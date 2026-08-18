@@ -209,6 +209,21 @@ export {
   type VerifierRule,
 } from "./verifier/index.js";
 
+// Re-export the LSP integration (F9.2, §22 Phase 4)
+export {
+  MockLspClient,
+  NoopLspClient,
+  StaticLspManager,
+  type LspClient,
+  type LspClientMap,
+  type LspDiagnostic,
+  type LspHover,
+  type LspLocation,
+  type LspManager,
+  type MockLspCall,
+  type MockLspResponseTable,
+} from "./lsp/index.js";
+
 // Re-export the scoreboard (§13 of the design doc)
 export {
   BenchmarkSchema,
