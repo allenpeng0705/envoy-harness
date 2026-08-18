@@ -35,3 +35,10 @@ export {
   type DefaultBuildSubagentFactoryOptions,
   type LocalMeshSubmitterOptions,
 } from "./local-mesh-submitter.js";
+
+export {
+  TaskInputSchema,
+  makeTaskTool,
+  type TaskInput,
+  type TaskResult,
+} from "./tools.js";

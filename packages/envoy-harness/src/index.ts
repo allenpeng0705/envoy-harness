@@ -263,12 +263,16 @@ export {
   LocalMeshSubmitter,
   NOOP_MESH_SUBMITTER_ERROR,
   NoopMeshSubmitter,
+  TaskInputSchema,
   defaultBuildSubagentFactory,
+  makeTaskTool,
   type DefaultBuildSubagentFactoryOptions,
   type LocalMeshSubmitterOptions,
   type MeshSubmitter,
   type SubagentInput,
   type SubagentResult,
+  type TaskInput,
+  type TaskResult,
 } from "./subagent/index.js";
 
 // Re-export the scoreboard (§13 of the design doc)

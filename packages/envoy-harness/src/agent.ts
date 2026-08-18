@@ -51,6 +51,8 @@ import type { LspManager } from "./lsp/index.js";
 import { makeLspTools } from "./lsp/tools.js";
 import { NullTracer } from "./trace/null-tracer.js";
 import type { Tracer } from "./trace/index.js";
+import type { MeshSubmitter } from "./subagent/index.js";
+import { makeTaskTool } from "./subagent/tools.js";
 
 /** Default max iterations before the agent throws. */
 export const DEFAULT_MAX_ITERATIONS = 50;
@@ -121,6 +123,26 @@ export interface AgentOptions {
    * async I/O must buffer.
    */
   tracer?: Tracer;
+  /**
+   * F10.1: mesh submitter. When set, the `task`
+   * tool is auto-registered with the parent's tool
+   * registry. The model can spawn sub-agents via
+   * the `task` tool; the submitter decides where
+   * the sub-agent runs (locally, on a peer, etc.).
+   *
+   * **No submitter → no `task` tool.** The model
+   * never sees the tool if the host hasn't
+   * configured a submitter. This is the
+   * "opt-in" pattern: sub-agents are an explicit
+   * capability the host turns on.
+   *
+   * **Default submitter:** `LocalMeshSubmitter` +
+   * `defaultBuildSubagentFactory` are the
+   * recommended defaults for a same-node host.
+   * Cross-node hosts inject a future
+   * `RemoteMeshSubmitter`.
+   */
+  meshSubmitter?: MeshSubmitter;
 }
 
 /** What `Agent.run()` returns. */
@@ -192,6 +214,9 @@ export class Agent {
   private lspManager: LspManager | undefined;
   /** F9.4: tracer. Always non-null (defaults to NullTracer). */
   private tracer: Tracer;
+  /** F10.1: mesh submitter. When set, the `task` tool
+   *  is auto-registered in the constructor. */
+  private meshSubmitter: MeshSubmitter | undefined;
 
   constructor(options: AgentOptions) {
     this.model = options.model;
@@ -204,6 +229,7 @@ export class Agent {
     this.askHandler = options.askHandler;
     this.lspManager = options.lspManager;
     this.tracer = options.tracer ?? new NullTracer();
+    this.meshSubmitter = options.meshSubmitter;
     // F9.2: register the 4 LSP tools when the host provides
     // a manager. We do this AFTER the constructor sets
     // `this.tools` so the registry is available.
@@ -211,6 +237,12 @@ export class Agent {
       for (const tool of makeLspTools(this.lspManager)) {
         this.tools.register(tool);
       }
+    }
+    // F10.1: register the `task` tool when the host
+    // provides a MeshSubmitter. Without one, the
+    // model never sees the tool (opt-in).
+    if (this.meshSubmitter) {
+      this.tools.register(makeTaskTool(this.meshSubmitter));
     }
     if (options.abortSignal) {
       // Wrap caller-provided signal so we can also fire on
