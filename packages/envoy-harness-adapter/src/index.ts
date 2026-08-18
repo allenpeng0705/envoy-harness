@@ -58,3 +58,10 @@ export {
   type EnvoyHarnessAdapterInput,
   type SignResultFn,
 } from "./adapter.js";
+
+// F8.4+ — default SignResult that uses real Ed25519 via
+// @envoymesh/identity.
+export {
+  defaultSignResult,
+  defaultSignResultFromKeyPair,
+} from "./signing.js";
