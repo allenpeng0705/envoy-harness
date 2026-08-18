@@ -56,6 +56,12 @@ import { makeTaskTool } from "./subagent/tools.js";
 
 /** Default max iterations before the agent throws. */
 export const DEFAULT_MAX_ITERATIONS = 50;
+/** F10.2: default cap on sub-agents per turn.
+ *  Picked to be generous (the model rarely needs
+ *  more than 3-4 sub-agents in one turn) while
+ *  still bounding cost. The host can lower this
+ *  for production. */
+export const DEFAULT_MAX_SUBAGENTS = 8;
 
 export interface AgentOptions {
   /** The model adapter. Required. */
@@ -143,6 +149,29 @@ export interface AgentOptions {
    * `RemoteMeshSubmitter`.
    */
   meshSubmitter?: MeshSubmitter;
+  /**
+   * F10.2: max sub-agents per turn. Hard cap
+   * on the number of `task` calls the model
+   * can emit in a single iteration. Default: 8.
+   *
+   * **When exceeded:** the agent refuses ALL the
+   * `task` calls in that turn (returns one
+   * `isError: true` tool_result per refused call
+   * with the message `"maxSubagents reached: N
+   * task calls in one turn (cap is M). Refused."`).
+   * **Why refuse all, not partial:** partial runs
+   * would hide the constraint from the model;
+   * refusing all teaches the model to budget
+   * its sub-agents.
+   *
+   * **Sub-agent cost:** the parent's `maxCostUsd`
+   * cap is unchanged (it's a per-Agent cap, only
+   * the parent's model calls). Sub-agents have
+   * their own `CostTracker`s. The host budgets
+   * sub-agents separately via each `task` call's
+   * `cost_ceiling_usd`.
+   */
+  maxSubagents?: number;
 }
 
 /** What `Agent.run()` returns. */
@@ -217,6 +246,8 @@ export class Agent {
   /** F10.1: mesh submitter. When set, the `task` tool
    *  is auto-registered in the constructor. */
   private meshSubmitter: MeshSubmitter | undefined;
+  /** F10.2: max sub-agents per turn. */
+  private maxSubagents: number;
 
   constructor(options: AgentOptions) {
     this.model = options.model;
@@ -230,6 +261,7 @@ export class Agent {
     this.lspManager = options.lspManager;
     this.tracer = options.tracer ?? new NullTracer();
     this.meshSubmitter = options.meshSubmitter;
+    this.maxSubagents = options.maxSubagents ?? DEFAULT_MAX_SUBAGENTS;
     // F9.2: register the 4 LSP tools when the host provides
     // a manager. We do this AFTER the constructor sets
     // `this.tools` so the registry is available.
@@ -418,11 +450,16 @@ export class Agent {
         );
       }
 
-      // 5. Execute each tool call (in order).
-      for (const call of toolCalls) {
-        if (this.abortController.signal.aborted) break;
-        await this.executeToolCall(call);
-      }
+      // 5. Execute the tool calls. F10.2: when
+      // ALL the calls are `task` (sub-agents),
+      // run them in parallel — each sub-agent
+      // gets its own session with no shared
+      // state, so there's nothing to order by.
+      // Mixed iterations (some `task` + some
+      // `bash`) stay serial (bash is
+      // order-dependent). The model's pattern
+      // is the driver; the host doesn't opt in.
+      await this.executeToolCalls(toolCalls);
 
       // If model said "max_tokens" and we have tool calls, treat
       // as end-of-turn; the agent shouldn't loop on a truncated
@@ -443,6 +480,85 @@ export class Agent {
    * check, arg validation, execution, post-hook, transcript.
    * Errors are caught and turned into `isError: true` results.
    */
+  /**
+   * F10.2: execute a batch of tool calls. When
+   * EVERY call is the `task` tool (sub-agent
+   * fan-out) AND a `meshSubmitter` is configured,
+   * run them in parallel via `Promise.all`.
+   * Otherwise, run them serially in the order
+   * they appear in the model's response.
+   *
+   * **Why auto-detect, not opt-in:** the model
+   * is the driver. When the model emits N
+   * `task` calls in one iteration, the right
+   * behavior is to run them in parallel (each
+   * sub-agent has its own session; nothing to
+   * order by). When the model emits a mix
+   * (e.g. `task` + `bash`), serial is the safe
+   * default (bash is order-dependent).
+   *
+   * **Cap:** when the call count exceeds
+   * `maxSubagents`, ALL calls are refused
+   * (one `isError: true` tool_result per
+   * call) with a clear message. Refusing all
+   * teaches the model to budget sub-agents;
+   * partial runs would hide the constraint.
+   *
+   * **Abort:** every in-flight sub-agent sees
+   * the parent's abort signal on the next
+   * iteration boundary (wired in F10.1.2's
+   * `LocalMeshSubmitter`). `Promise.all` honors
+   * the same signal; no extra wiring.
+   *
+   * **Result order:** the `tool_result` block
+   * lands in completion order, not call order.
+   * The model matches results to calls via
+   * `toolCallId` (the standard tool-use
+   * convention).
+   */
+  private async executeToolCalls(
+    calls: ReadonlyArray<Extract<ContentBlock, { type: "tool_call" }>>,
+  ): Promise<void> {
+    if (calls.length === 0) return;
+
+    // Sub-agent fan-out: parallel when ALL calls
+    // are `task`. Other tools (bash, lsp_*, etc.)
+    // may have order dependencies; they stay
+    // serial.
+    const allTask = this.meshSubmitter !== undefined &&
+      calls.every((c) => c.name === "task");
+    if (allTask) {
+      // Cap check: refuse ALL when exceeded.
+      if (calls.length > this.maxSubagents) {
+        for (const call of calls) {
+          this.appendToolResult(
+            call.id,
+            `maxSubagents reached: ${calls.length} task calls in one turn (cap is ${this.maxSubagents}). Refused.`,
+            true,
+          );
+        }
+        return;
+      }
+      // Parallel run. Each sub-agent runs in its
+      // own session; abort propagation is wired
+      // via the submitter (F10.1.2).
+      await Promise.all(
+        calls.map((call) => this.executeToolCall(call)),
+      );
+      return;
+    }
+
+    // Serial run (existing path). Used when:
+    // - No meshSubmitter (no `task` tool at all)
+    // - Mixed iteration (some `task` + some
+    //   other tool that may have order
+    //   dependencies)
+    for (const call of calls) {
+      if (this.abortController.signal.aborted) break;
+      await this.executeToolCall(call);
+    }
+  }
+
   private async executeToolCall(
     call: Extract<ContentBlock, { type: "tool_call" }>,
   ): Promise<void> {
