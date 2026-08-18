@@ -8,9 +8,9 @@
 > and *why*. This file says *what shipped*, *where it lives*,
 > and *what's still open*.
 >
-> **Status as of last commit:** `51fbb40` on `phase-1/types`.
-> Total: 488 tests, 24 test files, 36 source files, ~16k lines.
-> Phase 3 fully complete (F6 done). F7 (real LLM adapters + cost tracking) done — a pre-Phase-2 prerequisite. Phase 2 proper (F8 = `envoy-harness-adapter`, Package 3 — MAP integration) next.
+> **Status as of last commit:** (next commit, F8 done) on `phase-1/types`.
+> Total: 540 tests, 28 test files, 39 source files, ~17k lines (monorepo: 2 packages).
+> Phase 3 fully complete (F6 done). F7 (real LLM adapters + cost tracking) done. F8 (`envoy-harness-adapter`, Package 3 — MAP integration) done. **Phase 2 milestone per design §22 is "F8 done" — Phase 2 fully complete**. Future chunks are Phase 4 (LSP, team, cron, trace UI, per-call approval, cross-agent verification).
 
 ---
 
@@ -47,7 +47,7 @@ Per design §1.3, the four design targets are non-negotiable:
 |-------|-------|--------|-------|
 | **Phase 0** | Empty package skeleton | ✅ done (`4813d8c`) | 1 |
 | **Phase 1** | v0 spine (4 weeks) | ✅ done (Chunks 1-4d) | 220 |
-| **Phase 2** | Mesh-native (4 weeks) | 🔜 next | — |
+| **Phase 2** | Mesh-native (4 weeks) | ✅ done (F7 + F8) | 540 |
 | **Phase 3** | Self-evolution (3 weeks) | ✅ done (5a-5e + F6) | 110 |
 | **Phase 4** | Production-grade (ongoing) | ⏳ not started | — |
 
@@ -759,6 +759,95 @@ message `"--provider requires OPENAI_API_KEY env var to
 be set"`. The bin script is now usable for real providers
 once the corresponding `*_API_KEY` is set.
 
+### F8 — `envoy-harness-adapter` (Package 3 — MAP integration) — Phase 2 complete
+**§11, design.en.md (the reference MAP adapter).** F8.0
+through F8.7 are committed. **Phase 2 milestone per
+design §22 is now "F8 done" — Phase 2 fully complete.**
+
+**F8.0 — Monorepo restructure + scaffold.** The repo
+is now a pnpm workspace with two packages:
+`packages/envoy-harness/` (Package 1) and
+`packages/envoy-harness-adapter/` (Package 3). New
+workspace root files: `pnpm-workspace.yaml`,
+`tsconfig.base.json`, root `package.json` (private),
+workspace-level `README.md`. CI is now `pnpm -r run
+typecheck/test/build`. Per-package tsconfig extends
+`tsconfig.base.json`. `.gitignore` defensively excludes
+tsc outputs to `bin/`. The new package depends on
+`@envoymesh/envoy-harness` (workspace:*),
+`@envoymesh/agent-adapter`, `@envoymesh/protocol`,
+`@envoymesh/identity` (link: paths to the EnvoyMesh
+sibling monorepo). 488 + 2 = 490 tests passing.
+
+**F8.1 — `ENVOY_HARNESS_SKILLS` catalog** (5 skills):
+`code-edit`, `code-review`, `doc-search`, `bash-run`,
+`plan`. Cost ceilings from design §11: $5/$3/$1/$0.50/$1.
+All v0 skills are `maxSensitivity: "private"`. Skill →
+local tool set mapping in `getToolsForSkill()`:
+read-only skills expose only `read_file`; `code-edit`
+exposes both `read_file` + `bash`; `bash-run` exposes
+only `bash`. `isReadOnlySkill()` for permission-mode
+decisions. 19 new tests.
+
+**F8.2 + F8.4 + F8.5 + F8.6 — `EnvoyHarnessAdapter`
+class.** Implements `AgentAdapter` from
+`@envoymesh/agent-adapter`. Dependency-injection pattern
+(per `OpenClawAdapter`): `buildAgent` factory + `signResult`
+closure + `workerPeerId` + optional `runtimeVersion` +
+optional `buildPrompt`. The adapter is **runtime-agnostic**
+— no app-level imports. Methods:
+- `describeSkills()` — returns the 5-skill catalog.
+- `buildManifest(input)` — returns an unsigned
+  `CapabilityManifest`. The orchestrator signs with
+  the owner's key.
+- `execute(input)` — builds a local `Agent` via the
+  factory, runs the skill, translates via
+  `localToWireResult`, signs. Respects `input.signal`
+  (cancellation) and `input.costCeilingUsd` (passes as
+  `Agent.maxCostUsd` so the harness aborts when
+  exceeded). The wire `content` is just the final
+  assistant text (matches `OpenClawAdapter`); the
+  full transcript (including tool calls + tool results)
+  is preserved in `AgentResult.raw` for audit; the
+  signature covers `raw` so a malicious adapter cannot
+  retroactively edit it.
+- `verify(input)` — first-cut deterministic
+  (non-empty + non-echo). v0 placeholder; future chunk
+  wires the local verifier rules.
+- `defaultBuildAgentFactory({ model, cwd? })` —
+  exported helper for callers that don't want to write
+  their own factory. Builds a fresh `Agent` per
+  `execute()` with the skill's tool subset from
+  `BUILTIN_TOOLS`.
+
+**F8.3 — Local ↔ wire translation.** Lossy in one
+direction (local → wire). Stable schemaRefs for tool
+calls and tool results (`envoymesh://tool-call/v1`,
+`envoymesh://tool-result/v1`) — these are an internal
+contract between envoy-harness adapters on different
+nodes. The full local `AgentResult` is preserved in
+`AgentResult.raw` (typed `unknown`). 17 new tests.
+
+**Tests:** 14 in `test/adapter.test.ts` (describeSkills,
+buildManifest, execute text-only, execute tool-call,
+execute cancellation, verify 3 cases,
+defaultBuildAgentFactory). Total: 52 tests in the
+adapter package; 488 in the harness package; **540
+total across the monorepo**.
+
+**Known limitations (followups):**
+1. `signResult` is not wired to a real Ed25519 signer in
+   v0; tests use a fake that stamps a SHA-256 hash. A
+   future chunk integrates with `@envoymesh/identity`'s
+   `signCanonicalPayload`.
+2. The adapter depends on the EnvoyMesh monorepo via
+   `link:` paths. Cross-repo changes require updating
+   both. A future chunk could move the adapter into the
+   EnvoyMesh monorepo if a cleaner separation is wanted.
+3. `verify()` is the first-cut placeholder. The
+   local verifier rules (F1.4d) should be wired in
+   F8.6+ (a follow-up chunk).
+
 ---
 
 ## 4. Architectural invariants (what we hold)
@@ -1285,14 +1374,14 @@ the only place that imports both.
 
 | ID | Scope | Files | Status |
 |----|-------|-------|--------|
-| **F8.0** | Repo scaffold: create `envoy-harness-adapter/` as a new sibling repo (or, if user prefers, restructure envoy-harness as a pnpm workspace). Single-package with `@envoymesh/envoy-harness` + `@envoymesh/agent-adapter` + `@envoymesh/protocol` + `@envoymesh/identity` as deps. | new repo, `package.json`, `tsconfig.json`, `src/index.ts`, `test/smoke.test.ts` | ⏳ next |
-| **F8.1** | `ENVOY_HARNESS_SKILLS` catalog (5 skills: code-edit, code-review, doc-search, bash-run, plan). Skill → tool-set mapping (which tools are available per skill). | `src/skills.ts`, `test/skills.test.ts` | ⏳ pending |
-| **F8.2** | `EnvoyHarnessAdapter` class — `describeSkills`, `buildManifest` (unsigned — orchestrator signs), `execute` (translates ExecuteInput → local Agent.run → wire AgentResult), `verify` (uses local verifier rules). | `src/adapter.ts`, `test/adapter.test.ts` | ⏳ pending |
-| **F8.3** | Local ↔ wire translation: `localToWireResult(agentResult)`, `localAgentResultToWire(agentResult)`, `localContentBlockToWire(block)`, `localMessageToWireContent(message)`. | `src/translation.ts`, `test/translation.test.ts` | ⏳ pending |
-| **F8.4** | Sign result helper + integration with `@envoymesh/identity`. Adapter takes `signResult` as constructor dep (DI pattern, per OpenClawAdapter). | `src/adapter.ts`, `test/adapter.test.ts` | ⏳ pending |
-| **F8.5** | Skill execution: build prompt per skill, set up tool set, run local `Agent.run()`, return wire `SignedAgentResult`. Use `FakeModel` in tests. | `src/adapter.ts`, `test/adapter-execute.test.ts` | ⏳ pending |
-| **F8.6** | Cross-verify: when running alongside another adapter (e.g. OpenClawAdapter), use the cross-verify path. v0: just the local verifier. | `src/adapter.ts`, `test/adapter-verify.test.ts` | ⏳ pending |
-| **F8.7** | Public API surface: re-export `EnvoyHarnessAdapter`, `ENVOY_HARNESS_SKILLS`, types. Update `docs/implementation-plan.md` to mark F8 done. | `src/index.ts`, `docs/implementation-plan.md` | ⏳ pending |
+| **F8.0** | Repo scaffold: convert envoy-harness to a pnpm workspace; add `packages/envoy-harness-adapter/`. | new pnpm-workspace.yaml, tsconfig.base.json, packages/envoy-harness-adapter/{package.json,tsconfig.json,tsconfig.build.json,vitest.config.ts,src/index.ts,test/smoke.test.ts,README.md} | ✅ done |
+| **F8.1** | `ENVOY_HARNESS_SKILLS` catalog (5 skills: code-edit, code-review, doc-search, bash-run, plan). Skill → tool-set mapping (which tools are available per skill). | `src/skills.ts`, `test/skills.test.ts` | ✅ done |
+| **F8.2** | `EnvoyHarnessAdapter` class — `describeSkills`, `buildManifest` (unsigned — orchestrator signs), `execute` (translates ExecuteInput → local Agent.run → wire AgentResult), `verify` (uses local verifier rules). | `src/adapter.ts`, `test/adapter.test.ts` | ✅ done |
+| **F8.3** | Local ↔ wire translation: `localToWireResult`, `localToWireContent`, `localToWireBlock`, `localToWireMetrics`. Stable schemaRefs for tool calls + tool results (`envoymesh://tool-call/v1`, `envoymesh://tool-result/v1`). | `src/translation.ts`, `test/translation.test.ts` | ✅ done |
+| **F8.4** | Sign result helper + integration with `@envoymesh/identity`. Adapter takes `signResult` as constructor dep (DI pattern, per OpenClawAdapter). | `src/adapter.ts` (constructor + execute), `test/adapter.test.ts` | ✅ done |
+| **F8.5** | Skill execution: build prompt per skill, set up tool set, run local `Agent.run()`, return wire `SignedAgentResult`. `defaultBuildAgentFactory` exported. Use `FakeModel` in tests. | `src/adapter.ts`, `test/adapter.test.ts` | ✅ done |
+| **F8.6** | Runtime-specific verifier. v0: first-cut deterministic (non-empty + non-echo). Future chunk wires the local verifier rules. | `src/adapter.ts:verify`, `test/adapter.test.ts` | ✅ done (v0 first-cut) |
+| **F8.7** | Public API surface: re-export `EnvoyHarnessAdapter`, `ENVOY_HARNESS_SKILLS`, types. Update `docs/implementation-plan.md` to mark F8 done. | `src/index.ts`, `docs/implementation-plan.md` | ✅ done |
 
 **Adapter class sketch (per design §11):**
 
@@ -1640,3 +1729,56 @@ scoreboard opt-in (off by default)." — 3 of 4 done
   (Phase 2 milestone: F7 done), §10 (this entry). Next:
   F8 (envoy-harness-adapter, Package 3) — the MAP
   integration.
+- **2026-08-18 (F8.0 + phase 2 review)**: Phase 2
+  review fixes (header + status line + new risk 5.11
+  for `--max-cost-usd` silent no-op when adapter omits
+  `response.model`) + F8 plan + monorepo restructure.
+  Single-package repo → pnpm workspace with two
+  packages: `packages/envoy-harness/` (Package 1) +
+  `packages/envoy-harness-adapter/` (Package 3).
+  Workspace root files: `pnpm-workspace.yaml`,
+  `tsconfig.base.json`, root `package.json` (private).
+  CI: `pnpm -r run typecheck/test/build`. Per-package
+  tsconfig extends base. The new adapter package
+  depends on `link:` paths to the EnvoyMesh sibling
+  monorepo (`@envoymesh/agent-adapter`,
+  `@envoymesh/protocol`, `@envoymesh/identity`).
+  All 488 + 2 tests pass.
+- **2026-08-18 (F8.1)**: `ENVOY_HARNESS_SKILLS` catalog
+  + skill → tool-set mapping. 5 skills
+  (code-edit, code-review, doc-search, bash-run, plan)
+  with cost ceilings from design §11
+  ($5/$3/$1/$0.50/$1). `getToolsForSkill(skillId)`
+  returns the local tool subset; `isReadOnlySkill()` for
+  permission-mode decisions. 19 new tests.
+- **2026-08-18 (F8.3)**: Local ↔ wire type translation.
+  Lossy in one direction (local → wire): the wire
+  `AgentResult` drops the harness transcript, the
+  tool-call sequencing, and the effective sandbox
+  policy. Full local result is preserved in
+  `AgentResult.raw` (lossless audit; the signature
+  covers it). Tool calls + tool results are encoded
+  as wire `kind: "structured"` blocks with stable
+  schemaRefs (`envoymesh://tool-call/v1`,
+  `envoymesh://tool-result/v1`). 17 new tests.
+- **2026-08-18 (F8.2 + F8.4 + F8.5 + F8.6)**:
+  `EnvoyHarnessAdapter` class. Implements
+  `AgentAdapter` from `@envoymesh/agent-adapter`. DI
+  pattern (per `OpenClawAdapter`): `buildAgent`
+  factory + `signResult` closure + `workerPeerId` +
+  optional `runtimeVersion` + optional `buildPrompt`.
+  Methods: `describeSkills`, `buildManifest` (unsigned;
+  orchestrator signs with owner key), `execute`
+  (builds local Agent, runs skill, translates +
+  signs; respects `signal` and `costCeilingUsd`),
+  `verify` (first-cut deterministic placeholder).
+  `defaultBuildAgentFactory({ model, cwd? })` exported
+  helper. 14 new tests. **Phase 2 milestone per
+  design §22 is now "F8 done" — Phase 2 fully
+  complete.** Updated §2 (status + 540 tests + 2
+  packages), §3 (F8 done work + 3 known limitations),
+  §6.3 (F8.0-F8.7 all ✅), §7 (Phase 2: ✅ done,
+  540 tests), §10 (this entry). Next: future
+  chunks are Phase 4 (LSP, team, cron, trace UI,
+  per-call approval, cross-agent verification); no
+  more in Phase 2.
