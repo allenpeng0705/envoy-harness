@@ -1658,6 +1658,148 @@ fires the `PreToolUse` hook; the hook can already
 block; what's missing is the host integration. ~5
 commits, ~15-20 new tests.
 
+**F9.1 plan (per-call approval):**
+
+**The flow (Penguin style):**
+1. Tool call comes in (e.g. `bash("rm -rf /")`).
+2. `firePreToolUse` returns `HookDecision` with a new
+   `kind: "ask"` variant.
+3. The agent loop sees the `ask` decision and pauses.
+4. The loop calls `AgentOptions.askHandler({
+   tool: call.name, args: call.args, question, options })`
+   and awaits the host's response.
+5. The host returns `AskDecision`:
+   - `{ kind: "allow" }` — run the tool as-is.
+   - `{ kind: "deny", reason }` — tool result is
+     `"denied by user: <reason>"` with `isError: true`.
+   - `{ kind: "modify", args }` — run the tool with
+     the modified args (re-validates against the
+     zod schema).
+6. The agent resumes. The transcript records the
+   ask (and the decision) for audit.
+
+**Type changes (additive):**
+
+```ts
+// src/types.ts — add to HookDecision
+export type HookDecision =
+  | { kind: "continue" }
+  | { kind: "modify"; modified: unknown }
+  | { kind: "block"; reason: string }
+  | { kind: "add-context"; content: string }
+  | {
+      /** F9.1: ask the user (or the host) to approve. */
+      kind: "ask";
+      question: string;
+      /** Suggested options; the host may use them or replace. */
+      options?: ReadonlyArray<{ id: string; label: string }>;
+    };
+
+// src/types.ts (new) — the host's response
+export type AskDecision =
+  | { kind: "allow" }
+  | { kind: "deny"; reason: string }
+  | { kind: "modify"; args: Record<string, unknown> };
+
+/** The hook's request to the host. */
+export interface AskRequest {
+  /** The tool the model wants to call. */
+  tool: string;
+  /** The model's args. The host shows these to the user. */
+  args: unknown;
+  /** A human-readable question (e.g. "Run bash with this command?"). */
+  question: string;
+  /** Suggested options; the host may use them. */
+  options?: ReadonlyArray<{ id: string; label: string }>;
+  /** Abort signal: if the user cancels, the ask is cancelled. */
+  signal: AbortSignal;
+}
+
+export type AskHandler = (req: AskRequest) => Promise<AskDecision>;
+```
+
+**Agent integration:**
+
+```ts
+// src/agent.ts — AgentOptions
+interface AgentOptions {
+  // ... existing ...
+  /** F9.1: per-call approval handler. When undefined,
+   *  `kind: "ask"` decisions fall back to deny (safe default). */
+  askHandler?: AskHandler;
+}
+
+// src/agent.ts — executeToolCall (after firePreToolUse)
+const preDecision = await this.firePreToolUse(call);
+if (preDecision.kind === "block") {
+  // ... existing ...
+}
+if (preDecision.kind === "ask") {
+  const askReq: AskRequest = {
+    tool: call.name,
+    args: call.args,
+    question: preDecision.question,
+    ...(preDecision.options ? { options: preDecision.options } : {}),
+    signal: this.abortController.signal,
+  };
+  const decision = this.askHandler
+    ? await this.askHandler(askReq)
+    : { kind: "deny" as const, reason: "no ask handler configured" };
+  if (decision.kind === "deny") {
+    this.appendToolResult(call.id, `denied by user: ${decision.reason}`, true);
+    return;
+  }
+  if (decision.kind === "modify") {
+    call.args = decision.args; // re-validate below
+  }
+  // decision.kind === "allow" → fall through to the tool runner
+}
+```
+
+**CLI integration (B.4):**
+- `RunOptions.askHandler?: AskHandler` — the CLI
+  forwards a handler to the agent.
+- Default: a built-in handler that writes a
+  one-line "ask" record to stderr (`envoy-harness:
+  ask: bash with command="rm -rf /"? — denied by
+  default (no UI handler)`) and returns deny. This
+  makes the bin script safe in headless contexts.
+- Production (Tauri, web, etc.) injects a real UI
+  handler via the host binding.
+
+**Tests (~15-20):**
+- Hook returns `ask` → agent calls handler.
+- Handler returns `allow` → tool runs as-is.
+- Handler returns `deny` → tool result is "denied by
+  user: <reason>", isError: true.
+- Handler returns `modify` → tool runs with modified
+  args (re-validated; invalid modified args fail the
+  tool with a zod error).
+- No handler configured → defaults to deny.
+- Ask request receives the right fields (tool, args,
+  question, options, signal).
+- Ask with an aborted signal → handler is called
+  with the signal; the host decides.
+- Per-call approval is **additive**: existing
+  `block` / `continue` / `add-context` decisions
+  are unchanged.
+- The transcript records the ask + decision for
+  audit (the assistant message + the tool result
+  with "denied by user: ..." form a clear narrative).
+
+**Out of scope:**
+- Tauri / web UI. The host integration is out of
+  scope for this repo (the user app binds its own
+  handler).
+- Timeout on the ask. The host decides its own
+  timeout; the agent's `abortSignal` propagates so
+  a host that wants to cancel an in-flight ask
+  (e.g. on shutdown) can.
+- Persistent permission grants. Per-call only;
+  v0 is the floor.
+
+---
+
 **Why F9.5 last (cross-agent verification):**
 needs the most cross-cutting work — adapter
 extension, verifier extension, model router
