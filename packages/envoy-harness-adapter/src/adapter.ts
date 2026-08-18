@@ -76,7 +76,7 @@ import {
 
 import { ENVOY_HARNESS_SKILLS, ENVOY_HARNESS_VERSION, getToolsForSkill } from "./skills.js";
 import { localToWireResult } from "./translation.js";
-import { runLocalVerifier } from "./verify.js";
+import { runLocalVerifier, type CrossVerifyFn } from "./verify.js";
 
 // ---------------------------------------------------------------------------
 // Options
@@ -115,6 +115,25 @@ export interface EnvoyHarnessAdapterInput {
    * + objective + tool set + "produce a useful result").
    */
   buildPrompt?: (input: ExecuteInput) => string;
+  /**
+   * F9.5: optional cross-verify closure. When set,
+   * `verify()` calls it AFTER the local verifier and
+   * concatenates the cross verdicts with the local
+   * ones. Returns the combined array (per the
+   * `AgentAdapter.verify()` contract: `Verdict[]`).
+   *
+   * The orchestrator collapses the combined array
+   * with `combineVerdicts(verdicts)` (envoy-harness's
+   * `verifier/index.ts`).
+   *
+   * **Default factory:** `defaultCrossVerify(otherAdapter)`
+   * re-runs the same skill on a different
+   * `AgentAdapter` (typically a second
+   * `EnvoyHarnessAdapter` with a different
+   * `ModelAdapter`) and returns the local
+   * verifier's verdicts for the new result.
+   */
+  crossVerifyWith?: CrossVerifyFn;
 }
 
 // ---------------------------------------------------------------------------
@@ -135,6 +154,8 @@ export class EnvoyHarnessAdapter implements AgentAdapter {
   private readonly workerPeerId: string;
   private readonly runtimeVersion: string;
   private readonly buildPrompt: (input: ExecuteInput) => string;
+  /** F9.5: optional cross-verify closure. */
+  private readonly crossVerifyWith: CrossVerifyFn | undefined;
 
   constructor(input: EnvoyHarnessAdapterInput) {
     this.buildAgent = input.buildAgent;
@@ -142,6 +163,7 @@ export class EnvoyHarnessAdapter implements AgentAdapter {
     this.workerPeerId = input.workerPeerId;
     this.runtimeVersion = input.runtimeVersion ?? ENVOY_HARNESS_VERSION;
     this.buildPrompt = input.buildPrompt ?? defaultEnvoyHarnessPrompt;
+    this.crossVerifyWith = input.crossVerifyWith;
   }
 
   /** The catalog of skills this adapter advertises. */
@@ -234,9 +256,18 @@ export class EnvoyHarnessAdapter implements AgentAdapter {
    * `sandboxRespectedRule` is a no-op against that).
    * The full lossless local result is in
    * `SignedAgentResult.raw` for audit.
+   *
+   * **Cross-verify (F9.5):** when `crossVerifyWith` is
+   * set, this method ALSO calls the cross-verify
+   * closure and concatenates the cross verdicts with
+   * the local ones. The orchestrator collapses the
+   * combined array with `combineVerdicts(verdicts)`.
    */
   async verify(input: VerifyInput): Promise<Verdict[]> {
-    return runLocalVerifier(input);
+    const local = await runLocalVerifier(input);
+    if (!this.crossVerifyWith) return local;
+    const cross = await this.crossVerifyWith(input);
+    return [...local, ...cross];
   }
 }
 
