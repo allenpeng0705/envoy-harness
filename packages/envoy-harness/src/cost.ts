@@ -159,6 +159,16 @@ export class CostTracker {
    * accumulated cost. Unknown models contribute 0 cost but
    * the tokens are still counted.
    */
+  /**
+   * The model name this tracker was constructed with.
+   * Read-only. The agent emits this in the `agent_start`
+   * trace event; the actual model may be different if
+   * `addUsage` was called with a `modelOverride`.
+   */
+  get currentModel(): string {
+    return this.model;
+  }
+
   addUsage(usage: Usage, modelOverride?: string): void {
     this.inputTokens += usage.inputTokens;
     this.outputTokens += usage.outputTokens;

@@ -49,6 +49,8 @@ import type { AskHandler, AskRequest, SandboxPolicy } from "./types.js";
 import { CostTracker } from "./cost.js";
 import type { LspManager } from "./lsp/index.js";
 import { makeLspTools } from "./lsp/tools.js";
+import { NullTracer } from "./trace/null-tracer.js";
+import type { Tracer } from "./trace/index.js";
 
 /** Default max iterations before the agent throws. */
 export const DEFAULT_MAX_ITERATIONS = 50;
@@ -109,6 +111,16 @@ export interface AgentOptions {
    * the duration of a run.
    */
   lspManager?: LspManager;
+  /**
+   * F9.4: tracer. When undefined, a `NullTracer` is
+   * used (no observable side effect). The CLI's
+   * `--json` flag wires a `JsonLinesTracer` to stdout.
+   *
+   * **Sync contract:** `Tracer.emit` is synchronous.
+   * The agent does not await; a tracer that needs
+   * async I/O must buffer.
+   */
+  tracer?: Tracer;
 }
 
 /** What `Agent.run()` returns. */
@@ -178,6 +190,8 @@ export class Agent {
   private askHandler: AskHandler | undefined;
   /** F9.2: LSP manager (when provided, the 4 LSP tools are registered). */
   private lspManager: LspManager | undefined;
+  /** F9.4: tracer. Always non-null (defaults to NullTracer). */
+  private tracer: Tracer;
 
   constructor(options: AgentOptions) {
     this.model = options.model;
@@ -189,6 +203,7 @@ export class Agent {
     this.maxCostUsd = options.maxCostUsd;
     this.askHandler = options.askHandler;
     this.lspManager = options.lspManager;
+    this.tracer = options.tracer ?? new NullTracer();
     // F9.2: register the 4 LSP tools when the host provides
     // a manager. We do this AFTER the constructor sets
     // `this.tools` so the registry is available.
@@ -264,6 +279,21 @@ export class Agent {
     }
     this.session.appendMessage("user", [{ type: "text", text: prompt }]);
 
+    // F9.4: emit agent_start. The model name is the best
+    // guess we have (the agent doesn't know which model
+    // the adapter will use until the first call returns
+    // `usage.model`; for v0 we read it from the cost
+    // tracker after each response — the start event uses
+    // a placeholder "unknown" if unset).
+    this.tracer.emit({
+      kind: "agent_start",
+      ts: new Date().toISOString(),
+      sessionId: this.session.id,
+      model: this.costTracker.currentModel,
+      cwd: this.cwd,
+      tools: this.tools.list().map((t) => t.name),
+    });
+
     let iterations = 0;
     while (iterations < this.maxIterations) {
       if (this.abortController.signal.aborted) {
@@ -283,6 +313,12 @@ export class Agent {
         // message so the user sees the error in the transcript
         // and the loop exits cleanly (no retry policy in v0).
         const message = (err as Error).message ?? String(err);
+        this.tracer.emit({
+          kind: "error",
+          ts: new Date().toISOString(),
+          iteration: iterations,
+          message: `model error: ${message}`,
+        });
         this.session.appendMessage("assistant", [
           { type: "text", text: `[model error] ${message}` },
         ]);
@@ -320,6 +356,17 @@ export class Agent {
           return this.makeResult(response.content, "aborted", iterations);
         }
       }
+
+      // F9.4: emit model_response (after cost attribution
+      // so the event matches what the agent saw).
+      this.tracer.emit({
+        kind: "model_response",
+        ts: new Date().toISOString(),
+        iteration: iterations,
+        stopReason: response.stopReason,
+        content: response.content,
+        ...(response.usage ? { usage: response.usage } : {}),
+      });
 
       // 2. Append the assistant message.
       this.session.appendMessage("assistant", response.content);
@@ -428,6 +475,25 @@ export class Agent {
     // Execute. Errors are caught — the model needs to see them.
     let resultContent: unknown;
     let isError = false;
+    // F9.4: track tool execution duration for the
+    // tool_result event. The timer starts AFTER arg
+    // validation (we don't want to count time spent
+    // in the hook / validation; the trace is for
+    // tool execution time).
+    const toolStart = Date.now();
+
+    // F9.4: emit tool_call (after the PreToolUse hook
+    // passes and args validate). The model can see
+    // the call in the next iteration; the trace
+    // gets it now.
+    const toolCallEventIteration = this.toolCallCount; // 1-indexed
+    this.tracer.emit({
+      kind: "tool_call",
+      ts: new Date().toISOString(),
+      iteration: toolCallEventIteration,
+      call,
+    });
+
     try {
       const result = await tool.execute(parsed.data, {
         cwd: this.cwd,
@@ -440,6 +506,19 @@ export class Agent {
       resultContent = `tool execution error: ${(err as Error).message}`;
       isError = true;
     }
+
+    // F9.4: emit tool_result (after execution, before
+    // post-hook / transcript append). The duration
+    // is the time spent in the tool's `execute`.
+    const toolDurationMs = Date.now() - toolStart;
+    this.tracer.emit({
+      kind: "tool_result",
+      ts: new Date().toISOString(),
+      iteration: toolCallEventIteration,
+      callId: call.id,
+      result: { content: resultContent, ...(isError ? { isError } : {}) },
+      durationMs: toolDurationMs,
+    });
 
     // PostToolUse hook (modify the result, add context).
     const postDecision = await this.firePostToolUse(call, {
@@ -497,6 +576,21 @@ export class Agent {
     iterations: number,
   ): AgentResult {
     const cost = this.costTracker.total();
+    // F9.4: emit agent_end. This is the last event
+    // the tracer sees; consumers (e.g. the CLI's
+    // --json flag) can use it to flush.
+    this.tracer.emit({
+      kind: "agent_end",
+      ts: new Date().toISOString(),
+      stopReason,
+      iterations,
+      toolCalls: this.toolCallCount,
+      metrics: {
+        inputTokens: cost.inputTokens,
+        outputTokens: cost.outputTokens,
+        costUsd: cost.costUsd,
+      },
+    });
     return {
       content,
       stopReason,
