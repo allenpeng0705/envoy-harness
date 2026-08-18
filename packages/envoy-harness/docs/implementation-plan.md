@@ -12,7 +12,7 @@
 > Total: 564 tests, 28 test files, 40 source files, ~17k lines (monorepo: 2 packages).
 > Phase 3 fully complete (F6 done). Phase 2 fully complete (F7 + F8 done, F8 polish done). **Phase 4 complete (F9.1 + F9.2 + F9.3 + F9.4 + F9.5 done).** The 5 Phase 4 sub-chunks are done.
 
-**Phase 5 in progress: F10.1 done.** Mesh-native sub-agents shipped (the `task` tool + `MeshSubmitter` seam + `LocalMeshSubmitter` default). F10.2+ pending (cross-node `RemoteMeshSubmitter`, signature, federated routing).
+**Phase 5 in progress: F10.1 done. F10.2 starting.** Mesh-native sub-agents shipped (the `task` tool + `MeshSubmitter` seam + `LocalMeshSubmitter` default). F10.2+ pending (parallel sub-agents, maxSubagents cap, result aggregation). Mesh-native sub-agents shipped (the `task` tool + `MeshSubmitter` seam + `LocalMeshSubmitter` default). F10.2+ pending (cross-node `RemoteMeshSubmitter`, signature, federated routing).
 
 ---
 
@@ -3530,3 +3530,167 @@ Updated §2 (status), §3 (this entry), §6.6
 §10 (this entry). **Next: F10.2+ (cross-node
 submitter, signature, federated routing) or
 Phase 5 second sub-chunk, user's pick.**
+
+---
+
+### F10.2 — Parallel sub-agents + maxSubagents cap (1 sub-chunk)
+**Phase 5 second sub-chunk.** v0 (F10.1) executes
+`task` tool calls sequentially (`for await`).
+When the model emits 3 `task` calls in one response
+("spawn 3 reviewers"), they run one after the other.
+That's the right default for **most** tools
+(`bash` is order-dependent: `git add` then `git
+commit`), but `task` is **inherently parallel** — each
+sub-agent runs in its own session with no shared state.
+
+**v0 scope (this chunk):**
+
+1. **Auto-detect "all N tool calls are `task`"** →
+   run them in parallel via `Promise.all`. The
+   detection: every call in the iteration is `name ===
+   "task"`. Mixed iterations (some `task` + some
+   `bash`) stay serial (the bash side is order-dependent).
+   The model is the driver; the host doesn't opt in.
+
+2. **`AgentOptions.maxSubagents?: number`** — a
+   hard cap on the number of `task` calls per
+   turn. Default: `8`. When the model emits more
+   than `maxSubagents` `task` calls in one turn,
+   the agent **refuses all of them** and returns
+   one `isError: true` tool_result per refused
+   call with the message `"maxSubagents reached:
+   N (cap is M)"`. **Why refuse all, not partial:**
+   partial runs would hide the constraint from
+   the model; refusing all teaches the model to
+   budget its sub-agents.
+
+3. **Abort propagation** — already wired in F10.1.2
+   (LocalMeshSubmitter wires the parent's signal
+   to the sub-agent's abort). With parallel,
+   `Promise.all` honors the same signal: every
+   in-flight sub-agent aborts on the next iteration
+   boundary when the parent aborts.
+
+4. **Cost tracking** — sub-agents keep their own
+   `CostTracker`s (F10.1.2). The parent's
+   `maxCostUsd` cap is unchanged (it's a
+   per-Agent cap, only the parent's model calls).
+   **Future:** F10.3+ will aggregate sub-agent
+   costs into the parent's `CostTracker` (a
+   "this sub-agent's cost is the parent's cost"
+   attribution). v0: the host budgets sub-agents
+   separately via each `task` call's
+   `cost_ceiling_usd`.
+
+5. **Result shape** — N tool_results, one per
+   sub-agent. Each tool_result carries the
+   `SubagentResult` for that call. The order
+   of results in the message block follows the
+   completion order of `Promise.all` (not the
+   call order). The model matches results to
+   calls via `toolCallId` (this is the standard
+   OpenAI / Anthropic convention; the LLM knows
+   how to handle it).
+
+**Type sketch:**
+
+```ts
+// src/agent.ts — AgentOptions
+interface AgentOptions {
+  // ... existing ...
+  /** F10.2: max sub-agents per turn. Default 8.
+   *  When the model emits more `task` calls than
+   *  this, ALL are refused with isError: true
+   *  and a clear message. */
+  maxSubagents?: number;
+}
+
+// src/agent.ts — tool-execution step
+private async executeToolCalls(
+  calls: ReadonlyArray<ToolCall>,
+): Promise<void> {
+  if (calls.length === 0) return;
+
+  // Sub-agent fan-out: if EVERY call is the
+  // `task` tool, run them in parallel. The
+  // `task` tool's contract is "each call gets
+  // its own session" — there's no shared
+  // state to order by. Other tools (bash,
+  // lsp_definition, etc.) may have order
+  // dependencies; they stay serial.
+  if (this.meshSubmitter && calls.every(isTaskCall)) {
+    // Check the cap.
+    const cap = this.maxSubagents ?? DEFAULT_MAX_SUBAGENTS;
+    if (calls.length > cap) {
+      // Refuse ALL the calls (clear message
+      // teaches the model to budget).
+      for (const call of calls) {
+        this.appendToolResult(
+          call.id,
+          `maxSubagents reached: ${calls.length} task calls in one turn (cap is ${cap}). Refused.`,
+          true,
+        );
+      }
+      return;
+    }
+    // Parallel run.
+    await Promise.all(
+      calls.map((call) => this.executeToolCall(call)),
+    );
+    return;
+  }
+
+  // Serial run (existing path).
+  for (const call of calls) {
+    if (this.abortController.signal.aborted) break;
+    await this.executeToolCall(call);
+  }
+}
+```
+
+**Tests (target: ~10-15):**
+- N `task` calls in one iteration run in
+  parallel (assert on concurrency: the model
+  is called once per sub-agent; the sub-agents'
+  runs overlap in time).
+- Mixed iteration (1 `task` + 1 `bash`) stays
+  serial (the `task` runs to completion before
+  `bash` starts).
+- `maxSubagents: 2` and the model emits 3
+  `task` calls → all 3 are refused with
+  `isError: true`.
+- `maxSubagents: 8` (default) and the model
+  emits 8 `task` calls → all 8 run.
+- `maxSubagents: 0` and the model emits 1
+  `task` call → refused.
+- Parent abort during a parallel run → all
+  in-flight sub-agents abort.
+- The tool_results land in the parent's
+  transcript with the right `toolCallId`s.
+- Each sub-agent's session is independent
+  (already tested in F10.1.4; regression check
+  here).
+- Single `task` call (the common case) still
+  works (the parallel path also handles N=1).
+
+**Out of scope for v0:**
+- **Aggregating N results into one tool_result.**
+  The standard tool-use pattern (N results,
+  one per call) is what the LLM expects; the
+  model synthesizes. Aggregation would hide
+  the per-sub-agent structure.
+- **Capability-driven fan-out (`FanOutSpec`).**
+  v0 is model-driven; the host doesn't pre-register
+  fan-out patterns. A future F10.3 chunk can add
+  `AgentOptions.fanOut: Record<capabilityTag, { count: number; partition: (i, n) => SubagentInput }>`.
+- **Cost aggregation into the parent's
+  `CostTracker`.** v0: sub-agents have their own
+  cost; the host budgets via per-call
+  `cost_ceiling_usd`. A future chunk can wire
+  the sub-agent's `CostTracker.addUsage` into
+  the parent's tracker.
+
+**Sub-chunk breakdown (planned):**
+- F10.2.1: parallel detection + maxSubagents +
+  tests (single chunk; tightly coupled).
+
