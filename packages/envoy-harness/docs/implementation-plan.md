@@ -8,9 +8,9 @@
 > and *why*. This file says *what shipped*, *where it lives*,
 > and *what's still open*.
 >
-> **Status as of last commit:** (next commit, F9.1 done) on `phase-1/types`.
+> **Status as of last commit:** (next commit, F9.2 done) on `phase-1/types`.
 > Total: 564 tests, 28 test files, 40 source files, ~17k lines (monorepo: 2 packages).
-> Phase 3 fully complete (F6 done). Phase 2 fully complete (F7 + F8 done, F8 polish done). **Phase 4 in progress (F9.1 — per-call approval done).** F9.2-F9.5 pending (LSP, team+cron, --json trace mode, cross-verify).
+> Phase 3 fully complete (F6 done). Phase 2 fully complete (F7 + F8 done, F8 polish done). **Phase 4 in progress (F9.1 + F9.2 done; F9.3-F9.5 pending: team+cron, --json trace mode, cross-verify).**
 
 ---
 
@@ -1694,7 +1694,7 @@ each is a separate F9.x sub-chunk.
 | ID | Scope | Source | Status |
 |----|-------|--------|--------|
 | **F9.1** | Per-call approval callback (Penguin style). When the model tries a sensitive action (e.g. bash with workspace-write), pause the agent loop and call a host-provided `askHandler` callback. The callback returns a decision (allow / deny / modify). The agent resumes with the decision. The host decides UX (Tauri prompt, headless log, etc.). | design §10.4 (Penguin per-call approval sketch), §8.1 hook events | ✅ done |
-| **F9.2** | LSP client (parity with claw-code lane 8). `LspClient` class that wraps the LSP protocol over stdio. Auto-start language servers for projects the harness is reading/writing. Provides `definition`, `references`, `hover`, `diagnostics` to the agent as tools. | claw-code parity lane 8 | ⏳ pending |
+| **F9.2** | LSP client (parity with claw-code lane 8). `LspClient` class that wraps the LSP protocol over stdio. Auto-start language servers for projects the harness is reading/writing. Provides `definition`, `references`, `hover`, `diagnostics` to the agent as tools. | claw-code parity lane 8 | ✅ done (F9.2.1 + F9.2.2 + F9.2.3) |
 | **F9.3** | Team + cron (parity with claw-code lane 6). Multi-agent team definition (a team is a graph of agents + roles + delegation rules). Cron triggers (a team runs on a schedule). Saved as TOML config (`06-team-cron.toml`). v0: read the TOML, run the team in-process; no actual cron daemon. | claw-code parity lane 6, design §25 (parity dir) | ⏳ pending |
 | **F9.4** | Trace observability UI. The bin script gains `--json` mode (already accepted, currently ignored) that streams every agent decision + hook fire + tool call + verifier verdict as JSON Lines to stdout. A separate viewer (out-of-scope for this repo) renders the stream. v0: just the JSON Lines output; the viewer is a downstream concern. | design §19 (CLI), existing `--json` arg | ⏳ pending |
 | **F9.5** | Cross-agent verification. The `verify()` path can take an optional `crossVerifyWith` closure. When provided, the adapter calls it on the result and returns the cross-verify verdict in addition to its own. The orchestrator combines per design §6.2 (OR-of-pass, AND-of-fail). v0 in this chunk: a default cross-verify closure that re-runs the same skill on a different `ModelAdapter` (e.g. cheap local model vs. expensive GPT-4). | design §12.4 (4-source cascade), MAP §CrossAgentDisagreementVerifier | ⏳ pending |
@@ -2425,3 +2425,61 @@ scoreboard opt-in (off by default)." — 3 of 4 done
   D: wiring the adapter into EnvoyMesh's
   `runtime-registry` is deferred to the next
   session.
+
+---
+
+### F9.2 — LSP client + 4 tools (3 sub-chunks)
+**Phase 4 second sub-chunk.** F9.2 brings IDE-grade
+navigation tools to the agent (go-to-definition,
+find-references, hover, diagnostics) by wrapping
+the LSP protocol.
+
+**F9.2.1 (this commit) — types + tests + default impl +
+mock** lands the type surface (LspClient, LspManager,
+LspLocation, LspHover, LspDiagnostic) plus 3
+implementations: `NoopLspClient` (default; returns
+empty), `MockLspClient` (scriptable; for tests),
+`StaticLspManager` (extension-based routing with
+literal-path overrides; production wiring). 21 new
+tests in `test/lsp.test.ts`.
+
+**F9.2.2 (this commit) — `StdioLspClient`** is the
+production `LspClient`. Speaks JSON-RPC 2.0 with
+`Content-Length` framing over a child process. Implements
+the `initialize` handshake, the 4 ops, the
+`textDocument/publishDiagnostics` notification dispatch
+(server-push), server-initiated request handling (replies
+with `null` in v0), and graceful `shutdown` / `exit` on
+close. Also lands `FakeStdio` (scriptable stdio pair) +
+`frameLspMessage` for testing without a real server. 30
+new tests in `test/lsp-stdio.test.ts`. **Self-review
+caught 3 real bugs:** (1) `_closed` set before
+`sendRequest('shutdown')` → `assertOpen` throws;
+(2) data listener removed before shutdown response
+arrives → close() hangs; (3) `diagnostics()` only
+checks `assertInitialized`, not `assertOpen` → calls
+after close() silently return [].
+
+**F9.2.3 (this commit) — 4 tools + AgentOptions
+integration.** Lands `makeLspTools(manager)` returning
+4 tools (`lsp_definition`, `lsp_references`,
+`lsp_hover`, `lsp_diagnostics`). Each tool looks up
+the client via `manager.forFile(file)`, returns
+`{ content, isError: true }` on "no client" or
+client errors. `AgentOptions.lspManager?` is the
+new optional field; when provided, the 4 tools are
+auto-registered with the tool registry in the Agent
+constructor. The agent does NOT close the manager
+(host owns lifecycle). 13 new tests in
+`test/lsp-tools.test.ts`.
+
+**Total: 562 tests across 29 files.** F9.2 is
+**done**; the agent now has 4 IDE-grade navigation
+tools when a host provides an `LspManager`. Auto-spawn
+of language servers (the actual `typescript-language-server`
+etc.) is F9.2+1 — deferred. Updated §2 (status), §3
+(this entry), §6.5 (F9.2 ✅), §7 (sub-chunk template
+preserved), §10 (this entry). **Next: F9.4 (--json
+trace mode) or F9.3 (team+cron), user's pick.**
+
+---
