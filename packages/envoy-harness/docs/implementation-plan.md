@@ -8,11 +8,9 @@
 > and *why*. This file says *what shipped*, *where it lives*,
 > and *what's still open*.
 >
-> **Status as of last commit:** (next commit, F9.5 done) on `phase-1/types`.
-> Total: 564 tests, 28 test files, 40 source files, ~17k lines (monorepo: 2 packages).
-> Phase 3 fully complete (F6 done). Phase 2 fully complete (F7 + F8 done, F8 polish done). **Phase 4 complete (F9.1 + F9.2 + F9.3 + F9.4 + F9.5 done).** The 5 Phase 4 sub-chunks are done.
-
-**Phase 5 in progress: F10.1 done. F10.2 starting.** Mesh-native sub-agents shipped (the `task` tool + `MeshSubmitter` seam + `LocalMeshSubmitter` default). F10.2+ pending (parallel sub-agents, maxSubagents cap, result aggregation). Mesh-native sub-agents shipped (the `task` tool + `MeshSubmitter` seam + `LocalMeshSubmitter` default). F10.2+ pending (cross-node `RemoteMeshSubmitter`, signature, federated routing).
+> **Status as of last commit:** (next commit, F10.2 done) on `phase-1/types`.
+> Total: 746 tests across 45 files (envoy-harness 664 / 36 files + envoy-harness-adapter 82 / 9 files).
+> Phase 3 fully complete (F6 done). Phase 2 fully complete (F7 + F8 done, F8 polish done). **Phase 4 complete (F9.1 + F9.2 + F9.3 + F9.4 + F9.5 done).** **Phase 5 in progress: F10.1 + F10.2 done** (mesh-native sub-agents + parallel fan-out + maxSubagents cap). F10.3+ pending (cross-node `RemoteMeshSubmitter`, signature, federated routing).
 
 ---
 
@@ -340,10 +338,11 @@ Per design §1.3, the four design targets are non-negotiable:
 | **Phase 1** | v0 spine (4 weeks) | ✅ done (Chunks 1-4d) | 220 |
 | **Phase 2** | Mesh-native (4 weeks) | ✅ done (F7 + F8) | 540 |
 | **Phase 3** | Self-evolution (3 weeks) | ✅ done (5a-5e + F6) | 110 |
-| **Phase 4** | Production-grade (ongoing) | ⏳ not started | — |
+| **Phase 4** | Production-grade (5 sub-chunks: F9.1 + F9.2 + F9.3 + F9.4 + F9.5) | ✅ done | +130 (vs Phase 3) |
+| **Phase 5** | Mesh-native sub-agents (in progress) | ⏳ F10.1 ✅, F10.2 ✅, F10.3+ pending | +49 (vs Phase 4) |
 
-**Cumulative:** 305 tests across 16 files, all passing.
-Typecheck clean (`pnpm typecheck`).
+**Cumulative:** 746 tests across 45 files (envoy-harness 664 + envoy-harness-adapter 82), all passing.
+Typecheck clean (`pnpm -r typecheck`).
 
 **Per-module test inventory:**
 
@@ -2864,6 +2863,46 @@ infrastructure. Likely 8-12 commits.
 
 ---
 
+### 6.6 F10 — Phase 5: mesh-native sub-agents
+**Status:** F10.1 ✅ done, F10.2 ✅ done, F10.3+ pending.
+
+Per design §10.3 ("The task tool — mesh-native sub-agent")
+and design invariant #9 ("Sub-agents map to mesh chain steps,
+not in-process tasks"). The parent agent calls the `task` tool;
+the tool submits to a `MeshSubmitter`; the submitter runs (or
+routes) the sub-agent and returns the result. **Mesh-native**
+means the seam is the mesh: even when the sub-agent runs
+locally, it's an independent session (own id, own AGENTS.md,
+own hooks, own permission) — a future `RemoteMeshSubmitter`
+swaps in for cross-node execution without code changes.
+
+| ID | Scope | Files | Status |
+|----|-------|-------|--------|
+| **F10.1** | `MeshSubmitter` interface + `NoopMeshSubmitter`; `LocalMeshSubmitter` + `defaultBuildSubagentFactory`; `task` tool + `AgentOptions.meshSubmitter`; end-to-end via real `Agent.run()`. 4 sub-chunks. | `src/subagent/{types,noop-submitter,local-mesh-submitter,tools,index}.ts`, `src/agent.ts`, 4 test files | ✅ done (4 sub-chunks: F10.1.1 + F10.1.2 + F10.1.3 + F10.1.4) |
+| **F10.2** | Parallel sub-agent fan-out (auto-detect "all N task calls" → `Promise.all`) + `maxSubagents` cap (default 8, host-configurable; refuses ALL when exceeded). 1 sub-chunk. | `src/agent.ts`, `test/subagent-parallel.test.ts` | ✅ done (F10.2.1) |
+| **F10.3** | Cross-node `RemoteMeshSubmitter` + Ed25519 signature on `SubagentResult` + mesh routing. | `src/subagent/remote-mesh-submitter.ts` (new) | pending |
+| **F10.4+** | Cost aggregation (sub-agent `CostTracker` → parent); capability-driven fan-out (`FanOutSpec`); progress streaming. | `src/agent.ts`, `src/cost.ts` | pending |
+
+**Why the sub-agent path is the mesh-native contract, not in-process:**
+Codex and Claude Code create in-process sub-agents — same process, shared
+memory, no isolation. EnvoyMesh is a P2P mesh; sub-agents map to chain
+steps. Even local sub-agents are independent sessions: own id, own
+AGENTS.md, own hooks, own permission. The `MeshSubmitter` seam is the
+only thing that knows WHERE the sub-agent runs. v0 ships
+`LocalMeshSubmitter`; a future `RemoteMeshSubmitter` swaps in for
+cross-node execution.
+
+**v0 limits (deferred to F10.3+):**
+- Local execution only (no cross-node routing).
+- Result is unsigned (v0: no cryptographic trust needed for local).
+- Cost tracking is per-sub-agent (the parent's `maxCostUsd` only counts
+  parent's model calls). Host budgets sub-agents separately via
+  per-call `cost_ceiling_usd`.
+- No capability-driven fan-out (model emits N task calls; v0 honors N
+  up to the cap; the host doesn't pre-register fan-out patterns).
+
+---
+
 ## 7. F6 sub-chunk archive (Phase 3 §13.3 — federated scoreboard)
 
 F6 was planned in §6.1 and split into 4 sub-chunks. The
@@ -3191,6 +3230,101 @@ scoreboard opt-in (off by default)." — 3 of 4 done
   D: wiring the adapter into EnvoyMesh's
   `runtime-registry` is deferred to the next
   session.
+- **2026-08-18 (F9.2 / F9.3 / F9.4 / F9.5)**: Phase 4
+  completed. F9.2 (LSP) — `LspClient` interface +
+  `NoopLspClient` / `MockLspClient` / `StaticLspManager` /
+  `StdioLspClient` (real JSON-RPC over stdio, Content-Length
+  framing); `makeLspTools(manager)` returns 4 tools
+  (`lsp_definition` / `lsp_references` / `lsp_hover` /
+  `lsp_diagnostics`); `AgentOptions.lspManager` auto-registers.
+  F9.3 (team + cron) — `TeamConfig` / `AgentSpec` /
+  `ScheduleSpec` / `TeamResult`; hand-rolled minimal TOML
+  reader (no `@iarna/toml`); `Team.runOnce` with topological
+  sort (Kahn's algorithm); `envoy team <config.toml>` CLI
+  subcommand. F9.4 (--json trace) — `TraceEvent` union
+  (6 kinds: `agent_start` / `model_response` / `tool_call` /
+  `tool_result` / `agent_end` / `error`); `NullTracer` /
+  `JsonLinesTracer` (`WritableStream` structural type);
+  CLI `--json` flag wires `JsonLinesTracer(stdout)`.
+  F9.5 (cross-agent verification) — `CrossVerifyFn` type
+  + `defaultCrossVerify(otherAdapter)` factory;
+  `EnvoyHarnessAdapter.crossVerifyWith` integration
+  (`verify()` concatenates local + cross verdicts). All 5
+  Phase 4 sub-chunks now done. 130 new tests across 9
+  files. Total: 694 tests across 33 files (envoy-harness) +
+  82 in envoy-harness-adapter = 776 across 42 files.
+  Self-review highlights: (1) `HookRegistry.fire()` had
+  to learn the new `ask` decision (F9.1), (2) `StdioLspClient`
+  had 3 close-time bugs (close `set too early blocking
+  shutdown response, data listener removed before response
+  arrives, `diagnostics()` missing `assertOpen`), (3) agent's
+  `run()` catches model errors and returns `stopReason:
+  "aborted"`, so Team's per-agent failure detection needed
+  to check stopReason not exceptions, (4) `instanceof
+  TomlParseError` failed across module boundaries; switched
+  to `.name === "TomlParseError"` check, (5) cross-verify
+  test design called verify on cross-equipped adapter BEFORE
+  checking baseline; separated baseline + cross-equipped
+  adapters. Updated §1, §2, §3, §6.5, §7, §10. Next: F10
+  (Phase 5: mesh-native sub-agents).
+- **2026-08-18 (F10.1)**: Phase 5 first sub-chunk landed
+  (mesh-native sub-agents). The `task` tool + `MeshSubmitter`
+  seam + `LocalMeshSubmitter` default. 4 sub-chunks:
+  F10.1.1 (types + `NoopMeshSubmitter`),
+  F10.1.2 (`LocalMeshSubmitter` + `defaultBuildSubagentFactory` —
+  NEW session per call: own id, own AGENTS.md, own hooks,
+  own permission; sub-agent's own permission, not the
+  requester's),
+  F10.1.3 (`makeTaskTool(submitter)` + `AgentOptions.meshSubmitter`
+  auto-registration),
+  F10.1.4 (end-to-end via real `Agent.run()`).
+  41 new tests across 4 files
+  (`test/subagent-types.test.ts` 9,
+  `test/subagent-local.test.ts` 12,
+  `test/subagent-tool.test.ts` 14,
+  `test/subagent-e2e.test.ts` 6).
+  Self-review caught 4 real bugs across the 4 sub-chunks:
+  (1) parent.abort() test used model returning end_turn on
+  call 1, ending the loop before the abort could be detected;
+  (2) tests used `require("@envoymesh/envoy-harness")` which
+  fails in ESM context — switched to static import;
+  (3) redundant first `execute()` call in propagates-submitter-errors
+  test threw uncaught; (4) parent and sub-agent shared scripted
+  model, sub-agent consumed parent's second response. v0
+  limits: local execution only, unsigned result, no cross-node
+  routing. Forward-compat seam: `MeshSubmitter` interface
+  supports future `RemoteMeshSubmitter`. **F10.1 ✅ done.**
+  Total: 656 tests across 36 files (envoy-harness) +
+  82 in envoy-harness-adapter = 738 across 45 files.
+  Updated §1, §2, §3, §7, §10. **Note:** §6.6 was referenced
+  but missing — added in the F10.2 commit. Next: F10.2
+  (parallel sub-agents + maxSubagents cap).
+- **2026-08-18 (F10.2)**: Phase 5 second sub-chunk landed
+  (parallel sub-agent fan-out + `maxSubagents` cap). 1 sub-chunk
+  (F10.2.1): `AgentOptions.maxSubagents?: number` (default 8),
+  `executeToolCalls` helper auto-detects "all task calls" →
+  `Promise.all`; mixed iterations stay serial (bash is
+  order-dependent); refuses ALL when `calls.length > maxSubagents`
+  (teaches the model to budget; partial runs would hide the
+  constraint). Each `tool_result` carries the right `toolCallId`
+  (model matches by id, the standard tool-use convention).
+  8 new tests in `test/subagent-parallel.test.ts` covering
+  parallel detection, single-task fallback, mixed serial,
+  cap refusal (3 cases), toolCallId correlation, parent abort.
+  **Self-review caught 1 environmental issue:** `dist/agent.js`
+  was stale (built at 23:30, src edited at 23:43) — first
+  test run reported `maxInFlight=1` (serial execution). After
+  `pnpm -F @envoymesh/envoy-harness run build`, the parallel
+  path worked correctly (`maxInFlight=3`). **Lesson:** any
+  time src changes, rebuild before running tests; otherwise
+  tests run against stale compiled output. **F10.2 ✅ done.**
+  Total: 664 tests across 37 files (envoy-harness, +8 from
+  F10.2.1) + 82 in envoy-harness-adapter = 746 across 45
+  files (monorepo). Updated §1 (status line), §2 (status table
+  Phase 5 row), §3 (F10.2 done entry), §6.6 (F10 row, F10.2 ✅),
+  §7 (template preserved), §10 (this entry). Next: F10.3
+  (cross-node `RemoteMeshSubmitter` + Ed25519 signature) or
+  push all 8 unpushed commits, user's pick.
 
 ---
 
@@ -3693,4 +3827,73 @@ private async executeToolCalls(
 **Sub-chunk breakdown (planned):**
 - F10.2.1: parallel detection + maxSubagents +
   tests (single chunk; tightly coupled).
+
+---
+
+### F10.2 — done
+
+**F10.2.1 (this commit) — parallel sub-agent fan-out
++ `maxSubagents` cap.** When the model emits N `task`
+tool calls in one iteration, run them in parallel via
+`Promise.all`. Mixed iterations (some `task` + some
+`bash`) stay serial because `bash` is order-dependent.
+Each sub-agent already runs in its own session (F10.1)
+so there's nothing to order by.
+
+When the call count exceeds `maxSubagents` (default 8,
+host-configurable via `AgentOptions.maxSubagents`),
+**ALL calls are refused** with `isError: true` and
+a clear message (`"maxSubagents reached: N task calls
+in one turn (cap is M). Refused."`). Refusing all (vs
+partial) teaches the model to budget sub-agents;
+partial runs would hide the constraint.
+
+Sub-agent cost: the parent's `maxCostUsd` is unchanged
+(per-Agent, only parent's model calls). Sub-agents keep
+their own `CostTracker`s. The host budgets sub-agents
+separately via each `task` call's `cost_ceiling_usd`.
+Aggregation into the parent's tracker is deferred to
+F10.3+.
+
+Result shape: N `tool_result` blocks, one per sub-agent.
+The order of results in the message block follows the
+completion order of `Promise.all` (not the call order).
+The model matches results to calls via `toolCallId` (the
+standard tool-use convention; LLMs handle this).
+
+8 new tests in `test/subagent-parallel.test.ts`:
+1. 3 `task` calls run with `maxInFlight=3` (truly parallel).
+2. A single `task` call still works (the parallel path
+   handles N=1).
+3. Mixed iteration (`task` + `bash`) stays serial.
+4. `maxSubagents: 2` with 3 `task` calls → all 3 refused
+   with `isError: true`; sub-agent model never called.
+5. `maxSubagents: 0` with 1 `task` call → refused.
+6. `maxSubagents: 8` (default) with 8 `task` calls → all 8 run.
+7. Each `tool_result` carries the right `toolCallId`
+   (order may differ; the model matches by id).
+8. Parent `abort()` BEFORE the run → the loop's first
+   iteration check sees the abort; `stopReason: "aborted"`.
+
+**Self-review caught 1 environmental issue:** the
+`dist/agent.js` was stale (built at 23:30, src edited
+at 23:43). The first test run reported `maxInFlight=1`
+(serial execution). After `pnpm -F @envoymesh/envoy-harness
+run build`, the parallel path worked correctly
+(`maxInFlight=3`). **Lesson:** any time src changes,
+rebuild before running tests; otherwise tests run against
+stale compiled output.
+
+**Total: 664 tests across 37 files** (envoy-harness
+Package 1, +8 from F10.2.1; +82 from F9.5/F10.1 cross-verify
+work in envoy-harness-adapter Package 3 → monorepo total
+**746 across 45 files**). F10.2 is **done**; parallel
+sub-agents + cap are shipped. Phase 5 has its first two
+sub-chunks landed.
+
+Updated §1 (status line), §2 (status table Phase 5 row),
+§3 (this entry), §6.6 (F10 row, F10.2 ✅), §7 (template
+preserved), §10 (this entry). **Next: F10.3 (cross-node
+`RemoteMeshSubmitter` + Ed25519 signature) or push
+all 8 unpushed commits, user's pick.**
 
