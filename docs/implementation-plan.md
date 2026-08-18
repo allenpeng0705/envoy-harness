@@ -1267,24 +1267,134 @@ CLI cap (currently a no-op stub).
 ### 6.3 F8 — Phase 2: `envoy-harness-adapter` (Package 3)
 **Status:** pending. The MAP integration.
 
-**Scope:**
-- New package: `packages/envoy-harness-adapter/`.
-- Translates local types to wire types and back.
-- Wires the harness to EnvoyMesh's manifest broadcast,
-  task submission, and the 3-tuple reputation book.
-- The verification chain (worker → verifier → 4-source
-  cascade) is what the adapter submits, not the worker
-  itself.
+**Reference:** design.en.md §11 (the reference MAP
+adapter). The interface is `AgentAdapter` from
+`@envoymesh/agent-adapter` (Package "agent-adapter",
+in the EnvoyMesh monorepo). Reference implementations:
+`OpenClawAdapter`, `PiAdapter` in
+`packages/agent-adapter/src/`.
 
-**Tests:** the EnvoyMesh repo has
-`packages/protocol/test/agent-adapter-integration.test.ts`
-verifying coexistence. The adapter's own tests live in
-its package.
+**Goal:** `EnvoyHarnessAdapter implements AgentAdapter`
+— the home-team adapter. The adapter is a thin bridge
+that knows about both envoy-harness (Package 1) and the
+mesh (Package 2 + `@envoymesh/agent-adapter`).
+**envoy-harness stays mesh-agnostic**; the adapter is
+the only place that imports both.
 
-**Why third:** the local harness is the foundation. The
-adapter sits on top. Building the adapter without a real
-LLM adapter is possible (FakeModel in tests) but not
-useful.
+**Scope (sub-chunks):**
+
+| ID | Scope | Files | Status |
+|----|-------|-------|--------|
+| **F8.0** | Repo scaffold: create `envoy-harness-adapter/` as a new sibling repo (or, if user prefers, restructure envoy-harness as a pnpm workspace). Single-package with `@envoymesh/envoy-harness` + `@envoymesh/agent-adapter` + `@envoymesh/protocol` + `@envoymesh/identity` as deps. | new repo, `package.json`, `tsconfig.json`, `src/index.ts`, `test/smoke.test.ts` | ⏳ next |
+| **F8.1** | `ENVOY_HARNESS_SKILLS` catalog (5 skills: code-edit, code-review, doc-search, bash-run, plan). Skill → tool-set mapping (which tools are available per skill). | `src/skills.ts`, `test/skills.test.ts` | ⏳ pending |
+| **F8.2** | `EnvoyHarnessAdapter` class — `describeSkills`, `buildManifest` (unsigned — orchestrator signs), `execute` (translates ExecuteInput → local Agent.run → wire AgentResult), `verify` (uses local verifier rules). | `src/adapter.ts`, `test/adapter.test.ts` | ⏳ pending |
+| **F8.3** | Local ↔ wire translation: `localToWireResult(agentResult)`, `localAgentResultToWire(agentResult)`, `localContentBlockToWire(block)`, `localMessageToWireContent(message)`. | `src/translation.ts`, `test/translation.test.ts` | ⏳ pending |
+| **F8.4** | Sign result helper + integration with `@envoymesh/identity`. Adapter takes `signResult` as constructor dep (DI pattern, per OpenClawAdapter). | `src/adapter.ts`, `test/adapter.test.ts` | ⏳ pending |
+| **F8.5** | Skill execution: build prompt per skill, set up tool set, run local `Agent.run()`, return wire `SignedAgentResult`. Use `FakeModel` in tests. | `src/adapter.ts`, `test/adapter-execute.test.ts` | ⏳ pending |
+| **F8.6** | Cross-verify: when running alongside another adapter (e.g. OpenClawAdapter), use the cross-verify path. v0: just the local verifier. | `src/adapter.ts`, `test/adapter-verify.test.ts` | ⏳ pending |
+| **F8.7** | Public API surface: re-export `EnvoyHarnessAdapter`, `ENVOY_HARNESS_SKILLS`, types. Update `docs/implementation-plan.md` to mark F8 done. | `src/index.ts`, `docs/implementation-plan.md` | ⏳ pending |
+
+**Adapter class sketch (per design §11):**
+
+```ts
+// src/adapter.ts
+import type {
+  AgentAdapter,
+  BuildManifestInput,
+  ExecuteInput,
+  VerifyInput,
+} from "@envoymesh/agent-adapter";
+import type {
+  AgentResult as WireAgentResult,
+  SignedAgentResult,
+  CapabilityManifest,
+  SkillDescriptor,
+  Verdict,
+} from "@envoymesh/protocol";
+import { signCanonicalPayload } from "@envoymesh/identity";
+import type { Agent as LocalAgent, AgentResult as LocalAgentResult } from "@envoymesh/envoy-harness";
+
+export const ENVOY_HARNESS_VERSION = "0.0.0";
+
+export const ENVOY_HARNESS_SKILLS: ReadonlyArray<SkillDescriptor> = [
+  { skillId: "code-edit",  ..., tags: ["code", "edit"] },
+  // ... 5 skills total
+];
+
+export interface EnvoyHarnessAdapterInput {
+  /** The local agent factory — builds a fresh `Agent` per `execute()`. */
+  buildAgent: (skillId: string, objective: string) => LocalAgent;
+  /** Sign an unsigned wire `AgentResult`. The node controls the key. */
+  signResult: (unsigned: WireAgentResult) => SignedAgentResult;
+  /** The node's worker peerId. */
+  workerPeerId: string;
+  /** Optional: env's runtime version. Default: `ENVOY_HARNESS_VERSION`. */
+  runtimeVersion?: string;
+}
+
+export class EnvoyHarnessAdapter implements AgentAdapter {
+  readonly runtime = "envoy-harness" as const;
+  // ... describeSkills, buildManifest, execute, verify
+}
+```
+
+**Local ↔ wire translation (per design §4 + implementation-plan §3):**
+
+| Local (Package 1) | Wire (Package 2 protocol) |
+|---|---|
+| `ContentBlock` (`type: "text"`, `type: "tool_call"`, `type: "tool_result"`) | `ContentBlock` (`kind: "text"`, etc. — different schema) |
+| `Message[]` (transcript) | not in wire — sanitized out |
+| `SandboxPolicy` (effective) | not in wire — internal audit |
+| `AgentResult.metrics.costUsd` | `AgentMetrics.costUsd` |
+| `AgentResult.iterations` | not in wire — replaced by `durationMs` |
+| `AgentResult.toolCalls` | not in wire |
+| `AgentResult.stopReason` | not in wire — verifier handles quality |
+| `AgentResult.content` (local) | wire `content[]` (translated) |
+
+The translation is **lossy** — the wire format is the
+public contract, not the internal state. Per the
+contemporary protocol schemas, only `content` (text +
+tool calls) and `metrics` survive.
+
+**Hard requirements (per AgentAdapter contract):**
+- `execute` MUST respect `input.signal` (abort on cancel).
+- `execute` SHOULD refuse to start when `costCeilingUsd`
+  is too low (the orchestrator's `chain-budget-ledger` is
+  the authoritative gate; the adapter is the first line).
+- `verify` returns one or more verdicts. Multiple verdicts
+  on the same result are OR-combined by the orchestrator.
+- `signResult` is provided by the node (the adapter does
+  not invent or hold a key).
+
+**Why a separate package (not a workspace in envoy-harness):**
+- The adapter is the **only** place that knows about both
+  envoy-harness and the mesh. envoy-harness Package 1
+  must stay mesh-agnostic (design target #2 + invariant).
+- A new sibling repo `envoy-harness-adapter/` matches the
+  user's existing pattern (separate repos for separate
+  packages; cross-repo deps via npm). The alternative —
+  converting envoy-harness to a pnpm workspace — is
+  invasive (CI, package.json, build) and the design
+  doesn't require it.
+- A separate repo also makes the dependency direction
+  one-way: `envoy-harness-adapter` depends on
+  `envoy-harness`, never the reverse. The
+  `AgentAdapter` interface comes from
+  `@envoymesh/agent-adapter` (EnvoyMesh monorepo).
+
+**Tests:** ~30 across 6 test files (skills, adapter,
+translation, execute, verify, smoke). All use `FakeModel`
+for the local `Agent` (per F7.5 design — no real network
+calls in tests). The `signResult` dep is a fake that
+just stamps a SHA-256 of the canonical JSON.
+
+**Why this is a Phase 2 milestone (per design §22):**
+Phase 2 = "EnvoyHarnessAdapter implements the full MAP
+surface". F8.0-F8.7 are the path. After F8.7, the
+adapter is fully functional (manifest broadcast, task
+submission, 3-tuple reputation book local-only,
+arbitration reads work). Subsequent chunks (Phase 4) add
+LSP, team, cron, trace UI, etc.
 
 ---
 
