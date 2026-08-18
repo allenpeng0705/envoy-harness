@@ -46,6 +46,13 @@ export interface VerifierRule {
   /** Stable, kebab-case identifier. */
   name: string;
   /**
+   * One-paragraph human description. Used by the hypothesis
+   * prompt (§13) so the optimizer can reason about the ruleset
+   * without seeing the rule bodies. Optional for backward
+   * compatibility with rules that pre-date this field.
+   */
+  description?: string;
+  /**
    * Run the rule. Returns a `Verdict` or `null`.
    *
    * **Async for forward-compat:** the interface is async

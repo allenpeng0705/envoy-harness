@@ -121,7 +121,7 @@ export async function writeBenchmark(
  * internal logic (which is in TypeScript code, not data).
  */
 export async function hashRuleset(
-  rules: ReadonlyArray<{ name: string; description?: string }>,
+  rules: ReadonlyArray<{ name: string; description?: string | undefined }>,
 ): Promise<string> {
   const { createHash } = await import("node:crypto");
   const canonical = rules

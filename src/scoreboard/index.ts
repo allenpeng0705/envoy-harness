@@ -41,3 +41,17 @@ export {
   writeBenchmark,
   writeScoreboard,
 } from "./storage.js";
+
+export {
+  DefaultBenchmarkRunner,
+  ModelHypothesisProvider,
+  SelfEvolve,
+  buildHypothesisPrompt,
+  parseHypothesisFromLlm,
+  type BenchmarkRunner,
+  type Hypothesis,
+  type HypothesisProvider,
+  type RunOneCycleResult,
+  type SelfEvolveOptions,
+  type SelfEvolvePaths,
+} from "./self-evolve.js";
