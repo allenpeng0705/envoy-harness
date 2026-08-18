@@ -3,10 +3,17 @@
  *
  * **Design doc:** `docs/design.md` §19.
  *
- * **Phase 1 scope:** the v0 flag set. We don't try to match every
+ * **Phase 1+3 scope:** the v0 flag set for `envoy-harness` and
+ * the `self-evolve` subcommand. We don't try to match every
  * flag from §19 in this chunk — the parser is designed to be
  * additive (new flags append to `KNOWN_FLAGS` without breaking
  * existing tests). The full §19 surface lands in later chunks.
+ *
+ * **Subcommand dispatch:** the first non-flag positional is
+ * treated as a subcommand (`self-evolve` is the only one in
+ * v0; `envoy-harness [prompt]` is the default / no-subcommand
+ * form). The top-level `parseArgs` returns a discriminated
+ * union; callers narrow on `subcommand`.
  *
  * **Why a hand-rolled parser?** `process.argv.slice(2)` is a
  * single line; a `commander` / `yargs` dependency is overkill
@@ -18,8 +25,8 @@
 
 import type { PermissionMode } from "../types.js";
 
-/** v0 flag set. Additive: new flags are appended, not reordered. */
-const KNOWN_FLAGS = new Set([
+/** v0 flag set for the `run` subcommand (default). */
+const RUN_FLAGS = new Set([
   "--help",
   "--version",
   "--json",
@@ -38,8 +45,26 @@ const KNOWN_FLAGS = new Set([
   "--quiet",
 ]);
 
-/** A flag that takes a value (--flag value). */
-const VALUED_FLAGS = new Set([
+/** v0 flag set for the `self-evolve` subcommand. */
+const SELF_EVOLVE_FLAGS = new Set([
+  "--help",
+  "--version",
+  "--model",
+  "--provider",
+  "--scoreboard",
+  "--snapshot-dir",
+  "--benchmark",
+  "--ruleset",
+  "--agents-md",
+  "--commit",
+  "--recent-failures",
+  "--no-color",
+  "--verbose",
+  "--quiet",
+]);
+
+/** A flag that takes a value (--flag value) for the run subcommand. */
+const RUN_VALUED_FLAGS = new Set([
   "--sandbox",
   "--approval",
   "--model",
@@ -51,7 +76,28 @@ const VALUED_FLAGS = new Set([
   "--fork",
 ]);
 
-export interface ParsedArgs {
+/** A flag that takes a value for the self-evolve subcommand. */
+const SELF_EVOLVE_VALUED_FLAGS = new Set([
+  "--model",
+  "--provider",
+  "--scoreboard",
+  "--snapshot-dir",
+  "--benchmark",
+  "--ruleset",
+  "--agents-md",
+  "--recent-failures",
+]);
+
+/** The shared flags used by every subcommand. */
+const COMMON_FLAGS = new Set(["--help", "--version", "--no-color", "--verbose", "--quiet"]);
+
+// ---------------------------------------------------------------------------
+// ParsedArgs — discriminated union by subcommand
+// ---------------------------------------------------------------------------
+
+/** Args for the default `run` subcommand (no subcommand keyword). */
+export interface RunParsedArgs {
+  subcommand: "run";
   /** `--help`: print help and exit. */
   help: boolean;
   /** `--version`: print version and exit. */
@@ -60,7 +106,7 @@ export interface ParsedArgs {
   json: boolean;
   /** `--sandbox <mode>`: permission mode. */
   sandbox: PermissionMode | undefined;
-  /** `--approval <mode>`: ask-for-approval policy (Phase 1: accepted, ignored for now). */
+  /** `--approval <mode>`: ask-for-approval policy. */
   approval: string | undefined;
   /** `--model <id>`: model identifier (passed to the adapter). */
   model: string | undefined;
@@ -76,7 +122,7 @@ export interface ParsedArgs {
   resume: string | undefined;
   /** `--fork <session-id>`: fork a saved session. */
   fork: string | undefined;
-  /** `--plan`: plan-only mode (read + plan, no writes). Phase 2. */
+  /** `--plan`: plan-only mode. */
   plan: boolean;
   /** `--no-color`: disable ANSI colors. */
   noColor: boolean;
@@ -88,6 +134,41 @@ export interface ParsedArgs {
   positional: string[];
 }
 
+/** Args for the `self-evolve` subcommand. */
+export interface SelfEvolveParsedArgs {
+  subcommand: "self-evolve";
+  /** `--help`: print help and exit. */
+  help: boolean;
+  /** `--version`: print version and exit. */
+  version: boolean;
+  /** `--model <id>`: model identifier (passed to the adapter). */
+  model: string | undefined;
+  /** `--provider <name>`: provider name. */
+  provider: string | undefined;
+  /** `--scoreboard <path>`: scoreboard YAML file. */
+  scoreboard: string | undefined;
+  /** `--snapshot-dir <path>`: snapshot directory. */
+  snapshotDir: string | undefined;
+  /** `--benchmark <path>`: frozen benchmark YAML file. */
+  benchmark: string | undefined;
+  /** `--ruleset <path>`: live ruleset file (committed on `kept`). */
+  ruleset: string | undefined;
+  /** `--agents-md <path>`: user AGENTS.md (snapshotted, not edited in v0). */
+  agentsMd: string | undefined;
+  /** `--commit`: actually write the candidate on `kept` (default: shadow). */
+  commit: boolean;
+  /** `--recent-failures <n>`: number of recent entries to feed the prompt. */
+  recentFailures: number | undefined;
+  /** `--no-color`: disable ANSI colors. */
+  noColor: boolean;
+  /** `--verbose`: print hook fires and validator verdicts. */
+  verbose: boolean;
+  /** `--quiet`: suppress human output, only stream-json. */
+  quiet: boolean;
+}
+
+export type ParsedArgs = RunParsedArgs | SelfEvolveParsedArgs;
+
 /** Error thrown when argv parsing fails. Caught by the runner. */
 export class ArgvError extends Error {
   constructor(message: string) {
@@ -98,12 +179,28 @@ export class ArgvError extends Error {
 
 /**
  * Parse `argv` (typically `process.argv.slice(2)`) into a
- * `ParsedArgs` object. Unknown flags throw `ArgvError`; this
- * is intentional — silent acceptance of unknown flags would
- * mask typos.
+ * `ParsedArgs` object. The first non-flag positional selects
+ * the subcommand; `self-evolve` is the only one in v0.
+ *
+ * Unknown flags throw `ArgvError`; this is intentional — silent
+ * acceptance of unknown flags would mask typos.
  */
 export function parseArgs(argv: ReadonlyArray<string>): ParsedArgs {
-  const out: ParsedArgs = {
+  // Detect subcommand: the first non-flag positional.
+  const firstPositional = argv.find((a) => !a.startsWith("--"));
+  if (firstPositional === "self-evolve") {
+    return parseSelfEvolveArgs(argv);
+  }
+  return parseRunArgs(argv);
+}
+
+// ---------------------------------------------------------------------------
+// run subcommand (default)
+// ---------------------------------------------------------------------------
+
+function parseRunArgs(argv: ReadonlyArray<string>): RunParsedArgs {
+  const out: RunParsedArgs = {
+    subcommand: "run",
     help: false,
     version: false,
     json: false,
@@ -127,17 +224,10 @@ export function parseArgs(argv: ReadonlyArray<string>): ParsedArgs {
     const arg = argv[i];
     if (arg === undefined) continue;
     if (arg.startsWith("--")) {
-      if (!KNOWN_FLAGS.has(arg)) {
+      if (!RUN_FLAGS.has(arg)) {
         throw new ArgvError(`unknown flag: ${arg}`);
       }
-      if (arg === "--help") {
-        out.help = true;
-        continue;
-      }
-      if (arg === "--version") {
-        out.version = true;
-        continue;
-      }
+      if (handleCommonFlag(arg, out)) continue;
       if (arg === "--json") {
         out.json = true;
         continue;
@@ -146,20 +236,8 @@ export function parseArgs(argv: ReadonlyArray<string>): ParsedArgs {
         out.plan = true;
         continue;
       }
-      if (arg === "--no-color") {
-        out.noColor = true;
-        continue;
-      }
-      if (arg === "--verbose") {
-        out.verbose = true;
-        continue;
-      }
-      if (arg === "--quiet") {
-        out.quiet = true;
-        continue;
-      }
       // Valued flags: consume the next arg.
-      if (VALUED_FLAGS.has(arg)) {
+      if (RUN_VALUED_FLAGS.has(arg)) {
         const value = argv[++i];
         if (value === undefined) {
           throw new ArgvError(`${arg} requires a value`);
@@ -218,6 +296,127 @@ export function parseArgs(argv: ReadonlyArray<string>): ParsedArgs {
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// self-evolve subcommand
+// ---------------------------------------------------------------------------
+
+function parseSelfEvolveArgs(argv: ReadonlyArray<string>): SelfEvolveParsedArgs {
+  const out: SelfEvolveParsedArgs = {
+    subcommand: "self-evolve",
+    help: false,
+    version: false,
+    model: undefined,
+    provider: undefined,
+    scoreboard: undefined,
+    snapshotDir: undefined,
+    benchmark: undefined,
+    ruleset: undefined,
+    agentsMd: undefined,
+    commit: false,
+    recentFailures: undefined,
+    noColor: false,
+    verbose: false,
+    quiet: false,
+  };
+
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === undefined) continue;
+    if (arg.startsWith("--")) {
+      if (!SELF_EVOLVE_FLAGS.has(arg)) {
+        throw new ArgvError(`unknown flag: ${arg}`);
+      }
+      if (handleCommonFlag(arg, out)) continue;
+      if (arg === "--commit") {
+        out.commit = true;
+        continue;
+      }
+      if (SELF_EVOLVE_VALUED_FLAGS.has(arg)) {
+        const value = argv[++i];
+        if (value === undefined) {
+          throw new ArgvError(`${arg} requires a value`);
+        }
+        switch (arg) {
+          case "--model":
+            out.model = value;
+            break;
+          case "--provider":
+            out.provider = value;
+            break;
+          case "--scoreboard":
+            out.scoreboard = value;
+            break;
+          case "--snapshot-dir":
+            out.snapshotDir = value;
+            break;
+          case "--benchmark":
+            out.benchmark = value;
+            break;
+          case "--ruleset":
+            out.ruleset = value;
+            break;
+          case "--agents-md":
+            out.agentsMd = value;
+            break;
+          case "--recent-failures": {
+            const n = Number(value);
+            if (!Number.isFinite(n) || n < 0) {
+              throw new ArgvError(`invalid --recent-failures: ${value}`);
+            }
+            out.recentFailures = n;
+            break;
+          }
+        }
+        continue;
+      }
+      throw new ArgvError(`unhandled flag: ${arg}`);
+    }
+    // For self-evolve, the only non-flag positional is the
+    // subcommand keyword itself ("self-evolve"), which we've
+    // already used to dispatch. Anything else is an error.
+    if (arg !== "self-evolve") {
+      throw new ArgvError(`unexpected positional: ${arg}`);
+    }
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Handle flags common to all subcommands: --help, --version,
+ * --no-color, --verbose, --quiet. Returns `true` if handled
+ * (caller should continue), `false` otherwise.
+ */
+function handleCommonFlag(
+  arg: string,
+  out: { help: boolean; version: boolean; noColor: boolean; verbose: boolean; quiet: boolean },
+): boolean {
+  if (arg === "--help") {
+    out.help = true;
+    return true;
+  }
+  if (arg === "--version") {
+    out.version = true;
+    return true;
+  }
+  if (arg === "--no-color") {
+    out.noColor = true;
+    return true;
+  }
+  if (arg === "--verbose") {
+    out.verbose = true;
+    return true;
+  }
+  if (arg === "--quiet") {
+    out.quiet = true;
+    return true;
+  }
+  return false;
+}
+
 function isPermissionMode(value: string): value is PermissionMode {
   return (
     value === "read-only" ||
@@ -225,6 +424,11 @@ function isPermissionMode(value: string): value is PermissionMode {
     value === "danger-full-access"
   );
 }
+
+// Silence the "unused" warning for COMMON_FLAGS — it's kept as
+// documentation of the shared surface; the actual handling is
+// in `handleCommonFlag`.
+void COMMON_FLAGS;
 
 /** Print the help text to stderr (or wherever `out` points). */
 export function formatHelp(version: string): string {
@@ -235,8 +439,9 @@ export function formatHelp(version: string): string {
     "  envoy-harness [flags] [prompt]",
     "  envoy-harness [flags] -                    # read prompt from stdin",
     "  envoy-harness [flags] <prompt-file>        # read prompt from a file",
+    "  envoy-harness self-evolve [flags]          # run one self-evolution cycle",
     "",
-    "Flags:",
+    "Flags (run):",
     "  --sandbox <mode>       read-only | workspace-write | danger-full-access",
     "  --approval <mode>      unless-trusted | on-request | granular | never",
     "  --model <id>           LLM model identifier",
@@ -253,6 +458,15 @@ export function formatHelp(version: string): string {
     "  --verbose              print hook fires and validator verdicts",
     "  --help                 print this help and exit",
     "  --version              print version and exit",
+    "",
+    "Flags (self-evolve):",
+    "  --scoreboard <path>    scoreboard YAML file",
+    "  --snapshot-dir <path>  snapshot directory",
+    "  --benchmark <path>     frozen benchmark YAML file",
+    "  --ruleset <path>       live ruleset file (committed on kept)",
+    "  --agents-md <path>     user AGENTS.md (snapshotted)",
+    "  --commit               actually write the candidate (default: shadow)",
+    "  --recent-failures <n>  recent entries to feed the prompt (default 20)",
     "",
     "See docs/design.md §19 for the full surface.",
   ].join("\n");

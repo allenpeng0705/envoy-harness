@@ -5,13 +5,12 @@
  *
  * **What this module does:**
  *
- * 1. Parses argv (via `parseArgs`).
- * 2. Resolves the prompt (positional arg, `-` for stdin, or a
- *    file path). Phase 1 supports positional only; stdin / file
- *    land in a later chunk.
- * 3. Builds an `Agent` with the configured model, tools, session,
- *    and hooks.
- * 4. Runs the loop and prints the result.
+ * 1. Parses argv (via `parseArgs`) — dispatches to the
+ *    `run` or `self-evolve` subcommand handler.
+ * 2. For `run`: resolves the prompt, builds an `Agent`, runs
+ *    the loop, prints the result.
+ * 3. For `self-evolve`: builds a `SelfEvolve`, runs one cycle,
+ *    prints the scoreboard entry.
  *
  * **What this module does NOT do (yet):**
  *
@@ -31,18 +30,25 @@
  */
 
 import { promises as fs } from "node:fs";
+import * as path from "node:path";
 
 import {
   Agent,
   BUILTIN_TOOLS,
+  DefaultBenchmarkRunner,
   HookRegistry,
   InMemorySession,
+  ModelHypothesisProvider,
   newSessionId,
+  SelfEvolve,
   ToolRegistry,
   VERSION,
+  DEFAULT_RULES,
   type ModelAdapter,
   type Session,
+  type SelfEvolvePaths,
   type SessionMetadata,
+  type VerifierRule,
 } from "../index.js";
 import { formatHelp, parseArgs, type ParsedArgs } from "./argv.js";
 
@@ -64,8 +70,10 @@ export interface RunOptions {
   stderr?: NodeJS.WritableStream;
 }
 
-/** Result of a successful run. */
+/** Result of a successful `run` invocation. */
 export interface RunResult {
+  /** Discriminator for the union (`CliRunResult`). */
+  subcommand: "run";
   /** The agent's final content. */
   content: string;
   /** The agent's stop reason. */
@@ -78,6 +86,25 @@ export interface RunResult {
   toolCalls: number;
 }
 
+/** Result of a successful `self-evolve` invocation. */
+export interface SelfEvolveRunResult {
+  /** Discriminator for the union (`CliRunResult`). */
+  subcommand: "self-evolve";
+  /** Whether the cycle's candidate was kept (would have been, in shadow mode). */
+  kept: boolean;
+  /** The scoreboard entry written by the cycle. */
+  version: number;
+  hypothesis: string;
+  status: "kept" | "reverted";
+  passRateBefore: number;
+  passRateAfter: number;
+  nRuns: number;
+  rulesetHash: string;
+}
+
+/** Union of the two subcommand results. */
+export type CliRunResult = RunResult | SelfEvolveRunResult;
+
 /** The process exit code. */
 export type ExitCode = 0 | 1 | 2 | 64 | 65 | 66;
 
@@ -88,13 +115,13 @@ export const EXIT_DATAERR: ExitCode = 65; // EX_DATAERR
 export const EXIT_NOINPUT: ExitCode = 66; // EX_NOINPUT
 
 /**
- * Run the CLI. Returns a `RunResult` on success, or throws
+ * Run the CLI. Returns a `CliRunResult` on success, or throws
  * `CliError` on usage / runtime errors. The bin script catches
  * the error and sets the exit code.
  */
 export async function run(
   options: RunOptions = {},
-): Promise<RunResult> {
+): Promise<CliRunResult> {
   const argv = options.argv ?? process.argv.slice(2);
   const stdout = options.stdout ?? process.stdout;
   const stderr = options.stderr ?? process.stderr;
@@ -104,41 +131,47 @@ export async function run(
   try {
     parsed = parseArgs(argv);
   } catch (err) {
+    throw new CliError((err as Error).message, EXIT_USAGE);
+  }
+
+  // 2. Handle --help / --version (common to all subcommands).
+  if (parsed.help) {
+    stdout.write(formatHelpText() + "\n");
+    return makeEmptyRunResult();
+  }
+  if (parsed.version) {
+    stdout.write(`${VERSION}\n`);
+    return makeEmptyRunResult();
+  }
+
+  // 3. Dispatch on subcommand.
+  if (parsed.subcommand === "self-evolve") {
+    return runSelfEvolve(parsed, options, stdout, stderr);
+  }
+  return runAgent(parsed, options, stdout, stderr);
+}
+
+// ---------------------------------------------------------------------------
+// run subcommand (default)
+// ---------------------------------------------------------------------------
+
+async function runAgent(
+  parsed: Extract<ParsedArgs, { subcommand: "run" }>,
+  options: RunOptions,
+  stdout: NodeJS.WritableStream,
+  stderr: NodeJS.WritableStream,
+): Promise<RunResult> {
+  void stderr; // reserved for future use (e.g. verbose log)
+  // 1. Resolve the prompt.
+  const prompt = await resolvePrompt(parsed);
+  if (prompt === null) {
     throw new CliError(
-      (err as Error).message,
+      "no prompt provided (pass it as an argument)",
       EXIT_USAGE,
     );
   }
 
-  // 2. Handle --help / --version.
-  if (parsed.help) {
-    stdout.write(formatHelpText() + "\n");
-    return {
-      content: "",
-      stopReason: "end_turn",
-      sessionId: "",
-      iterations: 0,
-      toolCalls: 0,
-    };
-  }
-  if (parsed.version) {
-    stdout.write(`${VERSION}\n`);
-    return {
-      content: "",
-      stopReason: "end_turn",
-      sessionId: "",
-      iterations: 0,
-      toolCalls: 0,
-    };
-  }
-
-  // 3. Resolve the prompt.
-  const prompt = await resolvePrompt(parsed, stderr);
-  if (prompt === null) {
-    throw new CliError("no prompt provided (pass it as an argument)", EXIT_USAGE);
-  }
-
-  // 4. Model is required in v0.
+  // 2. Model is required in v0.
   if (!options.model) {
     throw new CliError(
       "no model adapter configured (this is a v0 limitation; wire a real adapter in the bin script)",
@@ -146,7 +179,7 @@ export async function run(
     );
   }
 
-  // 5. Build the agent.
+  // 3. Build the agent.
   const cwd = parsed.cwd ?? options.cwd ?? process.cwd();
   const meta: SessionMetadata = {
     cwd,
@@ -159,7 +192,6 @@ export async function run(
   for (const t of BUILTIN_TOOLS) tools.register(t);
   const hooks = options.hooks ?? new HookRegistry();
 
-  // exactOptionalPropertyTypes: only include maxTurns when set.
   const agentOptions: ConstructorParameters<typeof Agent>[0] = {
     model: options.model,
     tools,
@@ -172,10 +204,10 @@ export async function run(
   }
   const agent = new Agent(agentOptions);
 
-  // 6. Run the loop.
+  // 4. Run the loop.
   const result = await agent.run(prompt);
 
-  // 7. Print the result.
+  // 5. Print the result.
   const text = result.content
     .filter((b): b is Extract<typeof b, { type: "text" }> => b.type === "text")
     .map((b) => b.text)
@@ -185,6 +217,7 @@ export async function run(
   }
 
   return {
+    subcommand: "run",
     content: text,
     stopReason: result.stopReason,
     sessionId: session.id,
@@ -193,36 +226,120 @@ export async function run(
   };
 }
 
-/**
- * Resolve the prompt from the positional argv. Returns `null` if
- * no prompt was provided. The first positional arg is the prompt
- * (or `-` for stdin, or a file path; in v0 only the literal prompt
- * is supported).
- */
-async function resolvePrompt(
-  parsed: ParsedArgs,
+// ---------------------------------------------------------------------------
+// self-evolve subcommand
+// ---------------------------------------------------------------------------
+
+async function runSelfEvolve(
+  parsed: Extract<ParsedArgs, { subcommand: "self-evolve" }>,
+  options: RunOptions,
+  stdout: NodeJS.WritableStream,
   _stderr: NodeJS.WritableStream,
+): Promise<SelfEvolveRunResult> {
+  // 1. Model is required (the hypothesis provider calls it).
+  if (!options.model) {
+    throw new CliError(
+      "no model adapter configured (envoy self-evolve uses a model for the hypothesis; pass one via RunOptions.model)",
+      EXIT_USAGE,
+    );
+  }
+
+  // 2. Build paths. Each path has a sensible default under
+  //    $ENVOY_HOME; for v0, we use `<cwd>/.envoymesh/...`.
+  const cwd = options.cwd ?? process.cwd();
+  const root = path.join(cwd, ".envoymesh");
+  const paths: SelfEvolvePaths = {
+    scoreboard: parsed.scoreboard ?? path.join(root, "verifier-scoreboard.yaml"),
+    snapshotDir: parsed.snapshotDir ?? path.join(root, "snapshots"),
+    benchmark: parsed.benchmark ?? path.join(root, "frozen-benchmark.yaml"),
+    ruleset: parsed.ruleset ?? path.join(root, "verifier-rules.json"),
+    agentsMd: parsed.agentsMd ?? path.join(root, "AGENTS.md"),
+  };
+
+  // 3. Wire the components.
+  const hypothesisProvider = new ModelHypothesisProvider(options.model);
+  const benchmarkRunner = new DefaultBenchmarkRunner();
+  const currentRules: ReadonlyArray<VerifierRule> = DEFAULT_RULES;
+
+  // 4. Run the cycle.
+  const evolve = new SelfEvolve({
+    paths,
+    currentRules,
+    hypothesisProvider,
+    benchmarkRunner,
+    shadowMode: !parsed.commit,
+    ...(parsed.recentFailures !== undefined
+      ? { recentFailureWindow: parsed.recentFailures }
+      : {}),
+  });
+  const cycleResult = await evolve.runOneCycle();
+
+  // 5. Print a human-readable summary.
+  if (!parsed.quiet) {
+    stdout.write(
+      [
+        `envoy self-evolve: cycle v${cycleResult.entry.version}`,
+        `  status: ${cycleResult.entry.status}`,
+        `  hypothesis: ${cycleResult.entry.hypothesis}`,
+        `  pass rate: ${cycleResult.entry.passRateBefore.toFixed(2)} → ${cycleResult.entry.passRateAfter.toFixed(2)} (${cycleResult.entry.nRuns} runs)`,
+        `  ruleset hash: ${cycleResult.entry.rulesetHash}`,
+        cycleResult.kept && !parsed.commit
+          ? `  (shadow mode: candidate was NOT committed)`
+          : cycleResult.kept
+            ? `  (committed to ${paths.ruleset})`
+            : `  (reverted: no improvement)`,
+        "",
+      ].join("\n"),
+    );
+  }
+
+  return {
+    subcommand: "self-evolve",
+    kept: cycleResult.kept,
+    version: cycleResult.entry.version,
+    hypothesis: cycleResult.entry.hypothesis,
+    status: cycleResult.entry.status,
+    passRateBefore: cycleResult.entry.passRateBefore,
+    passRateAfter: cycleResult.entry.passRateAfter,
+    nRuns: cycleResult.entry.nRuns,
+    rulesetHash: cycleResult.entry.rulesetHash,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function makeEmptyRunResult(): RunResult {
+  return {
+    subcommand: "run",
+    content: "",
+    stopReason: "end_turn",
+    sessionId: "",
+    iterations: 0,
+    toolCalls: 0,
+  };
+}
+
+async function resolvePrompt(
+  parsed: Extract<ParsedArgs, { subcommand: "run" }>,
 ): Promise<string | null> {
   if (parsed.positional.length === 0) return null;
   const first = parsed.positional[0];
   if (first === undefined) return null;
   if (first === "-") {
-    // Read all of stdin.
     const chunks: Buffer[] = [];
     for await (const chunk of process.stdin) {
       chunks.push(chunk as Buffer);
     }
     return Buffer.concat(chunks).toString("utf8").trim();
   }
-  // Heuristic: if it looks like a file path AND the file exists,
-  // read it. Otherwise treat it as a literal prompt.
   if (
     (first.startsWith("/") || first.startsWith("./") || first.startsWith("../")) &&
     await isFile(first)
   ) {
     return (await fs.readFile(first, "utf8")).trim();
   }
-  // Treat the whole positional as the prompt (joined by spaces).
   return parsed.positional.join(" ");
 }
 

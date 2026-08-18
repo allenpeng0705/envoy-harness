@@ -34,8 +34,17 @@ class StringWritable extends Writable {
 }
 
 describe("parseArgs", () => {
+  // Helper: parseArgs and narrow to the run subcommand shape.
+  function parseRun(argv: ReadonlyArray<string>) {
+    const a = parseArgs(argv);
+    if (a.subcommand !== "run") {
+      throw new Error(`expected run subcommand, got ${a.subcommand}`);
+    }
+    return a;
+  }
+
   it("returns defaults for empty argv", () => {
-    const a = parseArgs([]);
+    const a = parseRun([]);
     expect(a.help).toBe(false);
     expect(a.sandbox).toBeUndefined();
     expect(a.positional).toEqual([]);
@@ -50,54 +59,54 @@ describe("parseArgs", () => {
   });
 
   it("captures --json", () => {
-    expect(parseArgs(["--json"]).json).toBe(true);
+    expect(parseRun(["--json"]).json).toBe(true);
   });
 
   it("captures --plan, --no-color, --verbose, --quiet as booleans", () => {
-    expect(parseArgs(["--plan"]).plan).toBe(true);
-    expect(parseArgs(["--no-color"]).noColor).toBe(true);
-    expect(parseArgs(["--verbose"]).verbose).toBe(true);
-    expect(parseArgs(["--quiet"]).quiet).toBe(true);
+    expect(parseRun(["--plan"]).plan).toBe(true);
+    expect(parseRun(["--no-color"]).noColor).toBe(true);
+    expect(parseRun(["--verbose"]).verbose).toBe(true);
+    expect(parseRun(["--quiet"]).quiet).toBe(true);
   });
 
   it("parses --sandbox with a value, validates the value", () => {
-    expect(parseArgs(["--sandbox", "read-only"]).sandbox).toBe("read-only");
-    expect(parseArgs(["--sandbox", "workspace-write"]).sandbox).toBe(
+    expect(parseRun(["--sandbox", "read-only"]).sandbox).toBe("read-only");
+    expect(parseRun(["--sandbox", "workspace-write"]).sandbox).toBe(
       "workspace-write",
     );
-    expect(parseArgs(["--sandbox", "danger-full-access"]).sandbox).toBe(
+    expect(parseRun(["--sandbox", "danger-full-access"]).sandbox).toBe(
       "danger-full-access",
     );
     expect(() => parseArgs(["--sandbox", "bogus"])).toThrow(ArgvError);
   });
 
   it("parses --max-turns as a positive number", () => {
-    expect(parseArgs(["--max-turns", "10"]).maxTurns).toBe(10);
+    expect(parseRun(["--max-turns", "10"]).maxTurns).toBe(10);
     expect(() => parseArgs(["--max-turns", "0"])).toThrow(ArgvError);
     expect(() => parseArgs(["--max-turns", "abc"])).toThrow(ArgvError);
   });
 
   it("parses --max-cost-usd allowing zero", () => {
-    expect(parseArgs(["--max-cost-usd", "0"]).maxCostUsd).toBe(0);
-    expect(parseArgs(["--max-cost-usd", "5.5"]).maxCostUsd).toBe(5.5);
+    expect(parseRun(["--max-cost-usd", "0"]).maxCostUsd).toBe(0);
+    expect(parseRun(["--max-cost-usd", "5.5"]).maxCostUsd).toBe(5.5);
     expect(() => parseArgs(["--max-cost-usd", "-1"])).toThrow(ArgvError);
   });
 
   it("captures --model, --provider, --cwd, --resume, --fork", () => {
-    expect(parseArgs(["--model", "claude-opus-4"]).model).toBe("claude-opus-4");
-    expect(parseArgs(["--provider", "anthropic"]).provider).toBe("anthropic");
-    expect(parseArgs(["--cwd", "/tmp"]).cwd).toBe("/tmp");
-    expect(parseArgs(["--resume", "abc"]).resume).toBe("abc");
-    expect(parseArgs(["--fork", "abc"]).fork).toBe("abc");
+    expect(parseRun(["--model", "claude-opus-4"]).model).toBe("claude-opus-4");
+    expect(parseRun(["--provider", "anthropic"]).provider).toBe("anthropic");
+    expect(parseRun(["--cwd", "/tmp"]).cwd).toBe("/tmp");
+    expect(parseRun(["--resume", "abc"]).resume).toBe("abc");
+    expect(parseRun(["--fork", "abc"]).fork).toBe("abc");
   });
 
   it("collects positional args", () => {
-    const a = parseArgs(["hello", "world"]);
+    const a = parseRun(["hello", "world"]);
     expect(a.positional).toEqual(["hello", "world"]);
   });
 
   it("supports flags interspersed with positional", () => {
-    const a = parseArgs(["--quiet", "hi", "--json", "there"]);
+    const a = parseRun(["--quiet", "hi", "--json", "there"]);
     expect(a.quiet).toBe(true);
     expect(a.json).toBe(true);
     expect(a.positional).toEqual(["hi", "there"]);
@@ -110,6 +119,37 @@ describe("parseArgs", () => {
   it("throws when a valued flag has no value", () => {
     expect(() => parseArgs(["--sandbox"])).toThrow(ArgvError);
     expect(() => parseArgs(["--model"])).toThrow(ArgvError);
+  });
+});
+
+describe("parseArgs: self-evolve subcommand", () => {
+  it("dispatches to self-evolve when first positional is 'self-evolve'", () => {
+    const a = parseArgs(["self-evolve", "--commit"]);
+    if (a.subcommand !== "self-evolve") {
+      throw new Error("expected self-evolve subcommand");
+    }
+    expect(a.commit).toBe(true);
+  });
+
+  it("captures --scoreboard, --snapshot-dir, --benchmark, --ruleset, --agents-md", () => {
+    const a = parseArgs([
+      "self-evolve",
+      "--scoreboard", "/tmp/sb.yaml",
+      "--snapshot-dir", "/tmp/snaps",
+      "--benchmark", "/tmp/bench.yaml",
+      "--ruleset", "/tmp/rules.json",
+      "--agents-md", "/tmp/AGENTS.md",
+    ]);
+    if (a.subcommand !== "self-evolve") throw new Error("expected self-evolve");
+    expect(a.scoreboard).toBe("/tmp/sb.yaml");
+    expect(a.snapshotDir).toBe("/tmp/snaps");
+    expect(a.benchmark).toBe("/tmp/bench.yaml");
+    expect(a.ruleset).toBe("/tmp/rules.json");
+    expect(a.agentsMd).toBe("/tmp/AGENTS.md");
+  });
+
+  it("rejects unknown flags in self-evolve", () => {
+    expect(() => parseArgs(["self-evolve", "--bogus"])).toThrow(ArgvError);
   });
 });
 
@@ -187,6 +227,8 @@ describe("run: with a fake model", () => {
       stdout: out,
       stderr: err,
     });
+    // Narrow: these tests only invoke the run subcommand.
+    if (result.subcommand !== "run") throw new Error("expected run subcommand");
     expect(result.content).toBe("echoed: hello");
     expect(result.stopReason).toBe("end_turn");
     expect(out.data).toContain("echoed: hello");
@@ -233,6 +275,7 @@ describe("run: with a fake model", () => {
       stdout: out,
       stderr: err,
     });
+    if (result.subcommand !== "run") throw new Error("expected run subcommand");
     expect(result.content).toBe("should-not-appear");
     expect(out.data).toBe("");
   });

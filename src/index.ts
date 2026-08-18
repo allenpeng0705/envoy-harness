@@ -137,6 +137,10 @@ export {
   type ParsedArgs,
   type RunOptions,
   type RunResult,
+  type RunParsedArgs,
+  type SelfEvolveParsedArgs,
+  type CliRunResult,
+  type SelfEvolveRunResult,
 } from "./cli/index.js";
 
 // Re-export the verifier (§12 of the design doc)

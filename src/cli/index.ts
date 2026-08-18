@@ -18,6 +18,8 @@ export {
   formatHelp,
   parseArgs,
   type ParsedArgs,
+  type RunParsedArgs,
+  type SelfEvolveParsedArgs,
 } from "./argv.js";
 
 export {
@@ -28,7 +30,9 @@ export {
   EXIT_OK,
   EXIT_USAGE,
   run,
+  type CliRunResult,
   type ExitCode,
   type RunOptions,
   type RunResult,
+  type SelfEvolveRunResult,
 } from "./run.js";

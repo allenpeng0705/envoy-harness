@@ -123,7 +123,7 @@ describe("e2e: read → run → summarize (direct agent)", () => {
     expect(result.stopReason).toBe("end_turn");
     expect(result.iterations).toBe(3);
     expect(result.toolCalls).toBe(2);
-    expect((result.content[0] as { text: string }).text).toContain("Summary");
+    expect((result.content[0] as { type: string; text: string }).text).toContain("Summary");
 
     // Transcript shape: user, assistant(1), tool, assistant(2), tool, assistant(3).
     const roles = session.messages.map((m) => m.role);
@@ -183,6 +183,7 @@ describe("e2e: read → run → summarize (via CLI)", () => {
       cwd: tmpDir,
     });
 
+    if (result.subcommand !== "run") throw new Error("expected run subcommand");
     expect(result.stopReason).toBe("end_turn");
     expect(result.iterations).toBe(3);
     expect(result.toolCalls).toBe(2);
