@@ -211,17 +211,22 @@ export {
 
 // Re-export the LSP integration (F9.2, §22 Phase 4)
 export {
+  FakeStdio,
   MockLspClient,
   NoopLspClient,
   StaticLspManager,
+  StdioLspClient,
+  frameLspMessage,
   type LspClient,
   type LspClientMap,
   type LspDiagnostic,
   type LspHover,
   type LspLocation,
   type LspManager,
+  type LspProcess,
   type MockLspCall,
   type MockLspResponseTable,
+  type StdioLspClientOptions,
 } from "./lsp/index.js";
 
 // Re-export the scoreboard (§13 of the design doc)

@@ -37,3 +37,11 @@ export {
   StaticLspManager,
   type LspClientMap,
 } from "./static-manager.js";
+
+export {
+  StdioLspClient,
+  type LspProcess,
+  type StdioLspClientOptions,
+} from "./stdio-client.js";
+
+export { FakeStdio, frameLspMessage } from "./fake-stdio.js";
