@@ -12,6 +12,297 @@
 > Total: 564 tests, 28 test files, 40 source files, ~17k lines (monorepo: 2 packages).
 > Phase 3 fully complete (F6 done). Phase 2 fully complete (F7 + F8 done, F8 polish done). **Phase 4 complete (F9.1 + F9.2 + F9.3 + F9.4 + F9.5 done).** The 5 Phase 4 sub-chunks are done.
 
+**F10 (mesh-native sub-agents) starts here.**
+
+---
+
+### F10.1 — Mesh-native sub-agents (4 sub-chunks)
+**Phase 5 first sub-chunk.** Per design invariant #9
+("Sub-agents map to mesh chain steps, not in-process
+tasks") and §10.3 ("The task tool"). The `task` tool
+is the parent's escape hatch: when the model decides
+"this needs a different perspective" or "I need a
+specialist to handle this sub-problem", it spawns a
+sub-agent.
+
+**The "real workable" sub-agent, by design:**
+
+| Aspect | envoy-harness design | Codex/Claude Code |
+|---|---|---|
+| Lifetime | New session (own id, AGENTS.md, hooks, permission) | In-process fork |
+| Permission | **Worker's own policy**, not requester's | Inherits parent's |
+| Discoverability | `capabilityTag` (the orchestrator routes) | Hard-coded patterns |
+| Audit | Sub-agent's `SignedAgentResult` referenced in parent's transcript | One transcript |
+| Cost | Parent pays (per `chain-budget-ledger`); sub-agent reports its cost | Parent pays; no clean attribution |
+| Trust | Cryptographic — worker's owner key signs the result | Trust the fork |
+
+**Why local-only for v0:** the `MeshSubmitter`
+interface is the seam. v0 ships `LocalMeshSubmitter`
+which runs the sub-agent in a NEW local session. The
+interface supports a remote submitter (a future
+`RemoteMeshSubmitter` that calls the EnvoyMesh
+orchestrator); v0 just doesn't ship it. The host can
+swap implementations without changing the `task` tool.
+
+**Why a new session, not an in-place fork:** even
+for local execution, the sub-agent gets its own:
+- session id (audit trail distinguishes parent from
+  sub-agent transcripts)
+- AGENTS.md (the sub-agent's view of the workspace
+  may differ — e.g. a different `cwd`)
+- hook context (PreToolUse / PostToolUse fire
+  independently; the parent's hooks don't apply to
+  the sub-agent's tool calls)
+- permission mode (the sub-agent's `read-only` vs
+  `workspace-write` is the WORKER's policy, not the
+  requester's)
+
+This is the "sub-agents map to mesh chain steps"
+invariant in its purest form: a sub-agent is a fresh
+session, period.
+
+**Type sketch:**
+
+```ts
+// src/subagent/types.ts
+export interface SubagentInput {
+  objective: string;
+  /** A free-form tag the orchestrator (or local
+   *  router) uses to pick the right runtime + tools. */
+  capabilityTag: string;
+  costCeilingUsd: number;
+  deadlineMs: number;
+  /** Optional: prefer a specific peer (mesh routing
+   *  hint). v0's LocalMeshSubmitter ignores this. */
+  preferredPeerId?: string;
+  /** Optional: prefer a specific runtime. v0's
+   *  LocalMeshSubmitter ignores this. */
+  preferredRuntime?: AgentRuntime;
+}
+
+export interface SubagentResult {
+  status: "completed" | "failed" | "partial";
+  content: ReadonlyArray<ContentBlock>;
+  workerPeerId: string;
+  workerRuntime: AgentRuntime;
+  costUsd: number;
+  durationMs: number;
+  /** v0: always one of the default 6 verdicts.
+   *  Future: the mesh orchestrator's verdict. */
+  verdict: Verdict;
+  /** v0: empty string (local; no cryptographic
+   *  trust needed). Future: Ed25519 over the result. */
+  signature: string;
+}
+
+/** The seam between the `task` tool and the
+ *  actual sub-agent execution. */
+export interface MeshSubmitter {
+  submit(input: SubagentInput, signal: AbortSignal):
+    Promise<SubagentResult>;
+}
+```
+
+**Default no-op submitter:**
+
+```ts
+// src/subagent/noop-submitter.ts
+/** A MeshSubmitter that returns a "not configured"
+ *  error. The default when AgentOptions.meshSubmitter
+ *  is undefined. Better to fail loud than to silently
+ *  no-op. */
+export class NoopMeshSubmitter implements MeshSubmitter {
+  async submit(): Promise<SubagentResult> {
+    throw new Error(
+      "task tool called but no MeshSubmitter is configured. " +
+      "Set AgentOptions.meshSubmitter to a LocalMeshSubmitter " +
+      "(or a future RemoteMeshSubmitter)."
+    );
+  }
+}
+```
+
+**Local submitter (the "real workable" path):**
+
+```ts
+// src/subagent/local-mesh-submitter.ts
+export class LocalMeshSubmitter implements MeshSubmitter {
+  constructor(private readonly opts: {
+    /** Factory: build a fresh Agent for the sub-agent.
+     *  Each call returns a NEW Agent with a NEW
+     *  session. The host decides the sub-agent's
+     *  model, tools, permission, hooks. */
+    buildSubagent: (input: SubagentInput) => Agent;
+    /** This node's peerId. Stamped into the result. */
+    workerPeerId: string;
+  }) {}
+
+  async submit(input, signal): Promise<SubagentResult> {
+    const agent = this.opts.buildSubagent(input);
+    const startedAt = Date.now();
+    const result = await agent.run(input.objective, { signal });
+    return {
+      status: result.stopReason === "aborted" ? "failed" : "completed",
+      content: result.content,
+      workerPeerId: this.opts.workerPeerId,
+      workerRuntime: "envoy-harness",
+      costUsd: result.metrics.costUsd,
+      durationMs: Date.now() - startedAt,
+      verdict: synthesizeVerdict(result),  // simple v0
+      signature: "",  // local; no trust needed
+    };
+  }
+}
+
+export function defaultBuildSubagentFactory(opts: {
+  model: ModelAdapter;
+  cwd?: string;
+  permissionMode?: PermissionMode;
+}): (input: SubagentInput) => Agent {
+  return (input) => {
+    const session = new InMemorySession(newSessionId(), {
+      cwd: opts.cwd ?? process.cwd(),
+      permissionMode: opts.permissionMode ?? "read-only",
+      startedAt: new Date().toISOString(),
+    });
+    const tools = new ToolRegistry();
+    for (const t of BUILTIN_TOOLS) tools.register(t);
+    const hooks = new HookRegistry();
+    return new Agent({
+      model: opts.model,
+      tools,
+      session,
+      hooks,
+      cwd: opts.cwd ?? process.cwd(),
+      maxCostUsd: input.costCeilingUsd,
+      systemPrompt: buildSubagentSystemPrompt(input.capabilityTag, input.objective),
+    });
+  };
+}
+```
+
+**The `task` tool:**
+
+```ts
+// src/subagent/tools.ts
+export function makeTaskTool(submitter: MeshSubmitter): Tool {
+  return {
+    name: "task",
+    description:
+      "Spawn a sub-agent. The sub-agent may run on this " +
+      "node or a peer in the mesh. Returns the sub-agent's " +
+      "final text + verdict + cost. Use this when a sub-problem " +
+      "deserves a fresh session with its own permission state.",
+    parameters: z.object({
+      objective: z.string().describe("What the sub-agent should do"),
+      capability_tag: z.string().describe(
+        "Free-form tag for routing (e.g. 'code-search', 'summarize')."
+      ),
+      cost_ceiling_usd: z.number().describe(
+        "Cost ceiling for the sub-agent's run."
+      ),
+      deadline_ms: z.number().int().positive().describe(
+        "Wall-clock deadline in ms."
+      ),
+    }),
+    async execute({ objective, capability_tag, cost_ceiling_usd, deadline_ms }, ctx) {
+      const signal = ctx.abortSignal;
+      const result = await submitter.submit(
+        { objective, capabilityTag: capability_tag, costCeilingUsd: cost_ceiling_usd, deadlineMs: deadline_ms },
+        signal,
+      );
+      return { content: result };
+    },
+  };
+}
+```
+
+**Agent integration:**
+
+```ts
+// src/agent.ts — AgentOptions
+interface AgentOptions {
+  // ... existing ...
+  /** F10.1: mesh submitter. When set, the `task` tool
+   *  is auto-registered. No submitter → no `task` tool. */
+  meshSubmitter?: MeshSubmitter;
+}
+
+// In the Agent constructor (after tool registry setup):
+if (options.meshSubmitter) {
+  this.tools.register(makeTaskTool(options.meshSubmitter));
+}
+```
+
+**Sub-chunk breakdown (planned):**
+1. **F10.1.1** — types + `MeshSubmitter` interface +
+   `NoopMeshSubmitter` + tests for the type surface
+   and the no-op behavior.
+2. **F10.1.2** — `LocalMeshSubmitter` + the sub-agent
+   factory (defaultBuildSubagentFactory) + tests
+   for local execution.
+3. **F10.1.3** — `makeTaskTool(submitter)` + the
+   `AgentOptions.meshSubmitter` auto-registration +
+   tests for the tool surface.
+4. **F10.1.4** — end-to-end: a parent agent with
+   `meshSubmitter` can spawn a sub-agent via the
+   `task` tool; the sub-agent runs in a NEW session
+   (independent id, independent AGENTS.md,
+   independent permission); the result returns to
+   the parent and lands in the parent's transcript.
+
+**Out of scope for v0:**
+- **Cross-node submission** (a `RemoteMeshSubmitter`
+  that calls the EnvoyMesh orchestrator). v0 ships
+  the interface; the host can plug in a remote
+  implementation later.
+- **Cryptographic signing** of the sub-agent's
+  result. v0 returns `signature: ""`. The wire
+  format's `signature` field is reserved for the
+  future cross-node case.
+- **A separate `subagent` package**. v0 ships the
+  implementation in `src/subagent/` (intra-package
+  in envoy-harness). The cross-package boundary
+  is a future chunk — the design leaves room for
+  `LocalMeshSubmitter` to be moved to the adapter
+  package once the cross-node `RemoteMeshSubmitter`
+  needs to share the same interface.
+- **Capability matching / skill routing**. v0
+  doesn't match `capabilityTag` against a catalog;
+  the host decides what to do with it (e.g. swap
+  the sub-agent's tool set, or pick a different
+  model).
+- **Sub-agent cancellation propagation across the
+  submitter**. v0 best-effort: the parent's
+  `abortSignal` is forwarded, but the local
+  submitter's in-flight run is only stopped when
+  the agent's loop checks the signal.
+
+**Self-review checklist (per sub-chunk):**
+- [ ] Types compile; `MeshSubmitter` is a closed
+      interface.
+- [ ] `NoopMeshSubmitter` throws on submit (not
+      silent no-op).
+- [ ] `LocalMeshSubmitter` runs the sub-agent in a
+      NEW session (asserted: parent session id ≠
+      sub-agent session id).
+- [ ] Sub-agent's `permissionMode` is the worker's
+      own (default: read-only), NOT the parent's.
+- [ ] The `task` tool's params include
+      `objective`, `capability_tag`,
+      `cost_ceiling_usd`, `deadline_ms`.
+- [ ] `meshSubmitter: undefined` → no `task` tool
+      in the parent's tool registry.
+- [ ] End-to-end: parent's transcript has the
+      `task` tool call + the sub-agent's result.
+
+**Sub-chunk template (per F10.1.x):**
+1. Plan (this doc, the F10.1 section above).
+2. Data layer (types + interface).
+3. Algorithm (default impl + factory + tool).
+4. Audit trail (tests for every claim above).
+5. Update the doc (§3 done + §6.6 status + §10).
+
 ---
 
 ## 1. Project context
