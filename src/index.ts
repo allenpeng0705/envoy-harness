@@ -120,3 +120,21 @@ export {
   bashTool,
   readFileTool,
 } from "./tools/builtin/index.js";
+
+// Re-export the CLI (§19 of the design doc)
+export {
+  ArgvError,
+  CliError,
+  EXIT_DATAERR,
+  EXIT_ERROR,
+  EXIT_NOINPUT,
+  EXIT_OK,
+  EXIT_USAGE,
+  formatHelp,
+  parseArgs,
+  run,
+  type ExitCode,
+  type ParsedArgs,
+  type RunOptions,
+  type RunResult,
+} from "./cli/index.js";

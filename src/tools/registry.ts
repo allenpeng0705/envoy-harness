@@ -38,12 +38,18 @@ export class ToolRegistry {
    * the same name is already registered. The `name` on the tool
    * is the source of truth — the caller can't register it under
    * a different key.
+   *
+   * **Type erasure:** we accept any `Tool<TParams>`. The
+   * registry stores them as `Tool<z.ZodTypeAny>`; the type-narrowed
+   * schema is preserved on the tool instance for `safeParse` at
+   * dispatch time. This lets us store heterogeneous tools in one
+   * Map without the union breaking `register`.
    */
-  register<TParams extends z.ZodTypeAny>(tool: Tool<TParams>): this {
+  register(tool: Tool<z.ZodTypeAny>): this {
     if (this.tools.has(tool.name)) {
       throw new DuplicateToolError(tool.name);
     }
-    this.tools.set(tool.name, tool as unknown as Tool);
+    this.tools.set(tool.name, tool);
     return this;
   }
 
