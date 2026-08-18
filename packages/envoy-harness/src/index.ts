@@ -258,10 +258,14 @@ export {
   type TeamResult,
 } from "./team/index.js";
 
-// Re-export the sub-agent types + default no-op submitter (F10.1, §10.3)
+// Re-export the sub-agent types + default implementations (F10.1, §10.3)
 export {
+  LocalMeshSubmitter,
   NOOP_MESH_SUBMITTER_ERROR,
   NoopMeshSubmitter,
+  defaultBuildSubagentFactory,
+  type DefaultBuildSubagentFactoryOptions,
+  type LocalMeshSubmitterOptions,
   type MeshSubmitter,
   type SubagentInput,
   type SubagentResult,
