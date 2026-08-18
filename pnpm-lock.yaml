@@ -37,6 +37,31 @@ importers:
         specifier: ^2.1.0
         version: 2.1.9(@types/node@22.20.1)
 
+  packages/envoy-harness-adapter:
+    dependencies:
+      '@envoymesh/agent-adapter':
+        specifier: link:../../../EnvoyMesh/packages/agent-adapter
+        version: link:../../../EnvoyMesh/packages/agent-adapter
+      '@envoymesh/envoy-harness':
+        specifier: workspace:*
+        version: link:../envoy-harness
+      '@envoymesh/identity':
+        specifier: link:../../../EnvoyMesh/packages/identity
+        version: link:../../../EnvoyMesh/packages/identity
+      '@envoymesh/protocol':
+        specifier: link:../../../EnvoyMesh/packages/protocol
+        version: link:../../../EnvoyMesh/packages/protocol
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.1
+      typescript:
+        specifier: ^5.6.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@22.20.1)
+
 packages:
 
   '@esbuild/aix-ppc64@0.21.5':

@@ -12,7 +12,7 @@
 | Package | Status | Description |
 |---|---|---|
 | [`@envoymesh/envoy-harness`](./packages/envoy-harness/README.md) | ✅ v0.1+ | The home-team agent harness. Production-grade CLI agent, EnvoyMesh-native, independently runnable. The 3-package design target #2 (independently runnable) means this is the foundation. |
-| `@envoymesh/envoy-harness-adapter` | 🟡 F8 in progress | The reference MAP adapter (Package 3). Bridges envoy-harness to EnvoyMesh's manifest broadcast, task submission, and the 3-tuple reputation book. See [`docs/improving-agent-network.en.md`](https://github.com/allenpeng0705/EnvoyMesh) §5.2 for the protocol spec. |
+| [`@envoymesh/envoy-harness-adapter`](./packages/envoy-harness-adapter/README.md) | 🟡 F8 in progress | The reference MAP adapter (Package 3). Bridges envoy-harness to EnvoyMesh's manifest broadcast, task submission, and the 3-tuple reputation book. See [`docs/improving-agent-network.en.md`](https://github.com/allenpeng0705/EnvoyMesh) §5.2 for the protocol spec. |
 
 ## Layout
 
