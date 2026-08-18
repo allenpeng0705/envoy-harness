@@ -39,8 +39,8 @@
  * design revision.
  */
 
-import { verifyEntrySignature } from "./storage.js";
-import type { ScoreboardEntry } from "./types.js";
+import { appendAdoption, verifyEntrySignature } from "./storage.js";
+import type { FederatedAdoptionRecord, ScoreboardEntry } from "./types.js";
 import type { Hypothesis, SelfEvolve } from "./self-evolve.js";
 
 // ---------------------------------------------------------------------------
@@ -218,13 +218,18 @@ export class FederatedScoreboard {
    * don't ship full rule bodies in v0; only the hypothesis
    * text and the operator's local re-implementation count).
    *
+   * F6.3: when `adoptionsFile` is provided, every evaluated
+   * candidate (kept or rejected) is appended to the file
+   * — it's the audit trail of "we tried X, the local gate
+   * said Y". Without `adoptionsFile`, the function still
+   * returns the AdoptResult but doesn't persist.
+   *
    * **Adoption criteria:** the candidate's local 5-step
    * evaluation must say `kept: true` (strict greater pass
    * rate). The audit trail of each evaluation is in the
    * main scoreboard (the cycle counter advances); the
    * "adopted" set (the candidates that passed) is returned
-   * to the caller for further action (F6.3 records them
-   * in `federated-adoptions.yaml`; F6.4 wires the CLI).
+   * to the caller for further action.
    *
    * **Throws:** if `selfEvolve` is not set (the gate is
    * required). The caller is expected to pass it.
@@ -232,6 +237,7 @@ export class FederatedScoreboard {
   async adopt(
     pullResult: PullResult,
     selfEvolve: SelfEvolve,
+    options: { adoptionsFile?: string; peerId?: string } = {},
   ): Promise<AdoptResult> {
     if (pullResult.skipped) {
       return {
@@ -242,6 +248,8 @@ export class FederatedScoreboard {
     }
     const adopted: AdoptedCandidate[] = [];
     const rejected: Array<{ entry: ScoreboardEntry; reason: string }> = [];
+    const peerId = options.peerId ?? "unknown";
+
     for (const entry of pullResult.validatedCandidates) {
       // The peer's hypothesis text + an empty rule list —
       // federated entries don't ship full rule bodies. The
@@ -256,23 +264,74 @@ export class FederatedScoreboard {
       try {
         cycle = await selfEvolve.runOneCycleAgainst(hypothesis);
       } catch (err) {
-        rejected.push({
-          entry,
-          reason: `local-cycle-error: ${(err as Error).message}`,
-        });
+        const reason = `local-cycle-error: ${(err as Error).message}`;
+        rejected.push({ entry, reason });
+        if (options.adoptionsFile) {
+          await appendAdoption(
+            options.adoptionsFile,
+            buildRecord(peerId, entry, undefined, false, reason),
+          );
+        }
         continue;
       }
       if (cycle.kept) {
         adopted.push({ entry, cycle });
+        if (options.adoptionsFile) {
+          await appendAdoption(
+            options.adoptionsFile,
+            buildRecord(peerId, entry, cycle.entry, true),
+          );
+        }
       } else {
-        rejected.push({
-          entry,
-          reason: `local-pass-rate-did-not-improve: ${cycle.entry.passRateBefore.toFixed(2)} → ${cycle.entry.passRateAfter.toFixed(2)}`,
-        });
+        const reason = `local-pass-rate-did-not-improve: ${cycle.entry.passRateBefore.toFixed(2)} → ${cycle.entry.passRateAfter.toFixed(2)}`;
+        rejected.push({ entry, reason });
+        if (options.adoptionsFile) {
+          await appendAdoption(
+            options.adoptionsFile,
+            buildRecord(peerId, entry, cycle.entry, false, reason),
+          );
+        }
       }
     }
     return { adopted, rejected, skipped: false };
   }
+}
+
+/**
+ * Build a `FederatedAdoptionRecord` from a peer's entry and
+ * the local cycle that evaluated it.
+ */
+function buildRecord(
+  peerId: string,
+  sourceEntry: ScoreboardEntry,
+  localEntry: import("./self-evolve.js").RunOneCycleResult["entry"] | undefined,
+  kept: boolean,
+  reason?: string,
+): FederatedAdoptionRecord {
+  return {
+    peerId,
+    sourceEntry: {
+      version: sourceEntry.version,
+      hypothesis: sourceEntry.hypothesis,
+      rulesetHash: sourceEntry.rulesetHash,
+      passRateAfter: sourceEntry.passRateAfter,
+      ownerSignature: sourceEntry.ownerSignature,
+    },
+    localEntry: localEntry
+      ? {
+          version: localEntry.version,
+          passRateBefore: localEntry.passRateBefore,
+          passRateAfter: localEntry.passRateAfter,
+        }
+      : {
+          version: 0,
+          passRateBefore: 0,
+          passRateAfter: 0,
+        },
+    kept,
+    adoptedAt: new Date().toISOString(),
+    ...(reason !== undefined ? { reason } : {}),
+  };
 }
 
 /** A candidate that passed the local 5-step gate. */

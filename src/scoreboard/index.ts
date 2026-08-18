@@ -22,19 +22,25 @@
 
 export {
   BenchmarkSchema,
+  FederatedAdoptionRecordSchema,
+  FederatedAdoptionsSchema,
   ScoreboardEntrySchema,
   ScoreboardSchema,
   type Benchmark,
   type BenchmarkResult,
   type BenchmarkTask,
+  type FederatedAdoptionRecord,
+  type FederatedAdoptions,
   type Scoreboard,
   type ScoreboardEntry,
   type VerifierRuleset,
 } from "./types.js";
 
 export {
+  appendAdoption,
   appendEntry,
   hashRuleset,
+  readAdoptions,
   readBenchmark,
   readScoreboard,
   signEntry,
@@ -60,6 +66,8 @@ export {
 export {
   FederatedScoreboard,
   LocalPeerSource,
+  type AdoptedCandidate,
+  type AdoptResult,
   type PeerScoreboard,
   type PeerSource,
   type PullOptions,

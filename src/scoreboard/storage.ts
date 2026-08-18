@@ -27,9 +27,12 @@ import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 import {
   BenchmarkSchema,
+  FederatedAdoptionsSchema,
   ScoreboardEntrySchema,
   ScoreboardSchema,
   type Benchmark,
+  type FederatedAdoptions,
+  type FederatedAdoptionRecord,
   type Scoreboard,
   type ScoreboardEntry,
 } from "./types.js";
@@ -107,6 +110,47 @@ export async function writeBenchmark(
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   const tmp = `${filePath}.tmp`;
   await fs.writeFile(tmp, stringifyYaml(validated), "utf8");
+  await fs.rename(tmp, filePath);
+}
+
+// ---------------------------------------------------------------------------
+// Federated adoptions (§13.3) — separate file from the main scoreboard
+// ---------------------------------------------------------------------------
+
+/**
+ * Read the federated adoptions log. Returns an empty list
+ * if the file doesn't exist (a fresh peer has no federated
+ * history).
+ */
+export async function readAdoptions(
+  filePath: string,
+): Promise<FederatedAdoptions> {
+  let raw: string;
+  try {
+    raw = await fs.readFile(filePath, "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw err;
+  }
+  const parsed = parseYaml(raw);
+  return FederatedAdoptionsSchema.parse(parsed);
+}
+
+/**
+ * Append a record to the federated adoptions log. Atomic
+ * write via temp + rename. The file is created if it
+ * doesn't exist.
+ */
+export async function appendAdoption(
+  filePath: string,
+  record: FederatedAdoptionRecord,
+): Promise<void> {
+  const validated = FederatedAdoptionsSchema.element.parse(record);
+  const existing = await readAdoptions(filePath);
+  existing.push(validated);
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  const tmp = `${filePath}.tmp`;
+  await fs.writeFile(tmp, stringifyYaml(existing), "utf8");
   await fs.rename(tmp, filePath);
 }
 

@@ -72,6 +72,60 @@ export const ScoreboardSchema = z.array(ScoreboardEntrySchema);
 export type Scoreboard = z.infer<typeof ScoreboardSchema>;
 
 // ---------------------------------------------------------------------------
+// FederatedAdoptionRecord — the audit trail of federated pulls (§13.3)
+// ---------------------------------------------------------------------------
+
+/**
+ * A record of "we tried this peer's hypothesis, and the local
+ * 5-step gate said yes/no." Append-only, separate from the
+ * main `Scoreboard` so a federated pull can't pollute the
+ * local cycle counter.
+ *
+ * **Why a separate file?** the main scoreboard is the local
+ * cycle log. Federated evaluations are a different concern —
+ * they record "peer X's hypothesis Y, evaluated locally, the
+ * local gate said Z". Mixing them would make the local cycle
+ * counter meaningless.
+ *
+ * **What `localEntry` references:** the LOCAL `ScoreboardEntry`
+ * that the federated evaluation produced. The link is
+ * `(localEntry.version, peerId, sourceEntry.version)` — three
+ * fields, all unique together. v0 doesn't enforce uniqueness;
+ * the operator inspects the file to deduplicate.
+ */
+export const FederatedAdoptionRecordSchema = z.object({
+  /** The peer that proposed the candidate. */
+  peerId: z.string().min(1),
+  /** The peer's scoreboard entry (the source of the candidate). */
+  sourceEntry: z.object({
+    version: z.number().int().positive(),
+    hypothesis: z.string().min(1),
+    rulesetHash: z.string().min(1),
+    passRateAfter: z.number().min(0).max(1),
+    ownerSignature: z.string().min(1),
+  }),
+  /** The local scoreboard entry produced by the evaluation. */
+  localEntry: z.object({
+    version: z.number().int().positive(),
+    passRateBefore: z.number().min(0).max(1),
+    passRateAfter: z.number().min(0).max(1),
+  }),
+  /** Whether the local gate kept the candidate. */
+  kept: z.boolean(),
+  /** ISO 8601 timestamp. */
+  adoptedAt: z.string().datetime(),
+  /**
+   * Optional reason (for rejected cases). e.g.
+   * "local-pass-rate-did-not-improve" or "local-cycle-error: ..."
+   */
+  reason: z.string().optional(),
+});
+export type FederatedAdoptionRecord = z.infer<typeof FederatedAdoptionRecordSchema>;
+
+export const FederatedAdoptionsSchema = z.array(FederatedAdoptionRecordSchema);
+export type FederatedAdoptions = z.infer<typeof FederatedAdoptionsSchema>;
+
+// ---------------------------------------------------------------------------
 // VerifierRuleset — a versioned list of rules
 // ---------------------------------------------------------------------------
 
