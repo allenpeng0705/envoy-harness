@@ -1695,7 +1695,7 @@ each is a separate F9.x sub-chunk.
 |----|-------|--------|--------|
 | **F9.1** | Per-call approval callback (Penguin style). When the model tries a sensitive action (e.g. bash with workspace-write), pause the agent loop and call a host-provided `askHandler` callback. The callback returns a decision (allow / deny / modify). The agent resumes with the decision. The host decides UX (Tauri prompt, headless log, etc.). | design §10.4 (Penguin per-call approval sketch), §8.1 hook events | ✅ done |
 | **F9.2** | LSP client (parity with claw-code lane 8). `LspClient` class that wraps the LSP protocol over stdio. Auto-start language servers for projects the harness is reading/writing. Provides `definition`, `references`, `hover`, `diagnostics` to the agent as tools. | claw-code parity lane 8 | ✅ done (F9.2.1 + F9.2.2 + F9.2.3) |
-| **F9.3** | Team + cron (parity with claw-code lane 6). Multi-agent team definition (a team is a graph of agents + roles + delegation rules). Cron triggers (a team runs on a schedule). Saved as TOML config (`06-team-cron.toml`). v0: read the TOML, run the team in-process; no actual cron daemon. | claw-code parity lane 6, design §25 (parity dir) | ⏳ pending |
+| **F9.3** | Team + cron (parity with claw-code lane 6). Multi-agent team definition (a team is a graph of agents + roles + delegation rules). Cron triggers (a team runs on a schedule). Saved as TOML config (`06-team-cron.toml`). v0: read the TOML, run the team in-process; no actual cron daemon. | claw-code parity lane 6, design §25 (parity dir) | ⏳ pending (planned) |
 | **F9.4** | Trace observability UI. The bin script gains `--json` mode (already accepted, currently ignored) that streams every agent decision + hook fire + tool call + verifier verdict as JSON Lines to stdout. A separate viewer (out-of-scope for this repo) renders the stream. v0: just the JSON Lines output; the viewer is a downstream concern. | design §19 (CLI), existing `--json` arg | ✅ done (F9.4.1 + F9.4.2 + F9.4.3) |
 | **F9.5** | Cross-agent verification. The `verify()` path can take an optional `crossVerifyWith` closure. When provided, the adapter calls it on the result and returns the cross-verify verdict in addition to its own. The orchestrator combines per design §6.2 (OR-of-pass, AND-of-fail). v0 in this chunk: a default cross-verify closure that re-runs the same skill on a different `ModelAdapter` (e.g. cheap local model vs. expensive GPT-4). | design §12.4 (4-source cascade), MAP §CrossAgentDisagreementVerifier | ⏳ pending |
 
@@ -2276,6 +2276,178 @@ this.tracer = options.tracer ?? new NullTracer();
    points + agent-level tests.
 3. **F9.4.3** — CLI `--json` integration + bin
    script end-to-end test.
+
+---
+
+**F9.3 plan (team + cron):**
+
+**Why F9.3 now (after F9.4):** once a single
+agent is observable (F9.4), the next production
+need is multi-agent workflows — a "team" of
+agents that hand off work to each other. The
+simplest useful v0: a TOML file describing a team
+(a list of agents + their delegation rules), and
+an in-process runner that executes the team once
+per call. No actual cron daemon — the host
+(system cron, k8s CronJob, or a simple
+`setInterval`) calls `runTeam()` on a schedule.
+This matches the design §22 Phase 4 scope
+("team + cron, parity with claw-code lane 6, if
+useful").
+
+**v0 scope (this chunk):**
+- `TeamConfig` type — parsed shape of a TOML
+  team config. Fields: `name`, `agents[]` (each
+  with `id`, `role`, `system_prompt`,
+  `objective`, optional `depends_on[]` for
+  delegation), optional `schedule` (a cron
+  expression for the host to use).
+- Hand-rolled minimal TOML reader (`parseTeamToml`).
+  Supports the subset we need: `[section]`,
+  `key = "string"`, `key = [array, of, strings]`,
+  `key = { nested = "table" }`. No third-party
+  dep; ~80 lines.
+- `Team` class — takes a `TeamConfig` + a
+  `ModelAdapter` + an optional `AgentOptions`
+  factory. `runOnce()` executes the team in
+  dependency order: agents with no `depends_on`
+  run first; downstream agents receive the
+  upstream agent's final text as a "context"
+  message.
+- CLI subcommand `envoy team` (or `--team`)
+  reads a TOML file and runs the team once.
+  Output is a summary (per-agent final text +
+  status).
+
+**Out of scope for v0:**
+- A real cron daemon. The host calls
+  `runOnce()` on a schedule (system cron,
+  k8s CronJob, etc.).
+- Parallel agent execution. v0 is sequential
+  (topological order on `depends_on`). Parallel
+  is a future chunk.
+- A team UI / dashboard. The CLI is the surface.
+- Conditional delegation (if/else rules). v0 has
+  static `depends_on[]` only.
+- State persistence. Each `runOnce()` is
+  stateless; the orchestrator can persist the
+  result if needed.
+
+**TOML format (v0 subset):**
+
+```toml
+name = "code-review-team"
+
+[[agents]]
+id = "explore"
+role = "explore"
+system_prompt = "You explore the codebase."
+objective = "Find files relevant to ${input}."
+
+[[agents]]
+id = "review"
+role = "review"
+system_prompt = "You review code."
+objective = "Review the files from explore."
+depends_on = ["explore"]
+
+[schedule]
+cron = "0 9 * * *"
+```
+
+**Type sketch:**
+
+```ts
+// src/team/types.ts
+export interface AgentSpec {
+  id: string;
+  role: string;
+  systemPrompt: string;
+  objective: string;
+  /** IDs of agents whose final text this agent
+   *  should receive as a "context" message. */
+  dependsOn: ReadonlyArray<string>;
+}
+
+export interface ScheduleSpec {
+  /** A cron expression (5-field). The host parses
+   *  it; v0 doesn't ship a cron parser. */
+  cron: string;
+}
+
+export interface TeamConfig {
+  name: string;
+  agents: ReadonlyArray<AgentSpec>;
+  schedule?: ScheduleSpec;
+}
+```
+
+**Algorithm sketch:**
+
+```ts
+// src/team/runner.ts
+export class Team {
+  constructor(opts: {
+    config: TeamConfig;
+    model: ModelAdapter;
+    cwd?: string;
+    /** Optional factory for AgentOptions (per-agent
+     *  customization). Default: use a single
+     *  AgentOptions for every agent. */
+    optionsFor?: (spec: AgentSpec) => Partial<AgentOptions>;
+  }) { ... }
+
+  async runOnce(input: string): Promise<TeamResult> {
+    // 1. Topological sort on depends_on.
+    // 2. For each agent in order:
+    //    - Build the prompt (objective + upstream results)
+    //    - Run the agent
+    //    - Capture final text
+    // 3. Return the per-agent results + overall status.
+  }
+}
+```
+
+**CLI integration:**
+- `envoy-harness team <config.toml> [--input "..."]`
+  reads the file, builds a `Team`, calls
+  `runOnce()`, prints the summary.
+- The `--json` flag works with the team subcommand
+  too: per-agent trace events stream to stdout
+  alongside the team-level summary.
+
+**Tests (target: ~20-25):**
+- `parseTeamToml`: minimal valid config, multiple
+  agents, agents with `depends_on`, schedule,
+  malformed config (clear error message).
+- `Team.runOnce`: empty team, single agent, two
+  agents with depends_on, three agents in a
+  chain, three agents in a fan-out, missing
+  dependency (error), circular dependency
+  (error).
+- Each agent's prompt includes the upstream
+  agent's final text.
+- The order is topological: agent A runs before
+  agent B if A is in B's depends_on.
+- `TeamResult` carries per-agent results in
+  execution order.
+- CLI: `envoy team config.toml` reads and runs
+  the team.
+
+**Out of scope (recap):**
+- Real cron daemon. Host invokes runOnce() on
+  schedule.
+- Parallel agent execution (v0 is sequential).
+- Conditional delegation. v0 has static
+  `depends_on[]` only.
+- State persistence across runs.
+
+**Sub-chunk breakdown (planned):**
+1. **F9.3.1** — types + minimal TOML reader +
+   tests (no Agent integration; just parse).
+2. **F9.3.2** — `Team.runOnce()` with topological
+   order + tests.
+3. **F9.3.3** — CLI subcommand + end-to-end test.
 
 ---
 
