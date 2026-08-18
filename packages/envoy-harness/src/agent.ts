@@ -456,9 +456,40 @@ export class Agent {
     }
 
     if (!tool) {
+      // F9.4: emit tool_call + tool_result even for
+      // unknown tools (the trace records the attempt
+      // + the error). Without this, an unknown tool
+      // is invisible in the trace.
+      this.tracer.emit({
+        kind: "tool_call",
+        ts: new Date().toISOString(),
+        iteration: this.toolCallCount,
+        call,
+      });
       this.appendToolResult(call.id, `unknown tool: ${call.name}`, true);
+      this.tracer.emit({
+        kind: "tool_result",
+        ts: new Date().toISOString(),
+        iteration: this.toolCallCount,
+        callId: call.id,
+        result: { content: `unknown tool: ${call.name}`, isError: true },
+        durationMs: 0,
+      });
       return;
     }
+
+    // F9.4: emit tool_call (after the PreToolUse hook
+    // passes but BEFORE arg validation). The model can
+    // see the call in the next iteration; the trace
+    // gets it now. Even if arg validation fails, the
+    // trace records the attempt.
+    const toolCallEventIteration = this.toolCallCount;
+    this.tracer.emit({
+      kind: "tool_call",
+      ts: new Date().toISOString(),
+      iteration: toolCallEventIteration,
+      call,
+    });
 
     // Arg validation. Re-runs for the `modify` case
     // (the host may have given us a different shape).
@@ -469,6 +500,17 @@ export class Agent {
         `invalid arguments: ${parsed.error.message}`,
         true,
       );
+      this.tracer.emit({
+        kind: "tool_result",
+        ts: new Date().toISOString(),
+        iteration: toolCallEventIteration,
+        callId: call.id,
+        result: {
+          content: `invalid arguments: ${parsed.error.message}`,
+          isError: true,
+        },
+        durationMs: 0,
+      });
       return;
     }
 
@@ -481,18 +523,6 @@ export class Agent {
     // in the hook / validation; the trace is for
     // tool execution time).
     const toolStart = Date.now();
-
-    // F9.4: emit tool_call (after the PreToolUse hook
-    // passes and args validate). The model can see
-    // the call in the next iteration; the trace
-    // gets it now.
-    const toolCallEventIteration = this.toolCallCount; // 1-indexed
-    this.tracer.emit({
-      kind: "tool_call",
-      ts: new Date().toISOString(),
-      iteration: toolCallEventIteration,
-      call,
-    });
 
     try {
       const result = await tool.execute(parsed.data, {
