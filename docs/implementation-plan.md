@@ -8,9 +8,9 @@
 > and *why*. This file says *what shipped*, *where it lives*,
 > and *what's still open*.
 >
-> **Status as of last commit:** `5acd49a` on `phase-1/types`.
-> Total: 451 tests, 22 test files, 33 source files, ~14k lines.
-> Phase 3 fully complete (F6 done). Phase 2 in progress (F7.1 + F7.2 + F7.3 done; F7.4 next).
+> **Status as of last commit:** (next commit, F7.4) on `phase-1/types`.
+> Total: 460 tests, 23 test files, 34 source files, ~14k lines.
+> Phase 3 fully complete (F6 done). Phase 2 in progress (F7.1 + F7.2 + F7.3 + F7.4 done; F7.5 next).
 
 ---
 
@@ -636,6 +636,41 @@ Tests: 45 in `test/llm-anthropic.test.ts` covering
 `AnthropicAdapter` request shape (9), and
 `AnthropicAdapter` error handling (3).
 
+### F7.4 — `DeepSeekAdapter` (this commit)
+**§14, F7.4.**
+
+`src/llm/deepseek.ts` (new) — thin constructor wrapper
+that subclasses `OpenAIAdapter`. DeepSeek's wire format
+is identical to OpenAI's (POST `/chat/completions`, same
+`messages` / `tools` / `usage` shapes, same
+`choices[0].message` / `tool_calls` / `finish_reason`
+response). The constructor just sets the DeepSeek
+defaults:
+- Base URL: `https://api.deepseek.com/v1` (vs OpenAI's
+  `https://api.openai.com/v1`).
+- Default model: `deepseek-chat`.
+- API key env var: `DEEPSEEK_API_KEY` (handled by F7.5).
+
+Other DeepSeek models (`deepseek-reasoner`, the reasoning
+model) are selected by passing `model: "deepseek-reasoner"`
+to the constructor. The adapter doesn't branch on the
+model name — the wire format is the same.
+
+**Why subclass, not delegate?** `OpenAIAdapter` is a
+`ModelAdapter` implementation that handles the entire
+OpenAI wire format end-to-end (request shape, response
+parsing, error handling, stop-reason mapping,
+malformed-args tolerance). Subclassing reuses all of it
+without duplication. The constructor is a 4-line
+defaults-setter.
+
+Tests: 9 in `test/llm-deepseek.test.ts` covering defaults
+(URL, model), overrides (custom model, custom baseUrl,
+auth header), and end-to-end response parsing
+(text-only, usage, tool-call stop reason, 4xx error).
+The response-parsing tests serve as a regression guard
+that subclassing doesn't break the OpenAI parser.
+
 ---
 
 ## 4. Architectural invariants (what we hold)
@@ -717,13 +752,12 @@ API. Real model adapters (Phase 2) belong in a separate
 `llm` package.
 
 ### 5.7 Real LLM adapters — partial
-**Where:** `src/llm/` — `OpenAIAdapter` (F7.2) and
-`AnthropicAdapter` (F7.3) are wired and tested
-end-to-end against `FakeHttpClient`. The bin
-script still needs a provider-dispatch path (F7.5).
-**DeepSeek** (F7.4) is the next sub-chunk. Until F7.5
-lands, real usage requires manually constructing an
-adapter in user code.
+**Where:** `src/llm/` — `OpenAIAdapter` (F7.2),
+`AnthropicAdapter` (F7.3), and `DeepSeekAdapter` (F7.4)
+are wired and tested end-to-end against `FakeHttpClient`.
+The bin script still needs a provider-dispatch path
+(F7.5). Until F7.5 lands, real usage requires manually
+constructing an adapter in user code.
 
 ### 5.8 `parseArgs` returns a discriminated union
 **Where:** `src/cli/argv.ts` — every caller must narrow on
@@ -794,8 +828,8 @@ each model.
 | **F7.1** | `src/cost.ts` with `TokenPrice`/`CostTracker`/`DEFAULT_PRICING`; `ModelResponse.usage`; `AgentResult.metrics`; `costReasonableForWorkRule` wired. | `src/cost.ts`, `src/model.ts`, `src/agent.ts`, `src/verifier/rules/index.ts`, `test/cost.test.ts` | ✅ done (`90a158f`) |
 | **F7.2** | `HttpClient` abstraction (`FetchHttpClient` + `FakeHttpClient`); `OpenAIAdapter` translating to OpenAI's chat/completions wire format. | `src/llm/http.ts`, `src/llm/openai.ts`, `test/llm-openai.test.ts` | ✅ done (this commit) |
 | **F7.3** | `AnthropicAdapter` — different wire format (POST `/v1/messages`, system role separate). | `src/llm/anthropic.ts`, `test/llm-anthropic.test.ts` | ✅ done (`5acd49a`) |
-| **F7.4** | `DeepSeekAdapter` — OpenAI-compatible, different base URL + key env. | `src/llm/deepseek.ts`, `test/llm-deepseek.test.ts` | ⏳ next |
-| **F7.5** | `bin/envoy-harness.ts` reads `--provider` and env vars; dispatches to the right adapter. `--max-cost-usd` enforces a cap. | `bin/envoy-harness.ts`, `src/cli/run.ts`, `test/cli-provider-dispatch.test.ts` | ⏳ pending |
+| **F7.4** | `DeepSeekAdapter` — OpenAI-compatible, different base URL + key env. | `src/llm/deepseek.ts`, `test/llm-deepseek.test.ts` | ✅ done (this commit) |
+| **F7.5** | `bin/envoy-harness.ts` reads `--provider` and env vars; dispatches to the right adapter. `--max-cost-usd` enforces a cap. | `bin/envoy-harness.ts`, `src/cli/run.ts`, `test/cli-provider-dispatch.test.ts` | ⏳ next |
 
 **Type changes (F7.1):**
 
@@ -1123,7 +1157,7 @@ useful.
 |-------|-------|-------|--------|
 | 0 | 1 day | Empty package skeleton | ✅ done |
 | 1 | 4 weeks | v0 spine: types, validators, hooks, AGENTS.md, tools, agent loop, CLI, verifier | ✅ done |
-| 2 | 4 weeks | Mesh-native: adapter, manifest broadcast, task submission, reputation book, persistence, real LLM adapters, cost tracking | 🟡 in progress (F7.1 + F7.2 + F7.3 done; F7.4 next) |
+| 2 | 4 weeks | Mesh-native: adapter, manifest broadcast, task submission, reputation book, persistence, real LLM adapters, cost tracking | 🟡 in progress (F7.1–F7.4 done; F7.5 next) |
 | 3 | 3 weeks | Self-evolution: 5-step protocol, federated scoreboard, owner-key-signed entries | ✅ done (5a-5e + F6) |
 | 4 | ongoing | LSP, team, cron, trace UI, per-call approval, cross-agent verification | ⏳ not started |
 
@@ -1259,3 +1293,12 @@ scoreboard opt-in (off by default)." — 3 of 4 done
   §2 (status), §3 (F7.3 done work), §5.7 (Anthropic done,
   DeepSeek next), §6.2 (F7.3 ✅, F7.4 next), §7 (Phase 2
   status), §10 (this entry). Next: F7.4 (DeepSeek).
+- **2026-08-18 (F7.4)**: `DeepSeekAdapter` landed in
+  `src/llm/deepseek.ts`. 9 new tests covering defaults,
+  overrides (model, baseUrl, auth header), and
+  end-to-end response parsing. Thin constructor wrapper
+  that subclasses `OpenAIAdapter` (DeepSeek's API is
+  OpenAI-compatible, so the entire wire format
+  implementation is reused). Updated §2, §3, §5.7
+  (DeepSeek done; F7.5 next), §6.2, §7, §10. Next:
+  F7.5 (CLI provider dispatch + `--max-cost-usd`).
