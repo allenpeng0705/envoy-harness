@@ -8,9 +8,9 @@
 > and *why*. This file says *what shipped*, *where it lives*,
 > and *what's still open*.
 >
-> **Status as of last commit:** `7c69aa0` on `phase-1/types`.
-> Total: 406 tests, 21 test files, 32 source files, ~13k lines.
-> Phase 3 fully complete (F6 done). Phase 2 in progress (F7.1 + F7.2 done; F7.3 next).
+> **Status as of last commit:** `5acd49a` on `phase-1/types`.
+> Total: 451 tests, 22 test files, 33 source files, ~14k lines.
+> Phase 3 fully complete (F6 done). Phase 2 in progress (F7.1 + F7.2 + F7.3 done; F7.4 next).
 
 ---
 
@@ -589,6 +589,53 @@ stop-reason mappings / malformed tool args), `parseError`
 (4 incl. JSON message, non-JSON body, no-error-field,
 long-body truncation), and `is2xx` (2).
 
+### F7.3 — `AnthropicAdapter` (`5acd49a`)
+**§14, F7.3.**
+
+`src/llm/anthropic.ts` (new) — `AnthropicAdapter
+implements ModelAdapter`. Wire format differs from OpenAI
+in 7 ways (full table in §6.2 F7.3 plan):
+- Auth: `x-api-key` + `anthropic-version: 2023-06-01`
+  headers (not `Authorization: Bearer`).
+- System prompt is a top-level `system` field, not a
+  message with `role: "system"`. `splitSystemAndMessages`
+  extracts.
+- Tool shape is flat `{ name, description, input_schema }`
+  (no `function` wrapper, `input_schema` instead of
+  `parameters`).
+- Tool call in response is `content: [{ type: "tool_use",
+  id, name, input }]` — mixed with text in one array.
+- Tool results in the request are `role: "user"` with
+  `content: [{ type: "tool_result", tool_use_id, content }]`.
+- `max_tokens` is required by Anthropic. We default to
+  `1024` (Anthropic's recommended default) when the caller
+  doesn't pass one. Override via `CompleteInput.maxTokens`
+  or `AnthropicAdapterOptions.defaultMaxTokens`.
+- Usage field names `input_tokens` / `output_tokens` match
+  our `ModelResponse.usage` directly (no rename needed).
+
+**Hard requirements handled:**
+- `max_tokens` always set in the body (default 1024).
+- `anthropic-version` always set in headers (default
+  2023-06-01).
+- Empty assistant content → placeholder text block.
+- Missing `usage` → no `usage` field on ModelResponse
+  (cost is then 0 for that call).
+- Empty response content → empty `content` array
+  (the loop continues).
+
+**Reuses** `zodToJsonSchema` and `FetchHttpClient` from
+`http.ts` (F7.2). `toolsToAnthropic` and
+`messagesToAnthropic` mirror their OpenAI counterparts
+with the wire-format-specific translations.
+
+Tests: 45 in `test/llm-anthropic.test.ts` covering
+`splitSystemAndMessages` (5), `toolsToAnthropic` (3),
+`messagesToAnthropic` (10 incl. full harness transcript),
+`parseMessagesResponse` (9), `parseError` (4), `is2xx` (2),
+`AnthropicAdapter` request shape (9), and
+`AnthropicAdapter` error handling (3).
+
 ---
 
 ## 4. Architectural invariants (what we hold)
@@ -670,13 +717,13 @@ API. Real model adapters (Phase 2) belong in a separate
 `llm` package.
 
 ### 5.7 Real LLM adapters — partial
-**Where:** `src/llm/` — `OpenAIAdapter` (F7.2) is wired and
-tested end-to-end against `FakeHttpClient`. The bin
+**Where:** `src/llm/` — `OpenAIAdapter` (F7.2) and
+`AnthropicAdapter` (F7.3) are wired and tested
+end-to-end against `FakeHttpClient`. The bin
 script still needs a provider-dispatch path (F7.5).
-**Anthropic** (F7.3) and **DeepSeek** (F7.4) adapters are
-the next two sub-chunks. Until F7.5 lands, real usage
-requires manually constructing an `OpenAIAdapter` in
-user code.
+**DeepSeek** (F7.4) is the next sub-chunk. Until F7.5
+lands, real usage requires manually constructing an
+adapter in user code.
 
 ### 5.8 `parseArgs` returns a discriminated union
 **Where:** `src/cli/argv.ts` — every caller must narrow on
@@ -746,8 +793,8 @@ each model.
 |----|-------|-------|--------|
 | **F7.1** | `src/cost.ts` with `TokenPrice`/`CostTracker`/`DEFAULT_PRICING`; `ModelResponse.usage`; `AgentResult.metrics`; `costReasonableForWorkRule` wired. | `src/cost.ts`, `src/model.ts`, `src/agent.ts`, `src/verifier/rules/index.ts`, `test/cost.test.ts` | ✅ done (`90a158f`) |
 | **F7.2** | `HttpClient` abstraction (`FetchHttpClient` + `FakeHttpClient`); `OpenAIAdapter` translating to OpenAI's chat/completions wire format. | `src/llm/http.ts`, `src/llm/openai.ts`, `test/llm-openai.test.ts` | ✅ done (this commit) |
-| **F7.3** | `AnthropicAdapter` — different wire format (POST `/v1/messages`, system role separate). | `src/llm/anthropic.ts`, `test/llm-anthropic.test.ts` | ⏳ next |
-| **F7.4** | `DeepSeekAdapter` — OpenAI-compatible, different base URL + key env. | `src/llm/deepseek.ts`, `test/llm-deepseek.test.ts` | ⏳ pending |
+| **F7.3** | `AnthropicAdapter` — different wire format (POST `/v1/messages`, system role separate). | `src/llm/anthropic.ts`, `test/llm-anthropic.test.ts` | ✅ done (`5acd49a`) |
+| **F7.4** | `DeepSeekAdapter` — OpenAI-compatible, different base URL + key env. | `src/llm/deepseek.ts`, `test/llm-deepseek.test.ts` | ⏳ next |
 | **F7.5** | `bin/envoy-harness.ts` reads `--provider` and env vars; dispatches to the right adapter. `--max-cost-usd` enforces a cap. | `bin/envoy-harness.ts`, `src/cli/run.ts`, `test/cli-provider-dispatch.test.ts` | ⏳ pending |
 
 **Type changes (F7.1):**
@@ -1076,7 +1123,7 @@ useful.
 |-------|-------|-------|--------|
 | 0 | 1 day | Empty package skeleton | ✅ done |
 | 1 | 4 weeks | v0 spine: types, validators, hooks, AGENTS.md, tools, agent loop, CLI, verifier | ✅ done |
-| 2 | 4 weeks | Mesh-native: adapter, manifest broadcast, task submission, reputation book, persistence, real LLM adapters, cost tracking | 🟡 in progress (F7.1 + F7.2 done; F7.3 next) |
+| 2 | 4 weeks | Mesh-native: adapter, manifest broadcast, task submission, reputation book, persistence, real LLM adapters, cost tracking | 🟡 in progress (F7.1 + F7.2 + F7.3 done; F7.4 next) |
 | 3 | 3 weeks | Self-evolution: 5-step protocol, federated scoreboard, owner-key-signed entries | ✅ done (5a-5e + F6) |
 | 4 | ongoing | LSP, team, cron, trace UI, per-call approval, cross-agent verification | ⏳ not started |
 
@@ -1200,3 +1247,15 @@ scoreboard opt-in (off by default)." — 3 of 4 done
   5.7 reframed: OpenAI done, Anthropic + DeepSeek next),
   §6.2 (F7.1 + F7.2 marked ✅), §7 (Phase 2 status), §10
   (this entry). Next: F7.3 (Anthropic).
+- **2026-08-18 (F7.3)**: `AnthropicAdapter` landed in
+  `src/llm/anthropic.ts`. 45 new tests covering
+  split/format helpers, request shape, response parsing,
+  error handling, all four stop-reason mappings, and a
+  full harness-transcript translation. Reuses
+  `zodToJsonSchema` + `FetchHttpClient` from F7.2. The
+  adapter handles 5 hard requirements (always-set
+  `max_tokens` + `anthropic-version`, empty-assistant
+  placeholder, missing-usage, empty-response). Updated
+  §2 (status), §3 (F7.3 done work), §5.7 (Anthropic done,
+  DeepSeek next), §6.2 (F7.3 ✅, F7.4 next), §7 (Phase 2
+  status), §10 (this entry). Next: F7.4 (DeepSeek).
