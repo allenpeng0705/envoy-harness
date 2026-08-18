@@ -1697,7 +1697,7 @@ each is a separate F9.x sub-chunk.
 | **F9.2** | LSP client (parity with claw-code lane 8). `LspClient` class that wraps the LSP protocol over stdio. Auto-start language servers for projects the harness is reading/writing. Provides `definition`, `references`, `hover`, `diagnostics` to the agent as tools. | claw-code parity lane 8 | ✅ done (F9.2.1 + F9.2.2 + F9.2.3) |
 | **F9.3** | Team + cron (parity with claw-code lane 6). Multi-agent team definition (a team is a graph of agents + roles + delegation rules). Cron triggers (a team runs on a schedule). Saved as TOML config (`06-team-cron.toml`). v0: read the TOML, run the team in-process; no actual cron daemon. | claw-code parity lane 6, design §25 (parity dir) | ✅ done (F9.3.1 + F9.3.2 + F9.3.3) |
 | **F9.4** | Trace observability UI. The bin script gains `--json` mode (already accepted, currently ignored) that streams every agent decision + hook fire + tool call + verifier verdict as JSON Lines to stdout. A separate viewer (out-of-scope for this repo) renders the stream. v0: just the JSON Lines output; the viewer is a downstream concern. | design §19 (CLI), existing `--json` arg | ✅ done (F9.4.1 + F9.4.2 + F9.4.3) |
-| **F9.5** | Cross-agent verification. The `verify()` path can take an optional `crossVerifyWith` closure. When provided, the adapter calls it on the result and returns the cross-verify verdict in addition to its own. The orchestrator combines per design §6.2 (OR-of-pass, AND-of-fail). v0 in this chunk: a default cross-verify closure that re-runs the same skill on a different `ModelAdapter` (e.g. cheap local model vs. expensive GPT-4). | design §12.4 (4-source cascade), MAP §CrossAgentDisagreementVerifier | ⏳ pending |
+| **F9.5** | Cross-agent verification. The `verify()` path can take an optional `crossVerifyWith` closure. When provided, the adapter calls it on the result and returns the cross-verify verdict in addition to its own. The orchestrator combines per design §6.2 (OR-of-pass, AND-of-fail). v0 in this chunk: a default cross-verify closure that re-runs the same skill on a different `ModelAdapter` (e.g. cheap local model vs. expensive GPT-4). | design §12.4 (4-source cascade), MAP §CrossAgentDisagreementVerifier | ⏳ pending (planned) |
 
 **Why priority order:** F9.1 is the smallest and most
 user-facing. Per-call approval is a daily UX need
@@ -2448,6 +2448,121 @@ export class Team {
 2. **F9.3.2** — `Team.runOnce()` with topological
    order + tests.
 3. **F9.3.3** — CLI subcommand + end-to-end test.
+
+---
+
+**F9.5 plan (cross-agent verification):**
+
+**Why F9.5 last:** it's the most cross-cutting F9.x
+chunk. The verify() path lives in
+`@envoymesh/envoy-harness-adapter` (Package 3); a
+default cross-verify closure needs another
+`EnvoyHarnessAdapter` (or any `AgentAdapter`); the
+orchestrator combines the verdicts.
+
+**v0 scope (this chunk):**
+- `CrossVerifyFn` type — `(input: VerifyInput) =>
+  Promise<Verdict[]>`.
+- `EnvoyHarnessAdapter.crossVerifyWith?: CrossVerifyFn`
+  — when set, `verify()` calls it and concatenates
+  the cross verdicts with the local verdicts.
+  Returns the combined array (per the
+  `AgentAdapter.verify()` contract: `Verdict[]`).
+- `defaultCrossVerify(otherAdapter)` — a factory
+  that returns a `CrossVerifyFn`. The closure
+  re-runs the same skill on the other adapter
+  (using `otherAdapter.execute()` with the same
+  objective) and runs the local verifier on the
+  new result.
+- v0 does NOT pre-combine the verdicts. The
+  orchestrator calls `combineVerdicts(verdicts)`
+  to collapse the array into a single Verdict.
+  This keeps the per-source visibility
+  (which rules passed on which model).
+
+**Out of scope for v0:**
+- The 4-source cascade (rules + LLM + human +
+  cross). v0 has just the existing rules + an
+  optional cross-verify. The cascade is a future
+  chunk.
+- Confidence-weighted voting. v0 concatenates
+  verdicts; the orchestrator decides how to
+  collapse.
+- Cross-verify between DIFFERENT runtime adapters
+  (e.g. envoy-harness vs. openclaw). v0 is
+  same-runtime only (envoy-harness ↔ envoy-harness).
+- Caching the cross-verify result. Each
+  `verify()` call re-runs the skill.
+
+**Type sketch:**
+
+```ts
+// envoy-harness-adapter/src/verify.ts (new)
+/** A function that produces additional verdicts
+ *  for a given verify input. The adapter's verify()
+ *  calls it after the local verifier and concatenates
+ *  the results. */
+export type CrossVerifyFn = (input: VerifyInput) => Promise<Verdict[]>;
+
+/** A factory that re-runs the same skill on a
+ *  different adapter and returns the local
+ *  verifier's verdicts for the new result. */
+export function defaultCrossVerify(
+  otherAdapter: AgentAdapter,
+): CrossVerifyFn {
+  return async (input) => {
+    const newResult = await otherAdapter.execute({
+      skillId: input.result.skillId,
+      objective: input.objective,
+      inputArtifacts: [],
+      costCeilingUsd: 0,
+      deadlineMs: 30_000,
+      correlationId: input.result.correlationId,
+      signal: new AbortController().signal,
+    });
+    return runLocalVerifier({ result: newResult, objective: input.objective });
+  };
+}
+```
+
+**Adapter integration:**
+
+```ts
+// envoy-harness-adapter/src/adapter.ts
+export interface EnvoyHarnessAdapterInput {
+  // ... existing ...
+  crossVerifyWith?: CrossVerifyFn;
+}
+
+class EnvoyHarnessAdapter {
+  // ...
+  async verify(input: VerifyInput): Promise<Verdict[]> {
+    const local = await runLocalVerifier(input);
+    if (!this.crossVerifyWith) return local;
+    const cross = await this.crossVerifyWith(input);
+    return [...local, ...cross];
+  }
+}
+```
+
+**Tests (target: ~10-15):**
+- `defaultCrossVerify(otherAdapter)` returns a function
+  that calls `otherAdapter.execute()`.
+- `defaultCrossVerify` returns the local verifier's
+  verdicts on the new result.
+- `EnvoyHarnessAdapter.crossVerifyWith` is invoked
+  during `verify()`.
+- Without `crossVerifyWith`, `verify()` returns
+  the local verdicts (unchanged behavior).
+- `verify()` concatenates local + cross verdicts.
+- `defaultCrossVerify` re-runs with the same
+  objective + skillId + correlationId.
+
+**Sub-chunks (planned):**
+1. **F9.5.1** — `CrossVerifyFn` type +
+   `defaultCrossVerify` factory + tests.
+2. **F9.5.2** — `EnvoyHarnessAdapter.crossVerifyWith`
+   integration + tests.
 
 ---
 
