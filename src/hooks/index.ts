@@ -19,3 +19,5 @@ export {
 } from "./registry.js";
 
 export { runShellHandler, runModuleHandler } from "./runner.js";
+
+export type { HookDecision } from "../types.js";

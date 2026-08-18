@@ -105,3 +105,18 @@ export {
   type Session,
   type SessionMetadata,
 } from "./session.js";
+
+// Re-export the agent loop (§3.4 of the design doc)
+export {
+  Agent,
+  DEFAULT_MAX_ITERATIONS,
+  type AgentOptions,
+  type AgentResult,
+} from "./agent.js";
+
+// Re-export built-in tools (§10 of the design doc)
+export {
+  BUILTIN_TOOLS,
+  bashTool,
+  readFileTool,
+} from "./tools/builtin/index.js";

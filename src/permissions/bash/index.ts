@@ -55,6 +55,11 @@ export {
   sedValidation,
 };
 
+// Re-export the input/verdict types so callers (e.g. the bash tool)
+// can type their `validateBash` calls without reaching into
+// `../../types.js`.
+export type { BashValidationInput, BashVerdict };
+
 /**
  * The 6 bash safety validators, in execution order.
  *
