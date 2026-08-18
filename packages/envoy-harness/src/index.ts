@@ -230,6 +230,21 @@ export {
   type StdioLspClientOptions,
 } from "./lsp/index.js";
 
+// Re-export the trace layer (F9.4, §19 of the design doc)
+export {
+  JsonLinesTracer,
+  NullTracer,
+  type AgentEndEvent,
+  type AgentStartEvent,
+  type ErrorEvent,
+  type ModelResponseEvent,
+  type ToolCallEvent,
+  type ToolResultEvent,
+  type TraceEvent,
+  type Tracer,
+  type WritableStream,
+} from "./trace/index.js";
+
 // Re-export the scoreboard (§13 of the design doc)
 export {
   BenchmarkSchema,
