@@ -8,9 +8,9 @@
 > and *why*. This file says *what shipped*, *where it lives*,
 > and *what's still open*.
 >
-> **Status as of last commit:** (next commit, F9.2 done) on `phase-1/types`.
+> **Status as of last commit:** (next commit, F9.4 done) on `phase-1/types`.
 > Total: 564 tests, 28 test files, 40 source files, ~17k lines (monorepo: 2 packages).
-> Phase 3 fully complete (F6 done). Phase 2 fully complete (F7 + F8 done, F8 polish done). **Phase 4 in progress (F9.1 + F9.2 done; F9.3-F9.5 pending: team+cron, --json trace mode, cross-verify).**
+> Phase 3 fully complete (F6 done). Phase 2 fully complete (F7 + F8 done, F8 polish done). **Phase 4 in progress (F9.1 + F9.2 + F9.4 done; F9.3 + F9.5 pending: team+cron, cross-verify).**
 
 ---
 
@@ -1696,7 +1696,7 @@ each is a separate F9.x sub-chunk.
 | **F9.1** | Per-call approval callback (Penguin style). When the model tries a sensitive action (e.g. bash with workspace-write), pause the agent loop and call a host-provided `askHandler` callback. The callback returns a decision (allow / deny / modify). The agent resumes with the decision. The host decides UX (Tauri prompt, headless log, etc.). | design §10.4 (Penguin per-call approval sketch), §8.1 hook events | ✅ done |
 | **F9.2** | LSP client (parity with claw-code lane 8). `LspClient` class that wraps the LSP protocol over stdio. Auto-start language servers for projects the harness is reading/writing. Provides `definition`, `references`, `hover`, `diagnostics` to the agent as tools. | claw-code parity lane 8 | ✅ done (F9.2.1 + F9.2.2 + F9.2.3) |
 | **F9.3** | Team + cron (parity with claw-code lane 6). Multi-agent team definition (a team is a graph of agents + roles + delegation rules). Cron triggers (a team runs on a schedule). Saved as TOML config (`06-team-cron.toml`). v0: read the TOML, run the team in-process; no actual cron daemon. | claw-code parity lane 6, design §25 (parity dir) | ⏳ pending |
-| **F9.4** | Trace observability UI. The bin script gains `--json` mode (already accepted, currently ignored) that streams every agent decision + hook fire + tool call + verifier verdict as JSON Lines to stdout. A separate viewer (out-of-scope for this repo) renders the stream. v0: just the JSON Lines output; the viewer is a downstream concern. | design §19 (CLI), existing `--json` arg | ⏳ pending (planned) |
+| **F9.4** | Trace observability UI. The bin script gains `--json` mode (already accepted, currently ignored) that streams every agent decision + hook fire + tool call + verifier verdict as JSON Lines to stdout. A separate viewer (out-of-scope for this repo) renders the stream. v0: just the JSON Lines output; the viewer is a downstream concern. | design §19 (CLI), existing `--json` arg | ✅ done (F9.4.1 + F9.4.2 + F9.4.3) |
 | **F9.5** | Cross-agent verification. The `verify()` path can take an optional `crossVerifyWith` closure. When provided, the adapter calls it on the result and returns the cross-verify verdict in addition to its own. The orchestrator combines per design §6.2 (OR-of-pass, AND-of-fail). v0 in this chunk: a default cross-verify closure that re-runs the same skill on a different `ModelAdapter` (e.g. cheap local model vs. expensive GPT-4). | design §12.4 (4-source cascade), MAP §CrossAgentDisagreementVerifier | ⏳ pending |
 
 **Why priority order:** F9.1 is the smallest and most
@@ -2669,5 +2669,68 @@ etc.) is F9.2+1 — deferred. Updated §2 (status), §3
 (this entry), §6.5 (F9.2 ✅), §7 (sub-chunk template
 preserved), §10 (this entry). **Next: F9.4 (--json
 trace mode) or F9.3 (team+cron), user's pick.**
+
+---
+
+### F9.4 — `--json` trace mode (3 sub-chunks)
+**Phase 4 third sub-chunk.** Debugging agent runs
+is the most common production need. v0 ships the
+JSON Lines trace layer; a downstream viewer (a
+separate repo) consumes the stream.
+
+**F9.4.1 (this commit) — types + NullTracer +
+JsonLinesTracer.** Lands the `TraceEvent` union
+(6 kinds: `agent_start`, `model_response`,
+`tool_call`, `tool_result`, `agent_end`, `error`),
+the `Tracer` interface, and the two no-op /
+write-to-stream implementations. Each event carries
+an ISO 8601 `ts`. `JsonLinesTracer` catches write
+errors silently (the agent's run shouldn't fail
+because the trace stream is dead); `droppedEvents`
+counter for diagnostics. 8 new tests in
+`test/trace.test.ts`.
+
+**F9.4.2 (this commit) — AgentOptions.tracer +
+5 emit points.** Lands the agent integration. The
+agent calls `tracer.emit(...)` at 5 points: top of
+`run()` (agent_start), after each model call
+(model_response), before/after each tool
+(tool_call / tool_result), and at `makeResult()`
+(agent_end). `agent_end` is the LAST event. Errors
+have a separate `error` event. Adds a public
+`currentModel` getter on `CostTracker` for the
+agent_start model name. 10 new tests in
+`test/trace-agent.test.ts`. **Self-review caught 3
+real bugs:** (1) `currentModel()` didn't exist on
+CostTracker (added public getter); (2) test designed
+for 2 model calls but used text-only responses that
+the agent ended on after 1; (3) tool_call event
+includes the `type: "tool_call"` ContentBlock tag
+(test was missing it).
+
+**F9.4.3 (this commit) — CLI `--json` integration.**
+Wires the `--json` flag (already accepted, previously
+ignored) to a `JsonLinesTracer` writing to stdout.
+`--json` + `--quiet` is supported (just trace
+events, no human output). Default mode interleaves
+both. `RunOptions.tracer?` allows programmatic
+injection. 4 new tests in `test/cli.test.ts`.
+**Self-review caught 2 real bugs:** (1) `tool_call`
++ `tool_result` were ONLY emitted on the success
+path; an unknown tool or invalid args would skip
+the emit (the trace didn't see the failure). Fixed
+by emitting on every path. (2) The "should-not-appear"
+test was checking `out.data` for absence, but the
+text legitimately appears in the model_response
+event's `content` field. Fixed by checking the last
+line is `agent_end` (no trailing human output).
+
+**Total: 584 tests across 30 files.** F9.4 is
+**done**; the bin script has working `--json` trace
+mode. The web UI for trace rendering is downstream
+(a separate repo). Updated §2 (status), §3 (this
+entry), §6.5 (F9.4 ✅), §7 (sub-chunk template
+preserved), §10 (this entry). **Next: F9.3
+(team+cron) or F9.5 (cross-verify), user's pick.**
 
 ---
