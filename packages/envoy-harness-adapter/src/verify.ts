@@ -219,3 +219,102 @@ export async function runLocalVerifierOnLocal(
 ): Promise<LocalVerdict[]> {
   return runVerifierRules(result, objective, options.rules ?? DEFAULT_RULES);
 }
+
+// ---------------------------------------------------------------------------
+// F9.5: cross-agent verification
+// ---------------------------------------------------------------------------
+
+import type { AgentAdapter, ExecuteInput } from "@envoymesh/agent-adapter";
+
+/**
+ * F9.5 — a function that produces additional verdicts
+ * for a given verify input. The adapter's `verify()`
+ * method calls it AFTER the local verifier and
+ * concatenates the cross verdicts with the local ones.
+ *
+ * **Use case:** the orchestrator can compose
+ * `crossVerifyWith = defaultCrossVerify(otherAdapter)`
+ * to re-run the same skill on a different model
+ * (e.g. a cheap local model for cross-checking an
+ * expensive GPT-4 result). The cross verifier's
+ * verdicts carry the per-source visibility; the
+ * orchestrator can collapse them with
+ * `combineVerdicts(verdicts)`.
+ *
+ * **Stability:** additive. New fields on the
+ * closure (e.g. a config for the deadline) are
+ * additive; the v0 contract is the simple
+ * `(input) => Promise<Verdict[]>` shape.
+ */
+export type CrossVerifyFn = (input: VerifyInput) => Promise<WireVerdict[]>;
+
+/**
+ * F9.5 — a default cross-verify closure that re-runs
+ * the same skill on a different `AgentAdapter` and
+ * returns the local verifier's verdicts for the new
+ * result.
+ *
+ * **Why "re-run on a different model":** the cheapest
+ * way to get a second opinion on a worker's output
+ * is to ask a different model to do the same work.
+ * If both verdicts agree, the result is high-confidence.
+ * If they disagree, the orchestrator can flag it as
+ * `disputed` and surface to a human (per design §6.2).
+ *
+ * **v0 limits:**
+ * - `inputArtifacts` is NOT re-passed (the cross
+ *   adapter may not have access to the same files;
+ *   v0 trusts the worker to include any needed
+ *   context in the result content).
+ * - `costCeilingUsd: 0` (the orchestrator is the
+ *   authoritative budget gate; v0 cross-verify runs
+ *   for free to keep the cost predictable).
+ * - `deadlineMs: 30_000` (tight; cross-verify should
+ *   be fast or the orchestrator escalates).
+ * - The signal is a fresh `AbortController.signal`
+ *   (the orchestrator can wrap it if it needs
+ *   shared cancellation).
+ *
+ * **The cross adapter's error:** if the other adapter
+ * throws (model down, etc.), the cross-verify returns
+ * a single `disputed` verdict with the error message
+ * in the `signals`. The local verdicts are still
+ * valid; the cross failure is recorded.
+ *
+ * **Stability:** additive. v0's contract is a single
+ * argument; future chunks may add options (custom
+ * deadline, custom rules, etc.).
+ */
+export function defaultCrossVerify(
+  otherAdapter: AgentAdapter,
+): CrossVerifyFn {
+  return async (input) => {
+    try {
+      const newResult = await otherAdapter.execute({
+        skillId: input.result.skillId,
+        objective: input.objective,
+        inputArtifacts: [],
+        costCeilingUsd: 0,
+        deadlineMs: 30_000,
+        correlationId: input.result.correlationId,
+        signal: new AbortController().signal,
+      } satisfies ExecuteInput);
+      // Run the local verifier on the new result.
+      return await runLocalVerifier({
+        result: newResult,
+        objective: input.objective,
+      });
+    } catch (err) {
+      // The cross adapter failed. Surface as a
+      // single `disputed` verdict; the local
+      // verdicts are still useful on their own.
+      return [
+        {
+          kind: "disputed",
+          needsHuman: true,
+          signals: [`cross-verify failed: ${(err as Error).message}`],
+        },
+      ];
+    }
+  };
+}

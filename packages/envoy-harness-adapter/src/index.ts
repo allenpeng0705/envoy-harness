@@ -67,7 +67,10 @@ export {
 } from "./signing.js";
 
 // F8.6+ — wire the local verifier rules.
+// F9.5+ — cross-agent verification (CrossVerifyFn + defaultCrossVerify).
 export {
+  defaultCrossVerify,
   runLocalVerifier,
   runLocalVerifierOnLocal,
+  type CrossVerifyFn,
 } from "./verify.js";
