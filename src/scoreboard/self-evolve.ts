@@ -433,26 +433,68 @@ export class SelfEvolve {
    * NOT recorded (a partial cycle shouldn't pollute history).
    */
   async runOneCycle(): Promise<RunOneCycleResult> {
+    return this.runOneCycleInner({ externalHypothesis: null });
+  }
+
+  /**
+   * Run the 5-step protocol with a fixed (external) hypothesis.
+   * Used by the federated layer (§13.3) to evaluate a peer's
+   * candidate against the local benchmark.
+   *
+   * **Differs from `runOneCycle` in two ways:**
+   *
+   * 1. **No provider call.** The hypothesis is given; step 2
+   *    (HYPOTHESIZE) is skipped entirely.
+   * 2. **Never commits.** Even in non-shadow mode, a federated
+   *    cycle does NOT replace the local ruleset. Adoption is
+   *    a separate, opt-in step (F6.3 / F6.4).
+   *
+   * The result is still recorded as a regular `ScoreboardEntry`
+   * (the cycle counter advances). The hypothesis text is
+   * prefixed with `[federated]` so the audit trail shows the
+   * origin.
+   */
+  async runOneCycleAgainst(
+    externalHypothesis: Hypothesis,
+  ): Promise<RunOneCycleResult> {
+    return this.runOneCycleInner({ externalHypothesis });
+  }
+
+  /**
+   * The shared inner loop. `externalHypothesis: null` means
+   * "ask the provider"; a non-null value means "use this
+   * hypothesis and skip the provider call" (federated path).
+   */
+  private async runOneCycleInner(input: {
+    externalHypothesis: Hypothesis | null;
+  }): Promise<RunOneCycleResult> {
     // 1. SNAPSHOT
     const version = await this.nextVersion();
     const snapshotPath = path.join(this.paths.snapshotDir, `v${version}.json`);
     await this.snapshot(snapshotPath);
 
-    // 2. HYPOTHESIZE
-    const recent = await this.recentFailures(this.recentFailureWindow);
-    const hypothesis = await this.hypothesisProvider.proposeHypothesis({
-      currentRules: this.currentRules,
-      recentFailures: recent,
-    });
-    if (!hypothesis) {
-      const entry = await this.recordNoOp(version, recent);
-      // Read benchmark for the no-op result. v0: we still want
-      // a passRateAfter for the scoreboard; use the current
-      // ruleset as both before and after.
-      const bench = await readBenchmarkSafe(this.paths.benchmark);
-      const before = await this.benchmarkRunner.run(this.currentRules, bench);
-      return { kept: false, entry, before, after: before };
+    // 2. HYPOTHESIZE — skip if external hypothesis given.
+    let hypothesis: Hypothesis | null = input.externalHypothesis;
+    if (hypothesis === null) {
+      const recent = await this.recentFailures(this.recentFailureWindow);
+      hypothesis = await this.hypothesisProvider.proposeHypothesis({
+        currentRules: this.currentRules,
+        recentFailures: recent,
+      });
+      if (!hypothesis) {
+        const entry = await this.recordNoOp(version, recent);
+        const bench = await readBenchmarkSafe(this.paths.benchmark);
+        const before = await this.benchmarkRunner.run(this.currentRules, bench);
+        return { kept: false, entry, before, after: before };
+      }
     }
+
+    // Tag the hypothesis text for federated cycles so the
+    // audit trail shows the origin.
+    const hypothesisText =
+      input.externalHypothesis !== null
+        ? `[federated] ${hypothesis.text}`
+        : hypothesis.text;
 
     // 3. CANDIDATE — write the candidate ruleset.
     const candidatePath = path.join(
@@ -466,9 +508,12 @@ export class SelfEvolve {
     const before = await this.benchmarkRunner.run(this.currentRules, bench);
     const after = await this.benchmarkRunner.run(hypothesis.ruleChanges, bench);
 
-    // 5. COMMIT / REVERT
+    // 5. COMMIT / REVERT — federated cycles NEVER commit, even
+    //    when the local gate says "kept". Adoption is a separate
+    //    step (§13.3).
     const kept = after.passRate > before.passRate;
-    if (kept && !this.shadowMode) {
+    const isFederated = input.externalHypothesis !== null;
+    if (kept && !this.shadowMode && !isFederated) {
       await this.commitCandidate(hypothesis.ruleChanges);
     }
 
@@ -477,7 +522,7 @@ export class SelfEvolve {
     );
     const baseEntry = {
       version,
-      hypothesis: hypothesis.text,
+      hypothesis: hypothesisText,
       rulesetHash,
       meanScore: after.meanScore,
       passRateBefore: before.passRate,

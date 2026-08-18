@@ -41,6 +41,7 @@
 
 import { verifyEntrySignature } from "./storage.js";
 import type { ScoreboardEntry } from "./types.js";
+import type { Hypothesis, SelfEvolve } from "./self-evolve.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -144,9 +145,9 @@ export class FederatedScoreboard {
 
   /**
    * Pull peer scoreboards. F6.1: returns the validated
-   * candidates (filter + verify only). F6.2 will add the
-   * local 5-step gate: each candidate runs through the
-   * local protocol; adopt iff the local pass rate improves.
+   * candidates (filter + verify only). F6.2 adds the local
+   * 5-step gate: each candidate runs through the local
+   * protocol; adopt iff the local pass rate improves.
    *
    * **Opt-in is the default.** Pass `optIn: true` to
    * actually fetch from peers. The CLI flag is
@@ -208,4 +209,84 @@ export class FederatedScoreboard {
       skipped: false,
     };
   }
+
+  /**
+   * F6.2: run the local 5-step gate against each validated
+   * candidate. For each, calls `SelfEvolve.runOneCycleAgainst`
+   * with the candidate's hypothesis (the entry's `hypothesis`
+   * text + an empty ruleChanges list — federated candidates
+   * don't ship full rule bodies in v0; only the hypothesis
+   * text and the operator's local re-implementation count).
+   *
+   * **Adoption criteria:** the candidate's local 5-step
+   * evaluation must say `kept: true` (strict greater pass
+   * rate). The audit trail of each evaluation is in the
+   * main scoreboard (the cycle counter advances); the
+   * "adopted" set (the candidates that passed) is returned
+   * to the caller for further action (F6.3 records them
+   * in `federated-adoptions.yaml`; F6.4 wires the CLI).
+   *
+   * **Throws:** if `selfEvolve` is not set (the gate is
+   * required). The caller is expected to pass it.
+   */
+  async adopt(
+    pullResult: PullResult,
+    selfEvolve: SelfEvolve,
+  ): Promise<AdoptResult> {
+    if (pullResult.skipped) {
+      return {
+        adopted: [],
+        rejected: [],
+        skipped: true,
+      };
+    }
+    const adopted: AdoptedCandidate[] = [];
+    const rejected: Array<{ entry: ScoreboardEntry; reason: string }> = [];
+    for (const entry of pullResult.validatedCandidates) {
+      // The peer's hypothesis text + an empty rule list —
+      // federated entries don't ship full rule bodies. The
+      // operator's local re-implementation is the source of
+      // truth; the entry records "we tried this hypothesis
+      // and the local pass rate improved".
+      const hypothesis: Hypothesis = {
+        text: entry.hypothesis,
+        ruleChanges: [],
+      };
+      let cycle;
+      try {
+        cycle = await selfEvolve.runOneCycleAgainst(hypothesis);
+      } catch (err) {
+        rejected.push({
+          entry,
+          reason: `local-cycle-error: ${(err as Error).message}`,
+        });
+        continue;
+      }
+      if (cycle.kept) {
+        adopted.push({ entry, cycle });
+      } else {
+        rejected.push({
+          entry,
+          reason: `local-pass-rate-did-not-improve: ${cycle.entry.passRateBefore.toFixed(2)} → ${cycle.entry.passRateAfter.toFixed(2)}`,
+        });
+      }
+    }
+    return { adopted, rejected, skipped: false };
+  }
+}
+
+/** A candidate that passed the local 5-step gate. */
+export interface AdoptedCandidate {
+  /** The peer's scoreboard entry. */
+  entry: ScoreboardEntry;
+  /** The local cycle that evaluated it. */
+  cycle: import("./self-evolve.js").RunOneCycleResult;
+}
+
+/** The result of a federated adoption. */
+export interface AdoptResult {
+  adopted: ReadonlyArray<AdoptedCandidate>;
+  rejected: ReadonlyArray<{ entry: ScoreboardEntry; reason: string }>;
+  /** True if the upstream pull was skipped. */
+  skipped: boolean;
 }
