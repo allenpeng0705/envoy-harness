@@ -29,6 +29,7 @@ export {
   EXIT_NOINPUT,
   EXIT_OK,
   EXIT_USAGE,
+  defaultAskHandler,
   run,
   type CliRunResult,
   type ExitCode,

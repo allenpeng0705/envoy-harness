@@ -243,12 +243,58 @@ export type HookEvent = {
  * - `block`: the hook stops the action. `PreToolUse` / `PermissionRequest`.
  * - `add-context`: the hook has text to inject into the next prompt.
  *   `SessionStart` / `PreCompact`.
+ * - `ask`: F9.1 — the hook wants the user (or host) to
+ *   approve the action. The agent loop pauses and calls
+ *   `AgentOptions.askHandler`; the handler returns an
+ *   `AskDecision` (allow / deny / modify). `PreToolUse` only.
  */
 export type HookDecision =
   | { kind: "continue" }
   | { kind: "modify"; modified: unknown } // PostToolUse only
   | { kind: "block"; reason: string } // PreToolUse / PermissionRequest
-  | { kind: "add-context"; content: string }; // SessionStart / PreCompact
+  | { kind: "add-context"; content: string } // SessionStart / PreCompact
+  | {
+      /** F9.1: ask the user / host to approve the action. */
+      kind: "ask";
+      /** A human-readable question. */
+      question: string;
+      /** Suggested options; the host may use them or replace. */
+      options?: ReadonlyArray<{ id: string; label: string }>;
+    };
+
+/**
+ * F9.1 — the host's response to an `ask` decision.
+ * Returned by `AgentOptions.askHandler`.
+ */
+export type AskDecision =
+  | { kind: "allow" }
+  | { kind: "deny"; reason: string }
+  | { kind: "modify"; args: Record<string, unknown> };
+
+/**
+ * F9.1 — the request the agent loop sends to the host
+ * when a hook returns `kind: "ask"`.
+ */
+export interface AskRequest {
+  /** The tool the model wants to call. */
+  tool: string;
+  /** The model's args (the host shows these to the user). */
+  args: unknown;
+  /** A human-readable question (e.g. "Run bash with this command?"). */
+  question: string;
+  /** Suggested options; the host may use them. */
+  options?: ReadonlyArray<{ id: string; label: string }>;
+  /**
+   * Abort signal. The host can wire this to its own
+   * cancel button (e.g. a Tauri dialog's "Cancel").
+   * If the signal fires, the host can return
+   * `{ kind: "deny", reason: "cancelled" }`.
+   */
+  signal: AbortSignal;
+}
+
+/** F9.1 — the host's per-call approval handler. */
+export type AskHandler = (req: AskRequest) => Promise<AskDecision>;
 
 // ---------------------------------------------------------------------------
 // §5.5 AGENTS.md

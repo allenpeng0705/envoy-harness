@@ -47,6 +47,7 @@ import {
   VERSION,
   DEFAULT_RULES,
   createProviderAdapter,
+  type AskHandler,
   type ModelAdapter,
   type Session,
   type SelfEvolvePaths,
@@ -71,6 +72,12 @@ export interface RunOptions {
   stdout?: NodeJS.WritableStream;
   /** Where to write errors / status. Default: stderr. */
   stderr?: NodeJS.WritableStream;
+  /** F9.1: per-call approval handler. When the agent loop
+   *  hits a hook decision of `kind: "ask"`, this handler is
+   *  called. The default (when undefined) is a built-in
+   *  fallback that writes a one-line "ask" record to stderr
+   *  and returns `deny` (safe in headless contexts). */
+  askHandler?: AskHandler;
 }
 
 /** Result of a successful `run` invocation. */
@@ -216,6 +223,13 @@ async function runAgent(
   }
   if (parsed.maxCostUsd !== undefined) {
     agentOptions.maxCostUsd = parsed.maxCostUsd;
+  }
+  if (options.askHandler) {
+    agentOptions.askHandler = options.askHandler;
+  } else {
+    // F9.1 default: log to stderr + deny. The host (Tauri,
+    // web, etc.) injects a real UI handler via RunOptions.
+    agentOptions.askHandler = defaultAskHandler;
   }
   const agent = new Agent(agentOptions);
 
@@ -466,3 +480,33 @@ export class CliError extends Error {
     this.name = "CliError";
   }
 }
+
+// ---------------------------------------------------------------------------
+// F9.1: default ask handler (CLI fallback)
+// ---------------------------------------------------------------------------
+
+/**
+ * F9.1 default `askHandler` for the CLI runner. When the
+ * agent loop hits a hook decision of `kind: "ask"`, the
+ * runner writes a one-line "ask" record to stderr
+ * (so the user can see what was asked) and returns
+ * `deny` (safe default — the tool is blocked).
+ *
+ * **Why deny, not allow:** the bin script is the
+ * headless context. There's no UI to show a prompt;
+ * the user can't see it. Allowing would silently
+ * grant the model any action that the hook flagged.
+ * Denying ensures the user notices (the transcript
+ * shows "denied by user: no ask handler configured").
+ *
+ * **Production hosts** (Tauri, web, etc.) inject a
+ * real UI handler via `RunOptions.askHandler`. The
+ * production handler returns whatever the user
+ * picked. This default is for the v0 CLI.
+ */
+export const defaultAskHandler: AskHandler = async (req) => {
+  process.stderr.write(
+    `envoy-harness: ask: ${req.tool}(${JSON.stringify(req.args)}) — denied (no UI handler in v0 CLI)\n`,
+  );
+  return { kind: "deny", reason: "no UI ask handler configured (CLI v0)" };
+};

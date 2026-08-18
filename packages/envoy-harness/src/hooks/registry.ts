@@ -188,6 +188,7 @@ export class HookRegistry {
     const matched = handlers.filter((h) => this.matchHandler(h, payload));
 
     let lastModify: Extract<HookDecision, { kind: "modify" }> | null = null;
+    let lastAsk: Extract<HookDecision, { kind: "ask" }> | null = null;
     const contexts: string[] = [];
 
     for (const handler of matched) {
@@ -204,12 +205,22 @@ export class HookRegistry {
       if (decision.kind === "add-context") {
         contexts.push(decision.content);
       }
+      if (decision.kind === "ask") {
+        // F9.1: ask is PreToolUse only. Stash the last ask;
+        // if no block came first, return the ask at the end
+        // (after the loop) so multiple handlers compose: a
+        // block wins; otherwise the last ask wins.
+        if (eventName === "PreToolUse") {
+          lastAsk = decision;
+        }
+      }
     }
 
     if (contexts.length > 0) {
       return { kind: "add-context", content: contexts.join("\n\n") };
     }
     if (lastModify) return lastModify;
+    if (lastAsk) return lastAsk;
     return { kind: "continue" };
   }
 

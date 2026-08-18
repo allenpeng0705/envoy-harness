@@ -45,7 +45,7 @@ import {
 import type { ModelAdapter, ModelResponse } from "./model.js";
 import type { Session } from "./session.js";
 import type { ContentBlock, ToolRegistry } from "./tools/index.js";
-import type { SandboxPolicy } from "./types.js";
+import type { AskHandler, AskRequest, SandboxPolicy } from "./types.js";
 import { CostTracker } from "./cost.js";
 
 /** Default max iterations before the agent throws. */
@@ -85,6 +85,15 @@ export interface AgentOptions {
    * Default: no cap.
    */
   maxCostUsd?: number;
+  /**
+   * F9.1: per-call approval handler. When a hook returns
+   * `kind: "ask"`, the agent loop pauses and calls this
+   * handler. The handler returns an `AskDecision`
+   * (allow / deny / modify). When `undefined`, the agent
+   * defaults to `deny` (safe default — the tool is
+   * blocked with "no ask handler configured").
+   */
+  askHandler?: AskHandler;
 }
 
 /** What `Agent.run()` returns. */
@@ -150,6 +159,8 @@ export class Agent {
   private costTracker: CostTracker;
   /** F7.5: cost ceiling; when exceeded, the agent aborts. */
   private maxCostUsd: number | undefined;
+  /** F9.1: per-call approval handler. */
+  private askHandler: AskHandler | undefined;
 
   constructor(options: AgentOptions) {
     this.model = options.model;
@@ -159,6 +170,7 @@ export class Agent {
     this.cwd = options.cwd ?? process.cwd();
     this.maxIterations = options.maxIterations ?? DEFAULT_MAX_ITERATIONS;
     this.maxCostUsd = options.maxCostUsd;
+    this.askHandler = options.askHandler;
     if (options.abortSignal) {
       // Wrap caller-provided signal so we can also fire on
       // internal errors without leaking listeners.
@@ -332,11 +344,42 @@ export class Agent {
     this.toolCallCount++;
     const tool = this.tools.get(call.name);
 
-    // PreToolUse hook (audit log, rate limit, block).
+    // PreToolUse hook (audit log, rate limit, block, ask).
     const preDecision = await this.firePreToolUse(call);
     if (preDecision.kind === "block") {
       this.appendToolResult(call.id, `blocked by PreToolUse: ${preDecision.reason}`, true);
       return;
+    }
+
+    // F9.1: per-call approval. The hook wants the host
+    // to approve. We call the host's handler (if any)
+    // and act on the decision. No handler → safe deny.
+    if (preDecision.kind === "ask") {
+      const askReq: AskRequest = {
+        tool: call.name,
+        args: call.args,
+        question: preDecision.question,
+        ...(preDecision.options ? { options: preDecision.options } : {}),
+        signal: this.abortController.signal,
+      };
+      const decision = this.askHandler
+        ? await this.askHandler(askReq)
+        : { kind: "deny" as const, reason: "no ask handler configured" };
+      if (decision.kind === "deny") {
+        this.appendToolResult(
+          call.id,
+          `denied by user: ${decision.reason}`,
+          true,
+        );
+        return;
+      }
+      if (decision.kind === "modify") {
+        // Replace the args. We'll re-validate below
+        // against the tool's zod schema.
+        call = { ...call, args: decision.args };
+      }
+      // decision.kind === "allow" → fall through to
+      // the tool runner.
     }
 
     if (!tool) {
@@ -344,7 +387,8 @@ export class Agent {
       return;
     }
 
-    // Arg validation.
+    // Arg validation. Re-runs for the `modify` case
+    // (the host may have given us a different shape).
     const parsed = tool.parameters.safeParse(call.args);
     if (!parsed.success) {
       this.appendToolResult(

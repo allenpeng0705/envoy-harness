@@ -30,7 +30,10 @@ export {
 
 export type {
   AgentRuntime,
+  AskDecision,
   AskForApproval,
+  AskHandler,
+  AskRequest,
   BashValidationInput,
   BashValidator,
   BashVerdict,
@@ -176,6 +179,7 @@ export {
   EXIT_NOINPUT,
   EXIT_OK,
   EXIT_USAGE,
+  defaultAskHandler,
   formatHelp,
   parseArgs,
   run,
