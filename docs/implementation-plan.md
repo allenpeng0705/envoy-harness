@@ -8,9 +8,9 @@
 > and *why*. This file says *what shipped*, *where it lives*,
 > and *what's still open*.
 >
-> **Status as of last commit:** (next commit, F7.5) on `phase-1/types`.
+> **Status as of last commit:** `51fbb40` on `phase-1/types`.
 > Total: 488 tests, 24 test files, 36 source files, ~16k lines.
-> Phase 3 fully complete (F6 done). **Phase 2 milestone per design §22 is "F7 done" — 5 of 5 sub-chunks**. F8 (envoy-harness-adapter) next.
+> Phase 3 fully complete (F6 done). F7 (real LLM adapters + cost tracking) done — a pre-Phase-2 prerequisite. Phase 2 proper (F8 = `envoy-harness-adapter`, Package 3 — MAP integration) next.
 
 ---
 
@@ -877,6 +877,22 @@ actually writes to the ruleset is a Phase 2 concern (the
 operator's local re-implementation, plus Ed25519
 verification of the peer's full ruleset).
 
+### 5.11 `--max-cost-usd` is a silent no-op when adapter omits `response.model`
+**Where:** `src/agent.ts:cost attribution` — the agent
+calls `costTracker.addUsage(usage, response.model)`. If
+`response.model` is `undefined` (e.g. a custom adapter
+that forgets to set it), the tracker falls back to its
+constructor model (`"local"`, $0 pricing). The cost is
+silently 0; the cap never fires.
+**All three shipped adapters (OpenAI, Anthropic, DeepSeek)
+set `response.model` from the server's response** — the
+silent no-op is unreachable through the public API. The
+risk is for custom `ModelAdapter` implementations.
+**Mitigation:** the F7.1 contract documents this; the
+agent's `cost attribution` comment also notes it. A
+future chunk could add a `console.warn` when usage is
+present without a model name.
+
 ---
 
 ## 6. Planned work (the next 2 follow-ups, in order)
@@ -893,10 +909,14 @@ that the user prioritized.
 (F6.1-F6.4 all committed; see §3 for the done-work entries).
 Phase 3 milestone per design §22 is now "4 of 4 done".
 
-### 6.2 F7 — Phase 2: real LLM adapters + cost tracking (§14)
-**Status:** in progress (started 2026-08-18). F7.1 + F7.2
-done; F7.3 next.
-This is the biggest remaining chunk.
+### 6.2 F7 — Pre-Phase-2 prerequisite: real LLM adapters + cost tracking (§14)
+**Status:** done (5 of 5 sub-chunks: F7.1 + F7.2 + F7.3 +
+F7.4 + F7.5). F7 is technically a prerequisite to Phase 2
+proper (the MAP integration in F8) — the harness needs
+real LLM adapters to be a useful mesh participant. Per
+the original implementation-plan, F7 was tagged "Phase 2"
+loosely; the design §22's strict Phase 2 is F8
+(`envoy-harness-adapter`).
 
 **Scope:**
 - `src/llm/openai.ts` — OpenAI adapter (`ModelAdapter`).
