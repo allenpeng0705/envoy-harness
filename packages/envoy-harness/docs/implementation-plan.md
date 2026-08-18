@@ -1599,6 +1599,70 @@ export function runLocalVerifier(
 - Caching the local-ruleset in the adapter. The
   caller passes the rules (default: `DEFAULT_RULES`).
 
+### 6.5 F9 — Phase 4: Production-grade (LSP, team, cron, trace UI, per-call approval, cross-verify)
+**Status:** pending. Per design §22 Phase 4 is **ongoing**
+(not a fixed milestone). The 5 features are independent;
+each is a separate F9.x sub-chunk.
+
+**Sub-chunks (in priority order; user can pick any to start):**
+
+| ID | Scope | Source | Status |
+|----|-------|--------|--------|
+| **F9.1** | Per-call approval callback (Penguin style). When the model tries a sensitive action (e.g. bash with workspace-write), pause the agent loop and call a host-provided `onApprovalRequest(request)` callback. The callback returns a decision (allow / deny / modify). The agent resumes with the decision. The host decides UX (Tauri prompt, headless log, etc.). | design §10.4 (Penguin per-call approval sketch), §8.1 hook events | ⏳ next |
+| **F9.2** | LSP client (parity with claw-code lane 8). `LspClient` class that wraps the LSP protocol over stdio. Auto-start language servers for projects the harness is reading/writing. Provides `definition`, `references`, `hover`, `diagnostics` to the agent as tools. | claw-code parity lane 8 | ⏳ pending |
+| **F9.3** | Team + cron (parity with claw-code lane 6). Multi-agent team definition (a team is a graph of agents + roles + delegation rules). Cron triggers (a team runs on a schedule). Saved as TOML config (`06-team-cron.toml`). v0: read the TOML, run the team in-process; no actual cron daemon. | claw-code parity lane 6, design §25 (parity dir) | ⏳ pending |
+| **F9.4** | Trace observability UI. The bin script gains `--json` mode (already accepted, currently ignored) that streams every agent decision + hook fire + tool call + verifier verdict as JSON Lines to stdout. A separate viewer (out-of-scope for this repo) renders the stream. v0: just the JSON Lines output; the viewer is a downstream concern. | design §19 (CLI), existing `--json` arg | ⏳ pending |
+| **F9.5** | Cross-agent verification. The `verify()` path can take an optional `crossVerifyWith` closure. When provided, the adapter calls it on the result and returns the cross-verify verdict in addition to its own. The orchestrator combines per design §6.2 (OR-of-pass, AND-of-fail). v0 in this chunk: a default cross-verify closure that re-runs the same skill on a different `ModelAdapter` (e.g. cheap local model vs. expensive GPT-4). | design §12.4 (4-source cascade), MAP §CrossAgentDisagreementVerifier | ⏳ pending |
+
+**Why priority order:** F9.1 is the smallest and most
+user-facing. Per-call approval is a daily UX need
+(stop the agent from doing something dangerous); the
+infrastructure (hooks + abort) is already in place.
+F9.5 is largest (needs cross-adapter wiring).
+
+**Out of scope for F9.x:**
+- Streaming responses (LLM SSE). The agent's
+  `complete()` is non-streaming; a future chunk
+  could add `completeStreaming()`.
+- A web UI for trace rendering. F9.4 emits JSON
+  Lines; the viewer is downstream.
+- Real cron daemon. F9.3 reads a cron config and
+  runs in-process; system cron (or k8s CronJob) is
+  the host's responsibility.
+- Auto-merge / auto-commit. Per-call approval can
+  ALLOW an action, but the action is the model's
+  responsibility; F9.1 doesn't add new actions.
+- Multi-model routing (router → cheap-or-expensive
+  based on task). F9.5 is the closest chunk to this
+  but the user must opt in via the crossVerifyWith
+  closure.
+
+**Sub-chunk template (per F9.x):**
+1. **Plan in the doc first.** Expand the relevant
+   F9.x section with the design snippet, types,
+   tests, out-of-scope items. Commit separately.
+2. **Build the data layer** (types, file I/O).
+3. **Wire the algorithm** (the main logic, with
+   tests).
+4. **Wire the integration** (host surface:
+   `AgentOptions` field, `RunOptions` field,
+   `--cli-flag`).
+5. **Update the doc** (move from §6.5 to §3 done
+   work). Change log entry.
+
+**Why F9.1 first (over LSP or team):** per-call
+approval is a safety feature — without it, the
+agent can run any bash command in workspace-write
+mode without confirmation. The agent loop already
+fires the `PreToolUse` hook; the hook can already
+block; what's missing is the host integration. ~5
+commits, ~15-20 new tests.
+
+**Why F9.5 last (cross-agent verification):**
+needs the most cross-cutting work — adapter
+extension, verifier extension, model router
+infrastructure. Likely 8-12 commits.
+
 ---
 
 ## 7. F6 sub-chunk archive (Phase 3 §13.3 — federated scoreboard)
