@@ -45,3 +45,5 @@ export {
 } from "./stdio-client.js";
 
 export { FakeStdio, frameLspMessage } from "./fake-stdio.js";
+
+export { makeLspTools } from "./tools.js";

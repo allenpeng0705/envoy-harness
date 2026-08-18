@@ -217,6 +217,7 @@ export {
   StaticLspManager,
   StdioLspClient,
   frameLspMessage,
+  makeLspTools,
   type LspClient,
   type LspClientMap,
   type LspDiagnostic,

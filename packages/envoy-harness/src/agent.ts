@@ -47,6 +47,8 @@ import type { Session } from "./session.js";
 import type { ContentBlock, ToolRegistry } from "./tools/index.js";
 import type { AskHandler, AskRequest, SandboxPolicy } from "./types.js";
 import { CostTracker } from "./cost.js";
+import type { LspManager } from "./lsp/index.js";
+import { makeLspTools } from "./lsp/tools.js";
 
 /** Default max iterations before the agent throws. */
 export const DEFAULT_MAX_ITERATIONS = 50;
@@ -94,6 +96,19 @@ export interface AgentOptions {
    * blocked with "no ask handler configured").
    */
   askHandler?: AskHandler;
+  /**
+   * F9.2: LSP manager. When provided, the 4 LSP tools
+   * (`lsp_definition`, `lsp_references`, `lsp_hover`,
+   * `lsp_diagnostics`) are auto-registered with the
+   * tool registry. No manager → no LSP tools (the
+   * model's tool list doesn't mention LSP at all).
+   *
+   * **Lifecycle:** the agent does NOT close the
+   * manager. The host (Tauri, the CLI) owns the
+   * `LspManager`'s lifecycle; the agent borrows it for
+   * the duration of a run.
+   */
+  lspManager?: LspManager;
 }
 
 /** What `Agent.run()` returns. */
@@ -161,6 +176,8 @@ export class Agent {
   private maxCostUsd: number | undefined;
   /** F9.1: per-call approval handler. */
   private askHandler: AskHandler | undefined;
+  /** F9.2: LSP manager (when provided, the 4 LSP tools are registered). */
+  private lspManager: LspManager | undefined;
 
   constructor(options: AgentOptions) {
     this.model = options.model;
@@ -171,6 +188,15 @@ export class Agent {
     this.maxIterations = options.maxIterations ?? DEFAULT_MAX_ITERATIONS;
     this.maxCostUsd = options.maxCostUsd;
     this.askHandler = options.askHandler;
+    this.lspManager = options.lspManager;
+    // F9.2: register the 4 LSP tools when the host provides
+    // a manager. We do this AFTER the constructor sets
+    // `this.tools` so the registry is available.
+    if (this.lspManager) {
+      for (const tool of makeLspTools(this.lspManager)) {
+        this.tools.register(tool);
+      }
+    }
     if (options.abortSignal) {
       // Wrap caller-provided signal so we can also fire on
       // internal errors without leaking listeners.
