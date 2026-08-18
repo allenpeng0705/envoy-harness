@@ -8,9 +8,9 @@
 > and *why*. This file says *what shipped*, *where it lives*,
 > and *what's still open*.
 >
-> **Status as of last commit:** (next commit, F8 done) on `phase-1/types`.
-> Total: 540 tests, 28 test files, 39 source files, ~17k lines (monorepo: 2 packages).
-> Phase 3 fully complete (F6 done). F7 (real LLM adapters + cost tracking) done. F8 (`envoy-harness-adapter`, Package 3 — MAP integration) done. **Phase 2 milestone per design §22 is "F8 done" — Phase 2 fully complete**. Future chunks are Phase 4 (LSP, team, cron, trace UI, per-call approval, cross-agent verification).
+> **Status as of last commit:** (next commit, F9.1 done) on `phase-1/types`.
+> Total: 564 tests, 28 test files, 40 source files, ~17k lines (monorepo: 2 packages).
+> Phase 3 fully complete (F6 done). Phase 2 fully complete (F7 + F8 done, F8 polish done). **Phase 4 in progress (F9.1 — per-call approval done).** F9.2-F9.5 pending (LSP, team+cron, --json trace mode, cross-verify).
 
 ---
 
@@ -848,6 +848,91 @@ total across the monorepo**.
    local verifier rules (F1.4d) should be wired in
    F8.6+ (a follow-up chunk).
 
+### F9.1 — Per-call approval callback (Penguin style)
+**Phase 4 first sub-chunk.** Per-call approval is the
+smallest, most user-facing Phase 4 feature.
+
+**The flow:**
+1. Tool call comes in (e.g. `bash("rm -rf /")`).
+2. `firePreToolUse` returns `HookDecision` with a new
+   `kind: "ask"` variant.
+3. The agent loop sees the `ask` decision and pauses.
+4. The loop calls `AgentOptions.askHandler({ tool,
+   args, question, options, signal })` and awaits
+   the host's response.
+5. The host returns `AskDecision`:
+   - `allow` → tool runs as-is.
+   - `deny` → tool result is `"denied by user: <reason>"`
+     with `isError: true`.
+   - `modify` → tool runs with the modified args
+     (re-validated against the tool's zod schema).
+6. The agent resumes; the transcript records the ask
+   + decision for audit.
+
+**Type changes (additive):**
+- `HookDecision` gains a `{ kind: "ask", question,
+  options? }` variant.
+- New `AskDecision` union (`allow | deny | modify`).
+- New `AskRequest` interface.
+- New `AskHandler` type.
+
+**Agent integration:** `AgentOptions.askHandler?: AskHandler`.
+`executeToolCall` handles `ask`: calls the handler, on
+`deny` appends a "denied by user: <reason>" tool
+result, on `modify` replaces the call args and
+re-validates against the tool's zod schema, on
+`allow` falls through to the tool runner. No handler
+configured → defaults to `deny` (safe default — the
+tool is blocked with "no ask handler configured").
+
+**Hook registry fix:** the `fire()` function's
+decision handling only knew about `block` / `modify` /
+`add-context`. The new `ask` decision silently fell
+through to `continue` (the fire-time default). Tests
+caught this — the handler was never called because
+the registry kept returning `continue`. Fixed by
+adding explicit `ask` handling: the last `ask` wins
+(if no `block` came first); `ask` is only valid for
+`PreToolUse` events.
+
+**CLI integration (B.4):**
+- `RunOptions.askHandler?: AskHandler` — forward to agent.
+- `defaultAskHandler`: built-in fallback that writes a
+  one-line "ask" record to stderr and returns `deny`.
+  Safe in headless contexts (no UI). Production hosts
+  (Tauri, web) inject a real UI handler via `RunOptions`.
+- Re-exported from the package's public API.
+
+**Tests: 10 new in `test/per-call-approval.test.ts`.**
+- Handler called when hook returns `ask`.
+- `allow` / `deny` / `modify` paths.
+- No handler → defaults to deny.
+- `AskRequest` carries tool, args, question, options, signal.
+- Transcript shows "denied by user: <reason>" on deny.
+- Modified args that fail zod → "invalid arguments".
+- Backward compat: `continue` / `block` unchanged.
+
+**Self-review fix caught by tests:** the registry's
+`fire()` didn't know about the new `ask` decision.
+The handler was never called because the registry
+kept returning `continue`. **This is exactly the
+kind of bug a hand-written handler / registry has
+when a new decision variant lands** — the
+type-checker doesn't catch it (the existing code
+just doesn't match), and a unit test of the new
+feature doesn't see it. **The full-pipeline test
+(agent → registry → handler) caught it.** This is
+why the integration tests matter.
+
+**Total: 564 tests across 28 files (498 harness +
+66 adapter).** The F8 known limitations are now
+all resolved (signResult is real Ed25519; verify()
+is the local verifier; only the link: dep on
+EnvoyMesh remains as a v0 cross-repo limitation).
+
+**Next: F9.2 (LSP) or F9.4 (--json trace mode).**
+The user picks.
+
 ---
 
 ## 4. Architectural invariants (what we hold)
@@ -1608,7 +1693,7 @@ each is a separate F9.x sub-chunk.
 
 | ID | Scope | Source | Status |
 |----|-------|--------|--------|
-| **F9.1** | Per-call approval callback (Penguin style). When the model tries a sensitive action (e.g. bash with workspace-write), pause the agent loop and call a host-provided `onApprovalRequest(request)` callback. The callback returns a decision (allow / deny / modify). The agent resumes with the decision. The host decides UX (Tauri prompt, headless log, etc.). | design §10.4 (Penguin per-call approval sketch), §8.1 hook events | ⏳ next |
+| **F9.1** | Per-call approval callback (Penguin style). When the model tries a sensitive action (e.g. bash with workspace-write), pause the agent loop and call a host-provided `askHandler` callback. The callback returns a decision (allow / deny / modify). The agent resumes with the decision. The host decides UX (Tauri prompt, headless log, etc.). | design §10.4 (Penguin per-call approval sketch), §8.1 hook events | ✅ done |
 | **F9.2** | LSP client (parity with claw-code lane 8). `LspClient` class that wraps the LSP protocol over stdio. Auto-start language servers for projects the harness is reading/writing. Provides `definition`, `references`, `hover`, `diagnostics` to the agent as tools. | claw-code parity lane 8 | ⏳ pending |
 | **F9.3** | Team + cron (parity with claw-code lane 6). Multi-agent team definition (a team is a graph of agents + roles + delegation rules). Cron triggers (a team runs on a schedule). Saved as TOML config (`06-team-cron.toml`). v0: read the TOML, run the team in-process; no actual cron daemon. | claw-code parity lane 6, design §25 (parity dir) | ⏳ pending |
 | **F9.4** | Trace observability UI. The bin script gains `--json` mode (already accepted, currently ignored) that streams every agent decision + hook fire + tool call + verifier verdict as JSON Lines to stdout. A separate viewer (out-of-scope for this repo) renders the stream. v0: just the JSON Lines output; the viewer is a downstream concern. | design §19 (CLI), existing `--json` arg | ⏳ pending |
@@ -2102,3 +2187,35 @@ scoreboard opt-in (off by default)." — 3 of 4 done
   chunks are Phase 4 (LSP, team, cron, trace UI,
   per-call approval, cross-agent verification); no
   more in Phase 2.
+- **2026-08-18 (F8 polish + F9.1)**: A (F8 polish) +
+  C (plan Phase 4) + B (F9.1 per-call approval) +
+  D (deferred to next session). A: real Ed25519 via
+  `defaultSignResult` (F8.4+) + the local verifier
+  rules wired into `verify()` (F8.6+). C: §6.5
+  added with F9.1-F9.5 sub-chunk breakdown. B: F9.1
+  — per-call approval callback (Penguin style).
+  New `ask` HookDecision variant + AskDecision /
+  AskRequest / AskHandler types. `AgentOptions.askHandler`
+  — handler returns allow/deny/modify; on `modify`
+  the args are re-validated against the tool's zod
+  schema; no handler → defaults to deny (safe). CLI
+  fallback `defaultAskHandler` writes a one-line
+  "ask" record to stderr + deny. **Self-review fix
+  caught by tests:** the hook registry's `fire()`
+  function only handled `block`/`modify`/`add-context`,
+  so the new `ask` decision silently fell through
+  to `continue` — the handler was never called.
+  Fixed by adding explicit `ask` handling in fire().
+  10 new tests in `test/per-call-approval.test.ts`.
+  Total: 564 tests across 28 files (498 harness +
+  66 adapter). F8 known limitations are now fully
+  resolved (signResult is real Ed25519; verify() is
+  the local verifier); only the link: dep on the
+  EnvoyMesh sibling monorepo remains as a v0
+  cross-repo limitation. Updated §2 (status),
+  §3 (F9.1 done work), §6.5 (F9.1 ✅), §7 (Phase 4
+  in progress), §10 (this entry). Next: F9.2
+  (LSP) or F9.4 (--json trace mode), user's pick.
+  D: wiring the adapter into EnvoyMesh's
+  `runtime-registry` is deferred to the next
+  session.
