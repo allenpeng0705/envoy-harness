@@ -8,7 +8,7 @@
 > and *why*. This file says *what shipped*, *where it lives*,
 > and *what's still open*.
 >
-> **Status as of last commit:** (next commit, F7.2) on `phase-1/types`.
+> **Status as of last commit:** `7c69aa0` on `phase-1/types`.
 > Total: 406 tests, 21 test files, 32 source files, ~13k lines.
 > Phase 3 fully complete (F6 done). Phase 2 in progress (F7.1 + F7.2 done; F7.3 next).
 
