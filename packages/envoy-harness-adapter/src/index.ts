@@ -65,3 +65,9 @@ export {
   defaultSignResult,
   defaultSignResultFromKeyPair,
 } from "./signing.js";
+
+// F8.6+ — wire the local verifier rules.
+export {
+  runLocalVerifier,
+  runLocalVerifierOnLocal,
+} from "./verify.js";

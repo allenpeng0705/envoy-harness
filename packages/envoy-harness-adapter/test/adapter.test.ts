@@ -339,10 +339,10 @@ describe("EnvoyHarnessAdapter.execute — cancellation", () => {
 });
 
 // ---------------------------------------------------------------------------
-// verify
+// verify (F8.6+: wires the local verifier rules)
 // ---------------------------------------------------------------------------
 
-describe("EnvoyHarnessAdapter.verify (first-cut)", () => {
+describe("EnvoyHarnessAdapter.verify (local verifier rules)", () => {
   function adapter() {
     return new EnvoyHarnessAdapter({
       buildAgent: buildAgentWith(scriptedModel([])),
@@ -366,36 +366,36 @@ describe("EnvoyHarnessAdapter.verify (first-cut)", () => {
     return fakeSigner(unsigned);
   }
 
-  it("passes on a non-empty, non-echo result", async () => {
+  it("returns the 6 default-rule verdicts for a well-formed result", async () => {
     const v = await adapter().verify({
-      result: signedResultWith("a useful response"),
+      result: signedResultWith("a useful response that addresses the task"),
       objective: "do the thing",
     });
-    expect(v).toHaveLength(1);
-    expect(v[0]?.kind).toBe("pass");
+    // The local verifier runs 6 rules; some produce
+    // verdicts, some return null. The non-empty rule
+    // passes; the keyword-overlap rule may pass; etc.
+    // The point is: it's a list of verdicts, not a
+    // single "pass".
+    expect(Array.isArray(v)).toBe(true);
+    // At least one verdict should be a pass.
+    const passes = v.filter((x) => x.kind === "pass");
+    expect(passes.length).toBeGreaterThan(0);
   });
 
-  it("fails when the result has no text content", async () => {
+  it("includes a fail when the result has no text content", async () => {
     const v = await adapter().verify({
       result: signedResultWith(""),
       objective: "do the thing",
     });
-    expect(v).toHaveLength(1);
-    expect(v[0]?.kind).toBe("fail");
-    if (v[0]?.kind === "fail") {
-      expect(v[0].rollback).toBe(true);
-    }
-  });
-
-  it("fails when the result merely echoes the objective", async () => {
-    const v = await adapter().verify({
-      result: signedResultWith("do the thing"),
-      objective: "do the thing",
-    });
-    expect(v).toHaveLength(1);
-    expect(v[0]?.kind).toBe("fail");
-    if (v[0]?.kind === "fail") {
-      expect(v[0].reason).toMatch(/echoes/);
+    // The non-empty-content rule fires fail.
+    const fails = v.filter((x) => x.kind === "fail");
+    expect(fails.length).toBeGreaterThan(0);
+    const nonEmptyFail = fails.find(
+      (x) => x.kind === "fail" && x.reason.toLowerCase().includes("empty"),
+    );
+    expect(nonEmptyFail).toBeDefined();
+    if (nonEmptyFail?.kind === "fail") {
+      expect(nonEmptyFail.rollback).toBe(true);
     }
   });
 });

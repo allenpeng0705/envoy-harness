@@ -95,9 +95,13 @@ describe("defaultSignResultFromKeyPair", () => {
   it("accepts a key pair object and produces a working closure", () => {
     const key = generateEd25519KeyPair();
     const sign = defaultSignResultFromKeyPair(key);
-    const signed = sign(makeUnsigned());
+    // Capture the unsigned result once — makeUnsigned()
+    // generates a fresh `completedAt` on each call, so
+    // we can't re-derive when verifying.
+    const unsigned = makeUnsigned();
+    const signed = sign(unsigned);
     expect(signed.signature).toBeTruthy();
-    expect(verifyCanonicalPayload(makeUnsigned(), signed.signature, key.publicKeyPem)).toBe(true);
+    expect(verifyCanonicalPayload(unsigned, signed.signature, key.publicKeyPem)).toBe(true);
   });
 });
 

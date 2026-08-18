@@ -1493,8 +1493,8 @@ F8 done-work entry.
 
 | ID | Scope | Files | Status |
 |----|-------|-------|--------|
-| **F8.4+** | `defaultSignResult` helper that wraps `@envoymesh/identity`'s `signCanonicalPayload`. The adapter still takes `signResult` as a DI closure (no behavior change for callers), but the default closure does real Ed25519. Tests use a fake; production uses the real signer. | `src/signing.ts`, `test/signing.test.ts` | ⏳ next |
-| **F8.6+** | Wire the local verifier rules to the adapter's `verify()`. Currently a first-cut deterministic placeholder. Map wire `SignedAgentResult` → local `AgentResult` shape (extract `raw` audit, decode the structured tool-call/result blocks), then run `runVerifierRules` from `@envoymesh/envoy-harness`. Return the verdicts. | `src/verify.ts`, `test/verify.test.ts` | ⏳ pending |
+| **F8.4+** | `defaultSignResult` helper that wraps `@envoymesh/identity`'s `signCanonicalPayload`. The adapter still takes `signResult` as a DI closure (no behavior change for callers), but the default closure does real Ed25519. Tests use a fake; production uses the real signer. | `src/signing.ts`, `test/signing.test.ts` | ✅ done |
+| **F8.6+** | Wire the local verifier rules to the adapter's `verify()`. Map wire `SignedAgentResult` → local `AgentResult` shape (decode structured tool-call/result blocks; synthesize the message list; default the sandbox policy to safe), then run `runVerifierRules` from `@envoymesh/envoy-harness`. Return the verdicts. | `src/verify.ts`, `test/verify.test.ts` | ✅ done |
 
 **Why these are F8 polish (not separate F-chunks):** the
 adapter already has the seams — `signResult` is a DI

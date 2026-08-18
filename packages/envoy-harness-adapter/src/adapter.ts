@@ -76,6 +76,7 @@ import {
 
 import { ENVOY_HARNESS_SKILLS, ENVOY_HARNESS_VERSION, getToolsForSkill } from "./skills.js";
 import { localToWireResult } from "./translation.js";
+import { runLocalVerifier } from "./verify.js";
 
 // ---------------------------------------------------------------------------
 // Options
@@ -221,34 +222,21 @@ export class EnvoyHarnessAdapter implements AgentAdapter {
   }
 
   /**
-   * Runtime-specific verifier. F8.6 wires the local
-   * verifier rules; v0 of this method returns a
-   * first-cut deterministic check (non-empty + non-echo).
+   * Runtime-specific verifier. Wires the local verifier
+   * rules (F1.4d) to the wire `SignedAgentResult`:
+   * decodes the content blocks (text + structured tool
+   * calls/results) back to the local shape, runs the
+   * 6 default rules, returns the verdicts.
+   *
+   * **Sandbox policy:** the wire doesn't carry the
+   * worker's effective sandbox; `runLocalVerifier`
+   * defaults to a safe `read-only` policy (the
+   * `sandboxRespectedRule` is a no-op against that).
+   * The full lossless local result is in
+   * `SignedAgentResult.raw` for audit.
    */
   async verify(input: VerifyInput): Promise<Verdict[]> {
-    const text = firstTextContent(input.result.content);
-    if (!text) {
-      return [
-        { kind: "fail", reason: "result contains no text content", rollback: true },
-      ];
-    }
-    if (text === input.objective.trim()) {
-      return [
-        {
-          kind: "fail",
-          reason: "result merely echoes the objective verbatim",
-          rollback: true,
-        },
-      ];
-    }
-    return [
-      {
-        kind: "pass",
-        score: 0.85,
-        confidence: "medium",
-        notes: "non-empty, non-echo result (first-cut verifier)",
-      },
-    ];
+    return runLocalVerifier(input);
   }
 }
 
@@ -308,16 +296,6 @@ function describeArtifact(named: { key: string; artifact: unknown }): string {
     }
   }
   return "unknown";
-}
-
-function firstTextContent(content: ReadonlyArray<{ kind: string; text?: string }>): string | undefined {
-  for (const block of content) {
-    if (block.kind === "text" && typeof block.text === "string") {
-      const trimmed = block.text.trim();
-      if (trimmed.length > 0) return trimmed;
-    }
-  }
-  return undefined;
 }
 
 // ---------------------------------------------------------------------------
