@@ -26,3 +26,5 @@ export type {
 } from "./types.js";
 
 export { parseTeamToml, TomlParseError } from "./toml.js";
+
+export { Team, type TeamOptions } from "./runner.js";

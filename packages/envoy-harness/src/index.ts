@@ -249,10 +249,12 @@ export {
 export {
   TomlParseError,
   parseTeamToml,
+  Team,
   type AgentRunResult,
   type AgentSpec,
   type ScheduleSpec,
   type TeamConfig,
+  type TeamOptions,
   type TeamResult,
 } from "./team/index.js";
 
