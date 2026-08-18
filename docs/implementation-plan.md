@@ -841,6 +841,121 @@ export class FetchHttpClient implements HttpClient {
 In tests, we use a `FakeHttpClient` that records requests
 and returns canned responses — no real network.
 
+**OpenAIAdapter (F7.2):**
+
+```ts
+// src/llm/openai.ts
+export class OpenAIAdapter implements ModelAdapter {
+  async complete(input: CompleteInput): Promise<ModelResponse> {
+    const body = {
+      model: this.model,
+      messages: messagesToOpenAI(input.messages),  // local → OpenAI
+      ...(input.tools.length > 0 ? { tools: toolsToOpenAI(input.tools) } : {}),
+      ...(input.temperature !== undefined ? { temperature: input.temperature } : {}),
+      ...(input.maxTokens !== undefined ? { max_tokens: input.maxTokens } : {}),
+    };
+    const resp = await this.http.request({
+      method: "POST",
+      url: `${this.baseUrl}/chat/completions`,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify(body),
+    });
+    return parseChatResponse(JSON.parse(resp.body));
+  }
+}
+```
+
+**AnthropicAdapter (F7.3):** meaningfully different wire
+format. Key differences from OpenAI:
+
+| Aspect | OpenAI | Anthropic |
+|---|---|---|
+| Endpoint | `POST /v1/chat/completions` | `POST /v1/messages` |
+| Auth | `Authorization: Bearer <key>` | `x-api-key: <key>` + `anthropic-version: 2023-06-01` |
+| System prompt | in messages, `role: "system"` | top-level `system` field |
+| Message roles | `system / user / assistant / tool` | `user / assistant` only; tool results are `role: "user"` with `[{ type: "tool_result" }]` |
+| Role alternation | any | strict (user ↔ assistant) |
+| Tool shape | `{ type: "function", function: { name, description, parameters } }` | `{ name, description, input_schema }` (flat, no `function` wrapper) |
+| Tool call in response | `message.tool_calls: [...]` | `content: [{ type: "tool_use", id, name, input }]` (mixed with text in one array) |
+| Stop reason | `stop / tool_calls / length / content_filter / function_call` | `end_turn / max_tokens / stop_sequence / tool_use` (mostly 1:1) |
+| Usage field names | `prompt_tokens / completion_tokens` | `input_tokens / output_tokens` (matches our `ModelResponse.usage`) |
+
+```ts
+// src/llm/anthropic.ts (planned)
+export class AnthropicAdapter implements ModelAdapter {
+  async complete(input: CompleteInput): Promise<ModelResponse> {
+    const { system, messages } = splitSystemAndMessages(input.messages);
+    const body = {
+      model: this.model,
+      max_tokens: input.maxTokens ?? 1024,  // Anthropic REQUIRES max_tokens
+      ...(system ? { system } : {}),
+      messages: messagesToAnthropic(messages),
+      ...(input.tools.length > 0 ? { tools: toolsToAnthropic(input.tools) } : {}),
+      ...(input.temperature !== undefined ? { temperature: input.temperature } : {}),
+    };
+    const resp = await this.http.request({
+      method: "POST",
+      url: `${this.baseUrl}/v1/messages`,
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": this.apiKey,
+        "anthropic-version": ANTHROPIC_VERSION,
+      },
+      body: JSON.stringify(body),
+    });
+    return parseMessagesResponse(JSON.parse(resp.body));
+  }
+}
+```
+
+**Helpers (exported for tests):**
+- `splitSystemAndMessages(messages)` — pulls the first
+  `role: "system"` block(s) out, concatenates their text,
+  returns `{ system, messages }`. If there are no system
+  messages, `system` is `""` (we only emit the `system`
+  field when non-empty).
+- `messagesToAnthropic(messages)` — converts our
+  `Message[]` to Anthropic's wire format. Tool results
+  become `role: "user"` with `content: [{ type:
+  "tool_result", tool_use_id, content }]`. Empty content
+  arrays are guarded against.
+- `toolsToAnthropic(tools)` — flat `{ name, description,
+  input_schema }`, no `function` wrapper. Reuses
+  `zodToJsonSchema` from `http.ts`.
+- `parseMessagesResponse(parsed)` — iterates the response
+  `content` array, emits `text` and `tool_use` blocks
+  directly. Tool-use args come in as `input` (already an
+  object, not a JSON string). `stop_reason` is
+  pass-through except `tool_use` → `tool_use` (already
+  matches our internal enum). `usage` maps
+  `input_tokens` / `output_tokens` directly.
+- `parseError` — formats `error.message` from the JSON
+  body, falls back to a 200-char body slice for non-JSON.
+
+**Hard requirements:**
+- `max_tokens` is **required** by Anthropic. If the
+  caller doesn't pass one, default to `1024` (Anthropic's
+  recommended default; the harness's caller can override).
+- `anthropic-version` is **required** by Anthropic. Use
+  `2023-06-01` (the current stable version).
+- Empty `content` arrays are invalid. If an assistant
+  message has no text and no tool calls, emit a single
+  placeholder text block.
+
+**Tests:** ~40 in `test/llm-anthropic.test.ts` covering
+request shape (URL, headers, body w/ and w/o system
+prompt, role alternation, tool format, max_tokens
+defaulting), response parsing (text only, tool-use only,
+mixed text+tool-use, usage mapping, all four stop
+reasons, no-content, no-usage), error handling (4xx
+JSON, 5xx JSON, non-JSON body, missing-max_tokens
+guard), and the split/format helpers (system
+extraction, tool result as user message, empty-content
+guard).
+
 **Why this is the biggest remaining chunk:** the harness
 is demoable but not usable without a real LLM. After F7,
 the bin script's `--model` + `--provider` flags light up
@@ -854,9 +969,8 @@ CLI cap (currently a no-op stub).
 - Retry / backoff. v0 fails fast on a 5xx; the caller can
   retry at a higher level. Per-design the loop is one-shot
   per prompt.
-- Provider-specific tool-call serialization. v0 emits
-  OpenAI-format tool calls; Anthropic's tool format is
-  different and needs separate translation (F7.3).
+- Vision / image inputs. v0 only translates text and
+  tool blocks. Image content is a future chunk.
 
 ### 6.3 F8 — Phase 2: `envoy-harness-adapter` (Package 3)
 **Status:** pending. The MAP integration.
