@@ -77,3 +77,31 @@ export {
   runShellHandler,
   type HookMiddleware,
 } from "./hooks/index.js";
+
+// Re-export the tool system (§10 of the design doc)
+export {
+  DuplicateToolError,
+  ToolRegistry,
+  type ContentBlock,
+  type Message,
+  type Role,
+  type Tool,
+  type ToolCall,
+  type ToolContext,
+  type ToolResult,
+} from "./tools/index.js";
+
+// Re-export the model adapter (§3.4 of the design doc)
+export type {
+  CompleteInput,
+  ModelAdapter,
+  ModelResponse,
+} from "./model.js";
+
+// Re-export the session (§3.2 of the design doc)
+export {
+  InMemorySession,
+  newSessionId,
+  type Session,
+  type SessionMetadata,
+} from "./session.js";
