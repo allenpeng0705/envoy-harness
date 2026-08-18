@@ -8,9 +8,9 @@
 > and *why*. This file says *what shipped*, *where it lives*,
 > and *what's still open*.
 >
-> **Status as of last commit:** `fe0c5df` on `phase-1/types`.
-> Total: 330 tests, 19 test files, 29 source files, ~12k lines.
-> Phase 3 fully complete (F6 done).
+> **Status as of last commit:** (next commit, F7.2) on `phase-1/types`.
+> Total: 406 tests, 21 test files, 32 source files, ~13k lines.
+> Phase 3 fully complete (F6 done). Phase 2 in progress (F7.1 + F7.2 done; F7.3 next).
 
 ---
 
@@ -479,6 +479,116 @@ The result includes a `federated` field with adopted /
 rejected / filtered counts so callers can see what
 happened.
 
+### F7.1 — Cost tracking + `ModelResponse.usage` (`90a158f`)
+**§14, F7.1.**
+
+`src/cost.ts` (new) — the per-model USD cost story:
+- `TokenPrice` (input/output per 1M tokens, USD).
+- `DEFAULT_PRICING` table — OpenAI gpt-4o / 4o-mini / 4.1 /
+  4.1-mini / 5, Anthropic sonnet-4-6 / haiku-4 / opus-4,
+  DeepSeek chat / reasoner, plus `local` ($0).
+- `computeCost(usage, model)` — pure math; rounds sub-cent
+  to 6 decimal places.
+- `CostTracker` — accumulates `addUsage(usage, modelOverride?)`,
+  `total()` returns cost + per-model breakdown, `reset()` /
+  `setModel(model)` for control. Per-call `modelOverride`
+  enables multi-model attribution even when the tracker was
+  constructed with a different default.
+
+`src/model.ts` — added `usage?: { inputTokens, outputTokens }`
+and `model?: string` to `ModelResponse`. The model id
+attributes the response to a pricing row even when the
+tracker was constructed with a different default model.
+
+`src/agent.ts` — `AgentResult.metrics` is now populated
+from a `CostTracker`. The agent loop calls
+`tracker.addUsage(usage, model)` on every `ModelResponse`
+that has `usage`.
+
+`src/verifier/rules/index.ts` — wired the
+`costReasonableForWorkRule`. Heuristic:
+- `cost === 0` → `pass` (no model reported usage).
+- `cost <= $1` (default budget) → `pass` with
+  `score = cost / budget`.
+- `cost > $1` → `fail` with `rollback: true` and
+  reason "cost $X exceeds budget $Y".
+
+Tests: 18 in `test/cost.test.ts` covering `computeCost`
+math, `CostTracker` accumulation + per-model attribution,
+and the rule's three branches.
+
+### F7.2 — HTTP client abstraction + OpenAIAdapter
+**§14, F7.2.**
+
+`src/llm/http.ts` (new) — the seam where adapters make
+HTTP calls:
+- `HttpRequest` / `HttpResponse` / `HttpClient` interface.
+- `FetchHttpClient` (production) — uses Node 22+ built-in
+  `fetch`, no external deps.
+- `FakeHttpClient` (tests) — records requests; FIFO queue
+  with optional matcher predicates; `setDefault` fallback;
+  throws when nothing queued and no default set.
+- `zodToJsonSchema` — hand-rolled zod → JSON Schema
+  converter. v0 covers `ZodString` / `ZodNumber` /
+  `ZodBoolean` / `ZodOptional` / `ZodDefault` / `ZodNullable`
+  / `ZodObject` / `ZodArray` / `ZodEnum`. Other zod types
+  fall back to `{}` (additive extension point).
+- `toolsToOpenAI` / `messagesToOpenAI` — wire format
+  translation. Assistant text + tool calls are merged into
+  one message; tool results emit one `role: "tool"` message
+  per block; non-string tool result content is JSON-encoded.
+
+`src/llm/openai.ts` (new) — `OpenAIAdapter implements
+ModelAdapter`:
+- POSTs to `${baseUrl}/chat/completions` (default
+  `https://api.openai.com/v1`).
+- Headers: `Content-Type: application/json`,
+  `Authorization: Bearer ${apiKey}`, optional
+  `OpenAI-Organization`.
+- Body fields: `model`, `messages` (always),
+  `tools` (when non-empty), `temperature` and
+  `max_tokens` (when set).
+- 2xx → parsed `parseChatResponse`; non-2xx → `parseError`
+  thrown.
+- `parseChatResponse` maps `finish_reason`:
+  `stop`/`function_call` → `end_turn`,
+  `tool_calls` → `tool_use`, `length` → `max_tokens`,
+  `content_filter` → `stop_sequence`. Tool-call
+  arguments are JSON-parsed; malformed JSON leaves
+  `args = {}` (zod validation will surface the error).
+- `parseError` formats `error.message` from the JSON
+  body, falls back to a 200-char body slice for
+  non-JSON.
+
+**Self-review fixes** (caught while writing tests):
+1. `zodToJsonSchema` enum was reading `def.value` —
+   zod v3 stores values in `def.values` (array). Fixed.
+2. `zodToJsonSchema` array was reading `def.innerType` —
+   zod v3 stores the element in `def.type`. Fixed.
+3. `OpenAIAdapter` constructor used a lazy `require()`
+   factory that didn't satisfy `HttpClient` (the anonymous
+   class had no `request` method). Dropped the laziness —
+   `http.ts` is already imported for the converters — and
+   now uses `new FetchHttpClient()` directly.
+
+The array + enum bugs would have lurked until a tool used
+`z.array(...)` or `z.enum(...)` (the built-in tools only
+use `z.string()` + `z.optional()`, which happened to work
+by accident). Self-review caught what "compile and pass"
+would have shipped broken.
+
+Tests: 58 in `test/llm-openai.test.ts` covering
+`zodToJsonSchema` (10 shapes), `toolsToOpenAI` (3),
+`messagesToOpenAI` (10 incl. mixed transcript),
+`FakeHttpClient` (6 incl. FIFO, matcher, default, throw),
+`FetchHttpClient` (1, smoke test against a mocked
+`globalThis.fetch`), `OpenAIAdapter` request shape (8),
+`OpenAIAdapter` error handling (3), `parseChatResponse`
+(9 incl. text / tool-call / usage / no-choice / all four
+stop-reason mappings / malformed tool args), `parseError`
+(4 incl. JSON message, non-JSON body, no-error-field,
+long-body truncation), and `is2xx` (2).
+
 ---
 
 ## 4. Architectural invariants (what we hold)
@@ -559,10 +669,14 @@ code (not data) and changes are explicit.
 API. Real model adapters (Phase 2) belong in a separate
 `llm` package.
 
-### 5.7 No real LLM adapter yet
-**Where:** the bin script throws a useful error if no
-model is wired. Production users need to inject one
-(or wait for Package 4 / separate `llm` package).
+### 5.7 Real LLM adapters — partial
+**Where:** `src/llm/` — `OpenAIAdapter` (F7.2) is wired and
+tested end-to-end against `FakeHttpClient`. The bin
+script still needs a provider-dispatch path (F7.5).
+**Anthropic** (F7.3) and **DeepSeek** (F7.4) adapters are
+the next two sub-chunks. Until F7.5 lands, real usage
+requires manually constructing an `OpenAIAdapter` in
+user code.
 
 ### 5.8 `parseArgs` returns a discriminated union
 **Where:** `src/cli/argv.ts` — every caller must narrow on
@@ -606,7 +720,8 @@ that the user prioritized.
 Phase 3 milestone per design §22 is now "4 of 4 done".
 
 ### 6.2 F7 — Phase 2: real LLM adapters + cost tracking (§14)
-**Status:** in progress (started 2026-08-18).
+**Status:** in progress (started 2026-08-18). F7.1 + F7.2
+done; F7.3 next.
 This is the biggest remaining chunk.
 
 **Scope:**
@@ -627,13 +742,13 @@ each model.
 
 **Sub-chunks (in order):**
 
-| ID | Scope | Files |
-|----|-------|-------|
-| **F7.1** | `src/cost.ts` with `TokenPrice`/`CostTracker`/`DEFAULT_PRICING`; `ModelResponse.usage`; `AgentResult.metrics`; `costReasonableForWorkRule` wired. | `src/cost.ts`, `src/model.ts`, `src/agent.ts`, `src/verifier/rules/index.ts`, `test/cost.test.ts` |
-| **F7.2** | `HttpClient` abstraction (`FetchHttpClient` + `FakeHttpClient`); `OpenAIAdapter` translating to OpenAI's chat/completions wire format. | `src/llm/http.ts`, `src/llm/openai.ts`, `test/llm-openai.test.ts` |
-| **F7.3** | `AnthropicAdapter` — different wire format (POST `/v1/messages`, system role separate). | `src/llm/anthropic.ts`, `test/llm-anthropic.test.ts` |
-| **F7.4** | `DeepSeekAdapter` — OpenAI-compatible, different base URL + key env. | `src/llm/deepseek.ts`, `test/llm-deepseek.test.ts` |
-| **F7.5** | `bin/envoy-harness.ts` reads `--provider` and env vars; dispatches to the right adapter. `--max-cost-usd` enforces a cap. | `bin/envoy-harness.ts`, `src/cli/run.ts`, `test/cli-provider-dispatch.test.ts` |
+| ID | Scope | Files | Status |
+|----|-------|-------|--------|
+| **F7.1** | `src/cost.ts` with `TokenPrice`/`CostTracker`/`DEFAULT_PRICING`; `ModelResponse.usage`; `AgentResult.metrics`; `costReasonableForWorkRule` wired. | `src/cost.ts`, `src/model.ts`, `src/agent.ts`, `src/verifier/rules/index.ts`, `test/cost.test.ts` | ✅ done (`90a158f`) |
+| **F7.2** | `HttpClient` abstraction (`FetchHttpClient` + `FakeHttpClient`); `OpenAIAdapter` translating to OpenAI's chat/completions wire format. | `src/llm/http.ts`, `src/llm/openai.ts`, `test/llm-openai.test.ts` | ✅ done (this commit) |
+| **F7.3** | `AnthropicAdapter` — different wire format (POST `/v1/messages`, system role separate). | `src/llm/anthropic.ts`, `test/llm-anthropic.test.ts` | ⏳ next |
+| **F7.4** | `DeepSeekAdapter` — OpenAI-compatible, different base URL + key env. | `src/llm/deepseek.ts`, `test/llm-deepseek.test.ts` | ⏳ pending |
+| **F7.5** | `bin/envoy-harness.ts` reads `--provider` and env vars; dispatches to the right adapter. `--max-cost-usd` enforces a cap. | `bin/envoy-harness.ts`, `src/cli/run.ts`, `test/cli-provider-dispatch.test.ts` | ⏳ pending |
 
 **Type changes (F7.1):**
 
@@ -847,7 +962,7 @@ useful.
 |-------|-------|-------|--------|
 | 0 | 1 day | Empty package skeleton | ✅ done |
 | 1 | 4 weeks | v0 spine: types, validators, hooks, AGENTS.md, tools, agent loop, CLI, verifier | ✅ done |
-| 2 | 4 weeks | Mesh-native: adapter, manifest broadcast, task submission, reputation book, persistence, real LLM adapters, cost tracking | 🟡 next (F7) |
+| 2 | 4 weeks | Mesh-native: adapter, manifest broadcast, task submission, reputation book, persistence, real LLM adapters, cost tracking | 🟡 in progress (F7.1 + F7.2 done; F7.3 next) |
 | 3 | 3 weeks | Self-evolution: 5-step protocol, federated scoreboard, owner-key-signed entries | ✅ done (5a-5e + F6) |
 | 4 | ongoing | LSP, team, cron, trace UI, per-call approval, cross-agent verification | ⏳ not started |
 
@@ -946,3 +1061,28 @@ scoreboard opt-in (off by default)." — 3 of 4 done
   dispatch in bin). Type changes documented (ModelResponse.usage,
   AgentResult.metrics). Plan in place; implementation to
   follow.
+- **2026-08-18 (F7.1)**: Cost tracking module landed.
+  `src/cost.ts` (TokenPrice, DEFAULT_PRICING, computeCost,
+  CostTracker with per-call modelOverride for multi-model
+  attribution), `ModelResponse.usage` + `model` plumbed
+  through `Agent`, `AgentResult.metrics` populated,
+  `costReasonableForWorkRule` wired (pass under $1 budget,
+  fail over, abstain at zero). 18 new tests. Plan updates
+  deferred to this F7.2 commit.
+- **2026-08-18 (F7.2)**: HTTP client abstraction
+  (`FetchHttpClient` + `FakeHttpClient`) and `OpenAIAdapter`
+  landed in `src/llm/`. 58 new tests. **Self-review
+  caught three real bugs in the previously-unreviewed
+  source files**: (1) `zodToJsonSchema` enum was reading
+  `def.value` (zod v3 stores values in `def.values`),
+  (2) `zodToJsonSchema` array was reading `def.innerType`
+  (zod v3 stores element in `def.type`), (3) `OpenAIAdapter`
+  constructor used a lazy `require()` factory that didn't
+  satisfy `HttpClient` (the anonymous class had no `request`
+  method) — replaced with `new FetchHttpClient()`. The
+  array + enum bugs would have lurked until a tool used
+  `z.array(...)` or `z.enum(...)`. Updated §2 (status +
+  test count), §3 (done work for F7.1 + F7.2), §5 (risk
+  5.7 reframed: OpenAI done, Anthropic + DeepSeek next),
+  §6.2 (F7.1 + F7.2 marked ✅), §7 (Phase 2 status), §10
+  (this entry). Next: F7.3 (Anthropic).
