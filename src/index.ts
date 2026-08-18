@@ -50,3 +50,17 @@ export type {
   VerdictEntry,
   VerifierSource,
 } from "./types.js";
+
+// Re-export the bash safety composition (§6.2 of the design doc)
+export {
+  ALL_VALIDATORS,
+  commandSemanticsValidation,
+  destructiveCommandWarning,
+  modeValidation,
+  pathValidation,
+  readOnlyValidation,
+  sedValidation,
+  validateBash,
+} from "./permissions/bash/index.js";
+
+export { hasUnbalancedQuotes, containsBackticks } from "./permissions/bash/semantics.js";

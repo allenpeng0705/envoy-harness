@@ -208,6 +208,7 @@ describe("BashValidator (TypeScript-only)", () => {
       command: "ls -la",
       argv: ["ls", "-la"],
       env: { PATH: "/usr/bin" },
+      cwd: "/tmp",
       policy,
     };
     const validator: BashValidator = {

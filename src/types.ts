@@ -148,6 +148,8 @@ export interface BashValidationInput {
   argv: ReadonlyArray<string>;
   /** Environment at the time of the call. */
   env: Readonly<Record<string, string>>;
+  /** Current working directory. Used by `pathValidation` to resolve paths. */
+  cwd: string;
   /** Current sandbox policy. */
   policy: SandboxPolicy;
 }
