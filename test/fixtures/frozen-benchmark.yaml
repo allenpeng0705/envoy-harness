@@ -1,0 +1,40 @@
+# envoy-harness frozen benchmark (test fixture)
+#
+# This file is a reference fixture for tests and demos. It is
+# NOT the production benchmark — production uses an
+# operator-curated set under
+# ~/.envoymesh/agent-state/<peer>/benchmarks/<name>/frozen.yaml.
+#
+# The shape is what every frozen benchmark must follow:
+# a list of `tasks`, each with a stable `id`, an `objective`,
+# and a `stubKind` that the DefaultBenchmarkRunner uses to
+# build an AgentResult.
+#
+# `expectedVerdict` is the test's expected combined verdict.
+# - absent: pass = combined.kind === 'pass'
+# - 'fail': pass = combined.kind === 'fail' (negative test)
+# - etc.
+#
+# Adding tasks: keep the IDs stable across revisions; the
+# scoreboard's passRateAfter is comparable only when the
+# task set is the same.
+name: envoy-harness-smoke
+tasks:
+  - id: smoke-deploy
+    objective: deploy the database migration
+    stubKind: ok
+
+  - id: smoke-off-topic
+    objective: deploy the database migration
+    stubKind: off-topic
+    expectedVerdict: fail
+
+  - id: smoke-empty
+    objective: do something
+    stubKind: empty
+    expectedVerdict: fail
+
+  - id: smoke-forbidden
+    objective: write a file
+    stubKind: forbidden-path
+    expectedVerdict: fail
