@@ -470,22 +470,69 @@ we add a subcommand, the pattern repeats.
 ## 6. Planned work (the next 3 follow-ups, in order)
 
 ### 6.1 F6 — Federated scoreboard (§13.3)
-**Status:** pending. Phase 3 milestone is "3 of 4"; this is
-the 4th.
+**Status:** in progress (started 2026-08-18).
+Phase 3 milestone is "3 of 4"; this is the 4th.
 
-**Scope:**
-- `FederatedScoreboard` class (`src/scoreboard/federated.ts`).
-- Opt-in flag on the CLI (`envoy self-evolve --federated`).
-- Pull protocol: query bonded peers for their public
-  scoreboard; for each `kept` entry, run the local 5-step
-  protocol as the final gate.
+**Design constraints** (per §13.3):
 - **Pull is opt-in, never push.** A peer never receives
-  rules automatically; the operator must opt in, and the
-  local 5-step protocol is the final gate.
+  rules automatically; the operator must opt in.
+- **Local 5-step protocol is the final gate.** A pulled
+  candidate is only adopted if the local protocol's
+  evaluation says "kept" (strict greater pass rate).
+- **Contamination guard carries over.** A pulled candidate's
+  hypothesis is fed through `buildHypothesisPrompt` only;
+  the scoreboard we read from peers is itself built on the
+  same protocol, but we never see the peer's benchmark or
+  gold answers.
 
-**Tests:** 8-12 tests covering opt-in default, pulled
-candidate validation, kept adoption recording, signature
-verification on the pulled entries.
+**Sub-chunks (will be committed in order):**
+
+| ID | Scope | Files |
+|----|-------|-------|
+| **F6.1** | PeerSource interface + LocalPeerSource stub (no network). Pull protocol: fetch → filter `status === 'kept'` → verify signature. | `src/scoreboard/federated.ts`, `test/federated.test.ts` |
+| **F6.2** | Local 5-step gate: each pulled candidate runs through `SelfEvolve.runOneCycleAgainst(candidate)`. Adopt iff local.kept. | `src/scoreboard/federated.ts` |
+| **F6.3** | `FederatedAdoptionRecord` schema + scoreboard entry on adoption. New `federated-adoptions.yaml` file. | `src/scoreboard/federated.ts`, `src/scoreboard/types.ts` |
+| **F6.4** | CLI flag: `envoy self-evolve --pull` runs federated pull + adoption after the local cycle. | `src/cli/argv.ts`, `src/cli/run.ts` |
+
+**Types to add** (F6.1):
+```ts
+// A peer's public scoreboard (only kept entries; the rest is private).
+interface PeerScoreboard {
+  peerId: string;
+  entries: ReadonlyArray<ScoreboardEntry>;
+}
+
+// Where to fetch peer scoreboards. v0: in-memory stub; Phase 2:
+// libp2p pubsub.
+interface PeerSource {
+  fetchScoreboards(): Promise<ReadonlyArray<PeerScoreboard>>;
+}
+```
+
+**Tests** (F6.1-F6.4): ~12-16 tests covering:
+- `LocalPeerSource` returns an empty list (no network in v0).
+- `FederatedScoreboard.pull({ optIn: false })` is a no-op.
+- `FederatedScoreboard.pull({ optIn: true })` queries the source.
+- Pulled candidates with `status !== 'kept'` are filtered out.
+- Pulled candidates with invalid signature are rejected.
+- Pulled candidates that pass the local 5-step gate are
+  recorded as `federated-adoptions.yaml` entries.
+- Pulled candidates that fail the local 5-step gate are
+  recorded with `kept: false` (audit trail: we tried, we
+  rejected).
+- CLI: `envoy self-evolve --pull` invokes the federated
+  layer after the local cycle.
+
+**Out of scope (deferred):**
+- Actual libp2p / mesh integration. v0 has no network; the
+  `PeerSource` is a stub. Phase 2 (mesh-native) replaces
+  it with a real pubsub subscriber.
+- Cryptographic identity of peers (Ed25519 peer keys). v0
+  trusts whatever the `PeerSource` returns. Phase 2 adds
+  signed peer scoreboards.
+- Push (peers sending rules unsolicited). Per the design,
+  pull-only. The interface supports pull; push would be a
+  new interface.
 
 **Why this is next:** the local 5-step protocol works;
 the federated layer is an additive cross-peer exchange. It
@@ -625,3 +672,7 @@ scoreboard opt-in (off by default)." — 3 of 4 done
   and Phase 3 (5a-5e) complete. 305 tests, 27 source files,
   16 test files. F6 (federated scoreboard) is the next
   planned sub-chunk.
+- **2026-08-18 (F6 plan)**: Expanded §6.1 with F6.1-F6.4
+  sub-chunk breakdown (PeerSource interface, local 5-step
+  gate, federated adoption records, CLI --pull flag). Plan
+  in place; implementation to follow.
