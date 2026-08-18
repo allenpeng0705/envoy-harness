@@ -1885,6 +1885,212 @@ if (preDecision.kind === "ask") {
 
 ---
 
+**F9.2 plan (LSP client + 4 tools):**
+
+**Why F9.2 next (after F9.1):** the agent
+already has read_file + bash + grep, but lacks
+the "navigate code" tools that make code-edit
+agents actually productive (jump to definition,
+find references, hover for type info, surface
+diagnostics). The LSP protocol is the standard
+way to get these; wrapping it as 4 tools gives
+the model real IDE-grade capabilities.
+
+**v0 scope (this commit + a follow-up):**
+- `LspClient` interface — 4 ops: `definition`,
+  `references`, `hover`, `diagnostics`.
+- `NoopLspClient` — returns empty results;
+  default when LSP is disabled.
+- `MockLspClient` — scriptable responses; for
+  tests.
+- `StdioLspClient` — JSON-RPC over stdio; talks
+  to a real language server (e.g.
+  `typescript-language-server`).
+- `LspManager` interface — routes a file path
+  to the right `LspClient` (per language).
+- `StaticLspManager` — pre-configured map of
+  file-extension → `LspClient`.
+- 4 tools: `lsp_definition`, `lsp_references`,
+  `lsp_hover`, `lsp_diagnostics`. Each calls
+  the manager with the file path.
+- `AgentOptions.lspManager?` — when provided,
+  the 4 tools are auto-registered. No manager
+  → no LSP tools (no overhead).
+
+**v0+1 (deferred, follow-up):**
+- Auto-spawn language servers per file
+  extension (e.g. detect `.ts` → spawn
+  `typescript-language-server`).
+- Server lifecycle (start, restart on crash,
+  stop on shutdown).
+- Multi-root workspaces.
+- Document symbols, formatting, code actions
+  (4 listed ops only for v0).
+
+**Why this scope:** the LSP protocol is
+complex; the JSON-RPC + Content-Length framing
++ server-initiated requests + initialize
+handshake is the bulk of the work. By splitting
+"interface + tools" (F9.2) from "auto-spawn
+servers" (F9.2+1), we get the tool surface
+landed and testable with a mock, then the
+production wiring later. The first chunk is
+useful (any host with a pre-configured manager
+can use the tools); the second adds zero-friction
+auto-spawn.
+
+**Type sketch:**
+
+```ts
+// src/lsp/types.ts
+export interface LspLocation {
+  file: string;
+  line: number;
+  column: number;
+  endLine?: number;
+  endColumn?: number;
+}
+
+export interface LspHover {
+  contents: string;
+  file: string;
+  line: number;
+  column: number;
+}
+
+export interface LspDiagnostic {
+  file: string;
+  line: number;
+  column: number;
+  endLine?: number;
+  endColumn?: number;
+  severity: "error" | "warning" | "info" | "hint";
+  message: string;
+  code?: string | number;
+}
+
+export interface LspClient {
+  definition(file: string, line: number, column: number): Promise<LspLocation[]>;
+  references(file: string, line: number, column: number): Promise<LspLocation[]>;
+  hover(file: string, line: number, column: number): Promise<LspHover | null>;
+  diagnostics(file: string): Promise<LspDiagnostic[]>;
+  close(): Promise<void>;
+}
+
+export interface LspManager {
+  /** The LspClient for `file`'s language, or null. */
+  forFile(file: string): LspClient | null;
+  /** Close all clients. */
+  closeAll(): Promise<void>;
+}
+```
+
+**Tool sketch:**
+
+```ts
+// src/lsp/tools.ts
+export function makeLspTools(manager: LspManager): Tool[] {
+  return [
+    {
+      name: "lsp_definition",
+      description: "Find the definition of the symbol at line/column.",
+      parameters: z.object({
+        file: z.string(),
+        line: z.number().int().nonnegative(),
+        column: z.number().int().nonnegative(),
+      }),
+      async execute({ file, line, column }, _ctx) {
+        const client = manager.forFile(file);
+        if (!client) return { content: { error: "no LSP client for file" } };
+        const locs = await client.definition(file, line, column);
+        return { content: { locations: locs } };
+      },
+    },
+    // lsp_references, lsp_hover, lsp_diagnostics: same pattern
+  ];
+}
+```
+
+**Agent integration:**
+
+```ts
+// src/agent.ts — AgentOptions
+interface AgentOptions {
+  // ... existing ...
+  /** F9.2: LSP manager. When provided, the 4 LSP
+   *  tools are auto-registered. */
+  lspManager?: LspManager;
+}
+
+// In Agent constructor (after ToolRegistry setup):
+if (options.lspManager) {
+  for (const tool of makeLspTools(options.lspManager)) {
+    this.tools.register(tool);
+  }
+}
+```
+
+**CLI integration:**
+- `RunOptions.lspManager?: LspManager` — host
+  provides a pre-configured manager.
+- Default: no manager (LSP off; CLI runs as
+  before).
+- v0+1: a `--lsp` flag that boots
+  `typescript-language-server` for `.ts` / `.tsx`
+  files in the cwd. (Out of scope for this
+  chunk.)
+
+**Tests (target: ~15-20):**
+- `NoopLspClient` returns empty arrays / null.
+- `MockLspClient` returns scripted responses.
+- `StaticLspManager` routes by file extension.
+- `StaticLspManager` returns null for unknown
+  extensions.
+- `lsp_definition` tool calls
+  `manager.forFile(file)` then
+  `client.definition(...)`.
+- The 4 tools handle "no client" (return
+  `{ error: "no LSP client for file" }`).
+- `AgentOptions.lspManager` registers all 4
+  tools.
+- `AgentOptions` without `lspManager` doesn't
+  register LSP tools (verify tool list).
+- `LspManager.closeAll()` is called when the
+  agent finishes.
+- `StdioLspClient` round-trips an `initialize`
+  request and a `textDocument/definition`
+  request (uses a fake stdio pair — no real
+  server).
+- `StdioLspClient` parses `Content-Length` headers
+  correctly.
+- `StdioLspClient` handles server-initiated
+  notifications (no-op for v0).
+- `StdioLspClient` rejects requests after
+  `close()`.
+
+**Out of scope for v0:**
+- Real language server auto-spawn (F9.2+1).
+- Document symbols, formatting, code actions.
+- Multi-root workspaces.
+- Server-initiated requests that need a
+  response (we accept them but don't reply in
+  v0; v0+1 adds a `registerHandler` API).
+- Cancellation tokens in flight (we
+  fire-and-await; the `AbortSignal` from the
+  tool context cancels the stdio write).
+
+**Sub-chunk breakdown (planned):**
+1. **F9.2.1** — types + NoopLspClient +
+   MockLspClient + StaticLspManager + tests.
+2. **F9.2.2** — StdioLspClient (real JSON-RPC
+   over stdio) + tests with a fake stdio pair.
+3. **F9.2.3** — 4 tools + AgentOptions
+   integration + agent-level tests.
+4. **F9.2+1** (follow-up) — auto-spawn
+   language servers, real-server test in CI.
+
+---
+
 **Why F9.5 last (cross-agent verification):**
 needs the most cross-cutting work — adapter
 extension, verifier extension, model router
