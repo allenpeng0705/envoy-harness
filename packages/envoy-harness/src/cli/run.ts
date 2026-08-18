@@ -45,15 +45,18 @@ import {
   NullTracer,
   newSessionId,
   SelfEvolve,
+  Team,
   ToolRegistry,
   VERSION,
   DEFAULT_RULES,
   createProviderAdapter,
+  parseTeamToml,
   type AskHandler,
   type ModelAdapter,
   type Session,
   type SelfEvolvePaths,
   type SessionMetadata,
+  type TeamConfig,
   type VerifierRule,
 } from "../index.js";
 import { formatHelp, parseArgs, type ParsedArgs } from "./argv.js";
@@ -135,8 +138,27 @@ export interface SelfEvolveRunResult {
   };
 }
 
-/** Union of the two subcommand results. */
-export type CliRunResult = RunResult | SelfEvolveRunResult;
+/** Result of a successful `team` invocation. */
+export interface TeamRunResult {
+  /** Discriminator for the union. */
+  subcommand: "team";
+  /** The team's name. */
+  teamName: string;
+  /** Per-agent results, in execution order. */
+  agents: ReadonlyArray<{
+    id: string;
+    finalText: string;
+    stopReason: string;
+    durationMs: number;
+  }>;
+  /** "completed" if all agents finished cleanly. */
+  status: "completed" | "failed";
+  /** Error message if `status === "failed"`. */
+  error?: string;
+}
+
+/** Union of the subcommand results. */
+export type CliRunResult = RunResult | SelfEvolveRunResult | TeamRunResult;
 
 /** The process exit code. */
 export type ExitCode = 0 | 1 | 2 | 64 | 65 | 66;
@@ -180,6 +202,9 @@ export async function run(
   // 3. Dispatch on subcommand.
   if (parsed.subcommand === "self-evolve") {
     return runSelfEvolve(parsed, options, stdout, stderr);
+  }
+  if (parsed.subcommand === "team") {
+    return runTeam(parsed, options, stdout, stderr);
   }
   return runAgent(parsed, options, stdout, stderr);
 }
@@ -409,6 +434,104 @@ async function runSelfEvolve(
     rulesetHash: cycleResult.entry.rulesetHash,
     ...(federated !== undefined ? { federated } : {}),
   };
+}
+
+// ---------------------------------------------------------------------------
+// team subcommand (F9.3)
+// ---------------------------------------------------------------------------
+
+async function runTeam(
+  parsed: Extract<ParsedArgs, { subcommand: "team" }>,
+  options: RunOptions,
+  stdout: NodeJS.WritableStream,
+  stderr: NodeJS.WritableStream,
+): Promise<TeamRunResult> {
+  void stderr;
+  // 1. Resolve the model. Same dispatch as the `run`
+  //    subcommand: programmatic injection takes
+  //    precedence; else --provider + env.
+  const model = resolveModelForTeam(parsed, options);
+
+  // 2. Read the TOML config (positional[0]).
+  if (parsed.positional.length === 0) {
+    throw new CliError(
+      "team subcommand requires a TOML config path (e.g. `envoy team team.toml`)",
+      EXIT_USAGE,
+    );
+  }
+  const configPath = parsed.positional[0]!;
+  let config: TeamConfig;
+  try {
+    const toml = await fs.readFile(configPath, "utf8");
+    config = parseTeamToml(toml);
+  } catch (err) {
+    // Check by name (not instanceof) so the bundled
+    // dist's class identity matches. instanceof can
+    // fail when the same class is loaded from a
+    // different module instance.
+    if ((err as Error).name === "TomlParseError") {
+      throw new CliError(
+        `invalid team config at ${configPath}: ${(err as Error).message}`,
+        EXIT_DATAERR,
+      );
+    }
+    throw new CliError(
+      `failed to read team config at ${configPath}: ${(err as Error).message}`,
+      EXIT_DATAERR,
+    );
+  }
+
+  // 3. Build the team and run.
+  const team = new Team({
+    config,
+    model,
+    cwd: parsed.cwd ?? options.cwd ?? process.cwd(),
+    input: parsed.input ?? "",
+  });
+  const result = await team.runOnce();
+
+  // 4. Print the summary.
+  if (!parsed.quiet) {
+    const lines = [
+      `envoy team: ${result.teamName}`,
+      `  status: ${result.status}`,
+    ];
+    for (const a of result.agents) {
+      lines.push(`  [${a.id}] (${a.durationMs}ms): ${a.finalText.split("\n")[0]?.slice(0, 100) ?? ""}`);
+    }
+    if (result.error) lines.push(`  error: ${result.error}`);
+    lines.push("");
+    stdout.write(lines.join("\n"));
+  }
+
+  return {
+    subcommand: "team",
+    teamName: result.teamName,
+    agents: result.agents,
+    status: result.status,
+    ...(result.error !== undefined ? { error: result.error } : {}),
+  };
+}
+
+function resolveModelForTeam(
+  parsed: Extract<ParsedArgs, { subcommand: "team" }>,
+  options: RunOptions,
+): ModelAdapter {
+  if (options.model) return options.model;
+  if (!parsed.provider) {
+    throw new CliError(
+      "no model configured: pass one via RunOptions.model, or use --provider <openai|anthropic|deepseek|ollama> with the matching *_API_KEY env var",
+      EXIT_USAGE,
+    );
+  }
+  try {
+    return createProviderAdapter({
+      provider: parsed.provider,
+      ...(parsed.model !== undefined ? { model: parsed.model } : {}),
+    });
+  } catch (err) {
+    throw new CliError((err as Error).message, EXIT_USAGE);
+  }
 }
 
 // ---------------------------------------------------------------------------

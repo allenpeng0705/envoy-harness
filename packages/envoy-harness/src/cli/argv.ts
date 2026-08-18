@@ -178,7 +178,32 @@ export interface SelfEvolveParsedArgs {
   quiet: boolean;
 }
 
-export type ParsedArgs = RunParsedArgs | SelfEvolveParsedArgs;
+/** Args for the `team` subcommand. */
+export interface TeamParsedArgs {
+  subcommand: "team";
+  /** `--help`: print help and exit. */
+  help: boolean;
+  /** `--version`: print version and exit. */
+  version: boolean;
+  /** `--model <id>`: model identifier (passed to the adapter). */
+  model: string | undefined;
+  /** `--provider <name>`: provider name. */
+  provider: string | undefined;
+  /** `--cwd <path>`: override the working directory. */
+  cwd: string | undefined;
+  /** `--input <s>`: the team-level input (substituted
+   *  into each agent's objective as `${input}`). */
+  input: string | undefined;
+  /** `--json`: machine-readable JSON Lines output. */
+  json: boolean;
+  /** `--quiet`: suppress human output, only stream-json. */
+  quiet: boolean;
+  /** The first positional: the path to the TOML
+   *  team config. */
+  positional: string[];
+}
+
+export type ParsedArgs = RunParsedArgs | SelfEvolveParsedArgs | TeamParsedArgs;
 
 /** Error thrown when argv parsing fails. Caught by the runner. */
 export class ArgvError extends Error {
@@ -201,6 +226,9 @@ export function parseArgs(argv: ReadonlyArray<string>): ParsedArgs {
   const firstPositional = argv.find((a) => !a.startsWith("--"));
   if (firstPositional === "self-evolve") {
     return parseSelfEvolveArgs(argv);
+  }
+  if (firstPositional === "team") {
+    return parseTeamArgs(argv);
   }
   return parseRunArgs(argv);
 }
@@ -497,4 +525,77 @@ export function formatHelp(version: string): string {
     "",
     "See docs/design.md §19 for the full surface.",
   ].join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// team subcommand (F9.3)
+// ---------------------------------------------------------------------------
+
+const TEAM_FLAGS = new Set([
+  "--model",
+  "--provider",
+  "--cwd",
+  "--input",
+  "--json",
+  "--quiet",
+  "--help",
+  "--version",
+]);
+
+function parseTeamArgs(argv: ReadonlyArray<string>): TeamParsedArgs {
+  const out: TeamParsedArgs = {
+    subcommand: "team",
+    help: false,
+    version: false,
+    model: undefined,
+    provider: undefined,
+    cwd: undefined,
+    input: undefined,
+    json: false,
+    quiet: false,
+    positional: [],
+  };
+
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === undefined) continue;
+    if (arg.startsWith("--")) {
+      if (!TEAM_FLAGS.has(arg)) {
+        throw new ArgvError(`unknown flag for team subcommand: ${arg}`);
+      }
+      if (arg === "--help") {
+        out.help = true;
+        continue;
+      }
+      if (arg === "--version") {
+        out.version = true;
+        continue;
+      }
+      if (arg === "--json") {
+        out.json = true;
+        continue;
+      }
+      if (arg === "--quiet") {
+        out.quiet = true;
+        continue;
+      }
+      // Valued flags: consume the next arg.
+      const next = argv[i + 1];
+      if (next === undefined) {
+        throw new ArgvError(`flag ${arg} requires a value`);
+      }
+      if (arg === "--model") out.model = next;
+      else if (arg === "--provider") out.provider = next;
+      else if (arg === "--cwd") out.cwd = next;
+      else if (arg === "--input") out.input = next;
+      i++;
+      continue;
+    }
+    // Strip the "team" subcommand keyword from
+    // the positional list.
+    if (arg === "team") continue;
+    out.positional.push(arg);
+  }
+
+  return out;
 }

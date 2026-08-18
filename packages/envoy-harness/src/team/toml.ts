@@ -220,26 +220,28 @@ function splitTopLevel(s: string, delim: string): string[] {
 function toTeamConfig(raw: Record<string, unknown>): TeamConfig {
   const name = raw["name"];
   if (typeof name !== "string") {
-    throw new Error("TOML: missing or invalid `name` (string required)");
+    throw new TomlParseError(0, "", "missing or invalid `name` (string required)");
   }
   const agentsRaw = raw["agents"];
   if (!Array.isArray(agentsRaw) || agentsRaw.length === 0) {
-    throw new Error("TOML: missing or empty `[[agents]]` table");
+    throw new TomlParseError(0, "", "missing or empty `[[agents]]` table");
   }
   const agents: AgentSpec[] = agentsRaw.map((a, i) => toAgentSpec(a, i));
   const scheduleRaw = raw["schedule"];
   let schedule: ScheduleSpec | undefined;
   if (scheduleRaw !== undefined) {
     if (typeof scheduleRaw !== "object" || scheduleRaw === null) {
-      throw new Error("TOML: `schedule` must be a table");
+      throw new TomlParseError(0, "", "`schedule` must be a table");
     }
     const cron = (scheduleRaw as Record<string, unknown>)["cron"];
     if (typeof cron !== "string") {
-      throw new Error("TOML: `schedule.cron` must be a string");
+      throw new TomlParseError(0, "", "`schedule.cron` must be a string");
     }
     if (!/^\S+\s+\S+\s+\S+\s+\S+\s+\S+$/.test(cron)) {
-      throw new Error(
-        `TOML: \`schedule.cron\` must be a 5-field cron expression (got: ${JSON.stringify(cron)})`,
+      throw new TomlParseError(
+        0,
+        cron,
+        `\`schedule.cron\` must be a 5-field cron expression (got: ${JSON.stringify(cron)})`,
       );
     }
     schedule = { cron };
@@ -253,7 +255,7 @@ function toTeamConfig(raw: Record<string, unknown>): TeamConfig {
 
 function toAgentSpec(raw: unknown, index: number): AgentSpec {
   if (typeof raw !== "object" || raw === null) {
-    throw new Error(`TOML: agents[${index}] must be a table`);
+    throw new TomlParseError(0, "", `agents[${index}] must be a table`);
   }
   const r = raw as Record<string, unknown>;
   const id = r["id"];
@@ -261,28 +263,40 @@ function toAgentSpec(raw: unknown, index: number): AgentSpec {
   const systemPrompt = r["system_prompt"];
   const objective = r["objective"];
   if (typeof id !== "string") {
-    throw new Error(`TOML: agents[${index}].id must be a string`);
+    throw new TomlParseError(0, "", `agents[${index}].id must be a string`);
   }
   if (typeof role !== "string") {
-    throw new Error(`TOML: agents[${index}].role must be a string`);
+    throw new TomlParseError(0, "", `agents[${index}].role must be a string`);
   }
   if (typeof systemPrompt !== "string") {
-    throw new Error(`TOML: agents[${index}].system_prompt must be a string`);
+    throw new TomlParseError(
+      0,
+      "",
+      `agents[${index}].system_prompt must be a string`,
+    );
   }
   if (typeof objective !== "string") {
-    throw new Error(`TOML: agents[${index}].objective must be a string`);
+    throw new TomlParseError(
+      0,
+      "",
+      `agents[${index}].objective must be a string`,
+    );
   }
   let dependsOn: string[] = [];
   if (r["depends_on"] !== undefined) {
     if (!Array.isArray(r["depends_on"])) {
-      throw new Error(
-        `TOML: agents[${index}].depends_on must be a string array`,
+      throw new TomlParseError(
+        0,
+        "",
+        `agents[${index}].depends_on must be a string array`,
       );
     }
     dependsOn = r["depends_on"].map((d, j) => {
       if (typeof d !== "string") {
-        throw new Error(
-          `TOML: agents[${index}].depends_on[${j}] must be a string`,
+        throw new TomlParseError(
+          0,
+          "",
+          `agents[${index}].depends_on[${j}] must be a string`,
         );
       }
       return d;

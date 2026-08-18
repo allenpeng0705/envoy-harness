@@ -422,3 +422,112 @@ describe("run: --json flag", () => {
     expect(lastEvent.kind).toBe("agent_end");
   });
 });
+
+// ---------------------------------------------------------------------------
+// F9.3: team subcommand
+// ---------------------------------------------------------------------------
+
+describe("run: team subcommand", () => {
+  // A tiny helper to write a temp TOML file.
+  const tmpFiles: string[] = [];
+  function writeToml(content: string): string {
+    const fs = require("node:fs") as typeof import("node:fs");
+    const os = require("node:os") as typeof import("node:os");
+    const path = require("node:path") as typeof import("node:path");
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "envoy-team-"));
+    const file = path.join(dir, "team.toml");
+    fs.writeFileSync(file, content, "utf8");
+    tmpFiles.push(file);
+    return file;
+  }
+
+  it("reads a TOML file and runs the team", async () => {
+    const out = new StringWritable();
+    const err = new StringWritable();
+    let calls = 0;
+    const fakeModel: ModelAdapter = {
+      async complete(): Promise<ModelResponse> {
+        calls++;
+        return {
+          content: [{ type: "text", text: `result-${calls}` }],
+          stopReason: "end_turn",
+        };
+      },
+    };
+    const toml = `
+name = "t1"
+
+[[agents]]
+id = "explore"
+role = "explore"
+system_prompt = "sp"
+objective = "do A"
+depends_on = []
+
+[[agents]]
+id = "review"
+role = "review"
+system_prompt = "sp"
+objective = "do B"
+depends_on = ["explore"]
+`;
+    const file = writeToml(toml);
+    const result = await run({
+      argv: ["team", file, "--quiet"],
+      model: fakeModel,
+      stdout: out,
+      stderr: err,
+    });
+    if (result.subcommand !== "team") {
+      throw new Error("expected team subcommand");
+    }
+    expect(result.teamName).toBe("t1");
+    expect(result.status).toBe("completed");
+    expect(result.agents).toHaveLength(2);
+    expect(result.agents[0]?.id).toBe("explore");
+    expect(result.agents[1]?.id).toBe("review");
+  });
+
+  it("throws CliError when the config path is missing", async () => {
+    const out = new StringWritable();
+    const err = new StringWritable();
+    const fakeModel: ModelAdapter = {
+      async complete(): Promise<ModelResponse> {
+        return {
+          content: [{ type: "text", text: "x" }],
+          stopReason: "end_turn",
+        };
+      },
+    };
+    await expect(
+      run({
+        argv: ["team"],
+        model: fakeModel,
+        stdout: out,
+        stderr: err,
+      }),
+    ).rejects.toThrow(/requires a TOML config path/);
+  });
+
+  it("throws CliError on a bad TOML (missing agents)", async () => {
+    const out = new StringWritable();
+    const err = new StringWritable();
+    const fakeModel: ModelAdapter = {
+      async complete(): Promise<ModelResponse> {
+        return {
+          content: [{ type: "text", text: "x" }],
+          stopReason: "end_turn",
+        };
+      },
+    };
+    const file = writeToml('name = "t"\n');
+    await expect(
+      run({
+        argv: ["team", file, "--quiet"],
+        model: fakeModel,
+        stdout: out,
+        stderr: err,
+      }),
+    ).rejects.toThrow(/invalid team config/);
+  });
+});
