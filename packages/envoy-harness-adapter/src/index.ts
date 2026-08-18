@@ -37,3 +37,15 @@ export {
   type EnvoyHarnessSkillId,
   type EnvoyHarnessToolName,
 } from "./skills.js";
+
+// F8.3 — local ↔ wire type translation.
+export {
+  TOOL_CALL_SCHEMA_REF,
+  TOOL_RESULT_SCHEMA_REF,
+  localToWireBlock,
+  localToWireContent,
+  localToWireMetrics,
+  localToWireResult,
+  type ToolCallData,
+  type ToolResultData,
+} from "./translation.js";
