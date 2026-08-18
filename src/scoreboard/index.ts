@@ -1,0 +1,43 @@
+/**
+ * @envoymesh/envoy-harness — scoreboard module.
+ *
+ * **Phase 3 (self-evolution) data layer.** The scoreboard is the
+ * append-only log of every self-evolution cycle's outcome.
+ *
+ * Public API:
+ * - `readScoreboard`, `writeScoreboard`, `appendEntry` — file I/O.
+ * - `readBenchmark`, `writeBenchmark` — benchmark file I/O.
+ * - `hashRuleset` — SHA-256 over rule names + summaries.
+ * - `signEntry` — SHA-256 over the canonical payload (v0; Ed25519 in Phase 2+).
+ * - All schemas and types.
+ *
+ * **The 5-step protocol** itself lives in
+ * `src/scoreboard/self-evolve.ts` (Chunk 5b). This module is
+ * pure data + I/O.
+ *
+ * **Stability:** on-disk format is YAML; schema changes go
+ * through `ScoreboardEntrySchema` (zod). New optional fields
+ * are additive.
+ */
+
+export {
+  BenchmarkSchema,
+  ScoreboardEntrySchema,
+  ScoreboardSchema,
+  type Benchmark,
+  type BenchmarkResult,
+  type BenchmarkTask,
+  type Scoreboard,
+  type ScoreboardEntry,
+  type VerifierRuleset,
+} from "./types.js";
+
+export {
+  appendEntry,
+  hashRuleset,
+  readBenchmark,
+  readScoreboard,
+  signEntry,
+  writeBenchmark,
+  writeScoreboard,
+} from "./storage.js";

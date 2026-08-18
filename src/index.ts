@@ -154,3 +154,23 @@ export {
   sandboxRespectedRule,
   type VerifierRule,
 } from "./verifier/index.js";
+
+// Re-export the scoreboard (§13 of the design doc)
+export {
+  BenchmarkSchema,
+  ScoreboardEntrySchema,
+  ScoreboardSchema,
+  appendEntry,
+  hashRuleset,
+  readBenchmark,
+  readScoreboard,
+  signEntry,
+  writeBenchmark,
+  writeScoreboard,
+  type Benchmark,
+  type BenchmarkResult,
+  type BenchmarkTask,
+  type Scoreboard,
+  type ScoreboardEntry,
+  type VerifierRuleset,
+} from "./scoreboard/index.js";
