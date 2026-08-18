@@ -148,6 +148,19 @@ describe("parseArgs: self-evolve subcommand", () => {
     expect(a.agentsMd).toBe("/tmp/AGENTS.md");
   });
 
+  it("captures --pull, --peer-id, --adoptions (F6.4)", () => {
+    const a = parseArgs([
+      "self-evolve",
+      "--pull",
+      "--peer-id", "peer-abc",
+      "--adoptions", "/tmp/adoptions.yaml",
+    ]);
+    if (a.subcommand !== "self-evolve") throw new Error("expected self-evolve");
+    expect(a.pull).toBe(true);
+    expect(a.peerId).toBe("peer-abc");
+    expect(a.adoptions).toBe("/tmp/adoptions.yaml");
+  });
+
   it("rejects unknown flags in self-evolve", () => {
     expect(() => parseArgs(["self-evolve", "--bogus"])).toThrow(ArgvError);
   });

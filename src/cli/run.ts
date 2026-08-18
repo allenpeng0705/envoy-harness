@@ -36,8 +36,10 @@ import {
   Agent,
   BUILTIN_TOOLS,
   DefaultBenchmarkRunner,
+  FederatedScoreboard,
   HookRegistry,
   InMemorySession,
+  LocalPeerSource,
   ModelHypothesisProvider,
   newSessionId,
   SelfEvolve,
@@ -100,6 +102,17 @@ export interface SelfEvolveRunResult {
   passRateAfter: number;
   nRuns: number;
   rulesetHash: string;
+  /** Federated pull + adopt results (only present when --pull is set). */
+  federated?: {
+    /** Whether the pull was skipped (optIn: false). */
+    skipped: boolean;
+    /** Number of candidates that passed the local gate. */
+    adopted: number;
+    /** Number of candidates that failed the local gate. */
+    rejected: number;
+    /** Number of candidates filtered out before the gate. */
+    filtered: number;
+  };
 }
 
 /** Union of the two subcommand results. */
@@ -255,6 +268,7 @@ async function runSelfEvolve(
     ruleset: parsed.ruleset ?? path.join(root, "verifier-rules.json"),
     agentsMd: parsed.agentsMd ?? path.join(root, "AGENTS.md"),
   };
+  const adoptionsFile = parsed.adoptions ?? path.join(root, "federated-adoptions.yaml");
 
   // 3. Wire the components.
   const hypothesisProvider = new ModelHypothesisProvider(options.model);
@@ -274,23 +288,56 @@ async function runSelfEvolve(
   });
   const cycleResult = await evolve.runOneCycle();
 
-  // 5. Print a human-readable summary.
+  // 5. Federated pull (if --pull). v0: LocalPeerSource returns
+  //    []. The pull runs the local 5-step gate against any
+  //    candidates and records the audit trail. Without --pull,
+  //    the federated layer is a no-op.
+  let federated: SelfEvolveRunResult["federated"];
+  if (parsed.pull) {
+    const fed = new FederatedScoreboard(new LocalPeerSource());
+    const pullResult = await fed.pull({ optIn: true });
+    if (!pullResult.skipped) {
+      const adoptResult = await fed.adopt(pullResult, evolve, {
+        adoptionsFile,
+        ...(parsed.peerId !== undefined ? { peerId: parsed.peerId } : {}),
+      });
+      federated = {
+        skipped: false,
+        adopted: adoptResult.adopted.length,
+        rejected: adoptResult.rejected.length,
+        filtered: pullResult.rejected.length,
+      };
+    } else {
+      federated = { skipped: true, adopted: 0, rejected: 0, filtered: 0 };
+    }
+  }
+
+  // 6. Print a human-readable summary.
   if (!parsed.quiet) {
-    stdout.write(
-      [
-        `envoy self-evolve: cycle v${cycleResult.entry.version}`,
-        `  status: ${cycleResult.entry.status}`,
-        `  hypothesis: ${cycleResult.entry.hypothesis}`,
-        `  pass rate: ${cycleResult.entry.passRateBefore.toFixed(2)} → ${cycleResult.entry.passRateAfter.toFixed(2)} (${cycleResult.entry.nRuns} runs)`,
-        `  ruleset hash: ${cycleResult.entry.rulesetHash}`,
-        cycleResult.kept && !parsed.commit
-          ? `  (shadow mode: candidate was NOT committed)`
-          : cycleResult.kept
-            ? `  (committed to ${paths.ruleset})`
-            : `  (reverted: no improvement)`,
-        "",
-      ].join("\n"),
-    );
+    const lines = [
+      `envoy self-evolve: cycle v${cycleResult.entry.version}`,
+      `  status: ${cycleResult.entry.status}`,
+      `  hypothesis: ${cycleResult.entry.hypothesis}`,
+      `  pass rate: ${cycleResult.entry.passRateBefore.toFixed(2)} → ${cycleResult.entry.passRateAfter.toFixed(2)} (${cycleResult.entry.nRuns} runs)`,
+      `  ruleset hash: ${cycleResult.entry.rulesetHash}`,
+      cycleResult.kept && !parsed.commit
+        ? `  (shadow mode: candidate was NOT committed)`
+        : cycleResult.kept
+          ? `  (committed to ${paths.ruleset})`
+          : `  (reverted: no improvement)`,
+    ];
+    if (federated) {
+      if (federated.skipped) {
+        lines.push(`  federated: skipped (no --pull peers)`);
+      } else {
+        lines.push(
+          `  federated: ${federated.adopted} adopted, ${federated.rejected} rejected, ${federated.filtered} filtered`,
+        );
+        lines.push(`    (audit log: ${adoptionsFile})`);
+      }
+    }
+    lines.push("");
+    stdout.write(lines.join("\n"));
   }
 
   return {
@@ -303,6 +350,7 @@ async function runSelfEvolve(
     passRateAfter: cycleResult.entry.passRateAfter,
     nRuns: cycleResult.entry.nRuns,
     rulesetHash: cycleResult.entry.rulesetHash,
+    ...(federated !== undefined ? { federated } : {}),
   };
 }
 

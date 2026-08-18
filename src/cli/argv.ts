@@ -56,8 +56,11 @@ const SELF_EVOLVE_FLAGS = new Set([
   "--benchmark",
   "--ruleset",
   "--agents-md",
+  "--adoptions",
   "--commit",
   "--recent-failures",
+  "--pull",
+  "--peer-id",
   "--no-color",
   "--verbose",
   "--quiet",
@@ -85,7 +88,9 @@ const SELF_EVOLVE_VALUED_FLAGS = new Set([
   "--benchmark",
   "--ruleset",
   "--agents-md",
+  "--adoptions",
   "--recent-failures",
+  "--peer-id",
 ]);
 
 /** The shared flags used by every subcommand. */
@@ -155,10 +160,16 @@ export interface SelfEvolveParsedArgs {
   ruleset: string | undefined;
   /** `--agents-md <path>`: user AGENTS.md (snapshotted, not edited in v0). */
   agentsMd: string | undefined;
+  /** `--adoptions <path>`: federated adoptions YAML file. */
+  adoptions: string | undefined;
   /** `--commit`: actually write the candidate on `kept` (default: shadow). */
   commit: boolean;
   /** `--recent-failures <n>`: number of recent entries to feed the prompt. */
   recentFailures: number | undefined;
+  /** `--pull`: opt in to federated pull (off by default per design §13.3). */
+  pull: boolean;
+  /** `--peer-id <id>`: this peer's id (recorded in the adoptions log). */
+  peerId: string | undefined;
   /** `--no-color`: disable ANSI colors. */
   noColor: boolean;
   /** `--verbose`: print hook fires and validator verdicts. */
@@ -312,8 +323,11 @@ function parseSelfEvolveArgs(argv: ReadonlyArray<string>): SelfEvolveParsedArgs 
     benchmark: undefined,
     ruleset: undefined,
     agentsMd: undefined,
+    adoptions: undefined,
     commit: false,
     recentFailures: undefined,
+    pull: false,
+    peerId: undefined,
     noColor: false,
     verbose: false,
     quiet: false,
@@ -329,6 +343,10 @@ function parseSelfEvolveArgs(argv: ReadonlyArray<string>): SelfEvolveParsedArgs 
       if (handleCommonFlag(arg, out)) continue;
       if (arg === "--commit") {
         out.commit = true;
+        continue;
+      }
+      if (arg === "--pull") {
+        out.pull = true;
         continue;
       }
       if (SELF_EVOLVE_VALUED_FLAGS.has(arg)) {
@@ -358,6 +376,9 @@ function parseSelfEvolveArgs(argv: ReadonlyArray<string>): SelfEvolveParsedArgs 
           case "--agents-md":
             out.agentsMd = value;
             break;
+          case "--adoptions":
+            out.adoptions = value;
+            break;
           case "--recent-failures": {
             const n = Number(value);
             if (!Number.isFinite(n) || n < 0) {
@@ -366,6 +387,9 @@ function parseSelfEvolveArgs(argv: ReadonlyArray<string>): SelfEvolveParsedArgs 
             out.recentFailures = n;
             break;
           }
+          case "--peer-id":
+            out.peerId = value;
+            break;
         }
         continue;
       }
@@ -465,8 +489,11 @@ export function formatHelp(version: string): string {
     "  --benchmark <path>     frozen benchmark YAML file",
     "  --ruleset <path>       live ruleset file (committed on kept)",
     "  --agents-md <path>     user AGENTS.md (snapshotted)",
+    "  --adoptions <path>     federated adoptions YAML file",
     "  --commit               actually write the candidate (default: shadow)",
     "  --recent-failures <n>  recent entries to feed the prompt (default 20)",
+    "  --pull                 opt in to federated pull (default: off)",
+    "  --peer-id <id>         this peer's id (recorded in adoptions log)",
     "",
     "See docs/design.md §19 for the full surface.",
   ].join("\n");
