@@ -37,6 +37,7 @@ export type {
   DiscoveredAgentsDoc,
   HookDecision,
   HookEvent,
+  HookEventName,
   HookFn,
   HookHandler,
   LoadedAgentsMd,
@@ -64,3 +65,15 @@ export {
 } from "./permissions/bash/index.js";
 
 export { hasUnbalancedQuotes, containsBackticks } from "./permissions/bash/semantics.js";
+
+// Re-export AGENTS.md discovery (§9 of the design doc)
+export { discoverAgentsMd, type DiscoveryOptions } from "./agents-md/index.js";
+
+// Re-export the hook system (§8.2 of the design doc)
+export {
+  HookRegistry,
+  defaultRegistry,
+  runModuleHandler,
+  runShellHandler,
+  type HookMiddleware,
+} from "./hooks/index.js";
