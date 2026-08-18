@@ -12,7 +12,7 @@
 > Total: 564 tests, 28 test files, 40 source files, ~17k lines (monorepo: 2 packages).
 > Phase 3 fully complete (F6 done). Phase 2 fully complete (F7 + F8 done, F8 polish done). **Phase 4 complete (F9.1 + F9.2 + F9.3 + F9.4 + F9.5 done).** The 5 Phase 4 sub-chunks are done.
 
-**F10 (mesh-native sub-agents) starts here.**
+**Phase 5 in progress: F10.1 done.** Mesh-native sub-agents shipped (the `task` tool + `MeshSubmitter` seam + `LocalMeshSubmitter` default). F10.2+ pending (cross-node `RemoteMeshSubmitter`, signature, federated routing).
 
 ---
 
@@ -3433,3 +3433,100 @@ complete. Updated §2 (status), §3 (this entry),
 all 25+ unpushed commits, user's pick.**
 
 ---
+
+---
+
+### F10.1 — Mesh-native sub-agents (4 sub-chunks)
+**Phase 5 first sub-chunk.** The "real workable"
+sub-agent. The parent calls the `task` tool;
+the tool submits to a `MeshSubmitter`; the
+submitter runs the sub-agent in a NEW local
+session.
+
+**F10.1.1 (this commit) — types + `NoopMeshSubmitter`.**
+Lands `SubagentInput`, `SubagentResult`,
+`MeshSubmitter` interface, and a no-op submitter
+that throws the documented error message. The
+default-when-undefined is "no submitter" (so
+no `task` tool is registered); the no-op
+submitter exists for tests + forward-compat.
+9 new tests in `test/subagent-types.test.ts`.
+Also: re-exported `Verdict` from `verifier/index.ts`
+(was unexported — needed by `SubagentResult.verdict`).
+
+**F10.1.2 (this commit) — `LocalMeshSubmitter` +
+`defaultBuildSubagentFactory`.** The default
+plumbing: the host injects a `buildSubagent`
+factory; the submitter calls it, runs the
+resulting `Agent`, synthesizes a `SubagentResult`.
+The default factory creates a NEW `InMemorySession`
+per call (own id, own AGENTS.md, own hooks) with
+the configured model + `BUILTIN_TOOLS` + `read-only`
+permission. The sub-agent's own policy, not the
+requester's. Parent's `signal` is forwarded to
+the new agent's abort (next iteration boundary).
+12 new tests in `test/subagent-local.test.ts`.
+**Self-review caught 2 real issues:**
+(1) The "parent.abort()" test was wrong: the model
+returned `end_turn` on the first call, so the
+agent's loop ended before the abort could be
+detected. Fix: model returns a `tool_call` on
+every call so the loop iterates; the abort fires
+on call #4; the loop's next iteration check sees
+the abort.
+(2) Two tests used `require("@envoymesh/envoy-harness")`
+which fails in ESM context. Fix: static import
+of `ToolRegistry` at the top of the test file.
+
+**F10.1.3 (this commit) — `task` tool +
+`AgentOptions.meshSubmitter`.** The parent's
+escape hatch. `makeTaskTool(submitter)` returns
+a `Tool` named `task` with the documented zod
+schema (`objective`, `capability_tag`,
+`cost_ceiling_usd`, `deadline_ms`, optional
+`preferred_peer_id` / `preferred_runtime`).
+`AgentOptions.meshSubmitter?` is the new opt-in
+field; when set, the `task` tool is auto-registered
+with the parent's tool registry. No submitter →
+no `task` tool. 14 new tests in
+`test/subagent-tool.test.ts`.
+**Self-review caught 1 real issue:** the
+"propagates submitter errors" test had a
+redundant first `execute()` call that threw
+(`NoopMeshSubmitter` throws); the test's
+asserts on the SECOND call expected the throw.
+The first call wasn't caught. Fix: removed
+the first call; the test now just checks the
+one `execute()` throws as expected.
+
+**F10.1.4 (this commit) — end-to-end via real
+`Agent.run()`.** Lands 6 end-to-end tests:
+- The parent's tool list includes `task`
+  when `meshSubmitter` is set.
+- The full happy path: parent emits `task` call →
+  sub-agent runs in a new session → result
+  returns to the parent → parent's final
+  answer references the sub-agent's text.
+- The sub-agent's session is independent of
+  the parent's (capabilityTag routes through
+  the factory).
+- The parent's metrics are not affected by
+  the sub-agent's cost (separate `CostTracker`s).
+- The default `buildSubagent` factory is used
+  when no factory is provided.
+- The factory receives a fresh input on each
+  call (the two-call pattern).
+
+**Total: 656 tests across 36 files.** F10.1 is
+**done**; the "real workable" sub-agent is shipped.
+The parent agent can call the `task` tool to spawn
+a sub-agent that runs in a NEW local session (own
+id, own AGENTS.md, own hooks, own permission). The
+`MeshSubmitter` seam supports a future
+`RemoteMeshSubmitter` for cross-node execution;
+v0 ships `LocalMeshSubmitter` as the default.
+Updated §2 (status), §3 (this entry), §6.6
+(F10.1 ✅), §7 (sub-chunk template preserved),
+§10 (this entry). **Next: F10.2+ (cross-node
+submitter, signature, federated routing) or
+Phase 5 second sub-chunk, user's pick.**
