@@ -1,0 +1,36 @@
+# Node
+node_modules/
+dist/
+*.tsbuildinfo
+coverage/
+.nyc_output/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# Build artifacts
+.turbo/
+.next/
+out/
+*.tsbuildinfo
