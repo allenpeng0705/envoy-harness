@@ -45,6 +45,7 @@ import {
 import type { ModelAdapter, ModelResponse } from "./model.js";
 import type { Session } from "./session.js";
 import type { ContentBlock, ToolRegistry } from "./tools/index.js";
+import type { SandboxPolicy } from "./types.js";
 
 /** Default max iterations before the agent throws. */
 export const DEFAULT_MAX_ITERATIONS = 50;
@@ -98,6 +99,18 @@ export interface AgentResult {
   iterations: number;
   /** Total tool calls executed. */
   toolCalls: number;
+  /**
+   * The full transcript (system + user + assistant + tool). The
+   * verifier reads from this to check sandbox-respect and
+   * approval-respect. v0 exposes the full transcript so the
+   * verifier can see exactly what the worker did.
+   */
+  messages: ReadonlyArray<import("./tools/index.js").Message>;
+  /**
+   * Effective sandbox policy. The verifier's `sandbox-respected`
+   * rule uses this to bound which paths are allowed.
+   */
+  sandboxPolicy: SandboxPolicy;
 }
 
 export class Agent {
@@ -110,6 +123,8 @@ export class Agent {
   private abortController: AbortController;
   private systemPrompt: string | undefined;
   private toolCallCount = 0;
+  /** Effective sandbox policy, derived from the session. The verifier reads this. */
+  private sandboxPolicy: SandboxPolicy;
 
   constructor(options: AgentOptions) {
     this.model = options.model;
@@ -135,6 +150,13 @@ export class Agent {
       this.abortController = new AbortController();
     }
     this.systemPrompt = options.systemPrompt;
+    // Build the sandbox policy from the session's permission mode.
+    // The bash tool re-derives this; here we use it for the verifier
+    // and the AgentResult so callers can audit what was enforced.
+    this.sandboxPolicy = policyFromSessionMode(
+      this.session.metadata.permissionMode ?? "read-only",
+      this.cwd,
+    );
   }
 
   /** The AbortSignal tools see in their context. */
@@ -177,12 +199,7 @@ export class Agent {
     let iterations = 0;
     while (iterations < this.maxIterations) {
       if (this.abortController.signal.aborted) {
-        return {
-          content: [],
-          stopReason: "aborted",
-          iterations,
-          toolCalls: this.toolCallCount,
-        };
+        return this.makeResult([], "aborted", iterations);
       }
       iterations++;
 
@@ -201,12 +218,11 @@ export class Agent {
         this.session.appendMessage("assistant", [
           { type: "text", text: `[model error] ${message}` },
         ]);
-        return {
-          content: [{ type: "text", text: `[model error] ${message}` }],
-          stopReason: "aborted",
+        return this.makeResult(
+          [{ type: "text", text: `[model error] ${message}` }],
+          "aborted",
           iterations,
-          toolCalls: this.toolCallCount,
-        };
+        );
       }
 
       // 2. Append the assistant message.
@@ -220,13 +236,11 @@ export class Agent {
 
       // 4. No tool calls → done.
       if (toolCalls.length === 0) {
-        return {
-          content: response.content,
-          // Normalize the model's stop reason into our union.
-          stopReason: normalizeStopReason(response.stopReason),
+        return this.makeResult(
+          response.content,
+          normalizeStopReason(response.stopReason),
           iterations,
-          toolCalls: this.toolCallCount,
-        };
+        );
       }
 
       // 5. Execute each tool call (in order).
@@ -240,12 +254,7 @@ export class Agent {
       // response. The transcript still has the tool results, so
       // a follow-up `run()` would see them.
       if (response.stopReason === "max_tokens") {
-        return {
-          content: response.content,
-          stopReason: "max_tokens",
-          iterations,
-          toolCalls: this.toolCallCount,
-        };
+        return this.makeResult(response.content, "max_tokens", iterations);
       }
     }
 
@@ -352,6 +361,22 @@ export class Agent {
       result,
     });
   }
+
+  /** Build an `AgentResult` populated with the loop's metadata. */
+  private makeResult(
+    content: ContentBlock[],
+    stopReason: AgentResult["stopReason"],
+    iterations: number,
+  ): AgentResult {
+    return {
+      content,
+      stopReason,
+      iterations,
+      toolCalls: this.toolCallCount,
+      messages: this.session.messages,
+      sandboxPolicy: this.sandboxPolicy,
+    };
+  }
 }
 
 /**
@@ -364,4 +389,37 @@ function normalizeStopReason(
   modelReason: ModelResponse["stopReason"],
 ): AgentResult["stopReason"] {
   return modelReason;
+}
+
+/**
+ * Build a `SandboxPolicy` from a session's permission mode.
+ * Same shape as the bash tool's `policyFromMode` — they MUST
+ * stay in sync. If you change one, change the other. The
+ * duplication exists because the agent needs the policy for
+ * its result (verifier visibility) while the bash tool needs
+ * it for validation. The two are computed independently and
+ * compared at test time.
+ */
+function policyFromSessionMode(
+  mode: NonNullable<Session["metadata"]["permissionMode"]>,
+  cwd: string,
+): SandboxPolicy {
+  if (mode === "danger-full-access") {
+    return {
+      mode,
+      approval: "never",
+      backend: "none",
+      writableRoots: [],
+      networkAccess: true,
+      excludeSlashTmp: true,
+    };
+  }
+  return {
+    mode,
+    approval: "on-request",
+    backend: "linux-landlock",
+    writableRoots: mode === "workspace-write" ? [cwd] : [],
+    networkAccess: false,
+    excludeSlashTmp: true,
+  };
 }

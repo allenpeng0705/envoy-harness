@@ -138,3 +138,19 @@ export {
   type RunOptions,
   type RunResult,
 } from "./cli/index.js";
+
+// Re-export the verifier (§12 of the design doc)
+export {
+  DEFAULT_RULES,
+  approvalRespectedRule,
+  combineVerdicts,
+  concatText,
+  costReasonableForWorkRule,
+  extractKeywords,
+  meshTaskShapeRule,
+  nonEmptyContentRule,
+  outputMatchesObjectiveRule,
+  runVerifierRules,
+  sandboxRespectedRule,
+  type VerifierRule,
+} from "./verifier/index.js";
