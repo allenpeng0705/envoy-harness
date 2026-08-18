@@ -8,9 +8,9 @@
 > and *why*. This file says *what shipped*, *where it lives*,
 > and *what's still open*.
 >
-> **Status as of last commit:** (next commit, F7.4) on `phase-1/types`.
-> Total: 460 tests, 23 test files, 34 source files, ~14k lines.
-> Phase 3 fully complete (F6 done). Phase 2 in progress (F7.1 + F7.2 + F7.3 + F7.4 done; F7.5 next).
+> **Status as of last commit:** (next commit, F7.5) on `phase-1/types`.
+> Total: 488 tests, 24 test files, 36 source files, ~16k lines.
+> Phase 3 fully complete (F6 done). **Phase 2 milestone per design §22 is "F7 done" — 5 of 5 sub-chunks**. F8 (envoy-harness-adapter) next.
 
 ---
 
@@ -671,6 +671,94 @@ auth header), and end-to-end response parsing
 The response-parsing tests serve as a regression guard
 that subclassing doesn't break the OpenAI parser.
 
+### F7.5 — CLI provider dispatch + `--max-cost-usd` (this commit)
+**§14, F7.5.** Phase 2 milestone per design §22 ("real
+LLM adapters + cost tracking") is now complete: 5 of 5
+sub-chunks.
+
+`src/llm/index.ts` (new) — provider dispatch + re-exports:
+- `createProviderAdapter({ provider, model?, env? })`
+  returns the right `ModelAdapter` for the given provider
+  name. Supports `openai` / `anthropic` / `deepseek` /
+  `ollama`. Reads API keys from `env` (default:
+  `process.env`; override for tests).
+- `DEFAULT_PROVIDER_MODELS` — per-provider default
+  (gpt-4o / claude-sonnet-4-6 / deepseek-chat / llama3.1).
+- `SUPPORTED_PROVIDERS` — the canonical provider list.
+- `ollama` is keyless: uses the OpenAI-compatible
+  endpoint at `http://localhost:11434/v1` (override via
+  `OLLAMA_BASE_URL`). A placeholder API key (`"ollama"`)
+  is passed because `OpenAIAdapter` requires a non-empty
+  key.
+- Case-insensitive provider name (`"openai"` / `"OpenAI"` /
+  `"OPENAI"` all work).
+- Throws on unknown provider with the list of supported
+  names in the error message.
+
+`src/agent.ts` — `AgentOptions.maxCostUsd`:
+- New optional field. When set, the agent checks
+  `costTracker.total().costUsd > maxCostUsd` after every
+  model call that reports `usage`. If exceeded, the agent
+  aborts cleanly with `stopReason: "aborted"` and the
+  abort reason includes the cost + cap for debugging.
+- The cap is checked DURING the run, not at the end —
+  that's the whole point of a cap.
+
+`src/cli/run.ts` — provider dispatch in `runAgent` and
+`runSelfEvolve`:
+- New `resolveModel()` helper: prefer `RunOptions.model`,
+  fall back to `createProviderAdapter({ provider, model })`
+  when `--provider` is set, throw `CliError(EXIT_USAGE)`
+  otherwise. Both subcommands now accept `--provider`
+  end-to-end.
+- `createProviderAdapter` errors are wrapped as
+  `CliError(EXIT_USAGE)` so the bin script's exit code
+  is USAGE (not ERROR) for missing env / unknown provider.
+- `--max-cost-usd` is passed to the agent when set.
+
+`src/cli/argv.ts` — help text updated: provider list
+reflects the actual supported names (openai / anthropic /
+deepseek / ollama).
+
+`src/index.ts` — re-exports the LLM module (adapters +
+HTTP primitives + helpers + `createProviderAdapter` +
+`DEFAULT_PROVIDER_MODELS` + `SUPPORTED_PROVIDERS`).
+
+**Self-review caught:**
+1. The cost cap tests initially failed because the
+   scripted adapter's `ModelResponse` had no `model`
+   field, so the `CostTracker` fell back to the
+   constructor's default model (`"local"`, $0 pricing) —
+   even with 1M input tokens, cost was 0. Fixed by
+   setting `model: "gpt-4o"` in the test's response
+   builder. **This is a real-world gotcha**: adapters
+   that don't set `response.model` will be silently
+   priced as local. The cost attribution comment in
+   `agent.ts` already noted this risk ("Unknown model +
+   missing usage = 0 cost") — the tests now exercise
+   the right path.
+2. The "cap DURING the run" test was wrong: a pure-text
+   response ends the loop, so the second call never
+   happened. Fixed by giving the first response a
+   tool call (forcing the loop to continue) and the
+   second response a text result (testing the cap
+   triggers after the second iteration, not the first).
+3. The `--provider openai` dispatch test timed out
+   because the test machine might have `OPENAI_API_KEY`
+   set (real network call). Fixed by saving and
+   unsetting the env var in a `try/finally` block.
+
+Tests: 28 in `test/cli-provider-dispatch.test.ts` covering
+`createProviderAdapter` per-provider (15), `runAgent`
+dispatch (4), `Agent.maxCostUsd` cap (6), CLI integration
+(2), and public API surface (1).
+
+**End-to-end smoke verified:** `env -u OPENAI_API_KEY
+pnpm run envoy --provider openai 'hi'` exits 64 with
+message `"--provider requires OPENAI_API_KEY env var to
+be set"`. The bin script is now usable for real providers
+once the corresponding `*_API_KEY` is set.
+
 ---
 
 ## 4. Architectural invariants (what we hold)
@@ -751,13 +839,18 @@ code (not data) and changes are explicit.
 API. Real model adapters (Phase 2) belong in a separate
 `llm` package.
 
-### 5.7 Real LLM adapters — partial
+### 5.7 Real LLM adapters — done
 **Where:** `src/llm/` — `OpenAIAdapter` (F7.2),
-`AnthropicAdapter` (F7.3), and `DeepSeekAdapter` (F7.4)
-are wired and tested end-to-end against `FakeHttpClient`.
-The bin script still needs a provider-dispatch path
-(F7.5). Until F7.5 lands, real usage requires manually
-constructing an adapter in user code.
+`AnthropicAdapter` (F7.3), `DeepSeekAdapter` (F7.4), and
+`createProviderAdapter` (F7.5) are wired and tested
+end-to-end. The bin script dispatches via `--provider` +
+env vars (e.g. `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
+`DEEPSEEK_API_KEY`; ollama is keyless). The cost cap
+(`--max-cost-usd`) is enforced in the agent loop after
+every model call, not at the end. End-to-end smoke
+verified: `env -u OPENAI_API_KEY pnpm run envoy
+--provider openai 'hi'` exits 64 with message
+"`--provider requires OPENAI_API_KEY env var to be set`".
 
 ### 5.8 `parseArgs` returns a discriminated union
 **Where:** `src/cli/argv.ts` — every caller must narrow on
@@ -829,7 +922,7 @@ each model.
 | **F7.2** | `HttpClient` abstraction (`FetchHttpClient` + `FakeHttpClient`); `OpenAIAdapter` translating to OpenAI's chat/completions wire format. | `src/llm/http.ts`, `src/llm/openai.ts`, `test/llm-openai.test.ts` | ✅ done (this commit) |
 | **F7.3** | `AnthropicAdapter` — different wire format (POST `/v1/messages`, system role separate). | `src/llm/anthropic.ts`, `test/llm-anthropic.test.ts` | ✅ done (`5acd49a`) |
 | **F7.4** | `DeepSeekAdapter` — OpenAI-compatible, different base URL + key env. | `src/llm/deepseek.ts`, `test/llm-deepseek.test.ts` | ✅ done (this commit) |
-| **F7.5** | `bin/envoy-harness.ts` reads `--provider` and env vars; dispatches to the right adapter. `--max-cost-usd` enforces a cap. | `bin/envoy-harness.ts`, `src/cli/run.ts`, `test/cli-provider-dispatch.test.ts` | ⏳ next |
+| **F7.5** | `bin/envoy-harness.ts` reads `--provider` and env vars; dispatches to the right adapter. `--max-cost-usd` enforces a cap. | `src/llm/index.ts`, `src/agent.ts`, `src/cli/run.ts`, `test/cli-provider-dispatch.test.ts` | ✅ done (this commit) |
 
 **Type changes (F7.1):**
 
@@ -1255,7 +1348,7 @@ useful.
 |-------|-------|-------|--------|
 | 0 | 1 day | Empty package skeleton | ✅ done |
 | 1 | 4 weeks | v0 spine: types, validators, hooks, AGENTS.md, tools, agent loop, CLI, verifier | ✅ done |
-| 2 | 4 weeks | Mesh-native: adapter, manifest broadcast, task submission, reputation book, persistence, real LLM adapters, cost tracking | 🟡 in progress (F7.1–F7.4 done; F7.5 next) |
+| 2 | 4 weeks | Mesh-native: adapter, manifest broadcast, task submission, reputation book, persistence, real LLM adapters, cost tracking | 🟡 F7 done (real LLM adapters + cost tracking); F8 (envoy-harness-adapter) next |
 | 3 | 3 weeks | Self-evolution: 5-step protocol, federated scoreboard, owner-key-signed entries | ✅ done (5a-5e + F6) |
 | 4 | ongoing | LSP, team, cron, trace UI, per-call approval, cross-agent verification | ⏳ not started |
 
@@ -1400,3 +1493,20 @@ scoreboard opt-in (off by default)." — 3 of 4 done
   implementation is reused). Updated §2, §3, §5.7
   (DeepSeek done; F7.5 next), §6.2, §7, §10. Next:
   F7.5 (CLI provider dispatch + `--max-cost-usd`).
+- **2026-08-18 (F7.5)**: CLI provider dispatch + cost
+  cap landed. 28 new tests. `createProviderAdapter` in
+  `src/llm/index.ts` resolves `--provider` + env vars
+  to the right adapter (4 providers supported; ollama
+  is keyless via OpenAI-compatible endpoint). `AgentOptions.maxCostUsd`
+  enforced during the run (after every usage
+  attribution, not at the end). Both `runAgent` and
+  `runSelfEvolve` now accept `--provider` end-to-end.
+  Bin script smoke verified: `env -u OPENAI_API_KEY pnpm
+  run envoy --provider openai 'hi'` exits 64 with
+  helpful error. **Phase 2 milestone per design §22 is
+  now "F7 done" — 5 of 5 sub-chunks.** Updated §2
+  (status), §3 (F7.5 done work + self-review notes), §5.7
+  (mark done), §6.2 (F7.5 ✅; F8 next per design), §7
+  (Phase 2 milestone: F7 done), §10 (this entry). Next:
+  F8 (envoy-harness-adapter, Package 3) — the MAP
+  integration.
