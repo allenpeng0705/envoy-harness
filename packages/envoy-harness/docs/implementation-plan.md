@@ -8,9 +8,9 @@
 > and *why*. This file says *what shipped*, *where it lives*,
 > and *what's still open*.
 >
-> **Status as of last commit:** (next commit, F9.4 done) on `phase-1/types`.
+> **Status as of last commit:** (next commit, F9.3 done) on `phase-1/types`.
 > Total: 564 tests, 28 test files, 40 source files, ~17k lines (monorepo: 2 packages).
-> Phase 3 fully complete (F6 done). Phase 2 fully complete (F7 + F8 done, F8 polish done). **Phase 4 in progress (F9.1 + F9.2 + F9.4 done; F9.3 + F9.5 pending: team+cron, cross-verify).**
+> Phase 3 fully complete (F6 done). Phase 2 fully complete (F7 + F8 done, F8 polish done). **Phase 4 in progress (F9.1 + F9.2 + F9.3 + F9.4 done; F9.5 pending: cross-verify).**
 
 ---
 
@@ -1695,7 +1695,7 @@ each is a separate F9.x sub-chunk.
 |----|-------|--------|--------|
 | **F9.1** | Per-call approval callback (Penguin style). When the model tries a sensitive action (e.g. bash with workspace-write), pause the agent loop and call a host-provided `askHandler` callback. The callback returns a decision (allow / deny / modify). The agent resumes with the decision. The host decides UX (Tauri prompt, headless log, etc.). | design §10.4 (Penguin per-call approval sketch), §8.1 hook events | ✅ done |
 | **F9.2** | LSP client (parity with claw-code lane 8). `LspClient` class that wraps the LSP protocol over stdio. Auto-start language servers for projects the harness is reading/writing. Provides `definition`, `references`, `hover`, `diagnostics` to the agent as tools. | claw-code parity lane 8 | ✅ done (F9.2.1 + F9.2.2 + F9.2.3) |
-| **F9.3** | Team + cron (parity with claw-code lane 6). Multi-agent team definition (a team is a graph of agents + roles + delegation rules). Cron triggers (a team runs on a schedule). Saved as TOML config (`06-team-cron.toml`). v0: read the TOML, run the team in-process; no actual cron daemon. | claw-code parity lane 6, design §25 (parity dir) | ⏳ pending (planned) |
+| **F9.3** | Team + cron (parity with claw-code lane 6). Multi-agent team definition (a team is a graph of agents + roles + delegation rules). Cron triggers (a team runs on a schedule). Saved as TOML config (`06-team-cron.toml`). v0: read the TOML, run the team in-process; no actual cron daemon. | claw-code parity lane 6, design §25 (parity dir) | ✅ done (F9.3.1 + F9.3.2 + F9.3.3) |
 | **F9.4** | Trace observability UI. The bin script gains `--json` mode (already accepted, currently ignored) that streams every agent decision + hook fire + tool call + verifier verdict as JSON Lines to stdout. A separate viewer (out-of-scope for this repo) renders the stream. v0: just the JSON Lines output; the viewer is a downstream concern. | design §19 (CLI), existing `--json` arg | ✅ done (F9.4.1 + F9.4.2 + F9.4.3) |
 | **F9.5** | Cross-agent verification. The `verify()` path can take an optional `crossVerifyWith` closure. When provided, the adapter calls it on the result and returns the cross-verify verdict in addition to its own. The orchestrator combines per design §6.2 (OR-of-pass, AND-of-fail). v0 in this chunk: a default cross-verify closure that re-runs the same skill on a different `ModelAdapter` (e.g. cheap local model vs. expensive GPT-4). | design §12.4 (4-source cascade), MAP §CrossAgentDisagreementVerifier | ⏳ pending |
 
@@ -2904,5 +2904,80 @@ mode. The web UI for trace rendering is downstream
 entry), §6.5 (F9.4 ✅), §7 (sub-chunk template
 preserved), §10 (this entry). **Next: F9.3
 (team+cron) or F9.5 (cross-verify), user's pick.**
+
+---
+
+### F9.3 — Team + cron (3 sub-chunks)
+**Phase 4 fourth sub-chunk.** Multi-agent workflows
+land as a TOML config + an in-process runner.
+The host (system cron, k8s) calls `runOnce()` on
+schedule; v0 has no actual cron daemon.
+
+**F9.3.1 (this commit) — types + minimal TOML
+reader.** Lands `TeamConfig` (name + agents[] +
+optional schedule), `AgentSpec` (id, role,
+systemPrompt, objective, dependsOn),
+`ScheduleSpec` (5-field cron), `TeamResult`,
+`AgentRunResult`. Hand-rolled minimal TOML reader
+in `parseTeamToml` (~250 lines) supporting the v0
+subset: top-level `key = "string"`, `[section]`,
+`[[agents]]` (array of tables), string arrays,
+comments, blank lines, basic string escapes. Throws
+`TomlParseError` on bad input with line number +
+line content. 17 new tests in `test/team-toml.test.ts`.
+
+**F9.3.2 (this commit) — `Team.runOnce()` with
+topological order.** Lands the `Team` class
+(`runOnce()`). Kahn's algorithm for topological
+sort on `dependsOn`. Each agent runs in
+topological order; the downstream agent's prompt
+includes the upstream agents' final text as
+"context from upstream agents". `${input}` is
+substituted in each agent's objective with the
+team-level input. Per-agent failure (model error,
+etc.) sets `TeamResult.status: "failed"` with an
+error message. Throws on missing dependency or
+cycle. 9 new tests in `test/team-runner.test.ts`.
+**Self-review caught 1 real bug:** the agent's
+`run()` catches model errors and returns a
+synthetic `aborted` result rather than throwing;
+the Team's `runOnce` only checked for exceptions,
+so the team thought an aborted agent was
+successful. Fix: `runAgent` now returns
+`{text, stopReason}`; `runOnce` checks
+`stopReason === "aborted"` and treats it as a
+per-agent failure.
+
+**F9.3.3 (this commit) — CLI `team` subcommand.**
+Wires `envoy team <config.toml>` into argv +
+runner. New flags: `--model`, `--provider`,
+`--cwd`, `--input`, `--json`, `--quiet`. The
+runner reads the TOML, builds a `Team`, calls
+`runOnce()`, prints a per-agent summary. The
+`--json` flag works with team too (per-agent
+trace events stream to stdout). 3 new tests in
+`test/cli.test.ts`. **Self-review caught 2 real
+bugs:** (1) `TomlParseError` instanceof check
+failed because the test imports from the built
+`dist/` (different class identity than source).
+Fix: use `.name === "TomlParseError"` instead
+of `instanceof`. (2) The `toTeamConfig` +
+`toAgentSpec` error paths threw plain `Error`
+(not `TomlParseError`), so the CLI's name-based
+detection still missed them. Fix: all error
+throws in `toml.ts` use `TomlParseError`. The
+class is the public error type; the CLI relies
+on its `.name`.
+
+**Total: 612 tests across 32 files.** F9.3 is
+**done**; the bin script supports `envoy team
+<config.toml>` (alongside the default `envoy
+<prompt>` and `envoy self-evolve`). The host
+calls the subcommand on a schedule. Real cron
+daemon and parallel agent execution are out of
+scope for v0. Updated §2 (status), §3 (this
+entry), §6.5 (F9.3 ✅), §7 (sub-chunk template
+preserved), §10 (this entry). **Next: F9.5
+(cross-verify), user's pick.**
 
 ---
