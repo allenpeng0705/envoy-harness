@@ -245,6 +245,17 @@ export {
   type WritableStream,
 } from "./trace/index.js";
 
+// Re-export the team layer (F9.3, §22 of the design doc)
+export {
+  TomlParseError,
+  parseTeamToml,
+  type AgentRunResult,
+  type AgentSpec,
+  type ScheduleSpec,
+  type TeamConfig,
+  type TeamResult,
+} from "./team/index.js";
+
 // Re-export the scoreboard (§13 of the design doc)
 export {
   BenchmarkSchema,
