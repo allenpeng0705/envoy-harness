@@ -1037,6 +1037,104 @@ guard), and the split/format helpers (system
 extraction, tool result as user message, empty-content
 guard).
 
+**Provider dispatch + cost cap (F7.5):**
+
+The bin script needs to translate `--provider <name>` to
+the right adapter. The translation lives in a new helper
+in `src/llm/index.ts`:
+
+```ts
+// src/llm/index.ts
+export interface ProviderConfig {
+  /** "openai" | "anthropic" | "deepseek" | "ollama" */
+  provider: string;
+  /** Optional model override (provider has a default). */
+  model?: string;
+  /** Optional env override (for tests). Default: process.env. */
+  env?: NodeJS.ProcessEnv;
+}
+
+export function createProviderAdapter(config: ProviderConfig): ModelAdapter {
+  const env = config.env ?? process.env;
+  const provider = config.provider.toLowerCase();
+  switch (provider) {
+    case "openai": {
+      const apiKey = requireEnv(env, "OPENAI_API_KEY");
+      return new OpenAIAdapter({
+        apiKey,
+        model: config.model ?? "gpt-4o",
+      });
+    }
+    case "anthropic": {
+      const apiKey = requireEnv(env, "ANTHROPIC_API_KEY");
+      return new AnthropicAdapter({
+        apiKey,
+        model: config.model ?? "claude-sonnet-4-6",
+      });
+    }
+    case "deepseek": {
+      const apiKey = requireEnv(env, "DEEPSEEK_API_KEY");
+      return new DeepSeekAdapter({
+        apiKey,
+        model: config.model ?? "deepseek-chat",
+      });
+    }
+    case "ollama": {
+      // Ollama exposes an OpenAI-compatible endpoint at
+      // /v1 (no auth). We point the OpenAIAdapter at it.
+      return new OpenAIAdapter({
+        apiKey: "ollama",  // OpenAIAdapter requires a non-empty key
+        model: config.model ?? "llama3.1",
+        baseUrl: env["OLLAMA_BASE_URL"] ?? "http://localhost:11434/v1",
+      });
+    }
+    default:
+      throw new Error(`unknown provider: ${config.provider}`);
+  }
+}
+```
+
+**Cost cap (`--max-cost-usd`):** the cap is enforced
+*inside* the agent loop, not at the end of the run.
+After every model call that reports `usage`, the agent
+checks `costTracker.total().costUsd > maxCostUsd` and
+aborts if so. The result has `stopReason: "aborted"` and
+the user sees the cap message in the transcript.
+
+```ts
+// src/agent.ts — add to AgentOptions
+maxCostUsd?: number;
+
+// In Agent.run(), after addUsage:
+if (
+  this.maxCostUsd !== undefined &&
+  this.costTracker.total().costUsd > this.maxCostUsd
+) {
+  this.abortController.abort(
+    `max-cost-usd exceeded: $${this.costTracker.total().costUsd.toFixed(4)} > $${this.maxCostUsd}`,
+  );
+  return this.makeResult(response.content, "aborted", iterations);
+}
+```
+
+**`runAgent` dispatch** (`src/cli/run.ts`): when
+`options.model` is not provided but `parsed.provider` is,
+call `createProviderAdapter({ provider, model: parsed.model })`
+and use the result. Throw `CliError(EXIT_USAGE)` if neither
+is set, or if the env var for the chosen provider is
+missing.
+
+**Tests:** ~25 in `test/cli-provider-dispatch.test.ts`
+covering:
+- `createProviderAdapter` (4 providers × 2 cases each =
+  ~8, plus unknown-provider + custom-model + custom-env
+  = ~3, plus ollama-with-OLLAMA_BASE_URL = 1).
+- `runAgent` with `--provider openai` resolves the
+  adapter (3 cases: success, missing key, no provider).
+- `Agent.maxCostUsd` cap (5 cases: no cap, cap=0, cap
+  exceeded, cap not exceeded, cap checks per-iteration
+  not at end).
+
 **Why this is the biggest remaining chunk:** the harness
 is demoable but not usable without a real LLM. After F7,
 the bin script's `--model` + `--provider` flags light up

@@ -217,7 +217,8 @@ describe("run: usage errors", () => {
     } catch (err) {
       expect(err).toBeInstanceOf(CliError);
       expect((err as CliError).exitCode).toBe(64);
-      expect((err as CliError).message).toMatch(/model adapter/);
+      // F7.5: error message points to --provider + env var.
+      expect((err as CliError).message).toMatch(/--provider/);
     }
   });
 });

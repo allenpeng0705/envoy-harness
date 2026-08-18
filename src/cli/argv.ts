@@ -469,7 +469,7 @@ export function formatHelp(version: string): string {
     "  --sandbox <mode>       read-only | workspace-write | danger-full-access",
     "  --approval <mode>      unless-trusted | on-request | granular | never",
     "  --model <id>           LLM model identifier",
-    "  --provider <name>      LLM provider (openai, anthropic, ollama, custom)",
+    "  --provider <name>      LLM provider (openai, anthropic, deepseek, ollama)",
     "  --cwd <path>           override working directory",
     "  --max-turns <n>        agent loop iteration cap (default 50)",
     "  --max-cost-usd <n>     cost ceiling (default 5.00)",

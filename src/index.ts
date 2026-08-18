@@ -131,6 +131,42 @@ export {
   type Usage,
 } from "./cost.js";
 
+// Re-export the LLM adapters + provider dispatch (§14 of the design doc, F7)
+export {
+  AnthropicAdapter,
+  DeepSeekAdapter,
+  FakeHttpClient,
+  FetchHttpClient,
+  OpenAIAdapter,
+  createProviderAdapter,
+  DEFAULT_PROVIDER_MODELS,
+  isAnthropic2xx,
+  isOpenAI2xx,
+  messagesToAnthropic,
+  messagesToOpenAI,
+  parseAnthropicError,
+  parseChatResponse,
+  parseMessagesResponse,
+  parseOpenAIError,
+  splitSystemAndMessages,
+  toolsToAnthropic,
+  toolsToOpenAI,
+  zodToJsonSchema,
+  SUPPORTED_PROVIDERS,
+  type AnthropicAdapterOptions,
+  type AnthropicToolDefinition,
+  type DeepSeekAdapterOptions,
+  type HttpClient,
+  type HttpRequest,
+  type HttpResponse,
+  type OpenAIAdapterOptions,
+  type OpenAIMessage,
+  type OpenAIToolCall,
+  type OpenAIToolDefinition,
+  type ProviderConfig,
+  type SupportedProvider,
+} from "./llm/index.js";
+
 // Re-export the CLI (§19 of the design doc)
 export {
   ArgvError,

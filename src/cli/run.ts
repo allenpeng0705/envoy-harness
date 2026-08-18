@@ -46,6 +46,7 @@ import {
   ToolRegistry,
   VERSION,
   DEFAULT_RULES,
+  createProviderAdapter,
   type ModelAdapter,
   type Session,
   type SelfEvolvePaths,
@@ -184,13 +185,11 @@ async function runAgent(
     );
   }
 
-  // 2. Model is required in v0.
-  if (!options.model) {
-    throw new CliError(
-      "no model adapter configured (this is a v0 limitation; wire a real adapter in the bin script)",
-      EXIT_USAGE,
-    );
-  }
+  // 2. Resolve the model. F7.5: when no model is injected
+  //    via RunOptions, dispatch from --provider + env vars.
+  //    This makes the bin script usable end-to-end (no
+  //    need to wire a default adapter in user code).
+  const model = resolveModel(parsed, options);
 
   // 3. Build the agent.
   const cwd = parsed.cwd ?? options.cwd ?? process.cwd();
@@ -206,7 +205,7 @@ async function runAgent(
   const hooks = options.hooks ?? new HookRegistry();
 
   const agentOptions: ConstructorParameters<typeof Agent>[0] = {
-    model: options.model,
+    model,
     tools,
     session,
     hooks,
@@ -214,6 +213,9 @@ async function runAgent(
   };
   if (parsed.maxTurns !== undefined) {
     agentOptions.maxIterations = parsed.maxTurns;
+  }
+  if (parsed.maxCostUsd !== undefined) {
+    agentOptions.maxCostUsd = parsed.maxCostUsd;
   }
   const agent = new Agent(agentOptions);
 
@@ -249,13 +251,28 @@ async function runSelfEvolve(
   stdout: NodeJS.WritableStream,
   _stderr: NodeJS.WritableStream,
 ): Promise<SelfEvolveRunResult> {
-  // 1. Model is required (the hypothesis provider calls it).
-  if (!options.model) {
-    throw new CliError(
-      "no model adapter configured (envoy self-evolve uses a model for the hypothesis; pass one via RunOptions.model)",
-      EXIT_USAGE,
-    );
-  }
+  // 1. Resolve the model. F7.5: dispatch via --provider + env
+  //    when no model is injected via RunOptions. Same helper
+  //    as `runAgent` (the hypothesis provider just needs a
+  //    ModelAdapter; the wire format is provider-specific).
+  const model = options.model
+    ? options.model
+    : (() => {
+        if (!parsed.provider) {
+          throw new CliError(
+            "no model configured: pass one via RunOptions.model, or use --provider <openai|anthropic|deepseek|ollama> with the matching *_API_KEY env var",
+            EXIT_USAGE,
+          );
+        }
+        try {
+          return createProviderAdapter({
+            provider: parsed.provider,
+            ...(parsed.model !== undefined ? { model: parsed.model } : {}),
+          });
+        } catch (err) {
+          throw new CliError((err as Error).message, EXIT_USAGE);
+        }
+      })();
 
   // 2. Build paths. Each path has a sensible default under
   //    $ENVOY_HOME; for v0, we use `<cwd>/.envoymesh/...`.
@@ -271,7 +288,7 @@ async function runSelfEvolve(
   const adoptionsFile = parsed.adoptions ?? path.join(root, "federated-adoptions.yaml");
 
   // 3. Wire the components.
-  const hypothesisProvider = new ModelHypothesisProvider(options.model);
+  const hypothesisProvider = new ModelHypothesisProvider(model);
   const benchmarkRunner = new DefaultBenchmarkRunner();
   const currentRules: ReadonlyArray<VerifierRule> = DEFAULT_RULES;
 
@@ -357,6 +374,43 @@ async function runSelfEvolve(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Resolve the model adapter for the `run` subcommand. F7.5:
+ *
+ * - If `RunOptions.model` is provided, use it (programmatic
+ *   injection takes precedence over the CLI).
+ * - Else if `--provider <name>` is given, dispatch via
+ *   `createProviderAdapter`, reading the matching env var.
+ * - Else throw `CliError(EXIT_USAGE)` with a message that
+ *   tells the user how to fix it.
+ *
+ * `createProviderAdapter` throws on unknown provider /
+ * missing env var; we wrap as `CliError` so the bin
+ * script's exit code is correct (USAGE, not ERROR).
+ */
+function resolveModel(
+  parsed: Extract<ParsedArgs, { subcommand: "run" }>,
+  options: RunOptions,
+): ModelAdapter {
+  if (options.model) return options.model;
+  if (!parsed.provider) {
+    throw new CliError(
+      "no model configured: pass one via RunOptions.model, or use --provider <openai|anthropic|deepseek|ollama> with the matching *_API_KEY env var",
+      EXIT_USAGE,
+    );
+  }
+  try {
+    return createProviderAdapter({
+      provider: parsed.provider,
+      ...(parsed.model !== undefined ? { model: parsed.model } : {}),
+    });
+  } catch (err) {
+    throw new CliError((err as Error).message, EXIT_USAGE);
+  }
+}
+
+
 
 function makeEmptyRunResult(): RunResult {
   return {

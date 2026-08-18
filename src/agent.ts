@@ -77,6 +77,14 @@ export interface AgentOptions {
    * can read the first system message and inject it natively.
    */
   systemPrompt?: string;
+  /**
+   * F7.5: cost ceiling. When the accumulated
+   * `costTracker.total().costUsd` exceeds this number, the
+   * agent aborts (sets `stopReason: "aborted"`). The check
+   * happens after every model call that reports `usage`.
+   * Default: no cap.
+   */
+  maxCostUsd?: number;
 }
 
 /** What `Agent.run()` returns. */
@@ -140,6 +148,8 @@ export class Agent {
   private sandboxPolicy: SandboxPolicy;
   /** Cost tracker; populated across the run. F7.1. */
   private costTracker: CostTracker;
+  /** F7.5: cost ceiling; when exceeded, the agent aborts. */
+  private maxCostUsd: number | undefined;
 
   constructor(options: AgentOptions) {
     this.model = options.model;
@@ -148,6 +158,7 @@ export class Agent {
     this.hooks = options.hooks ?? defaultRegistry;
     this.cwd = options.cwd ?? process.cwd();
     this.maxIterations = options.maxIterations ?? DEFAULT_MAX_ITERATIONS;
+    this.maxCostUsd = options.maxCostUsd;
     if (options.abortSignal) {
       // Wrap caller-provided signal so we can also fire on
       // internal errors without leaking listeners.
@@ -256,6 +267,20 @@ export class Agent {
           },
           response.model,
         );
+      }
+
+      // 1c. F7.5: cost cap. After every usage attribution, check
+      // against the cap. The cap is checked DURING the run, not
+      // at the end — that's the whole point of a cap. Abort
+      // cleanly; the result still has the cost up to this point.
+      if (this.maxCostUsd !== undefined) {
+        const total = this.costTracker.total();
+        if (total.costUsd > this.maxCostUsd) {
+          this.abortController.abort(
+            `max-cost-usd exceeded: $${total.costUsd.toFixed(4)} > $${this.maxCostUsd}`,
+          );
+          return this.makeResult(response.content, "aborted", iterations);
+        }
       }
 
       // 2. Append the assistant message.
