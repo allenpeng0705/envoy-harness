@@ -1485,6 +1485,120 @@ submission, 3-tuple reputation book local-only,
 arbitration reads work). Subsequent chunks (Phase 4) add
 LSP, team, cron, trace UI, etc.
 
+### 6.4 F8 polish — wire real Ed25519 signing + local verifier rules
+**Status:** pending. Two known limitations from the
+F8 done-work entry.
+
+**Scope (sub-chunks):**
+
+| ID | Scope | Files | Status |
+|----|-------|-------|--------|
+| **F8.4+** | `defaultSignResult` helper that wraps `@envoymesh/identity`'s `signCanonicalPayload`. The adapter still takes `signResult` as a DI closure (no behavior change for callers), but the default closure does real Ed25519. Tests use a fake; production uses the real signer. | `src/signing.ts`, `test/signing.test.ts` | ⏳ next |
+| **F8.6+** | Wire the local verifier rules to the adapter's `verify()`. Currently a first-cut deterministic placeholder. Map wire `SignedAgentResult` → local `AgentResult` shape (extract `raw` audit, decode the structured tool-call/result blocks), then run `runVerifierRules` from `@envoymesh/envoy-harness`. Return the verdicts. | `src/verify.ts`, `test/verify.test.ts` | ⏳ pending |
+
+**Why these are F8 polish (not separate F-chunks):** the
+adapter already has the seams — `signResult` is a DI
+closure, `verify()` is a method. The polish is just
+filling in the default implementations with real
+Ed25519 + the local verifier. The behavior change is
+additive: callers that inject their own `signResult`
+are unaffected; the default just becomes real.
+
+**`defaultSignResult` (F8.4+):**
+
+```ts
+// src/signing.ts
+import { signCanonicalPayload } from "@envoymesh/identity";
+import type { SignResultFn } from "./adapter.js";
+
+/**
+ * Build a signResult closure that signs with the given
+ * Ed25519 private key (PEM). The closure calls
+ * `signCanonicalPayload(unsigned)` and returns the
+ * `SignedAgentResult` with the signature field.
+ *
+ * The adapter does NOT hold a key — the host provides
+ * it (typically from `@envoymesh/identity`'s
+ * `generateAgentIdentity(ownerId)`).
+ */
+export function defaultSignResult(
+  privateKeyPem: string,
+): SignResultFn {
+  return (unsigned) => ({
+    ...unsigned,
+    signature: signCanonicalPayload(unsigned, privateKeyPem),
+  });
+}
+```
+
+**Wire `verify()` (F8.6+):**
+
+```ts
+// src/verify.ts
+import {
+  runVerifierRules,
+  DEFAULT_RULES,
+  type VerifierRule,
+  type Message as LocalMessage,
+} from "@envoymesh/envoy-harness";
+import type { Verdict, SignedAgentResult, AgentResult as WireAgentResult } from "@envoymesh/protocol";
+import type { VerifyInput } from "@envoymesh/agent-adapter";
+import { localToWireBlock } from "./translation.js";
+
+/**
+ * Map a wire `AgentResult` to a local `AgentResult` shape
+ * for the verifier. The wire format has typed content
+ * blocks; the local verifier expects `messages` +
+ * `sandboxPolicy` + `content` (text + tool calls + tool
+ * results). The structured tool-call/result blocks are
+ * decoded back to the local shape.
+ */
+function wireToLocalAgentResult(
+  wire: WireAgentResult,
+): {
+  content: ReadonlyArray<{ type: "text" | "tool_call" | "tool_result"; ... }>;
+  messages: ReadonlyArray<LocalMessage>;
+  sandboxPolicy: { ... };
+  metrics: { ... };
+} {
+  // 1. Decode content blocks (text + structured tool_call/result).
+  // 2. Build a synthetic message list (the wire doesn't have a
+  //    full transcript; we approximate from content).
+  // 3. The sandbox policy isn't on the wire (it's internal
+  //    audit). Default to a safe policy.
+  ...
+}
+
+export function runLocalVerifier(
+  input: VerifyInput,
+  rules: ReadonlyArray<VerifierRule> = DEFAULT_RULES,
+): Verdict[] {
+  const local = wireToLocalAgentResult(input.result);
+  return runVerifierRules(local, rules);
+}
+```
+
+**Tests:**
+- F8.4+: ~5 tests for `defaultSignResult` (correct
+  signature shape, real Ed25519 round-trip, malformed
+  key throws, signature covers `raw`).
+- F8.6+: ~8 tests for `runLocalVerifier` (empty
+  content → fail, non-empty content → pass,
+  tool-call-heavy result → uses tool-aware rules,
+  unknown rule throws, default rules used when none
+  provided, custom rules list respected).
+
+**Out of scope:**
+- Real Ed25519 key generation. The host provides the
+  key (via `@envoymesh/identity`); the adapter
+  doesn't generate.
+- Wiring `verify()` to use cross-agent rules (e.g. when
+  the orchestrator asks the adapter to verify a
+  result produced by another adapter). v0: the
+  adapter only verifies its own results.
+- Caching the local-ruleset in the adapter. The
+  caller passes the rules (default: `DEFAULT_RULES`).
+
 ---
 
 ## 7. F6 sub-chunk archive (Phase 3 §13.3 — federated scoreboard)
