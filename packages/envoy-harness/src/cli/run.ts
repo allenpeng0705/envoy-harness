@@ -39,8 +39,10 @@ import {
   FederatedScoreboard,
   HookRegistry,
   InMemorySession,
+  JsonLinesTracer,
   LocalPeerSource,
   ModelHypothesisProvider,
+  NullTracer,
   newSessionId,
   SelfEvolve,
   ToolRegistry,
@@ -78,6 +80,16 @@ export interface RunOptions {
    *  fallback that writes a one-line "ask" record to stderr
    *  and returns `deny` (safe in headless contexts). */
   askHandler?: AskHandler;
+  /**
+   * F9.4: tracer. When set, the agent emits trace
+   * events to this tracer instead of the default
+   * NullTracer. The CLI's `--json` flag wires a
+   * `JsonLinesTracer` to stdout automatically;
+   * programmatic callers can inject a custom
+   * tracer (e.g. one that ships to a logging
+   * service).
+   */
+  tracer?: import("../index.js").Tracer;
 }
 
 /** Result of a successful `run` invocation. */
@@ -230,6 +242,20 @@ async function runAgent(
     // F9.1 default: log to stderr + deny. The host (Tauri,
     // web, etc.) injects a real UI handler via RunOptions.
     agentOptions.askHandler = defaultAskHandler;
+  }
+  // F9.4: when --json is set, wire a JsonLinesTracer
+  // to stdout. The trace events stream alongside the
+  // final text; downstream tools (jq, a viewer) parse
+  // the stream.
+  if (parsed.json) {
+    agentOptions.tracer = new JsonLinesTracer(stdout);
+  } else if (options.tracer) {
+    // Programmatic injection takes precedence (the host
+    // might want a different sink — file, websocket, etc.).
+    agentOptions.tracer = options.tracer;
+  } else {
+    // Default: NullTracer (no observable side effect).
+    agentOptions.tracer = new NullTracer();
   }
   const agent = new Agent(agentOptions);
 

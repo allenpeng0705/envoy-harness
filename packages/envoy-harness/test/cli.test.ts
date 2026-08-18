@@ -294,3 +294,131 @@ describe("run: with a fake model", () => {
     expect(out.data).toBe("");
   });
 });
+
+// ---------------------------------------------------------------------------
+// F9.4: --json flag
+// ---------------------------------------------------------------------------
+
+describe("run: --json flag", () => {
+  it("streams trace events to stdout as JSON Lines", async () => {
+    const out = new StringWritable();
+    const err = new StringWritable();
+    const fakeModel: ModelAdapter = {
+      async complete(): Promise<ModelResponse> {
+        return {
+          content: [{ type: "text", text: "done" }],
+          stopReason: "end_turn",
+        };
+      },
+    };
+    await run({
+      argv: ["--json", "--quiet", "hi"],
+      model: fakeModel,
+      stdout: out,
+      stderr: err,
+    });
+    // --quiet suppresses the human-readable final text;
+    // only the JSON trace events land on stdout.
+    const lines = out.data.split("\n").filter((l) => l.length > 0);
+    const events = lines.map((l) => JSON.parse(l) as { kind: string });
+    const kinds = events.map((e) => e.kind);
+    expect(kinds).toContain("agent_start");
+    expect(kinds).toContain("agent_end");
+    // agent_start must be the first event.
+    expect(kinds[0]).toBe("agent_start");
+    // agent_end must be the last event.
+    expect(kinds[kinds.length - 1]).toBe("agent_end");
+  });
+
+  it("streams tool_call + tool_result when the model emits a tool", async () => {
+    const out = new StringWritable();
+    const err = new StringWritable();
+    let calls = 0;
+    const fakeModel: ModelAdapter = {
+      async complete(): Promise<ModelResponse> {
+        calls++;
+        if (calls === 1) {
+          return {
+            content: [
+              { type: "tool_call", id: "t1", name: "echo", args: { s: "x" } },
+            ],
+            stopReason: "tool_use",
+          };
+        }
+        return {
+          content: [{ type: "text", text: "done" }],
+          stopReason: "end_turn",
+        };
+      },
+    };
+    // The default tool registry has read_file + bash
+    // but no echo tool; the agent will see the unknown
+    // tool and write `isError: true` to the transcript.
+    // For trace purposes, the tool_call + tool_result
+    // events still fire (we test the trace, not the
+    // tool's existence).
+    await run({
+      argv: ["--json", "--quiet", "use echo"],
+      model: fakeModel,
+      stdout: out,
+      stderr: err,
+    });
+    const lines = out.data.split("\n").filter((l) => l.length > 0);
+    const events = lines.map((l) => JSON.parse(l) as { kind: string });
+    expect(events.map((e) => e.kind)).toContain("tool_call");
+    expect(events.map((e) => e.kind)).toContain("tool_result");
+  });
+
+  it("does not emit trace events when --json is not set", async () => {
+    const out = new StringWritable();
+    const err = new StringWritable();
+    const fakeModel: ModelAdapter = {
+      async complete(): Promise<ModelResponse> {
+        return {
+          content: [{ type: "text", text: "hi" }],
+          stopReason: "end_turn",
+        };
+      },
+    };
+    await run({
+      argv: ["hi"],
+      model: fakeModel,
+      stdout: out,
+      stderr: err,
+    });
+    // No JSON in stdout — the only line is the agent's
+    // text "hi\n".
+    expect(out.data).toBe("hi\n");
+  });
+
+  it("respects --quiet alongside --json (no human output, just trace)", async () => {
+    const out = new StringWritable();
+    const err = new StringWritable();
+    const fakeModel: ModelAdapter = {
+      async complete(): Promise<ModelResponse> {
+        return {
+          content: [{ type: "text", text: "should-not-appear" }],
+          stopReason: "end_turn",
+        };
+      },
+    };
+    await run({
+      argv: ["--json", "--quiet", "hi"],
+      model: fakeModel,
+      stdout: out,
+      stderr: err,
+    });
+    // The text should not appear as a human line.
+    const lines = out.data.split("\n").filter((l) => l.length > 0);
+    // Every line should be a JSON event (parseable).
+    for (const line of lines) {
+      expect(() => JSON.parse(line)).not.toThrow();
+    }
+    // The last event must be agent_end (the trace
+    // is complete; no "should-not-appear" follows
+    // as human output).
+    const lastLine = lines[lines.length - 1];
+    const lastEvent = JSON.parse(lastLine!) as { kind: string };
+    expect(lastEvent.kind).toBe("agent_end");
+  });
+});
