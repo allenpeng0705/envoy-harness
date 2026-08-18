@@ -38,6 +38,7 @@ export {
   readBenchmark,
   readScoreboard,
   signEntry,
+  verifyEntrySignature,
   writeBenchmark,
   writeScoreboard,
 } from "./storage.js";
@@ -55,3 +56,12 @@ export {
   type SelfEvolveOptions,
   type SelfEvolvePaths,
 } from "./self-evolve.js";
+
+export {
+  FederatedScoreboard,
+  LocalPeerSource,
+  type PeerScoreboard,
+  type PeerSource,
+  type PullOptions,
+  type PullResult,
+} from "./federated.js";

@@ -154,3 +154,23 @@ export async function signEntry(
   });
   return createHash("sha256").update(canonical, "utf8").digest("hex");
 }
+
+/**
+ * Verify a scoreboard entry's signature. v0: recompute the
+ * SHA-256 of the canonical payload and compare to
+ * `ownerSignature`. Returns `true` iff the signature is valid.
+ *
+ * **What this protects against:** accidental corruption of
+ * the scoreboard file. A malicious process can still rewrite
+ * the file (signing is local; Ed25519 with the owner's key
+ * is the real protection — Phase 2).
+ *
+ * **What this does NOT protect against:** a peer lying about
+ * its identity. v0 trusts the `PeerSource` to return the
+ * right entries. Phase 2 adds peer-key verification.
+ */
+export async function verifyEntrySignature(entry: ScoreboardEntry): Promise<boolean> {
+  const { ownerSignature, ...rest } = entry;
+  const expected = await signEntry(rest);
+  return expected === ownerSignature;
+}
