@@ -1,0 +1,61 @@
+{
+  "name": "@envoymesh/envoy-harness",
+  "version": "0.0.0",
+  "description": "EnvoyMesh's home-team agent harness — production-grade CLI agent, EnvoyMesh-native, independently runnable.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "envoy-harness": "./bin/envoy-harness.ts"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "docs"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "envoy": "tsx bin/envoy-harness.ts",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "engines": {
+    "node": ">=22.19"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/allenpeng0705/envoy-harness.git"
+  },
+  "bugs": {
+    "url": "https://github.com/allenpeng0705/envoy-harness/issues"
+  },
+  "homepage": "https://github.com/allenpeng0705/envoy-harness#readme",
+  "keywords": [
+    "agent",
+    "harness",
+    "envoymesh",
+    "mesh",
+    "cli",
+    "ai"
+  ],
+  "dependencies": {
+    "yaml": "^2.6.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}

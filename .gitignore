@@ -5,6 +5,12 @@ dist/
 coverage/
 .nyc_output/
 
+# tsx-compiled bin outputs (bin/*.ts is the source; tsc should not emit to bin/)
+packages/*/bin/*.js
+packages/*/bin/*.js.map
+packages/*/bin/*.d.ts
+packages/*/bin/*.d.ts.map
+
 # Logs
 *.log
 npm-debug.log*
