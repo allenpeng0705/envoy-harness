@@ -39,6 +39,7 @@ function makeAgentResult(overrides: {
   toolCalls?: number;
   iterations?: number;
   stopReason?: AgentResult["stopReason"];
+  costUsd?: number;
 }): AgentResult {
   const session = new InMemorySession(newSessionId(), {
     cwd: "/tmp",
@@ -60,6 +61,11 @@ function makeAgentResult(overrides: {
     toolCalls: overrides.toolCalls ?? 0,
     messages: overrides.messages ?? session.messages,
     sandboxPolicy: policy,
+    metrics: {
+      inputTokens: 0,
+      outputTokens: 0,
+      costUsd: overrides.costUsd ?? 0,
+    },
   };
 }
 
@@ -190,12 +196,13 @@ describe("meshTaskShapeRule", () => {
 });
 
 describe("costReasonableForWorkRule", () => {
-  it("abstains (returns null) — no cost metrics in v0", async () => {
+  it("passes when cost is 0 (no model reported usage; v0 default)", async () => {
     const v = await costReasonableForWorkRule.check(
       makeAgentResult({}),
       "any",
     );
-    expect(v).toBeNull();
+    // F7.1: cost tracking is now real. cost=0 → pass.
+    expect(v?.kind).toBe("pass");
   });
 });
 
@@ -209,8 +216,9 @@ describe("runVerifierRules", () => {
       content: [{ type: "text", text: "deployed the database migration" }],
     });
     const verdicts = await runVerifierRules(result, "deploy database", DEFAULT_RULES);
-    // 5 of 6 rules return verdicts; cost-reasonable abstains.
-    expect(verdicts.length).toBe(5);
+    // F7.1: cost-reasonable now also returns a verdict (pass at cost=0).
+    // All 6 rules return verdicts.
+    expect(verdicts.length).toBe(6);
     // All should be pass for this benign case.
     expect(verdicts.every((v) => v.kind === "pass")).toBe(true);
   });

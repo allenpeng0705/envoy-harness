@@ -46,6 +46,7 @@ import type { ModelAdapter, ModelResponse } from "./model.js";
 import type { Session } from "./session.js";
 import type { ContentBlock, ToolRegistry } from "./tools/index.js";
 import type { SandboxPolicy } from "./types.js";
+import { CostTracker } from "./cost.js";
 
 /** Default max iterations before the agent throws. */
 export const DEFAULT_MAX_ITERATIONS = 50;
@@ -111,6 +112,18 @@ export interface AgentResult {
    * rule uses this to bound which paths are allowed.
    */
   sandboxPolicy: SandboxPolicy;
+  /**
+   * Accumulated cost + token metrics across the run. F7.1:
+   * populated from each `ModelResponse.usage` via the
+   * `CostTracker`. `costUsd` is 0 when no usage was reported
+   * (e.g. FakeModel, local models, or adapters that don't
+   * surface usage).
+   */
+  metrics: {
+    inputTokens: number;
+    outputTokens: number;
+    costUsd: number;
+  };
 }
 
 export class Agent {
@@ -125,6 +138,8 @@ export class Agent {
   private toolCallCount = 0;
   /** Effective sandbox policy, derived from the session. The verifier reads this. */
   private sandboxPolicy: SandboxPolicy;
+  /** Cost tracker; populated across the run. F7.1. */
+  private costTracker: CostTracker;
 
   constructor(options: AgentOptions) {
     this.model = options.model;
@@ -157,6 +172,10 @@ export class Agent {
       this.session.metadata.permissionMode ?? "read-only",
       this.cwd,
     );
+    // Cost tracker. v0 defaults to "local" (which has $0 pricing);
+    // F7.2+ adapters set the model name in their ModelResponse, so
+    // cost is attributed per-response rather than per-construction.
+    this.costTracker = new CostTracker({ model: "local" });
   }
 
   /** The AbortSignal tools see in their context. */
@@ -222,6 +241,20 @@ export class Agent {
           [{ type: "text", text: `[model error] ${message}` }],
           "aborted",
           iterations,
+        );
+      }
+
+      // 1b. F7.1: cost attribution. The model reports usage; the
+      // Agent attributes it to the right model (each model has
+      // its own price). Unknown model + missing usage = 0 cost
+      // (graceful default for FakeModel / local).
+      if (response.usage) {
+        this.costTracker.addUsage(
+          {
+            inputTokens: response.usage.inputTokens,
+            outputTokens: response.usage.outputTokens,
+          },
+          response.model,
         );
       }
 
@@ -368,6 +401,7 @@ export class Agent {
     stopReason: AgentResult["stopReason"],
     iterations: number,
   ): AgentResult {
+    const cost = this.costTracker.total();
     return {
       content,
       stopReason,
@@ -375,6 +409,11 @@ export class Agent {
       toolCalls: this.toolCallCount,
       messages: this.session.messages,
       sandboxPolicy: this.sandboxPolicy,
+      metrics: {
+        inputTokens: cost.inputTokens,
+        outputTokens: cost.outputTokens,
+        costUsd: cost.costUsd,
+      },
     };
   }
 }

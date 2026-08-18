@@ -299,6 +299,9 @@ function buildStubResult(task: {
   objective: string;
   stubKind: "empty" | "ok" | "off-topic" | "forbidden-path";
 }): AgentResult {
+  // The metrics field is required (F7.1) but stubs have no
+  // cost data — 0 across the board is the safe default.
+  const baseMetrics = { inputTokens: 0, outputTokens: 0, costUsd: 0 };
   switch (task.stubKind) {
     case "empty":
       return {
@@ -315,6 +318,7 @@ function buildStubResult(task: {
           networkAccess: false,
           excludeSlashTmp: true,
         },
+        metrics: baseMetrics,
       };
     case "ok":
       return {
@@ -333,6 +337,7 @@ function buildStubResult(task: {
           networkAccess: false,
           excludeSlashTmp: true,
         },
+        metrics: baseMetrics,
       };
     case "off-topic":
       return {
@@ -349,6 +354,7 @@ function buildStubResult(task: {
           networkAccess: false,
           excludeSlashTmp: true,
         },
+        metrics: baseMetrics,
       };
     case "forbidden-path":
       return {
@@ -365,6 +371,7 @@ function buildStubResult(task: {
           networkAccess: false,
           excludeSlashTmp: true,
         },
+        metrics: baseMetrics,
       };
   }
 }

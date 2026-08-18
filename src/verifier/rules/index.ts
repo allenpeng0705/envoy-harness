@@ -252,17 +252,54 @@ export const meshTaskShapeRule: VerifierRule = {
 
 /**
  * Check that the work done was reasonable for the work asked.
- * v0: we don't have cost metrics yet (cost tracking is §14,
- * Phase 2). The rule abstains (returns null) so the average
- * isn't skewed.
+ *
+ * **v0 heuristic:** cost is judged against a per-objective
+ * budget. The default budget is $1.00 per objective (set
+ * here as a constant; v0 doesn't yet parse the operator's
+ * custom budgets from config). Work below the budget passes
+ * with confidence scaled by ratio; work over fails with
+ * `rollback: true` (the orchestrator may want to release
+ * the cost reserve).
+ *
+ * **Why a heuristic, not an LLM:** the rule runs on every
+ * verifier check. An LLM call would dominate the verifier's
+ * latency. v0 ships the heuristic; F12 (cost) can layer an
+ * LLM-source check on top for high-criticality chains.
+ *
+ * **Edge case:** if `result.metrics.costUsd` is 0 (no model
+ * reported usage, e.g. FakeModel in tests, or a local
+ * model), the rule passes unconditionally. The 0-cost
+ * path is the safe default — the absence of cost data
+ * isn't a signal of failure.
  */
 export const costReasonableForWorkRule: VerifierRule = {
   name: "cost-reasonable-for-work",
-  async check(_result, _objective) {
-    // No metrics → abstain.
-    return null;
+  async check(result) {
+    const cost = result.metrics.costUsd;
+    // No cost data → pass (v0 default; F12 may add an LLM check).
+    if (cost === 0) {
+      return { kind: "pass", score: 1.0, confidence: "low" };
+    }
+    const budget = DEFAULT_COST_BUDGET_USD;
+    if (cost > budget) {
+      return {
+        kind: "fail",
+        reason: `cost ${cost.toFixed(4)} USD exceeds budget ${budget.toFixed(2)} USD`,
+        rollback: true,
+      };
+    }
+    const ratio = cost / budget;
+    return {
+      kind: "pass",
+      score: ratio,
+      // Lower ratio = better.
+      confidence: ratio <= 0.5 ? "high" : "medium",
+    };
   },
 };
+
+/** Default per-objective cost budget in USD. F12 will read this from config. */
+const DEFAULT_COST_BUDGET_USD = 1.0;
 
 // ---------------------------------------------------------------------------
 // The default rule set (the 6 rules in design §12.1 order)

@@ -121,6 +121,16 @@ export {
   readFileTool,
 } from "./tools/builtin/index.js";
 
+// Re-export cost tracking (§14 of the design doc, F7.1)
+export {
+  CostTracker,
+  DEFAULT_PRICING,
+  computeCost,
+  type RunCost,
+  type TokenPrice,
+  type Usage,
+} from "./cost.js";
+
 // Re-export the CLI (§19 of the design doc)
 export {
   ArgvError,

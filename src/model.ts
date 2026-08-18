@@ -32,9 +32,11 @@ import type { Message, Tool } from "./tools/types.js";
  * What a model returns from one `complete()` call. The agent
  * extracts text and tool calls from `content` and dispatches.
  *
- * **No `usage` field in v0.** Cost tracking is §14 of the design
- * and is a future chunk. Add `usage: { inputTokens, outputTokens }`
- * when that lands.
+ * **`usage` (F7.1):** when the model reports token counts
+ * (OpenAI, Anthropic, DeepSeek all do), the adapter puts
+ * them here. The Agent loop feeds them into the CostTracker.
+ * `FakeModel` (and other test adapters) may omit `usage` —
+ * the cost is then 0 but the loop continues.
  */
 export interface ModelResponse {
   content: Message["content"];
@@ -45,6 +47,22 @@ export interface ModelResponse {
    * `stop_sequence` = hit a stop sequence; treated like `end_turn`.
    */
   stopReason: "end_turn" | "tool_use" | "max_tokens" | "stop_sequence";
+  /**
+   * Token usage for this call. Optional — when omitted, the
+   * cost is 0 for this call (no pricing data). The Agent
+   * loop accumulates these into `AgentResult.metrics`.
+   */
+  usage?: {
+    inputTokens: number;
+    outputTokens: number;
+  };
+  /**
+   * The model identifier that produced this response. The
+   * Agent uses this to attribute cost (each model has its
+   * own price). Optional — when omitted, the CostTracker
+   * uses the model it was constructed with.
+   */
+  model?: string;
 }
 
 /**
