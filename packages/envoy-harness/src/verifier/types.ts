@@ -32,6 +32,8 @@
 import type { AgentResult } from "../agent.js";
 import type { Verdict } from "../types.js";
 
+export type { Verdict };
+
 /**
  * A single verifier rule. Returns `null` if the rule has no
  * opinion (e.g. cost-reasonable-for-work when there are no

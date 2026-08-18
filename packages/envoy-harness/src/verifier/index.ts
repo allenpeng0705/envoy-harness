@@ -20,6 +20,7 @@ export {
   combineVerdicts,
   concatText,
   runVerifierRules,
+  type Verdict,
   type VerifierRule,
 } from "./types.js";
 

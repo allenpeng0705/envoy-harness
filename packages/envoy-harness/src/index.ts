@@ -50,7 +50,6 @@ export type {
   SandboxBackend,
   SandboxPolicy,
   SkillId,
-  Verdict,
   VerdictEntry,
   VerifierSource,
 } from "./types.js";
@@ -206,6 +205,7 @@ export {
   outputMatchesObjectiveRule,
   runVerifierRules,
   sandboxRespectedRule,
+  type Verdict,
   type VerifierRule,
 } from "./verifier/index.js";
 
@@ -257,6 +257,15 @@ export {
   type TeamOptions,
   type TeamResult,
 } from "./team/index.js";
+
+// Re-export the sub-agent types + default no-op submitter (F10.1, §10.3)
+export {
+  NOOP_MESH_SUBMITTER_ERROR,
+  NoopMeshSubmitter,
+  type MeshSubmitter,
+  type SubagentInput,
+  type SubagentResult,
+} from "./subagent/index.js";
 
 // Re-export the scoreboard (§13 of the design doc)
 export {
