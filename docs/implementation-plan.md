@@ -606,7 +606,8 @@ that the user prioritized.
 Phase 3 milestone per design §22 is now "4 of 4 done".
 
 ### 6.2 F7 — Phase 2: real LLM adapters + cost tracking (§14)
-**Status:** next. This is the biggest remaining chunk.
+**Status:** in progress (started 2026-08-18).
+This is the biggest remaining chunk.
 
 **Scope:**
 - `src/llm/openai.ts` — OpenAI adapter (`ModelAdapter`).
@@ -620,12 +621,127 @@ Phase 3 milestone per design §22 is now "4 of 4 done".
 - Update `costReasonableForWorkRule` to use the new metrics
   (was returning null in v0).
 
-**Tests:** each adapter has a `FakeHttpServer` mock that
+**Tests:** each adapter has a `FakeHttpClient` mock that
 asserts request shape; cost tests cover token-to-USD for
 each model.
 
-**Why second:** unblocks real-world use. Without a real
-adapter, the harness is demoable but not usable.
+**Sub-chunks (in order):**
+
+| ID | Scope | Files |
+|----|-------|-------|
+| **F7.1** | `src/cost.ts` with `TokenPrice`/`CostTracker`/`DEFAULT_PRICING`; `ModelResponse.usage`; `AgentResult.metrics`; `costReasonableForWorkRule` wired. | `src/cost.ts`, `src/model.ts`, `src/agent.ts`, `src/verifier/rules/index.ts`, `test/cost.test.ts` |
+| **F7.2** | `HttpClient` abstraction (`FetchHttpClient` + `FakeHttpClient`); `OpenAIAdapter` translating to OpenAI's chat/completions wire format. | `src/llm/http.ts`, `src/llm/openai.ts`, `test/llm-openai.test.ts` |
+| **F7.3** | `AnthropicAdapter` — different wire format (POST `/v1/messages`, system role separate). | `src/llm/anthropic.ts`, `test/llm-anthropic.test.ts` |
+| **F7.4** | `DeepSeekAdapter` — OpenAI-compatible, different base URL + key env. | `src/llm/deepseek.ts`, `test/llm-deepseek.test.ts` |
+| **F7.5** | `bin/envoy-harness.ts` reads `--provider` and env vars; dispatches to the right adapter. `--max-cost-usd` enforces a cap. | `bin/envoy-harness.ts`, `src/cli/run.ts`, `test/cli-provider-dispatch.test.ts` |
+
+**Type changes (F7.1):**
+
+```ts
+// src/model.ts — add to ModelResponse
+interface ModelResponse {
+  content: ContentBlock[];
+  stopReason: ...;
+  // NEW: usage in tokens (OpenAI/Anthropic/DeepSeek all report this).
+  usage?: {
+    inputTokens: number;
+    outputTokens: number;
+  };
+}
+
+// src/agent.ts — add to AgentResult
+interface AgentResult {
+  // ... existing fields ...
+  // NEW: accumulated metrics across the run.
+  metrics: {
+    inputTokens: number;
+    outputTokens: number;
+    costUsd: number;
+  };
+}
+```
+
+**Cost tracking module (F7.1):**
+
+```ts
+// src/cost.ts
+export interface TokenPrice {
+  /** USD per million input tokens. */
+  inputUsdPerMTok: number;
+  /** USD per million output tokens. */
+  outputUsdPerMTok: number;
+}
+
+export const DEFAULT_PRICING: Record<string, TokenPrice> = {
+  // OpenAI (as of 2026)
+  "gpt-4o":         { inputUsdPerMTok: 2.5,  outputUsdPerMTok: 10.0 },
+  "gpt-4o-mini":    { inputUsdPerMTok: 0.15, outputUsdPerMTok: 0.6 },
+  // Anthropic
+  "claude-sonnet-4-6": { inputUsdPerMTok: 3.0, outputUsdPerMTok: 15.0 },
+  "claude-haiku-4":    { inputUsdPerMTok: 1.0, outputUsdPerMTok: 5.0 },
+  // DeepSeek
+  "deepseek-chat":     { inputUsdPerMTok: 0.14, outputUsdPerMTok: 0.28 },
+};
+
+export function computeCost(
+  model: string,
+  inputTokens: number,
+  outputTokens: number,
+  pricing: Record<string, TokenPrice> = DEFAULT_PRICING,
+): number { ... }
+
+export class CostTracker {
+  private inputTokens = 0;
+  private outputTokens = 0;
+  addUsage(usage: { inputTokens: number; outputTokens: number }): void { ... }
+  total(): { inputTokens: number; outputTokens: number; costUsd: number } { ... }
+}
+```
+
+**HTTP client abstraction (F7.2):**
+
+```ts
+// src/llm/http.ts
+export interface HttpRequest {
+  method: string;
+  url: string;
+  headers: Record<string, string>;
+  body: string;
+}
+export interface HttpResponse {
+  status: number;
+  headers: Record<string, string>;
+  body: string;
+}
+export interface HttpClient {
+  request(req: HttpRequest): Promise<HttpResponse>;
+}
+
+export class FetchHttpClient implements HttpClient {
+  // Uses global fetch (Node 22+ / undici).
+  async request(req: HttpRequest): Promise<HttpResponse> { ... }
+}
+```
+
+In tests, we use a `FakeHttpClient` that records requests
+and returns canned responses — no real network.
+
+**Why this is the biggest remaining chunk:** the harness
+is demoable but not usable without a real LLM. After F7,
+the bin script's `--model` + `--provider` flags light up
+for real providers. Cost tracking unlocks the
+`costReasonableForWork` verifier rule and the `max-cost-usd`
+CLI cap (currently a no-op stub).
+
+**Out of scope:**
+- Streaming. v0 uses non-streaming `complete()`. Streaming
+  is a UX improvement, not a correctness one.
+- Retry / backoff. v0 fails fast on a 5xx; the caller can
+  retry at a higher level. Per-design the loop is one-shot
+  per prompt.
+- Provider-specific tool-call serialization. v0 emits
+  OpenAI-format tool calls; Anthropic's tool format is
+  different and needs separate translation (F7.3).
 
 ### 6.3 F8 — Phase 2: `envoy-harness-adapter` (Package 3)
 **Status:** pending. The MAP integration.
@@ -824,3 +940,9 @@ scoreboard opt-in (off by default)." — 3 of 4 done
   5.10), §6 (F6 marked done, F7/F8 renumbered), §7 (Phase 3
   status updated), §10 (this entry). Next: F7 (real LLM
   adapters + cost tracking).
+- **2026-08-18 (F7 plan)**: Expanded §6.2 with F7.1-F7.5
+  sub-chunk breakdown (cost tracking module, HTTP client
+  abstraction, OpenAI/Anthropic/DeepSeek adapters, provider
+  dispatch in bin). Type changes documented (ModelResponse.usage,
+  AgentResult.metrics). Plan in place; implementation to
+  follow.
