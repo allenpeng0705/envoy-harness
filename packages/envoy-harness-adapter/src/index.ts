@@ -49,3 +49,12 @@ export {
   type ToolCallData,
   type ToolResultData,
 } from "./translation.js";
+
+// F8.2 + F8.4 + F8.5 + F8.6 — EnvoyHarnessAdapter class.
+export {
+  EnvoyHarnessAdapter,
+  defaultBuildAgentFactory,
+  type BuildAgentFn,
+  type EnvoyHarnessAdapterInput,
+  type SignResultFn,
+} from "./adapter.js";
