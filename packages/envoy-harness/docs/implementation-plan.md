@@ -1696,7 +1696,7 @@ each is a separate F9.x sub-chunk.
 | **F9.1** | Per-call approval callback (Penguin style). When the model tries a sensitive action (e.g. bash with workspace-write), pause the agent loop and call a host-provided `askHandler` callback. The callback returns a decision (allow / deny / modify). The agent resumes with the decision. The host decides UX (Tauri prompt, headless log, etc.). | design §10.4 (Penguin per-call approval sketch), §8.1 hook events | ✅ done |
 | **F9.2** | LSP client (parity with claw-code lane 8). `LspClient` class that wraps the LSP protocol over stdio. Auto-start language servers for projects the harness is reading/writing. Provides `definition`, `references`, `hover`, `diagnostics` to the agent as tools. | claw-code parity lane 8 | ✅ done (F9.2.1 + F9.2.2 + F9.2.3) |
 | **F9.3** | Team + cron (parity with claw-code lane 6). Multi-agent team definition (a team is a graph of agents + roles + delegation rules). Cron triggers (a team runs on a schedule). Saved as TOML config (`06-team-cron.toml`). v0: read the TOML, run the team in-process; no actual cron daemon. | claw-code parity lane 6, design §25 (parity dir) | ⏳ pending |
-| **F9.4** | Trace observability UI. The bin script gains `--json` mode (already accepted, currently ignored) that streams every agent decision + hook fire + tool call + verifier verdict as JSON Lines to stdout. A separate viewer (out-of-scope for this repo) renders the stream. v0: just the JSON Lines output; the viewer is a downstream concern. | design §19 (CLI), existing `--json` arg | ⏳ pending |
+| **F9.4** | Trace observability UI. The bin script gains `--json` mode (already accepted, currently ignored) that streams every agent decision + hook fire + tool call + verifier verdict as JSON Lines to stdout. A separate viewer (out-of-scope for this repo) renders the stream. v0: just the JSON Lines output; the viewer is a downstream concern. | design §19 (CLI), existing `--json` arg | ⏳ pending (planned) |
 | **F9.5** | Cross-agent verification. The `verify()` path can take an optional `crossVerifyWith` closure. When provided, the adapter calls it on the result and returns the cross-verify verdict in addition to its own. The orchestrator combines per design §6.2 (OR-of-pass, AND-of-fail). v0 in this chunk: a default cross-verify closure that re-runs the same skill on a different `ModelAdapter` (e.g. cheap local model vs. expensive GPT-4). | design §12.4 (4-source cascade), MAP §CrossAgentDisagreementVerifier | ⏳ pending |
 
 **Why priority order:** F9.1 is the smallest and most
@@ -2088,6 +2088,194 @@ if (options.lspManager) {
    integration + agent-level tests.
 4. **F9.2+1** (follow-up) — auto-spawn
    language servers, real-server test in CI.
+
+---
+
+**F9.4 plan (--json trace mode):**
+
+**Why F9.4 next (after F9.2):** debugging an agent
+run is the most common production need. Today, the
+only way to see what the agent did is the final
+text + the transcript. For multi-step runs with
+tool calls, the trace is unreadable in text form.
+JSON Lines is the lowest-friction observability
+format (one event per line, easy to grep, easy to
+pipe to `jq`); the viewer is a downstream concern.
+
+**v0 scope (this chunk):**
+- `TraceEvent` discriminated union — 6 kinds:
+  `agent_start`, `model_response`, `tool_call`,
+  `tool_result`, `agent_end`, `error`.
+- `Tracer` interface — `emit(event: TraceEvent)`.
+- `NullTracer` — default; no-op.
+- `JsonLinesTracer` — writes each event as one
+  line of JSON to a `WritableStream`.
+- `AgentOptions.tracer?: Tracer` — the agent
+  calls `tracer.emit(...)` at 5 points.
+- CLI `--json` flag (already accepted, currently
+  ignored) wires a `JsonLinesTracer` to stdout.
+- The trace runs ALONGSIDE the human-readable
+  output; `--quiet` still works the same way.
+
+**Out of scope for v0:**
+- A web UI for trace rendering. F9.4 emits JSON
+  Lines; the viewer is a downstream concern (a
+  separate repo).
+- Streaming events (one per microtask). v0 emits
+  after each agent step. A future chunk can
+  switch to live streaming if needed.
+- Trace filtering / sampling. v0 is all-or-nothing.
+- Hook fire events. Hook fires are observable
+  via the `tool_call` / `tool_result` events
+  (which include the post-hook decision). Adding
+  a separate `hook_fire` event is additive.
+- Verifier verdict events. The verifier runs
+  OUTSIDE the agent (the orchestrator or the
+  harness binary's main flow calls it). v0 has
+  no way to know when the verifier runs from
+  inside the agent. The `agent_end` event
+  includes the transcript (so a downstream
+  verifier can be re-run on the trace).
+
+**Type sketch:**
+
+```ts
+// src/trace/types.ts
+export type TraceEvent =
+  | {
+      kind: "agent_start";
+      ts: string;
+      sessionId: string;
+      model: string;
+      cwd: string;
+      tools: ReadonlyArray<string>;
+    }
+  | {
+      kind: "model_response";
+      ts: string;
+      iteration: number;
+      stopReason: ModelResponse["stopReason"];
+      content: ModelResponse["content"];
+      ...(usage ? { usage: Usage } : {});
+    }
+  | {
+      kind: "tool_call";
+      ts: string;
+      iteration: number;
+      call: ToolCall;
+    }
+  | {
+      kind: "tool_result";
+      ts: string;
+      iteration: number;
+      callId: string;
+      result: ToolResult;
+      durationMs: number;
+    }
+  | {
+      kind: "agent_end";
+      ts: string;
+      stopReason: AgentResult["stopReason"];
+      iterations: number;
+      toolCalls: number;
+      metrics: { inputTokens: number; outputTokens: number; costUsd: number };
+    }
+  | {
+      kind: "error";
+      ts: string;
+      iteration: number;
+      message: string;
+    };
+
+export interface Tracer {
+  emit(event: TraceEvent): void;
+}
+```
+
+**Implementation sketch:**
+
+```ts
+// src/trace/json-lines.ts
+export class JsonLinesTracer implements Tracer {
+  constructor(private readonly stream: WritableStream) {}
+  emit(event: TraceEvent): void {
+    this.stream.write(JSON.stringify(event) + "\n");
+  }
+}
+
+// src/trace/null-tracer.ts
+export class NullTracer implements Tracer {
+  emit(_event: TraceEvent): void { /* no-op */ }
+}
+```
+
+**Agent integration:**
+
+```ts
+// src/agent.ts — AgentOptions
+interface AgentOptions {
+  // ... existing ...
+  /** F9.4: tracer. When undefined, NullTracer is used. */
+  tracer?: Tracer;
+}
+
+// At 5 points in the agent loop:
+this.tracer = options.tracer ?? new NullTracer();
+// 1. Constructor: this.tracer.emit({ kind: "agent_start", ... });
+// 2. After model call: this.tracer.emit({ kind: "model_response", ... });
+// 3. After validate: this.tracer.emit({ kind: "tool_call", ... });
+// 4. After execute: this.tracer.emit({ kind: "tool_result", ... });
+// 5. Loop end: this.tracer.emit({ kind: "agent_end", ... });
+```
+
+**CLI integration:**
+- `--json` already in argv (currently ignored).
+  Wire it: when set, `runAgent` constructs a
+  `JsonLinesTracer(process.stdout)` and passes it
+  to the agent.
+- Trace events are interleaved with the final
+  result text. v0 doesn't try to be clever about
+  "human output vs. trace output"; the user pipes
+  one or the other.
+
+**Tests (target: ~15-20):**
+- `NullTracer.emit` is a no-op.
+- `JsonLinesTracer.emit` writes one JSON line per event.
+- `JsonLinesTracer` survives a closed stream (silently
+  drops events, doesn't throw).
+- `AgentOptions.tracer` is used; without it,
+  NullTracer is used (verify by counting emissions).
+- `agent_start` event has sessionId, model, cwd, tools.
+- `model_response` event has iteration, content, stopReason.
+- `tool_call` event has the call args.
+- `tool_result` event has durationMs.
+- `agent_end` event has stopReason, iterations, metrics.
+- `error` event fires on agent errors.
+- `--json` flag in argv: the agent's tracer emits
+  events to stdout; the bin script's exit code is
+  unaffected.
+- The trace events are valid JSON Lines (each line
+  parses; the whole stream is a valid sequence).
+- Trace does not affect the human-readable output
+  (the final text is the same with or without --json).
+
+**Out of scope (recap):**
+- Web UI for rendering. F9.4 emits JSON Lines;
+  the viewer is a separate repo.
+- Hook fire events (folded into tool_call /
+  tool_result via the post-hook decision).
+- Verifier verdict events (verifier runs outside
+  the agent in v0).
+- Streaming (one event per microtask) — v0 emits
+  after each agent step.
+
+**Sub-chunk breakdown (planned):**
+1. **F9.4.1** — types + NullTracer + JsonLinesTracer
+   + tests for the two tracers.
+2. **F9.4.2** — AgentOptions.tracer + the 5 emit
+   points + agent-level tests.
+3. **F9.4.3** — CLI `--json` integration + bin
+   script end-to-end test.
 
 ---
 
