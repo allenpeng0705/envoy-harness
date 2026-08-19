@@ -55,6 +55,7 @@ import type { PermissionMode } from "../types.js";
 import type { Verdict } from "../verifier/types.js";
 
 import type { MeshSubmitter, SubagentInput, SubagentResult } from "./types.js";
+import type { SubagentResultSigner } from "./signer.js";
 
 /** Options for `LocalMeshSubmitter`. */
 export interface LocalMeshSubmitterOptions {
@@ -77,6 +78,34 @@ export interface LocalMeshSubmitterOptions {
    * tell where the sub-agent ran.
    */
   workerPeerId: string;
+  /**
+   * F10.3.1: optional signer. When provided, the
+   * result is signed before returning (the
+   * `SubagentResult.signature` field is the
+   * signer's output). v0 default: no signer →
+   * empty signature (F10.1.2 behavior, backward
+   * compatible).
+   *
+   * **Why the seam:** the host injects the key +
+   * the algorithm. envoy-harness doesn't know
+   * (or care) about Ed25519, secp256k1, HMAC, etc.
+   * The signer is a black box that takes a
+   * `SubagentResult` and returns a string.
+   *
+   * **When to sign:**
+   * - Local: usually not needed (parent + sub-agent
+   *   are in the same process; no trust boundary).
+   * - Cross-process (F10.3.2: `RemoteMeshSubmitter`):
+   *   the worker signs the result with its owner
+   *   key; the parent verifies using the worker's
+   *   public key.
+   *
+   * **What gets signed:** the entire `SubagentResult`
+   * (excluding the `signature` field). The host
+   * decides the canonical form; envoy-harness
+   * doesn't.
+   */
+  signer?: SubagentResultSigner;
 }
 
 /**
@@ -97,10 +126,17 @@ export interface LocalMeshSubmitterOptions {
 export class LocalMeshSubmitter implements MeshSubmitter {
   private readonly buildSubagent: (input: SubagentInput) => Agent;
   private readonly workerPeerId: string;
+  /**
+   * F10.3.1: optional signer. When set, every
+   * result is signed before returning. v0 (no
+   * signer) → empty signature (F10.1.2 behavior).
+   */
+  private readonly signer: SubagentResultSigner | undefined;
 
   constructor(options: LocalMeshSubmitterOptions) {
     this.buildSubagent = options.buildSubagent;
     this.workerPeerId = options.workerPeerId;
+    this.signer = options.signer;
   }
 
   async submit(
@@ -126,52 +162,67 @@ export class LocalMeshSubmitter implements MeshSubmitter {
     const startedAt = Date.now();
     try {
       const result = await agent.run(input.objective);
-      return synthesizeSubagentResult(result, this.workerPeerId, startedAt);
+      return this.synthesizeSubagentResult(result, startedAt);
     } finally {
       signal.removeEventListener("abort", onAbort);
     }
   }
-}
 
-/**
- * Synthesize a `SubagentResult` from the agent's
- * `AgentResult`. v0: simple stopReason-based
- * verdict. Future: call `runLocalVerifier` for a
- * proper verdict.
- *
- * **Status mapping:**
- * - `end_turn` / `tool_use` → `status: "completed"`,
- *   `verdict: pass` (placeholder; real verifier runs
- *   the 6 rules).
- * - `aborted` → `status: "failed"`,
- *   `verdict: fail`.
- * - `max_iterations` → `status: "failed"`,
- *   `verdict: fail` (the sub-agent didn't converge).
- * - `max_tokens` / `stop_sequence` →
- *   `status: "partial"`, `verdict: partial`.
- */
-function synthesizeSubagentResult(
-  result: import("../agent.js").AgentResult,
-  workerPeerId: string,
-  startedAt: number,
-): SubagentResult {
-  const verdict: Verdict = synthesizeVerdict(result);
-  const status: SubagentResult["status"] =
-    result.stopReason === "end_turn" || result.stopReason === "tool_use"
-      ? "completed"
-      : result.stopReason === "aborted" || result.stopReason === "max_iterations"
-        ? "failed"
-        : "partial";
-  return {
-    status,
-    content: result.content,
-    workerPeerId,
-    workerRuntime: "envoy-harness",
-    costUsd: result.metrics.costUsd,
-    durationMs: Date.now() - startedAt,
-    verdict,
-    signature: "", // v0: local; no cryptographic trust needed
-  };
+  /**
+   * Build a `SubagentResult` from the agent's
+   * `AgentResult`. v0: simple stopReason-based
+   * verdict. Future: call `runLocalVerifier` for a
+   * proper verdict.
+   *
+   * **Status mapping:**
+   * - `end_turn` / `tool_use` → `status: "completed"`,
+   *   `verdict: pass` (placeholder; real verifier runs
+   *   the 6 rules).
+   * - `aborted` → `status: "failed"`,
+   *   `verdict: fail`.
+   * - `max_iterations` → `status: "failed"`,
+   *   `verdict: fail` (the sub-agent didn't converge).
+   * - `max_tokens` / `stop_sequence` →
+   *   `status: "partial"`, `verdict: partial`.
+   *
+   * **F10.3.1 signing:** when a `signer` was
+   * injected, the result is signed AFTER the
+   * status + verdict are computed (so the signer
+   * sees the full final result, not an
+   * intermediate). The signature replaces the
+   * default empty string.
+   */
+  private synthesizeSubagentResult(
+    result: import("../agent.js").AgentResult,
+    startedAt: number,
+  ): SubagentResult {
+    const verdict: Verdict = synthesizeVerdict(result);
+    const status: SubagentResult["status"] =
+      result.stopReason === "end_turn" || result.stopReason === "tool_use"
+        ? "completed"
+        : result.stopReason === "aborted" || result.stopReason === "max_iterations"
+          ? "failed"
+          : "partial";
+    const base: SubagentResult = {
+      status,
+      content: result.content,
+      workerPeerId: this.workerPeerId,
+      workerRuntime: "envoy-harness",
+      costUsd: result.metrics.costUsd,
+      durationMs: Date.now() - startedAt,
+      verdict,
+      signature: "", // v0 default: unsigned
+    };
+    // F10.3.1: when a signer is injected, sign the
+    // full result. The signer sees the same
+    // `SubagentResult` shape the parent will see
+    // (minus the signature, which is what they're
+    // computing).
+    if (this.signer) {
+      base.signature = this.signer(base);
+    }
+    return base;
+  }
 }
 
 /** v0 verdict synthesis. The score is a placeholder

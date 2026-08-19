@@ -271,6 +271,7 @@ export {
   type MeshSubmitter,
   type SubagentInput,
   type SubagentResult,
+  type SubagentResultSigner,
   type TaskInput,
   type TaskResult,
 } from "./subagent/index.js";

@@ -3,12 +3,12 @@
  *
  * **What this module exports:** the type surface +
  * the default implementations (no-op + local) +
- * the default sub-agent factory. The `task` tool
- * lands in F10.1.3 (follow-up commit).
+ * the default sub-agent factory + the `task` tool
+ * + the F10.3.1 `SubagentResultSigner` seam.
  *
  * **Exports:**
  * - Types: `SubagentInput`, `SubagentResult`,
- *   `MeshSubmitter`.
+ *   `MeshSubmitter`, `SubagentResultSigner` (F10.3.1).
  * - `NoopMeshSubmitter` (default error) +
  *   `NOOP_MESH_SUBMITTER_ERROR` (the documented
  *   message).
@@ -23,6 +23,8 @@
  */
 
 export type { SubagentInput, SubagentResult, MeshSubmitter } from "./types.js";
+
+export type { SubagentResultSigner } from "./signer.js";
 
 export {
   NoopMeshSubmitter,
