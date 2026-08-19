@@ -41,6 +41,13 @@ export {
 export {
   TaskInputSchema,
   makeTaskTool,
+  type MakeTaskToolOptions,
   type TaskInput,
   type TaskResult,
 } from "./tools.js";
+
+export {
+  FanOutRegistry,
+  aggregateFanOutResults,
+  type FanOutSpec,
+} from "./fan-out.js";

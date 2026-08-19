@@ -53,6 +53,7 @@ import { NullTracer } from "./trace/null-tracer.js";
 import type { Tracer } from "./trace/index.js";
 import type { MeshSubmitter } from "./subagent/index.js";
 import { makeTaskTool } from "./subagent/tools.js";
+import type { FanOutRegistry } from "./subagent/fan-out.js";
 
 /** Default max iterations before the agent throws. */
 export const DEFAULT_MAX_ITERATIONS = 50;
@@ -172,6 +173,28 @@ export interface AgentOptions {
    * `cost_ceiling_usd`.
    */
   maxSubagents?: number;
+  /**
+   * F10.4.1: optional fan-out registry. When set,
+   * the `task` tool consults the registry on every
+   * call. If a `FanOutSpec` matches the input's
+   * `capability_tag`, the tool expands ONE model
+   * call into N parallel sub-agents (per the
+   * spec's `count`), then aggregates the N results
+   * into ONE for the model.
+   *
+   * **No registry → no fan-out** (F10.1 + F10.2
+   * baseline). The model emits N `task` calls;
+   * the agent runs them in parallel. With a
+   * registry, the host controls fan-out without
+   * teaching the model about it.
+   *
+   * **Example:** the host wants every
+   * `capability_tag: "research"` call to fan out
+   * to 3 sub-agents with different objectives.
+   * The model emits ONE call; the registry
+   * expands it. The model sees ONE result.
+   */
+  fanOutRegistry?: FanOutRegistry;
 }
 
 /** What `Agent.run()` returns. */
@@ -246,6 +269,9 @@ export class Agent {
   /** F10.1: mesh submitter. When set, the `task` tool
    *  is auto-registered in the constructor. */
   private meshSubmitter: MeshSubmitter | undefined;
+  /** F10.4.1: fan-out registry. When set, the `task`
+   *  tool consults it on every call. */
+  private fanOutRegistry: FanOutRegistry | undefined;
   /** F10.2: max sub-agents per turn. */
   private maxSubagents: number;
 
@@ -261,6 +287,7 @@ export class Agent {
     this.lspManager = options.lspManager;
     this.tracer = options.tracer ?? new NullTracer();
     this.meshSubmitter = options.meshSubmitter;
+    this.fanOutRegistry = options.fanOutRegistry;
     this.maxSubagents = options.maxSubagents ?? DEFAULT_MAX_SUBAGENTS;
     // F9.2: register the 4 LSP tools when the host provides
     // a manager. We do this AFTER the constructor sets
@@ -274,7 +301,12 @@ export class Agent {
     // provides a MeshSubmitter. Without one, the
     // model never sees the tool (opt-in).
     if (this.meshSubmitter) {
-      this.tools.register(makeTaskTool(this.meshSubmitter));
+      this.tools.register(
+        makeTaskTool({
+          submitter: this.meshSubmitter,
+          ...(this.fanOutRegistry ? { fanOutRegistry: this.fanOutRegistry } : {}),
+        }),
+      );
     }
     if (options.abortSignal) {
       // Wrap caller-provided signal so we can also fire on

@@ -30,6 +30,16 @@
  * do next (e.g. continue, retry, or report back
  * to the user).
  *
+ * **F10.4.1 — capability-driven fan-out:** when
+ * a `FanOutRegistry` is provided, the tool consults
+ * it on every call. If a spec matches the input's
+ * `capability_tag`, the tool expands ONE model
+ * call into N parallel sub-agents (via
+ * `Promise.all`), then aggregates the N results
+ * into ONE for the model. The model sees ONE
+ * call → ONE result; the host controls the
+ * fan-out without teaching the model about it.
+ *
  * **Stability:** additive. New fields on the
  * `TaskInput` / `TaskResult` (the tool's input /
  * output) are additive.
@@ -38,7 +48,8 @@
 import { z } from "zod";
 
 import type { ContentBlock, Tool } from "../tools/types.js";
-import type { MeshSubmitter } from "./types.js";
+import { aggregateFanOutResults, type FanOutRegistry } from "./fan-out.js";
+import type { MeshSubmitter, SubagentInput } from "./types.js";
 
 /** The tool's input schema (zod). */
 export const TaskInputSchema = z.object({
@@ -103,6 +114,22 @@ export type TaskResult = {
   signature: string;
 };
 
+/** F10.4.1: options for `makeTaskTool`. The submitter is
+ *  required; the `fanOutRegistry` is optional (no registry
+ *  = no fan-out, F10.1 + F10.2 baseline). */
+export interface MakeTaskToolOptions {
+  submitter: MeshSubmitter;
+  /**
+   * F10.4.1: optional registry. When set, the tool
+   * looks up the input's `capability_tag` on each
+   * call. If a spec matches, the tool expands ONE
+   * model call into N parallel sub-agents (per the
+   * `FanOutSpec.count`), then aggregates the N
+   * results into ONE.
+   */
+  fanOutRegistry?: FanOutRegistry;
+}
+
 /**
  * Build the `task` tool. The host provides the
  * `MeshSubmitter`; the tool calls it on every
@@ -110,8 +137,35 @@ export type TaskResult = {
  * agents can use different submitters (e.g. one
  * parent uses `LocalMeshSubmitter`, another uses
  * a future `RemoteMeshSubmitter`).
+ *
+ * **F10.4.1 — fan-out:** when `fanOutRegistry` is
+ * provided, the tool consults the registry. If a
+ * spec matches the input's `capability_tag`, the
+ * tool:
+ * 1. Builds N `SubagentInput`s via the spec's
+ *    `partition` function (or identity if not set).
+ * 2. Calls `submitter.submit` N times in parallel
+ *    via `Promise.all` (F10.2 fan-out path).
+ * 3. Aggregates the N results into ONE
+ *    `SubagentResult` for the model.
+ * 4. Honors the parent's `abortSignal` (any
+ *    sub-agent abort propagates to all in-flight).
  */
-export function makeTaskTool(submitter: MeshSubmitter): Tool {
+export function makeTaskTool(
+  submitterOrOptions: MeshSubmitter | MakeTaskToolOptions,
+): Tool {
+  // Backward compat: F10.1.3 callers pass a
+  // MeshSubmitter directly. F10.4.1 callers pass
+  // an options object. Both shapes are accepted.
+  const submitter: MeshSubmitter =
+    "submit" in submitterOrOptions
+      ? submitterOrOptions
+      : submitterOrOptions.submitter;
+  const fanOutRegistry: FanOutRegistry | undefined =
+    "submit" in submitterOrOptions
+      ? undefined
+      : submitterOrOptions.fanOutRegistry;
+
   return {
     name: "task",
     description:
@@ -124,24 +178,64 @@ export function makeTaskTool(submitter: MeshSubmitter): Tool {
       "continue to edit files.",
     parameters: TaskInputSchema,
     async execute(args, ctx) {
-      const result = await submitter.submit(
-        {
-          objective: args.objective,
-          capabilityTag: args.capability_tag,
-          costCeilingUsd: args.cost_ceiling_usd,
-          deadlineMs: args.deadline_ms,
-          ...(args.preferred_peer_id !== undefined
-            ? { preferredPeerId: args.preferred_peer_id }
-            : {}),
-          ...(args.preferred_runtime !== undefined
-            ? { preferredRuntime: args.preferred_runtime as never }
-            : {}),
-        },
-        ctx.abortSignal,
-      );
-      // Return the result as the tool's content.
-      // The model sees the full picture; the loop
-      // wraps it in a tool_result block.
+      const baseInput: SubagentInput = {
+        objective: args.objective,
+        capabilityTag: args.capability_tag,
+        costCeilingUsd: args.cost_ceiling_usd,
+        deadlineMs: args.deadline_ms,
+        ...(args.preferred_peer_id !== undefined
+          ? { preferredPeerId: args.preferred_peer_id }
+          : {}),
+        ...(args.preferred_runtime !== undefined
+          ? { preferredRuntime: args.preferred_runtime as never }
+          : {}),
+      };
+
+      // F10.4.1: fan-out expansion. Check the
+      // registry first; if a spec matches, expand
+      // to N parallel sub-agents.
+      const spec = fanOutRegistry?.lookup(baseInput.capabilityTag);
+      if (spec) {
+        if (spec.count < 1) {
+          // Defensive: invalid spec. Refuse all.
+          return {
+            content: {
+              status: "failed",
+              content: [
+                {
+                  type: "text",
+                  text: `FanOutSpec for "${spec.capabilityTag}" has invalid count ${spec.count}; must be >= 1.`,
+                },
+              ],
+              workerPeerId: "",
+              workerRuntime: "envoy-harness",
+              costUsd: 0,
+              durationMs: 0,
+              verdict: {
+                kind: "fail",
+                reason: "invalid FanOutSpec count",
+                rollback: false,
+              },
+              signature: "",
+            },
+          };
+        }
+        const partition = spec.partition ?? ((input) => input);
+        const inputs: SubagentInput[] = [];
+        for (let i = 0; i < spec.count; i++) {
+          inputs.push(partition(baseInput, i, spec.count));
+        }
+        // Parallel run (F10.2 path). Abort propagates
+        // via the shared `ctx.abortSignal`; each
+        // sub-agent's submitter honors it.
+        const results = await Promise.all(
+          inputs.map((input) => submitter.submit(input, ctx.abortSignal)),
+        );
+        return { content: aggregateFanOutResults(results) };
+      }
+
+      // No fan-out: single sub-agent (F10.1 baseline).
+      const result = await submitter.submit(baseInput, ctx.abortSignal);
       return { content: result };
     },
   };
