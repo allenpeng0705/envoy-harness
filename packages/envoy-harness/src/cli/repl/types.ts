@@ -105,6 +105,28 @@ export interface ReplOptions {
    * "no LSP servers configured".
    */
   lspManager?: import("../../lsp/index.js").LspManager;
+  /**
+   * F17.3: path to the history file. On REPL start, the
+   * file is read (if it exists) and the lines become the
+   * initial history. On REPL exit, the accumulated history
+   * is written back to the file.
+   *
+   * **Default:** `~/.local/state/envoy-harness/history`
+   * (or `$ENVOY_HARNESS_HISTORY` if set). Override via
+   * this option for tests (a temp file) or for hosts
+   * that want a different location.
+   *
+   * **Disable:** set this to `""` (empty string) to
+   * skip history persistence entirely. Useful for
+   * non-interactive use cases (CI, scripted runs).
+   */
+  historyPath?: string;
+  /**
+   * F17.3: max number of history lines to keep. When the
+   * history exceeds this size, the oldest lines are
+   * dropped (FIFO). Default: 1000.
+   */
+  historySize?: number;
 }
 
 /**

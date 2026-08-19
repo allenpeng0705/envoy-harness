@@ -126,8 +126,12 @@ export type DispatchResult =
  * The set of names that trigger a clean exit. The
  * dispatcher returns `{ kind: "exit" }` for these; the
  * REPL's `for await` loop sees this and breaks.
+ *
+ * **Exported** because the loop also uses this to skip
+ * exit commands from the history (F17.3 — exit
+ * commands are noise in the persisted history).
  */
-const EXIT_NAMES: ReadonlySet<string> = new Set(["/quit", "/exit"]);
+export const EXIT_NAMES: ReadonlySet<string> = new Set(["/quit", "/exit"]);
 
 export async function dispatchCommand(
   registry: ReplCommandRegistry,

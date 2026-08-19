@@ -24,6 +24,9 @@
 
 import * as readline from "node:readline";
 import { stdin, stdout, stderr } from "node:process";
+import * as fs from "node:fs/promises";
+import * as osModule from "node:os";
+import * as pathModule from "node:path";
 import {
   Agent,
   BUILTIN_TOOLS,
@@ -38,7 +41,7 @@ import {
 } from "../../index.js";
 import { BUILTIN_COMMANDS } from "./commands.js";
 import { BUILTIN_INFO_COMMANDS } from "./commands-info.js";
-import { ReplCommandRegistry, dispatchCommand, parseCommandLine } from "./registry.js";
+import { EXIT_NAMES, ReplCommandRegistry, dispatchCommand, parseCommandLine } from "./registry.js";
 import type { LineReader, ReplOptions, ReplResult } from "./types.js";
 
 /**
@@ -111,10 +114,43 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
   // 4. The loop.
   let turns = 0;
   let totalCostUsd = 0;
+  // F17.3: `exiting` flag so the dispatcher's "exit" can
+  // break out of the loop (rather than `return` from
+  // `runRepl`). Returning would skip the `finally` block
+  // that writes the history file.
+  let exiting = false;
+
+  // F17.3: history. We maintain our own array (the
+  // readline interface's history is per-session and not
+  // seedable from disk; persistence is our concern). The
+  // history covers all non-blank lines the user types
+  // (slash commands included — the user might want to
+  // recall `/model foo` later). Blank lines are skipped.
+  const historySize = opts.historySize ?? 1000;
+  const history: string[] = [];
+  const historyPath = resolveHistoryPath(opts.historyPath);
+  if (historyPath) {
+    const loaded = await loadHistory(historyPath, historySize);
+    history.push(...loaded);
+  }
+
   try {
     for await (const rawLine of lineReader) {
+      // F17.3: if the previous iteration asked us to
+      // exit, break here. We check at the TOP of each
+      // iteration because `break` inside the switch
+      // below only breaks the switch, not the for-await.
+      if (exiting) break;
       const line = rawLine.trim();
       if (line === "") continue; // ignore blank lines
+
+      // F17.3: append to history (dedupe consecutive,
+      // like readline's default). Cap at historySize.
+      // Skip exit commands (/quit, /exit) — they're noise
+      // (the user almost never wants to recall them).
+      if (!EXIT_NAMES.has(line)) {
+        appendHistory(history, line, historySize);
+      }
 
       // 4a. Slash commands.
       const parsed = parseCommandLine(line);
@@ -136,8 +172,12 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
           case "ok":
             continue;
           case "exit":
-            // Clean exit.
-            return { exitCode: 0, turns, totalCostUsd, sessionId: session.id };
+            // Clean exit. Set the flag + continue so we
+            // re-check `exiting` at the top of the loop
+            // and break out (without falling through to
+            // the non-slash block below).
+            exiting = true;
+            continue;
           case "unknown":
             err.write(
               `unknown command: ${result.name}\n` +
@@ -172,6 +212,13 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
     }
   } finally {
     lineReader.close();
+    // F17.3: save history on exit. Errors here are silent
+    // (the user is closing the REPL; we don't want a
+    // history-write error to surface as a confusing
+    // "error: ..." right at exit).
+    if (historyPath) {
+      await saveHistory(historyPath, history).catch(() => undefined);
+    }
   }
 
   return { exitCode: 0, turns, totalCostUsd, sessionId: session.id };
@@ -245,4 +292,92 @@ function newSession(): Session {
     title: "repl",
   };
   return new InMemorySession(newSessionId(), meta);
+}
+
+// ---------------------------------------------------------------------------
+// F17.3: history persistence
+// ---------------------------------------------------------------------------
+
+/** The default XDG state home path for envoy-harness. */
+function defaultHistoryPath(): string {
+  const env = process.env["ENVOY_HARNESS_HISTORY"];
+  if (env && env.length > 0) return env;
+  const xdgState = process.env["XDG_STATE_HOME"];
+  const home = xdgState && xdgState.length > 0 ? xdgState : `${osHomedir()}/.local/state`;
+  return `${home}/envoy-harness/history`;
+}
+
+/** Lazy `os.homedir()` — kept as a function so tests can stub. */
+function osHomedir(): string {
+  // `os` is imported at the top; we just route through a
+  // helper to keep the path-resolution code in one place.
+  return osModule.homedir();
+}
+
+/**
+ * Resolve the history path. Returns `null` when history
+ * persistence is disabled (`historyPath: ""` in
+ * `ReplOptions`).
+ */
+function resolveHistoryPath(option: string | undefined): string | null {
+  if (option === "") return null; // explicitly disabled
+  if (option !== undefined) return option;
+  return defaultHistoryPath();
+}
+
+/**
+ * Load the history file. Returns the lines (most recent
+ * `maxLines` lines; older lines are dropped on load).
+ *
+ * **Returns `[]` when the file doesn't exist** (first run).
+ * **Returns `[]` on read error** (don't block the REPL on
+ * a corrupt history file).
+ */
+async function loadHistory(path: string, maxLines: number): Promise<string[]> {
+  try {
+    const content = await fs.readFile(path, "utf-8");
+    const lines = content.split("\n").filter((l) => l.length > 0);
+    // Keep the most recent maxLines lines.
+    return lines.slice(-maxLines);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Save the history file. Writes the lines (one per row,
+ * trailing newline). Overwrites the file. Creates the
+ * parent directory if it doesn't exist.
+ *
+ * **Silent on error** (the user is closing the REPL; a
+ * write failure is not actionable here).
+ */
+async function saveHistory(path: string, history: ReadonlyArray<string>): Promise<void> {
+  // mkdir-p the parent so a fresh-install write doesn't
+  // fail with ENOENT.
+  await fs.mkdir(pathModule.dirname(path), { recursive: true });
+  await fs.writeFile(path, history.join("\n") + "\n", "utf-8");
+}
+
+/**
+ * Append a line to the history. Dedupes consecutive
+ * duplicates (matches readline's default behavior) and
+ * caps at `maxLines` (FIFO).
+ */
+function appendHistory(
+  history: string[],
+  line: string,
+  maxLines: number,
+): void {
+  // Skip blank lines (already filtered by the loop, but
+  // defensive).
+  if (line === "") return;
+  // Dedupe consecutive.
+  const last = history[history.length - 1];
+  if (last === line) return;
+  history.push(line);
+  // Cap (FIFO).
+  while (history.length > maxLines) {
+    history.shift();
+  }
 }

@@ -10,9 +10,9 @@
 > (`docs/boundary.en.md`) says *what belongs in envoy-harness vs
 > EnvoyMesh*; this file assumes the boundary.
 >
-> **Status as of last commit:** F17.2.5 done on `phase-1/types`.
+> **Status as of last commit:** F17.3 done on `phase-1/types`.
 >
-> - **Total:** 848 tests across 55 files (envoy-harness 756 / 45
+> - **Total:** 857 tests across 56 files (envoy-harness 765 / 46
 >   files + envoy-harness-adapter 92 / 10 files). All passing.
 > - **Typecheck:** clean (`pnpm -r typecheck`).
 > - **Phase 1 (v0 spine):** ✅ done (Chunks 1-4d, 220 tests)
@@ -20,8 +20,8 @@
 > - **Phase 3 (Self-evolution):** ✅ done (5a-5e + F6, 110 tests)
 > - **Phase 4 (Production-grade):** ✅ done (F9.1-F9.5, 5 sub-chunks)
 > - **Phase 5 (Mesh-native sub-agents):** ✅ done (F10.1-F10.6, 8 sub-chunks)
-> - **Phase 6 (REPL):** ⏳ in progress (F17.1 + F17.2 + F17.2.5 done;
->   F17.3 + F17.4 + F17.5 + F17.6 pending — see §6.7 + §11)
+> - **Phase 6 (REPL):** ⏳ in progress (F17.1 + F17.2 + F17.2.5 +
+>   F17.3 done; F17.4 + F17.5 + F17.6 pending — see §6.7 + §11)
 >
 > **How to read this document.** §1 is project context (1 page).
 > §2 is the status snapshot (test count + per-module inventory).
@@ -35,7 +35,7 @@
 >
 > **Top of doc:** the design discussion (what & why) for Phase 5 — the mesh-native sub-agents design rationale + type surface — now lives in [`docs/design.en.md`](./design.en.md) §10.3. The *implementation record* (what shipped) is in §3 (chronological by commit). The *plan-with-sub-chunks* (the F10.2, F10.3, etc. plans) is in §6.6.
 >
-> **Branch:** all work is on `phase-1/types`. 10 unpushed commits as of the latest (F10.6 + 2 doc restructure + 2 design/Phase-5 + README/F17 plan + F17.1 + F17.2 + commands sweep plan + F17.2.5); Phase 5 complete, Phase 6 (REPL) in progress (F17.1 + F17.2 + F17.2.5 done; F17.3 + F17.4 + F17.5 + F17.6 pending).
+> **Branch:** all work is on `phase-1/types`. 11 unpushed commits as of the latest (F10.6 + 2 doc restructure + 2 design/Phase-5 + README/F17 plan + F17.1 + F17.2 + commands sweep plan + F17.2.5 + F17.3); Phase 5 complete, Phase 6 (REPL) in progress (F17.1 + F17.2 + F17.2.5 + F17.3 done; F17.4 + F17.5 + F17.6 pending).
 
 ---
 
@@ -76,14 +76,14 @@ Per design §1.3, the four design targets are non-negotiable:
 | **Phase 3** | Self-evolution (3 weeks) | ✅ done (5a-5e + F6) | 110 |
 | **Phase 4** | Production-grade (5 sub-chunks: F9.1 + F9.2 + F9.3 + F9.4 + F9.5) | ✅ done | +130 (vs Phase 3) |
 | **Phase 5** | Mesh-native sub-agents (8 sub-chunks: F10.1-F10.6) | ✅ done | +94 (vs Phase 4) |
-| **Phase 6** | Interactive REPL (3 sub-chunks done: F17.1 + F17.2 + F17.2.5; 3 planned: F17.3 + F17.4 + F17.5 + F17.6) | ⏳ in progress | +57 (F17.1 + F17.2 + F17.2.5) |
+| **Phase 6** | Interactive REPL (4 sub-chunks done: F17.1 + F17.2 + F17.2.5 + F17.3; 2 planned: F17.4 + F17.5 + F17.6) | ⏳ in progress | +66 (F17.1 + F17.2 + F17.2.5 + F17.3) |
 
-**Cumulative:** 848 tests across 55 files (envoy-harness 756 + envoy-harness-adapter 92), all passing.
+**Cumulative:** 857 tests across 56 files (envoy-harness 765 + envoy-harness-adapter 92), all passing.
 Typecheck clean (`pnpm -r typecheck`).
 
-**Per-module test inventory (45 envoy-harness files + 10 envoy-harness-adapter files = 848 tests):**
+**Per-module test inventory (46 envoy-harness files + 10 envoy-harness-adapter files = 857 tests):**
 
-#### envoy-harness (Package 1, 756 tests / 45 files)
+#### envoy-harness (Package 1, 765 tests / 46 files)
 
 | Module | Tests | File | What it covers |
 |--------|-------|------|----------------|
@@ -132,6 +132,7 @@ Typecheck clean (`pnpm -r typecheck`).
 | REPL loop (F17.1) | 13 | `test/repl-loop.test.ts` | --repl flag; /quit + /exit + EOF exit; blank-line skip; unknown-slash placeholder; agent reuse across turns; turns + totalCostUsd accounting |
 | REPL commands (F17.2) | 25 | `test/repl-commands.test.ts` | parseCommandLine; ReplCommandRegistry; dispatchCommand; 9 built-ins (help/model/provider/sandbox/approval/clear/cost/status/quit); customCommands; built-in wins on collision |
 | REPL info (F17.2.5) | 19 | `test/repl-info.test.ts` | 8 info commands (session/context/scoreboard/rules/lsp/hooks/mcp/profile); BUILTIN_COMMANDS + BUILTIN_INFO_COMMANDS no name collisions; /help lists all 8 |
+| REPL history (F17.3) | 9 | `test/repl-history.test.ts` | load on start, write on exit, persists across restarts, missing file OK, dedupe consecutive, cap (FIFO), historyPath:'' disables, ENVOY_HARNESS_HISTORY override |
 
 #### envoy-harness-adapter (Package 3, 92 tests / 10 files)
 
@@ -1353,6 +1354,84 @@ row + per-module test inventory + REPL info row),
 
 **Next: F17.3** (history persistence:
 `~/.local/state/envoy-harness/history`).
+
+### F17.3 — History persistence (✅ done)
+
+The REPL persists the user's input across sessions:
+loads from a file on start, writes to the file on exit.
+Slash commands are saved (the user might want to
+recall `/model foo`), but exit commands are skipped
+(they're noise).
+
+**What it ships:**
+- `ReplOptions.historyPath?: string` — path to the
+  history file. Default: `~/.local/state/envoy-harness/history`
+  (or `$ENVOY_HARNESS_HISTORY` if set, or
+  `$XDG_STATE_HOME` if set). Override for tests
+  (temp file) or for hosts that want a different
+  location. `historyPath: ""` disables persistence
+  entirely.
+- `ReplOptions.historySize?: number` — max number of
+  history lines. Default 1000. FIFO drop on overflow.
+- The REPL maintains its own `history: string[]` array
+  (the readline interface's history is not seedable
+  from disk; the runner handles persistence directly).
+  After each non-blank, non-exit line: dedupe
+  consecutive, push, cap.
+- On REPL start: load the file (missing file is OK,
+  corrupt file is silently ignored). On REPL exit:
+  write the array (creates the parent dir via
+  `mkdir -p`; write errors are silent — don't block
+  exit on a flaky disk).
+
+**Files touched (3 edited + 1 new):**
+- `src/cli/repl/types.ts` (edit) — `historyPath?` +
+  `historySize?` on `ReplOptions`
+- `src/cli/repl/loop.ts` (edit) — history array;
+  load on start; save in `finally`; skip exit
+  commands; the `exiting` flag pattern that lets the
+  for-await's `finally` block run even when the
+  dispatcher returns "exit"
+- `src/cli/repl/registry.ts` (edit) — `EXIT_NAMES` is
+  now `export`ed (the loop uses it to skip exit
+  commands from the history)
+- `test/repl-history.test.ts` (new) — 9 tests
+
+**Self-review caught 3 real bugs + 1 missing test wiring:**
+1. `break` inside the dispatcher's `switch` case only
+   breaks the switch, not the for-await. The non-slash
+   block then ran with `/quit` as input, incrementing
+   `turns` to 4 in a 3-turn test. **Fixed:** use
+   `continue` + an `exiting` flag checked at the top
+   of each iteration (since `break` from a switch
+   only breaks the switch).
+2. `fs.writeFile` failed with ENOENT on a fresh
+   install (the parent dir didn't exist). **Fixed:**
+   `fs.mkdir(parentDir, { recursive: true })` before
+   the write.
+3. The first test run also failed because the test
+   passed `stdout: undefined` (the runner's
+   `ReplOptions.stdout` is `NodeJS.WritableStream`
+   (non-optional) under `exactOptionalPropertyTypes`).
+   **Fixed:** tests use `new StringWritable()`.
+4. Bonus: skipping exit commands from the history
+   keeps `/quit` / `/exit` out of the persisted file
+   (the user almost never wants to recall them). Not
+   strictly required by the plan; small quality
+   improvement.
+
+**Total: 857 tests across 56 files** (envoy-harness
+765 + envoy-harness-adapter 92). F17.3 is done.
+F17.4 (tests + e2e) is the next sub-chunk.
+
+Updated §1 (status line), §2 (status table Phase 6
+row + per-module test inventory + REPL history row),
+§3 (this entry), §6.7 (F17.3 marked ✅), §11
+(F17 archive updated).
+
+**Next: F17.4** (tests + e2e: wire tests across
+F17.1-F17.6; end-to-end REPL session; snapshot
+test for help text).
 
 ---
 
@@ -3114,15 +3193,16 @@ laptop has no Tauri app — they need a CLI REPL.
    ~200 LoC + tests. Tests: each built-in works; unknown
    command → help; order-independent; help is correct.
 
-3. **F17.3 — History persistence.** `~/.local/state/envoy-harness/history`
-   (or `$ENVOY_HARNESS_HISTORY`). Readline-managed (use
-   `readline.createInterface({ historySize: 1000 })` with
-   manual load/save). Each line is the literal input (slashes
-   preserved). On REPL start, load file (if exists); on REPL
-   exit, write file (truncate + append). Override via env var
-   or `--history <path>`. ~50 LoC + tests. Tests: history
-   loads on start, persists across restarts, ignores lines
-   longer than the cap.
+3. ✅ **F17.3 — History persistence** (planned 1dbe02b; next
+   commit). `~/.local/state/envoy-harness/history` (or
+   `$ENVOY_HARNESS_HISTORY`). The REPL maintains its own
+   history array (separate from readline's, which is
+   not seedable from disk); loads on start, writes on
+   exit. Skips exit commands (`/quit`, `/exit`) from the
+   history (they're noise). Dedupe consecutive lines,
+   cap at `historySize` (default 1000, FIFO). Override
+   via `ReplOptions.historyPath`; disable with
+   `historyPath: ""`. ~80 LoC + 9 tests.
 
 4. **F17.4 — Tests + e2e.** Wire tests across F17.1–F17.3:
    end-to-end REPL session (launch with mock model, type a
@@ -5351,12 +5431,19 @@ in this chunk.
   `ReplOptions` gained 4 new optional fields
   (`scoreboard`, `verifierRules`, `profileLoader`,
   `lspManager`).
-- ⏳ **F17.3** — History persistence
-  (`~/.local/state/envoy-harness/history`). ~50 LoC
-  + 4 tests. **Next chunk to build.**
+- ✅ **F17.3** — History persistence
+  (`~/.local/state/envoy-harness/history`). 9 new
+  tests. ~80 LoC. REPL maintains its own history
+  array (the readline's history is not seedable from
+  disk). Skips exit commands from the history
+  (they're noise). Dedupe consecutive lines, cap at
+  `historySize` (default 1000, FIFO). Override via
+  `ReplOptions.historyPath`; disable with
+  `historyPath: ""`.
 - ⏳ **F17.4** — Tests + e2e (wire tests across
   F17.1-F17.6; end-to-end REPL session; snapshot
-  test for help text). ~100 LoC of tests.
+  test for help text). ~100 LoC of tests. **Next
+  chunk to build.**
 - ⏳ **F17.5** — Tier 2 batch 1 (3 real features:
   `/compact` = context window compaction, `/init` =
   AGENTS.md generation, `/new` = fresh session).
