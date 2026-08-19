@@ -22,32 +22,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { Writable } from "node:stream";
 
 import { CliError, run, type ModelAdapter } from "../src/index.js";
-
-class StringWritable extends Writable {
-  data = "";
-  override _write(
-    chunk: Buffer,
-    _enc: BufferEncoding,
-    cb: (error?: Error | null) => void,
-  ): void {
-    this.data += chunk.toString();
-    cb();
-  }
-}
-
-function scriptedModel(text: string): ModelAdapter {
-  return {
-    async complete() {
-      return {
-        content: [{ type: "text", text }],
-        stopReason: "end_turn",
-      };
-    },
-  };
-}
+import { StringWritable, scriptedTextModel } from "./helpers.js";
 
 let tmpDir: string;
 
@@ -65,7 +42,7 @@ describe("CLI: default (no persistence flags)", () => {
     const err = new StringWritable();
     const result = await run({
       argv: ["--provider", "openai", "hello"],
-      model: scriptedModel("hi back"),
+      model: scriptedTextModel("hi back"),
       stdout: out,
       stderr: err,
       cwd: tmpDir,
@@ -98,7 +75,7 @@ describe("CLI: --persist", () => {
         sessionDir,
         "hello",
       ],
-      model: scriptedModel("hi back"),
+      model: scriptedTextModel("hi back"),
       stdout: out,
       stderr: err,
       cwd: tmpDir,
@@ -129,7 +106,7 @@ describe("CLI: --resume", () => {
         sessionDir,
         "first",
       ],
-      model: scriptedModel("first reply"),
+      model: scriptedTextModel("first reply"),
       stdout: out,
       stderr: err,
       cwd: tmpDir,
@@ -150,7 +127,7 @@ describe("CLI: --resume", () => {
         sessionDir,
         "second",
       ],
-      model: scriptedModel("second reply"),
+      model: scriptedTextModel("second reply"),
       stdout: out2,
       stderr: err2,
       cwd: tmpDir,
@@ -173,7 +150,7 @@ describe("CLI: --resume", () => {
           tmpDir,
           "x",
         ],
-        model: scriptedModel("x"),
+        model: scriptedTextModel("x"),
         stdout: out,
         stderr: err,
         cwd: tmpDir,
@@ -207,7 +184,7 @@ describe("CLI: --resume", () => {
         savedCwd,
         "first",
       ],
-      model: scriptedModel("first reply"),
+      model: scriptedTextModel("first reply"),
       stdout: out,
       stderr: err,
       cwd: tmpDir,
@@ -282,7 +259,7 @@ describe("CLI: --resume + --persist mutual exclusion", () => {
           path.join(tmpDir, "sessions"),
           "hi",
         ],
-        model: scriptedModel("ok"),
+        model: scriptedTextModel("ok"),
         stdout: out,
         stderr: err,
         cwd: tmpDir,
@@ -312,7 +289,7 @@ describe("CLI: --fork", () => {
         sessionDir,
         "source",
       ],
-      model: scriptedModel("source reply"),
+      model: scriptedTextModel("source reply"),
       stdout: out,
       stderr: err,
       cwd: tmpDir,
@@ -333,7 +310,7 @@ describe("CLI: --fork", () => {
         sessionDir,
         "forked",
       ],
-      model: scriptedModel("forked reply"),
+      model: scriptedTextModel("forked reply"),
       stdout: out2,
       stderr: err2,
       cwd: tmpDir,
@@ -382,7 +359,7 @@ describe("CLI: --fork", () => {
         sessionDir,
         "this is a long title that should be inherited by the fork",
       ],
-      model: scriptedModel("ok"),
+      model: scriptedTextModel("ok"),
       stdout: out,
       stderr: err,
       cwd: tmpDir,
@@ -401,7 +378,7 @@ describe("CLI: --fork", () => {
         sessionDir,
         "x",
       ],
-      model: scriptedModel("ok"),
+      model: scriptedTextModel("ok"),
       stdout: out2,
       stderr: err2,
       cwd: tmpDir,
@@ -437,7 +414,7 @@ describe("CLI: --resume + --fork mutual exclusion", () => {
           tmpDir,
           "x",
         ],
-        model: scriptedModel("x"),
+        model: scriptedTextModel("x"),
         stdout: out,
         stderr: err,
         cwd: tmpDir,
@@ -461,7 +438,7 @@ describe("CLI: --session-dir default", () => {
     try {
       const result = await run({
         argv: ["--provider", "openai", "--persist", "hello"],
-        model: scriptedModel("ok"),
+        model: scriptedTextModel("ok"),
         stdout: out,
         stderr: err,
         cwd: tmpDir,

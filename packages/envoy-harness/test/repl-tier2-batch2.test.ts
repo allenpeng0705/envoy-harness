@@ -21,7 +21,6 @@ import { execFileSync } from "node:child_process";
 import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { Writable } from "node:stream";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -32,99 +31,16 @@ import {
   BUILTIN_TIER2_BATCH3_COMMANDS,
   BUILTIN_TIER2_COMMANDS,
   runRepl,
-  type LineReader,
-  type ModelAdapter,
-  type ModelResponse,
-  type RunParsedArgs,
   type SubagentRegistry,
   type SubagentRecord,
 } from "../src/index.js";
-
-// ---------------------------------------------------------------------------
-// Test helpers
-// ---------------------------------------------------------------------------
-
-class StringWritable extends Writable {
-  data = "";
-  override _write(
-    chunk: Buffer,
-    _enc: BufferEncoding,
-    cb: (error?: Error | null) => void,
-  ): void {
-    this.data += chunk.toString();
-    cb();
-  }
-}
-
-function scriptedModel(responses: ReadonlyArray<{
-  content: ModelResponse["content"];
-  stopReason?: ModelResponse["stopReason"];
-}>): ModelAdapter {
-  let i = 0;
-  return {
-    async complete() {
-      const r = responses[i++];
-      if (!r) throw new Error(`scriptedModel: exhausted (call #${i})`);
-      return {
-        content: r.content,
-        stopReason: r.stopReason ?? "end_turn",
-      };
-    },
-  };
-}
-
-function textBlock(text: string): ModelResponse["content"][number] {
-  return { type: "text", text };
-}
-
-function fakeLineReader(lines: ReadonlyArray<string>): LineReader {
-  let i = 0;
-  return {
-    [Symbol.asyncIterator]() {
-      return this;
-    },
-    async next(): Promise<IteratorResult<string>> {
-      if (i >= lines.length) {
-        return { value: undefined as unknown as string, done: true };
-      }
-      const value = lines[i++];
-      if (value === undefined) {
-        return { value: undefined as unknown as string, done: true };
-      }
-      return { value, done: false };
-    },
-    close() {
-      // no-op for the fake
-    },
-  };
-}
-
-function makeArgs(overrides: Partial<RunParsedArgs> = {}): RunParsedArgs {
-  return {
-    subcommand: "run",
-    help: false,
-    version: false,
-    json: false,
-    sandbox: undefined,
-    approval: undefined,
-    model: undefined,
-    provider: undefined,
-    cwd: undefined,
-    maxTurns: undefined,
-    maxCostUsd: undefined,
-    resume: undefined,
-    fork: undefined,
-    persist: false,
-    sessionDir: undefined,
-    plan: false,
-    repl: false,
-    noColor: false,
-    verbose: false,
-    quiet: false,
-    positional: [],
-    ...overrides,
-  };
-}
+import {
+  StringWritable,
+  fakeLineReader,
+  makeArgs,
+  scriptedModel,
+  textBlock,
+} from "./helpers.js";
 
 /**
  * Make a `SubagentRegistry` that returns the given records.

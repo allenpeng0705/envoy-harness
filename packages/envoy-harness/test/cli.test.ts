@@ -6,8 +6,6 @@
  * model — production adapters are a separate concern).
  */
 
-import { Writable } from "node:stream";
-
 import { describe, expect, it } from "vitest";
 
 import {
@@ -19,19 +17,7 @@ import {
   type ModelAdapter,
   type ModelResponse,
 } from "../src/index.js";
-
-/** A writable that records everything written to it. */
-class StringWritable extends Writable {
-  data = "";
-  override _write(
-    chunk: Buffer,
-    _enc: BufferEncoding,
-    cb: (error?: Error | null) => void,
-  ): void {
-    this.data += chunk.toString();
-    cb();
-  }
-}
+import { StringWritable } from "./helpers.js";
 
 describe("parseArgs", () => {
   // Helper: parseArgs and narrow to the run subcommand shape.

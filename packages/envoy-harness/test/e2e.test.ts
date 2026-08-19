@@ -25,8 +25,6 @@ import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { Writable } from "node:stream";
-
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
@@ -42,6 +40,7 @@ import {
 } from "../src/index.js";
 
 import { textResponse, toolCall } from "./fixtures/fake-model.js";
+import { StringWritable } from "./helpers.js";
 
 let tmpDir: string;
 
@@ -65,19 +64,6 @@ function makeSession(cwd: string): Session {
     startedAt: new Date().toISOString(),
   };
   return new InMemorySession(newSessionId(), meta);
-}
-
-/** A recorder for stdout / stderr. */
-class StringWritable extends Writable {
-  data = "";
-  override _write(
-    chunk: Buffer,
-    _enc: BufferEncoding,
-    cb: (error?: Error | null) => void,
-  ): void {
-    this.data += chunk.toString();
-    cb();
-  }
 }
 
 describe("e2e: read → run → summarize (direct agent)", () => {

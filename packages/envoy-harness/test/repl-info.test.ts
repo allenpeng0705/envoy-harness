@@ -9,8 +9,6 @@
  * (with a fake `LineReader` and a `scriptedModel`).
  */
 
-import { Writable } from "node:stream";
-
 import { describe, expect, it } from "vitest";
 
 import {
@@ -22,101 +20,16 @@ import {
   newSessionId,
   StaticLspManager,
   runRepl,
-  type LineReader,
   type LspClient,
-  type ModelAdapter,
-  type ModelResponse,
   type ReplProfileLoader,
-  type RunParsedArgs,
 } from "../src/index.js";
-
-// ---------------------------------------------------------------------------
-// Test helpers
-// ---------------------------------------------------------------------------
-
-class StringWritable extends Writable {
-  data = "";
-  override _write(
-    chunk: Buffer,
-    _enc: BufferEncoding,
-    cb: (error?: Error | null) => void,
-  ): void {
-    this.data += chunk.toString();
-    cb();
-  }
-}
-
-function scriptedModel(responses: ReadonlyArray<{
-  content: ModelResponse["content"];
-  stopReason?: ModelResponse["stopReason"];
-}>): ModelAdapter & { callCount: () => number } {
-  let i = 0;
-  const adapter: ModelAdapter & { callCount: () => number } = {
-    async complete() {
-      const r = responses[i++];
-      if (!r) throw new Error(`scriptedModel: exhausted (call #${i})`);
-      return {
-        content: r.content,
-        stopReason: r.stopReason ?? (r.content.some((b) => b.type === "tool_call") ? "tool_use" : "end_turn"),
-      };
-    },
-    callCount: () => i,
-  };
-  return adapter;
-}
-
-function textBlock(text: string): ModelResponse["content"][number] {
-  return { type: "text", text };
-}
-
-function fakeLineReader(lines: ReadonlyArray<string>): LineReader {
-  let i = 0;
-  return {
-    [Symbol.asyncIterator]() {
-      return this;
-    },
-    async next(): Promise<IteratorResult<string>> {
-      if (i >= lines.length) {
-        return { value: undefined as unknown as string, done: true };
-      }
-      const value = lines[i++];
-      if (value === undefined) {
-        return { value: undefined as unknown as string, done: true };
-      }
-      return { value, done: false };
-    },
-    close() {
-      // no-op for the fake
-    },
-  };
-}
-
-function makeArgs(overrides: Partial<RunParsedArgs> = {}): RunParsedArgs {
-  return {
-    subcommand: "run",
-    help: false,
-    version: false,
-    json: false,
-    sandbox: undefined,
-    approval: undefined,
-    model: undefined,
-    provider: undefined,
-    cwd: undefined,
-    maxTurns: undefined,
-    maxCostUsd: undefined,
-    resume: undefined,
-    fork: undefined,
-    persist: false,
-    sessionDir: undefined,
-    plan: false,
-    repl: false,
-    noColor: false,
-    verbose: false,
-    quiet: false,
-    positional: [],
-    ...overrides,
-  };
-}
+import {
+  StringWritable,
+  fakeLineReader,
+  makeArgs,
+  scriptedModel,
+  textBlock,
+} from "./helpers.js";
 
 /** A noop LspClient — never used (we just need the manager to be set). */
 function makeNoopLspClient(): LspClient {

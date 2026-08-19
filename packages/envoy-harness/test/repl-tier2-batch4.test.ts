@@ -23,8 +23,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { Writable } from "node:stream";
-
 import {
   Agent,
   BUILTIN_TIER2_BATCH4_COMMANDS,
@@ -33,31 +31,24 @@ import {
   newSessionId,
   runRepl,
   ToolRegistry,
-  type LineReader,
   type ModelAdapter,
   type ReplOptions,
-  type RunParsedArgs,
 } from "../src/index.js";
+import {
+  StringWritable,
+  fakeLineReader,
+  makeArgs,
+} from "./helpers.js";
 
 // ---------------------------------------------------------------------------
 // Test fixtures
 // ---------------------------------------------------------------------------
 
-class StringWritable extends Writable {
-  data = "";
-  override _write(
-    chunk: Buffer,
-    _enc: BufferEncoding,
-    cb: (error?: Error | null) => void,
-  ): void {
-    this.data += chunk.toString();
-    cb();
-  }
-}
-
 /**
  * A model that records every call. Tests assert
  * the system prompt + user prompt content.
+ * Local to this file — the canonical `scriptedModel`
+ * in helpers.ts doesn't capture the input.
  */
 function recordingModel(
   responseText: string,
@@ -85,47 +76,6 @@ function recordingModel(
         stopReason: "end_turn",
       };
     },
-  };
-}
-
-function lineReader(lines: string[]): LineReader {
-  let i = 0;
-  return {
-    [Symbol.asyncIterator]() {
-      return this;
-    },
-    async next() {
-      if (i >= lines.length) return { value: "", done: true };
-      return { value: lines[i++]!, done: false };
-    },
-    close() {},
-  };
-}
-
-function makeArgs(overrides: Partial<RunParsedArgs> = {}): RunParsedArgs {
-  return {
-    subcommand: "run",
-    help: false,
-    version: false,
-    json: false,
-    sandbox: undefined,
-    approval: undefined,
-    model: undefined,
-    provider: undefined,
-    cwd: undefined,
-    maxTurns: undefined,
-    maxCostUsd: undefined,
-    resume: undefined,
-    fork: undefined,
-    persist: false,
-    sessionDir: undefined,
-    plan: false,
-    repl: true,
-    noColor: false,
-    verbose: false,
-    quiet: false,
-    positional: [],
-    ...overrides,
   };
 }
 
@@ -171,8 +121,8 @@ describe("/review: empty diff", () => {
     const err = new StringWritable();
     await runRepl({
       model,
-      args: makeArgs(),
-      lineReader: lineReader(["/review", "/quit"]),
+      args: makeArgs({}, { repl: true }),
+      lineReader: fakeLineReader(["/review", "/quit"]),
       reviewDiff: () => ({ stdout: "", stderr: "", exitCode: 0 }),
       stdout: out,
       stderr: err,
@@ -195,8 +145,8 @@ describe("/review: non-git dir", () => {
     const err = new StringWritable();
     await runRepl({
       model,
-      args: makeArgs(),
-      lineReader: lineReader(["/review", "/quit"]),
+      args: makeArgs({}, { repl: true }),
+      lineReader: fakeLineReader(["/review", "/quit"]),
       reviewDiff: () => ({
         stdout: "",
         stderr: "fatal: not a git repository\n",
@@ -217,8 +167,8 @@ describe("/review: non-git dir", () => {
     const err = new StringWritable();
     await runRepl({
       model,
-      args: makeArgs(),
-      lineReader: lineReader(["/review", "/quit"]),
+      args: makeArgs({}, { repl: true }),
+      lineReader: fakeLineReader(["/review", "/quit"]),
       reviewDiff: () => ({
         stdout: "",
         stderr: "",
@@ -252,8 +202,8 @@ describe("/review: happy path", () => {
     const err = new StringWritable();
     await runRepl({
       model,
-      args: makeArgs(),
-      lineReader: lineReader(["/review", "/quit"]),
+      args: makeArgs({}, { repl: true }),
+      lineReader: fakeLineReader(["/review", "/quit"]),
       reviewDiff: () => ({ stdout: diff, stderr: "", exitCode: 0 }),
       stdout: out,
       stderr: err,
@@ -284,8 +234,8 @@ describe("/review: happy path", () => {
     let receivedOpts: { cwd?: string; staged?: boolean } | undefined;
     await runRepl({
       model,
-      args: makeArgs(),
-      lineReader: lineReader(["/review staged", "/quit"]),
+      args: makeArgs({}, { repl: true }),
+      lineReader: fakeLineReader(["/review staged", "/quit"]),
       reviewDiff: (opts) => {
         receivedOpts = opts;
         return { stdout: diff, stderr: "", exitCode: 0 };
@@ -323,8 +273,8 @@ describe("/export: jsonl (default)", () => {
     const err = new StringWritable();
     await runRepl({
       model,
-      args: makeArgs(),
-      lineReader: lineReader(["/export", "/quit"]),
+      args: makeArgs({}, { repl: true }),
+      lineReader: fakeLineReader(["/export", "/quit"]),
       createSession: async () => session,
       stdout: out,
       stderr: err,
@@ -379,8 +329,8 @@ describe("/export: md", () => {
     const err = new StringWritable();
     await runRepl({
       model,
-      args: makeArgs(),
-      lineReader: lineReader(["/export md", "/quit"]),
+      args: makeArgs({}, { repl: true }),
+      lineReader: fakeLineReader(["/export md", "/quit"]),
       createSession: async () => session,
       stdout: out,
       stderr: err,
@@ -417,8 +367,8 @@ describe("/export: errors", () => {
     const err = new StringWritable();
     await runRepl({
       model,
-      args: makeArgs(),
-      lineReader: lineReader(["/export pdf", "/quit"]),
+      args: makeArgs({}, { repl: true }),
+      lineReader: fakeLineReader(["/export pdf", "/quit"]),
       stdout: out,
       stderr: err,
       historyPath: "",
@@ -443,7 +393,7 @@ describe("/export: errors", () => {
     await runRepl({
       model,
       args: makeArgs({ cwd: tmpDir }),
-      lineReader: lineReader([`/export jsonl ${customPath}`, "/quit"]),
+      lineReader: fakeLineReader([`/export jsonl ${customPath}`, "/quit"]),
       createSession: async () => session,
       stdout: out,
       stderr: new StringWritable(),
@@ -472,8 +422,8 @@ describe("/export: empty session", () => {
     const out = new StringWritable();
     await runRepl({
       model,
-      args: makeArgs(),
-      lineReader: lineReader(["/export", "/quit"]),
+      args: makeArgs({}, { repl: true }),
+      lineReader: fakeLineReader(["/export", "/quit"]),
       createSession: async () => session,
       stdout: out,
       stderr: new StringWritable(),
@@ -509,7 +459,7 @@ describe("/export: permission + path gates", () => {
     await runRepl({
       model,
       args: makeArgs({ cwd: tmpDir }),
-      lineReader: lineReader(["/export", "/quit"]),
+      lineReader: fakeLineReader(["/export", "/quit"]),
       createSession: async () => session,
       stdout: out,
       stderr: err,
@@ -535,7 +485,7 @@ describe("/export: permission + path gates", () => {
     await runRepl({
       model,
       args: makeArgs({ cwd: tmpDir }),
-      lineReader: lineReader([`/export jsonl ${outside}`, "/quit"]),
+      lineReader: fakeLineReader([`/export jsonl ${outside}`, "/quit"]),
       createSession: async () => session,
       stdout: out,
       stderr: err,

@@ -25,7 +25,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { Writable } from "node:stream";
 
 import {
   CliError,
@@ -33,81 +32,15 @@ import {
   run,
   runRepl,
   SessionStore,
-  type LineReader,
-  type ModelAdapter,
   type ReplOptions,
-  type RunParsedArgs,
 } from "../src/index.js";
-
-// ---------------------------------------------------------------------------
-// Test fixtures (mirrored from repl-e2e.test.ts; small enough to duplicate)
-// ---------------------------------------------------------------------------
-
-class StringWritable extends Writable {
-  data = "";
-  override _write(
-    chunk: Buffer,
-    _enc: BufferEncoding,
-    cb: (error?: Error | null) => void,
-  ): void {
-    this.data += chunk.toString();
-    cb();
-  }
-}
-
-function scriptedModel(responses: ReadonlyArray<string>): ModelAdapter {
-  let i = 0;
-  return {
-    async complete() {
-      const text = responses[i] ?? responses[responses.length - 1] ?? "ok";
-      i++;
-      return {
-        content: [{ type: "text", text }],
-        stopReason: "end_turn",
-      };
-    },
-  };
-}
-
-function lineReader(lines: string[]): LineReader {
-  let i = 0;
-  return {
-    [Symbol.asyncIterator]() {
-      return this;
-    },
-    async next() {
-      if (i >= lines.length) return { value: "", done: true };
-      return { value: lines[i++]!, done: false };
-    },
-    close() {},
-  };
-}
-
-function makeArgs(): RunParsedArgs {
-  return {
-    subcommand: "run",
-    help: false,
-    version: false,
-    json: false,
-    sandbox: undefined,
-    approval: undefined,
-    model: undefined,
-    provider: undefined,
-    cwd: undefined,
-    maxTurns: undefined,
-    maxCostUsd: undefined,
-    resume: undefined,
-    fork: undefined,
-    persist: false,
-    sessionDir: undefined,
-    plan: false,
-    repl: true,
-    noColor: false,
-    verbose: false,
-    quiet: false,
-    positional: [],
-  };
-}
+import {
+  StringWritable,
+  fakeLineReader,
+  makeArgs,
+  scriptedModel,
+  textBlock,
+} from "./helpers.js";
 
 let tmpDir: string;
 
@@ -145,9 +78,9 @@ describe("runRepl: sessionStore + resumeFromId", () => {
     const out = new StringWritable();
     const err = new StringWritable();
     const result = await runRepl({
-      model: scriptedModel(["new assistant"]),
+      model: scriptedModel([{ content: [textBlock("new assistant")] }]),
       args: makeArgs(),
-      lineReader: lineReader(["a new turn", "/quit"]),
+      lineReader: fakeLineReader(["a new turn", "/quit"]),
       sessionStore: store,
       resumeFromId: written.id,
       stdout: out,
@@ -178,9 +111,9 @@ describe("runRepl: sessionStore + resumeFromId", () => {
     // session's cwd.
     const out = new StringWritable();
     await runRepl({
-      model: scriptedModel(["ok"]),
+      model: scriptedModel([{ content: [textBlock("ok")] }]),
       args: makeArgs(),
-      lineReader: lineReader(["hi", "/quit"]),
+      lineReader: fakeLineReader(["hi", "/quit"]),
       sessionStore: store,
       resumeFromId: written.id,
       stdout: out,
@@ -208,9 +141,9 @@ describe("runRepl: sessionStore + resumeFromId", () => {
     // Run a REPL turn that appends a new user +
     // assistant message to the loaded session.
     await runRepl({
-      model: scriptedModel(["replied"]),
+      model: scriptedModel([{ content: [textBlock("replied")] }]),
       args: makeArgs(),
-      lineReader: lineReader(["next turn", "/quit"]),
+      lineReader: fakeLineReader(["next turn", "/quit"]),
       sessionStore: store,
       resumeFromId: written.id,
       stdout: new StringWritable(),
@@ -240,9 +173,9 @@ describe("runRepl: sessionStore + resumeFromId", () => {
     const out = new StringWritable();
     await expect(
       runRepl({
-        model: scriptedModel(["ok"]),
+        model: scriptedModel([{ content: [textBlock("ok")] }]),
         args: makeArgs(),
-        lineReader: lineReader(["hi", "/quit"]),
+        lineReader: fakeLineReader(["hi", "/quit"]),
         sessionStore: store,
         // no resumeFromId
         stdout: out,
@@ -256,9 +189,9 @@ describe("runRepl: sessionStore + resumeFromId", () => {
     const store = new SessionStore({ dir: tmpDir });
     await expect(
       runRepl({
-        model: scriptedModel(["ok"]),
+        model: scriptedModel([{ content: [textBlock("ok")] }]),
         args: makeArgs(),
-        lineReader: lineReader(["hi", "/quit"]),
+        lineReader: fakeLineReader(["hi", "/quit"]),
         sessionStore: store,
         resumeFromId: "does-not-exist",
         stdout: new StringWritable(),
@@ -279,9 +212,9 @@ describe("runRepl: createSession factory", () => {
     let factoryCallCount = 0;
     const out = new StringWritable();
     const result = await runRepl({
-      model: scriptedModel(["ok"]),
+      model: scriptedModel([{ content: [textBlock("ok")] }]),
       args: makeArgs(),
-      lineReader: lineReader(["hi", "/quit"]),
+      lineReader: fakeLineReader(["hi", "/quit"]),
       createSession: async () => {
         factoryCallCount++;
         return store.create({
@@ -327,7 +260,7 @@ describe("CLI: --repl --resume", () => {
         sessionDir,
         "first prompt",
       ],
-      model: scriptedModel(["first reply"]),
+      model: scriptedModel([{ content: [textBlock("first reply")] }]),
       stdout: out1,
       stderr: err1,
       cwd: tmpDir,
@@ -350,10 +283,10 @@ describe("CLI: --repl --resume", () => {
         "--session-dir",
         sessionDir,
       ],
-      model: scriptedModel(["second reply"]),
+      model: scriptedModel([{ content: [textBlock("second reply")] }]),
       // Inject the line reader so the REPL doesn't
       // hang on stdin.
-      lineReader: lineReader(["a new turn", "/quit"]),
+      lineReader: fakeLineReader(["a new turn", "/quit"]),
       stdout: out2,
       stderr: err2,
       cwd: tmpDir,
@@ -379,8 +312,8 @@ describe("CLI: --repl --resume", () => {
           "--session-dir",
           sessionDir,
         ],
-        model: scriptedModel(["ok"]),
-        lineReader: lineReader(["hi", "/quit"]),
+        model: scriptedModel([{ content: [textBlock("ok")] }]),
+        lineReader: fakeLineReader(["hi", "/quit"]),
         stdout: new StringWritable(),
         stderr: new StringWritable(),
         cwd: tmpDir,
@@ -407,8 +340,8 @@ describe("CLI: --repl --resume", () => {
           "--session-dir",
           sessionDir,
         ],
-        model: scriptedModel(["ok"]),
-        lineReader: lineReader(["hi", "/quit"]),
+        model: scriptedModel([{ content: [textBlock("ok")] }]),
+        lineReader: fakeLineReader(["hi", "/quit"]),
         stdout: new StringWritable(),
         stderr: new StringWritable(),
         cwd: tmpDir,
@@ -436,8 +369,8 @@ describe("CLI: --repl --persist", () => {
         "--session-dir",
         sessionDir,
       ],
-      model: scriptedModel(["ok"]),
-      lineReader: lineReader(["hi", "/quit"]),
+      model: scriptedModel([{ content: [textBlock("ok")] }]),
+      lineReader: fakeLineReader(["hi", "/quit"]),
       stdout: out,
       stderr: err,
       cwd: tmpDir,
@@ -457,8 +390,8 @@ describe("CLI: --repl (no persistence flags)", () => {
     const err = new StringWritable();
     const result = await run({
       argv: ["--provider", "openai", "--repl"],
-      model: scriptedModel(["ok"]),
-      lineReader: lineReader(["hi", "/quit"]),
+      model: scriptedModel([{ content: [textBlock("ok")] }]),
+      lineReader: fakeLineReader(["hi", "/quit"]),
       stdout: out,
       stderr: err,
       cwd: tmpDir,
