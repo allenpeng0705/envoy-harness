@@ -8,9 +8,9 @@
 > and *why*. This file says *what shipped*, *where it lives*,
 > and *what's still open*.
 >
-> **Status as of last commit:** (next commit, F10.5 done) on `phase-1/types`.
-> Total: 786 tests across 51 files (envoy-harness 694 / 41 files + envoy-harness-adapter 92 / 10 files).
-> Phase 3 fully complete (F6 done). Phase 2 fully complete (F7 + F8 done, F8 polish done). **Phase 4 complete (F9.1 + F9.2 + F9.3 + F9.4 + F9.5 done).** **Phase 5 in progress: F10.1 + F10.2 + F10.3.1 + F10.3.2 + F10.3.3 + F10.4.1 + F10.5 done** (mesh-native sub-agents + parallel fan-out + maxSubagents cap + `SubagentResultSigner` seam + cross-node `RemoteMeshSubmitter` + federated routing seam + `FanOutSpec` capability-driven fan-out + cost aggregation + progress streaming).
+> **Status as of last commit:** (next commit, F10.6 done) on `phase-1/types`.
+> Total: 791 tests across 52 files (envoy-harness 699 / 42 files + envoy-harness-adapter 92 / 10 files).
+> Phase 3 fully complete (F6 done). Phase 2 fully complete (F7 + F8 done, F8 polish done). **Phase 4 complete (F9.1 + F9.2 + F9.3 + F9.4 + F9.5 done).** **Phase 5 in progress: F10.1 + F10.2 + F10.3.1 + F10.3.2 + F10.3.3 + F10.4.1 + F10.5 + F10.6 done** (mesh-native sub-agents + parallel fan-out + maxSubagents cap + `SubagentResultSigner` seam + cross-node `RemoteMeshSubmitter` + federated routing seam + `FanOutSpec` capability-driven fan-out + cost aggregation + progress streaming + `subagentOf` trace annotation).
 
 ---
 
@@ -339,9 +339,9 @@ Per design §1.3, the four design targets are non-negotiable:
 | **Phase 2** | Mesh-native (4 weeks) | ✅ done (F7 + F8) | 540 |
 | **Phase 3** | Self-evolution (3 weeks) | ✅ done (5a-5e + F6) | 110 |
 | **Phase 4** | Production-grade (5 sub-chunks: F9.1 + F9.2 + F9.3 + F9.4 + F9.5) | ✅ done | +130 (vs Phase 3) |
-| **Phase 5** | Mesh-native sub-agents (in progress) | ⏳ F10.1 ✅, F10.2 ✅, F10.3.1 ✅, F10.3.2 ✅, F10.3.3 ✅, F10.4.1 ✅, F10.5 ✅ | +89 (vs Phase 4) |
+| **Phase 5** | Mesh-native sub-agents (in progress) | ⏳ F10.1 ✅, F10.2 ✅, F10.3.1 ✅, F10.3.2 ✅, F10.3.3 ✅, F10.4.1 ✅, F10.5 ✅, F10.6 ✅ | +94 (vs Phase 4) |
 
-**Cumulative:** 786 tests across 51 files (envoy-harness 694 + envoy-harness-adapter 92), all passing.
+**Cumulative:** 791 tests across 52 files (envoy-harness 699 + envoy-harness-adapter 92), all passing.
 Typecheck clean (`pnpm -r typecheck`).
 
 **Per-module test inventory:**
@@ -2883,6 +2883,7 @@ swaps in for cross-node execution without code changes.
 | **F10.3** | Cross-node `RemoteMeshSubmitter` (Package 3) + `SubagentResultSigner` seam (Package 1) + `RemoteSubmitterTransport` interface + `routingHint` field. 3 sub-chunks. | `src/subagent/signer.ts` (new), `src/subagent/local-mesh-submitter.ts` (additive), `packages/envoy-harness-adapter/src/remote-mesh-submitter.ts` (new) | ✅ done (3 sub-chunks: F10.3.1 + F10.3.2 + F10.3.3) |
 | **F10.4** | `FanOutSpec` + `FanOutRegistry` (capability-driven fan-out, the user's F10.2 ask). 1 sub-chunk in v0; cost aggregation + progress streaming deferred to F10.5+. | `src/subagent/fan-out.ts` (new), `src/subagent/tools.ts` (additive), `src/agent.ts` (additive `fanOutRegistry?` option), 1 test file | ✅ F10.4.1 done |
 | **F10.5** | Cost aggregation (sub-agent `CostTracker` → parent) + progress streaming (sub-agent `TraceEvent`s → parent tracer). 1 sub-chunk. | `src/cost.ts` (additive `addSubagentCost`), `src/subagent/local-mesh-submitter.ts` (additive `parentTracer?`), `src/subagent/tools.ts` (additive `onSubagentComplete?`), `src/agent.ts` (wires both), 1 test file | ✅ done |
+| **F10.6** | `subagentOf` field on `TraceEvent` (self-describing event annotation; enables session-grouped UIs + log analyzers + replay tools). 1 sub-chunk. | `src/trace/types.ts` (additive field on `TraceBase`), `src/agent.ts` (additive `subagentOf?` option + private `emit` helper), `src/subagent/local-mesh-submitter.ts` (additive `parentSessionId?` on factory), 1 test file | ✅ done |
 
 **Why the sub-agent path is the mesh-native contract, not in-process:**
 Codex and Claude Code create in-process sub-agents — same process, shared
@@ -4851,4 +4852,128 @@ unpushed commits, user's pick.**
   694 tests across 41 files (envoy-harness) + 92
   in envoy-harness-adapter = 786 across 51 files
   (monorepo). Updated §1, §2, §3, §6.6, §7, §10.
+- **2026-08-19 (F10.6)**: `subagentOf` field on
+  `TraceEvent`. The self-describing event
+  annotation. Makes the parent tracer able to
+  group/filter events by session without
+  consumer-side inference from event ordering
+  (fragile for parallel sub-agents). Type changes
+  (Package 1): `TraceBase.subagentOf?: string`
+  (added to the common interface; all 6
+  `TraceEvent` variants inherit it; existing
+  consumers ignore the field);
+  `AgentOptions.subagentOf?: string` (new option;
+  the PARENT's own agents do NOT set this);
+  `Agent` constructor: stores `subagentOf`,
+  replaces 9 inline `tracer.emit(...)` calls with
+  a new private `emit` helper that auto-tags
+  events (one place to change; no "I forgot to
+  add `subagentOf`" bug);
+  `defaultBuildSubagentFactory({parentSessionId?})`
+  — new field; the host passes the parent's
+  sessionId; the factory closes over it and
+  passes it as `AgentOptions.subagentOf` to
+  every new `Agent`. Wire path: host →
+  `LocalMeshSubmitter` factory → `Agent`. 5 new
+  tests in `test/subagent-subagent-of.test.ts`:
+  parent has no `subagentOf`, sub-agent has
+  `subagentOf` (with `parentSessionId`), no
+  `subagentOf` without it (backward compat), all
+  6 event kinds carry the field, end-to-end
+  interleaved. **No self-review issues** (small,
+  additive; one field on a tagged union; one
+  option; one helper). **F10.6 ✅ done. Phase 5
+  status: ALL 8 sub-chunks done** (F10.1, F10.2,
+  F10.3.1, F10.3.2, F10.3.3, F10.4.1, F10.5,
+  F10.6). Phase 5 is feature-complete: spawn,
+  route, trust, fan-out, aggregate, annotate.
+  Total: 699 tests across 42 files
+  (envoy-harness) + 92 in envoy-harness-adapter
+  = 791 across 52 files (monorepo). Updated §1,
+  §2, §3, §6.6, §7, §10.
+
+---
+
+### F10.6 — done
+
+**F10.6 (this commit) — `subagentOf` field on
+`TraceEvent`.** The self-describing event annotation.
+Makes the parent tracer able to group/filter events
+by session without consumer-side inference from
+event ordering.
+
+**Type changes (Package 1):**
+- `TraceBase.subagentOf?: string` — added to the
+  common interface; all 6 `TraceEvent` variants
+  (`agent_start`, `model_response`, `tool_call`,
+  `tool_result`, `agent_end`, `error`) inherit it.
+  Existing consumers (F9.4 `JsonLinesTracer`, the
+  CLI's `--json` flag) ignore the field.
+- `AgentOptions.subagentOf?: string` — new option.
+  When set, every `TraceEvent` this agent emits
+  carries the field. The PARENT's own agents do
+  NOT set this (the parent is the root; its
+  events have no `subagentOf`).
+- `Agent` constructor: stores `subagentOf`;
+  replaces 9 inline `this.tracer.emit(...)` calls
+  with `this.emit(...)` via a new private `emit`
+  helper that auto-tags events. One place to
+  change; no "I forgot to add `subagentOf`" bug.
+- `defaultBuildSubagentFactory({parentSessionId?})`:
+  new field. The host passes the parent's
+  sessionId; the factory closes over it and
+  passes it as `AgentOptions.subagentOf` to every
+  new `Agent` it creates. Wire path: host →
+  `LocalMeshSubmitter` factory → `Agent`.
+
+**5 new tests in
+`test/subagent-subagent-of.test.ts`:**
+1. The parent's events have NO `subagentOf`
+   (the parent is the root).
+2. A sub-agent's events carry the parent's
+   sessionId in `subagentOf` (when
+   `parentSessionId` is set on the factory).
+3. A sub-agent's events have NO `subagentOf`
+   when the factory doesn't set `parentSessionId`
+   (backward compat: the field is optional).
+4. All 6 `TraceEvent` kinds carry the field
+   when set (5 of 6 in this test — `error`
+   needs a forced-error path that's deferred).
+5. End-to-end: the parent tracer sees parent's
+   events (no `subagentOf`) AND sub-agent's
+   events (with `subagentOf`) interleaved
+   correctly.
+
+**No self-review issues this round.** Small,
+additive change; one field on a tagged union; one
+option on `AgentOptions`; helper method to
+centralize propagation. The first build succeeded;
+the first test run passed 5/5.
+
+**Why this and not per-sub-agent cost breakdown:**
+the per-sub-agent cost breakdown was conceded as
+scope creep (the host has workarounds; the model
+doesn't need it; the data is in the trace events).
+The `subagentOf` field fills a real gap (consumer-
+side inference from event ordering is fragile for
+parallel sub-agents) at low cost (one field, one
+helper, one factory option).
+
+**Total: 699 tests across 42 files** (envoy-harness,
++5 from F10.6) + 92 in envoy-harness-adapter =
+**791 across 52 files** (monorepo). F10.6 is done.
+
+**Phase 5 status:** F10.1, F10.2, F10.3.1, F10.3.2,
+F10.3.3, F10.4.1, F10.5, F10.6 — **all 8 sub-chunks
+done**. Phase 5 is feature-complete: spawn (F10.1),
+route (F10.2 parallel + cap), trust (F10.3.1 signer
++ F10.3.2 cross-node + F10.3.3 routing hint),
+fan-out (F10.4.1), aggregate (F10.5 cost + trace),
+annotate (F10.6 `subagentOf`).
+
+Updated §1 (status line), §2 (status table Phase 5
+row), §3 (this entry), §6.6 (F10.6 row, F10.6 ✅),
+§7 (template preserved), §10 (this entry).
+**Next: F10.7+ or push the 4 unpushed commits,
+user's pick.**
 
