@@ -2880,7 +2880,7 @@ swaps in for cross-node execution without code changes.
 |----|-------|-------|--------|
 | **F10.1** | `MeshSubmitter` interface + `NoopMeshSubmitter`; `LocalMeshSubmitter` + `defaultBuildSubagentFactory`; `task` tool + `AgentOptions.meshSubmitter`; end-to-end via real `Agent.run()`. 4 sub-chunks. | `src/subagent/{types,noop-submitter,local-mesh-submitter,tools,index}.ts`, `src/agent.ts`, 4 test files | ✅ done (4 sub-chunks: F10.1.1 + F10.1.2 + F10.1.3 + F10.1.4) |
 | **F10.2** | Parallel sub-agent fan-out (auto-detect "all N task calls" → `Promise.all`) + `maxSubagents` cap (default 8, host-configurable; refuses ALL when exceeded). 1 sub-chunk. | `src/agent.ts`, `test/subagent-parallel.test.ts` | ✅ done (F10.2.1) |
-| **F10.3** | Cross-node `RemoteMeshSubmitter` + Ed25519 signature on `SubagentResult` + mesh routing. | `src/subagent/remote-mesh-submitter.ts` (new) | pending |
+| **F10.3** | Cross-node `RemoteMeshSubmitter` (Package 3) + `SubagentResultSigner` seam (Package 1) + `RemoteSubmitterTransport` interface + `routingHint` field. 3 sub-chunks. | `src/subagent/signer.ts` (new), `src/subagent/local-mesh-submitter.ts` (additive), `packages/envoy-harness-adapter/src/remote-mesh-submitter.ts` (new) | 📋 planned (F10.3.1 + F10.3.2 + F10.3.3) |
 | **F10.4+** | Cost aggregation (sub-agent `CostTracker` → parent); capability-driven fan-out (`FanOutSpec`); progress streaming. | `src/agent.ts`, `src/cost.ts` | pending |
 
 **Why the sub-agent path is the mesh-native contract, not in-process:**
@@ -3896,4 +3896,205 @@ Updated §1 (status line), §2 (status table Phase 5 row),
 preserved), §10 (this entry). **Next: F10.3 (cross-node
 `RemoteMeshSubmitter` + Ed25519 signature) or push
 all 8 unpushed commits, user's pick.**
+
+---
+
+### F10.3 — Cross-node sub-agents (3 sub-chunks)
+**Phase 5 third sub-chunk.** v0 (F10.1 + F10.2) ships
+`LocalMeshSubmitter` only — the sub-agent runs in a NEW
+local session (own id, own AGENTS.md, own hooks, own
+permission). `SubagentResult.signature` is an empty
+string. **F10.3 makes sub-agents cross-node**, with
+Ed25519 trust on the result.
+
+**The package boundary (per `docs/boundary.{en,zh}.md`):**
+
+envoy-harness (Package 1) is a local runtime with ZERO
+EnvoyMesh-internal deps. The actual cross-node transport
+(libp2p, mesh envelopes, peer discovery) cannot live in
+envoy-harness. The F10.3 split follows the F8 pattern
+(`envoy-harness-adapter` is the ONLY place that knows
+about both envoy-harness and the mesh):
+
+- **Package 1 (envoy-harness)** owns the **seam**:
+  `SubagentResultSigner` type, `RemoteSubmitterTransport`
+  interface, `RemoteMeshSubmitterOptions` shape, plus
+  the optional `signer` field on `LocalMeshSubmitter`.
+- **Package 3 (envoy-harness-adapter)** owns the
+  **concrete cross-node impl**: `RemoteMeshSubmitter`
+  class that wires the transport + the signer + the
+  worker public key + the parent's verify path.
+- **EnvoyMesh (sibling monorepo)** owns the **transport
+  implementation**: libp2p, peer discovery, capability
+  routing, the wire envelope for sub-agent submission.
+
+**v0 (F10.3) scope — three sub-chunks:**
+
+1. **F10.3.1 — `SubagentResultSigner` abstraction in
+   Package 1.** A new type: `SubagentResultSigner =
+   (result: SubagentResult) => string` (a closure that
+   takes a result and returns a signature). Add an
+   optional `signer?: SubagentResultSigner` to
+   `LocalMeshSubmitter`; when provided, the
+   `synthesizeSubagentResult` helper signs the result
+   before returning. v0 default: no signer → empty
+   signature (backward compatible with F10.1.2). Why
+   the seam: the host injects the key + the algorithm;
+   envoy-harness doesn't need to know about Ed25519.
+   ~6 tests covering signed/unsigned LocalMeshSubmitter
+   paths.
+
+2. **F10.3.2 — `RemoteMeshSubmitter` in Package 3
+   (envoy-harness-adapter).** A `MeshSubmitter`
+   implementation that submits the sub-agent to a
+   remote worker node. Constructor: `{ transport:
+   RemoteSubmitterTransport, workerPublicKey:
+   SubagentVerifierKey, parentPrivateKey:
+   SubagentSignerKey, targetPeerId: string }`. On
+   `submit()`: serialize the input, send via the
+   transport, receive a `SignedSubagentResult` back,
+   verify the signature using the worker's public
+   key, return the result. **The transport** is an
+   interface: `RemoteSubmitterTransport = { send(
+   input: SubagentInput, target: string, signal:
+   AbortSignal) => Promise<SignedSubagentResult> }`.
+   This transport is provided by EnvoyMesh at the
+   `EnvoyHarnessAdapter.execute()` boundary (a thin
+   method: "submit this to peer X" → "here's the
+   signed result"). ~10 tests with a fake transport
+   covering happy path, signature mismatch, transport
+   timeout, abort propagation.
+
+3. **F10.3.3 — Federated routing seam (Package 1 +
+   Package 3).** The actual routing decision (which
+   peer to send to, capability matching, load
+   balancing) lives in EnvoyMesh. envoy-harness's
+   contribution is the **seam**: a `routingHint?:
+   { capabilityTag, maxHops?, preferredRegions? }`
+   field on `SubagentInput` (additive; the model
+   doesn't see it, but a future `FanOutSpec` can
+   pre-set it). The `RemoteSubmitterTransport.send`
+   signature takes the `targetPeerId` as an explicit
+   parameter (the routing decision is OUTSIDE the
+   transport). Document the seam in `design.en.md`:
+   "Routing is a mesh concern; envoy-harness exposes
+   the hint, EnvoyMesh decides the target." ~3
+   tests covering the type surface + a doc test
+   that asserts the seam comment is present.
+
+**v0 (F10.3) — out of scope:**
+
+- **Federated routing implementation** (capability
+  matching, peer scoring, load balancing). Lives in
+  EnvoyMesh, not envoy-harness.
+- **The actual `RemoteSubmitterTransport` impl**
+  (libp2p send/recv). Lives in EnvoyMesh, not
+  envoy-harness. envoy-harness-adapter provides the
+  seam; EnvoyMesh provides the implementation.
+- **Multi-hop routing** (`maxHops > 1`). v0: 1 hop
+  (parent → worker). Multi-hop is a future mesh
+  feature; envoy-harness's seam supports it
+  additively.
+- **Streaming progress** for the sub-agent's run.
+  v0: fire-and-await. F10.4+ if needed.
+
+**Type sketch (F10.3.1 + F10.3.2):**
+
+```ts
+// src/subagent/signer.ts (Package 1)
+export type SubagentResultSigner = (
+  result: SubagentResult,
+) => string;
+
+// src/subagent/types.ts (Package 1) — additive
+export interface SubagentInput {
+  // ... existing F10.1 fields ...
+  /** F10.3.3: routing hint for federated routing.
+   *  The mesh decides the target; this is metadata
+   *  the mesh can use to make a better decision. */
+  routingHint?: {
+    capabilityTag: string;
+    maxHops?: number;
+    preferredRegions?: ReadonlyArray<string>;
+  };
+}
+
+export interface SignedSubagentResult {
+  result: SubagentResult;
+  /** Ed25519 signature over the canonical form
+   *  of `result` (excluding the signature itself). */
+  signature: string;
+  /** Public key of the worker that produced the
+   *  result. Verifier uses this to check. */
+  workerPublicKey: string;
+}
+
+// src/subagent/local-mesh-submitter.ts (Package 1)
+// — additive
+export interface LocalMeshSubmitterOptions {
+  // ... existing F10.1.2 options ...
+  /** F10.3.1: optional signer. When provided, the
+   *  result is signed before returning. v0: leave
+   *  undefined → empty signature (no trust needed). */
+  signer?: SubagentResultSigner;
+}
+
+// packages/envoy-harness-adapter/src/remote-mesh-submitter.ts (Package 3)
+export interface RemoteSubmitterTransport {
+  send(
+    input: SubagentInput,
+    targetPeerId: string,
+    signal: AbortSignal,
+  ): Promise<SignedSubagentResult>;
+}
+
+export interface RemoteMeshSubmitterOptions {
+  transport: RemoteSubmitterTransport;
+  /** The worker's public key. The submitter uses
+   *  this to verify the result's signature. */
+  workerPublicKey: string;
+  /** The parent's signing key. The submitter
+   *  signs the request with this; the worker
+   *  verifies. */
+  parentPrivateKey: string;
+  /** The peer to send the sub-agent to. */
+  targetPeerId: string;
+}
+
+export class RemoteMeshSubmitter implements MeshSubmitter {
+  // ... implements the same interface as LocalMeshSubmitter ...
+  async submit(input: SubagentInput, signal: AbortSignal): Promise<SubagentResult> {
+    const signed = await this.options.transport.send(
+      this.signInput(input),
+      this.options.targetPeerId,
+      signal,
+    );
+    if (!verify(signed.signature, signed.result, this.options.workerPublicKey)) {
+      throw new Error("sub-agent result signature verification failed");
+    }
+    return signed.result;
+  }
+}
+```
+
+**Why the seam is `RemoteSubmitterTransport`, not a libp2p
+class directly:**
+
+The F8 pattern: `EnvoyHarnessAdapter` takes a `buildAgent`
+factory + a `signResult` closure. The host injects both;
+envoy-harness doesn't know how either is implemented. F10.3
+follows the same DI pattern: the host injects a
+`RemoteSubmitterTransport` (the thing that knows how to send
+a `SubagentInput` to a peer). envoy-harness-adapter's
+`RemoteMeshSubmitter` is the standard implementation; EnvoyMesh
+provides the real libp2p-backed transport.
+
+**Sub-chunk breakdown (planned):**
+
+- F10.3.1: `SubagentResultSigner` type + `LocalMeshSubmitter.signer` option + ~6 tests (~80 lines).
+- F10.3.2: `RemoteMeshSubmitter` in Package 3 + `RemoteSubmitterTransport` interface + ~10 tests (~250 lines).
+- F10.3.3: `routingHint` field on `SubagentInput` + design doc note + ~3 tests (~50 lines).
+
+**Total estimated: 3 commits, ~19 tests, ~380 lines across both
+packages + ~30 lines in `design.en.md`.**
 
