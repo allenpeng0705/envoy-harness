@@ -12,6 +12,21 @@
 > - [`../../pi`](../../pi) — minimal extension model, TaggedError, Agent Skills standard
 > - [`./improving-agent-network.en.md`](./improving-agent-network.en.md) — MAP protocol, 3-tuple reputation, federated scoreboard
 
+> **Status as of the latest commit on `phase-1/types`:**
+> - **Phase 0** (empty package) — ✅ shipped
+> - **Phase 1** (v0 spine) — ✅ shipped (Chunks 1–4d)
+> - **Phase 2** (mesh-native adapter) — ✅ shipped (F7 + F8, monorepo restructure + `@envoymesh/envoy-harness-adapter`)
+> - **Phase 3** (self-evolution) — ✅ shipped (5a–5e + F6 federated scoreboard)
+> - **Phase 4** (production-grade) — ✅ shipped (F9.1 per-call approval, F9.2 LSP, F9.3 team + cron, F9.4 `--json` trace, F9.5 cross-agent verification)
+> - **Phase 5** (mesh-native sub-agents) — ✅ shipped (F10.1 `MeshSubmitter` + `LocalMeshSubmitter` + `task` tool, F10.2 parallel fan-out + `maxSubagents=8` cap, F10.3 signer + `RemoteMeshSubmitter` + `RoutingHint`, F10.4 `FanOutSpec` + capability-driven fan-out, F10.5 cost aggregation + progress streaming, F10.6 `subagentOf` trace annotation)
+>
+> **What this document is:** the design — what and why, with code-shaped sketches for the load-bearing surfaces.
+> **What is NOT here:** the implementation record (per-sub-chunk commit history, per-module test inventory) — see [`docs/implementation-plan.md`](./implementation-plan.md). The boundary doc [`docs/boundary.en.md`](./boundary.en.md) is the one-pager for the package split.
+>
+> **Test count: 791 tests across 52 files** (Package 1: 699/42; Package 3: 92/10). All passing on `pnpm -r test`.
+>
+> Sections marked **shipped in Phase 5** below describe the final shape of mesh-native sub-agents; the §10.3 / §15 sketches predate the implementation and are kept for design intent, not as the source-of-truth code. For the code, see `packages/envoy-harness/src/subagent/` and `packages/envoy-harness-adapter/src/remote-mesh-submitter.ts`.
+
 ---
 
 ## 0. How to read this document
@@ -1682,6 +1697,8 @@ export const gitTool: ToolDefinition<GitInput, GitOutput> = {
 
 ### 10.3 The task tool (mesh-native sub-agent)
 
+> **Status: shipped in Phase 5.** The sketch below pre-dates the implementation; it captures the design intent (the model-facing shape of the `task` tool) but the **actual seam** is `MeshSubmitter` in `src/subagent/types.ts` (Package 1) and `RemoteMeshSubmitter` in `packages/envoy-harness-adapter/src/remote-mesh-submitter.ts` (Package 3). v0 ships `LocalMeshSubmitter`; `RemoteMeshSubmitter` is a 1-line wrapper over an opaque `RemoteSubmitterTransport` (crypto, wire format, parent request signing, and worker result verification live in the transport, not in the adapter). Routing (`RoutingHint`) and result signing (`SubagentResultSigner`) are host-injected. See [`docs/boundary.en.md`](./boundary.en.md) for the full layering and [`docs/implementation-plan.md`](./implementation-plan.md) §3 / §6.6 for the implementation record.
+
 ```ts
 // src/tools/task.ts (sketch)
 export const taskTool: ToolDefinition<TaskInput, TaskResult> = {
@@ -2277,6 +2294,8 @@ This is a heuristic, not a guarantee. The actual cost may exceed the max. The es
 ---
 
 ## 15. Sub-agent protocol (the mesh-native flow)
+
+> **Status: shipped in Phase 5.** The flow below is the design-level narrative; the actual code path lives in `src/subagent/local-mesh-submitter.ts` (Package 1) for local execution and `packages/envoy-harness-adapter/src/remote-mesh-submitter.ts` (Package 3) for mesh-routed execution. **The single rule** (see [`docs/boundary.en.md`](./boundary.en.md)): routing is a mesh concern; envoy-harness exposes the `MeshSubmitter` seam + `RoutingHint` and the mesh decides the target.
 
 When `envoy task` is called, the following happens end to end:
 
@@ -2885,15 +2904,32 @@ The runner reads the TOML, executes each test, fails CI if any test fails.
 - Owner-key-signed scoreboard entries.
 - Federated scoreboard opt-in (off by default).
 
-### Phase 4 — Production-grade (ongoing)
+### Phase 4 — Production-grade (✅ shipped, 5 sub-chunks: F9.1–F9.5)
 
-- LSP client (parity with claw-code lane 8).
-- Team + cron (parity with claw-code lane 6, if useful).
-- Trace observability UI.
-- Per-call approval callback (Penguin style).
-- Cross-agent verification (MAP §CrossAgentDisagreementVerifier).
+- ✅ **F9.1** Per-call approval callback (Penguin style). Hook returns `ask` → agent calls `askHandler` → handler returns `allow` / `deny` / `modify`. No handler → safe deny default.
+- ✅ **F9.2** LSP client + 4 tools (parity with claw-code lane 8). `LspClient` is the seam; envoy-harness provides the `Tool` surface; the host (Tauri, CLI) provides the actual `LspClient`s per file. v0: no auto-spawn.
+- ✅ **F9.3** Team + cron (parity with claw-code lane 6). Hand-rolled minimal TOML reader (no `@iarna/toml` dep); sequential execution; `${input}` substitution; per-agent failure → `status: "failed"`.
+- ✅ **F9.4** `--json` trace + `AgentOptions.tracer`. JSON Lines: one JSON object per line; `droppedEvents` counter; `WritableStream` structural type.
+- ✅ **F9.5** Cross-agent verification (MAP §CrossAgentDisagreementVerifier). `verify()` concatenates local + cross verdicts; orchestrator collapses with `combineVerdicts`. v0: `defaultCrossVerify` re-runs on a different adapter.
 
-**Total to v0 ship-ready: ~12 weeks, 1-2 engineers.**
+### Phase 5 — Mesh-native sub-agents (✅ shipped, 8 sub-chunks: F10.1–F10.6)
+
+The "real workable" sub-agent path. The `task` tool is the parent's escape hatch; it submits to a `MeshSubmitter`; the submitter runs (or routes) the sub-agent and returns the result. Per design invariant #9 (sub-agents are NEW sessions — own id, AGENTS.md, hooks, permission) and §10.3.
+
+- ✅ **F10.1** `MeshSubmitter` interface + `LocalMeshSubmitter` + `task` tool. New local session per sub-agent (4 sub-chunks: types, noop submitter, local submitter + default factory, e2e).
+- ✅ **F10.2** Parallel fan-out + `maxSubagents` cap (default 8). `executeToolCalls` helper auto-detects "all task" → `Promise.all`; mixed iterations stay serial; refuses ALL when cap exceeded.
+- ✅ **F10.3.1** `SubagentResultSigner` seam (`(result: SubagentResult) => string`). Optional; backward compat: no signer = empty signature.
+- ✅ **F10.3.2** `RemoteMeshSubmitter` (Package 3) + `RemoteSubmitterTransport` seam. Thin wrapper: 1-line `submit()` → `transport.send()`. Transport handles ALL crypto + wire format. **Design pivot from the F10.3 plan:** the F10.3.1 plan had `workerPublicKey` + `parentPrivateKey` fields on the submitter; deferred to the transport's contract (cleaner seam; the adapter doesn't need to know about keys).
+- ✅ **F10.3.3** `RoutingHint { workerCapabilityTag, maxHops?, preferredRegions? }` (host-only; not in model's `task` tool zod schema). The mesh interprets it. **Routing is a mesh concern; envoy-harness exposes the hint, EnvoyMesh decides the target.**
+- ✅ **F10.4.1** `FanOutSpec { capabilityTag, count, partition? }` + `FanOutRegistry`. Host-driven fan-out (vs F10.2's model-driven). When model emits ONE `task` call with matching tag, the tool expands to N parallel sub-agents via `Promise.all` (F10.2 path), then aggregates. **Worst-case aggregation** (status, verdict); concatenated content with `[sub-agent i/N]` headers; summed `costUsd`; max `durationMs`; empty signature for aggregated result.
+- ✅ **F10.5** Cost aggregation + progress streaming. `CostTracker.addSubagentCost(costUsd)` (additive; no token attribution — sub-agent already tracked its own tokens in its own `CostTracker`; parent only sees derived `costUsd` sum). `LocalMeshSubmitterOptions.parentTracer?` + `defaultBuildSubagentFactory({parentTracer?})` (sub-agent's `TraceEvent`s flow to parent tracer for progress streaming).
+- ✅ **F10.6** `subagentOf` trace annotation. `TraceBase.subagentOf?: string` (additive); all 6 `TraceEvent` variants inherit it. `AgentOptions.subagentOf?: string` new option (sub-agents set it; parents don't). Private `emit()` helper centralizes the propagation (replaces 9 inline `tracer.emit(...)` calls; one place to change). `defaultBuildSubagentFactory({parentSessionId?})` — host passes parent's sessionId; factory closes over it. **Why this and not per-sub-agent cost breakdown** (per the user's call on the F10.6 plan): the breakdown is scope creep (host has workarounds; data is in trace events; bloats `SubagentResult`). The `subagentOf` field fills a real gap (consumer-side inference from event ordering is fragile for parallel sub-agents) at low cost.
+
+**Total to v0 ship-ready: ~12 weeks, 1-2 engineers** (Phase 0–3 as originally estimated; Phase 4 + 5 are post-v0 incremental work that has now shipped).
+
+---
+
+## 23. Decision summary (what we decided and what we didn't)
 
 ---
 
@@ -2943,7 +2979,7 @@ The runner reads the TOML, executes each test, fails CI if any test fails.
 
 5. **Federated self-evolution: pull model or push model?** Today: pull (peer B fetches peer A's rule). Should there be a push model (peer A's rule is automatically offered to all envoy-harness nodes running the same runtime)? Recommend: pull, with explicit opt-in. Push is later if pull works.
 
-6. **Cost attribution across mesh.** When a chain step runs on a remote node, the cost is paid by the requester. But the verifier LLM (for cross-agent verification) is paid by whom? Recommend: the requester (matches chain-budget-ledger's reserve/commit semantics).
+6. **Cost attribution across mesh.** When a chain step runs on a remote node, the cost is paid by the requester. But the verifier LLM (for cross-agent verification) is paid by whom? Recommend: the requester (matches chain-budget-ledger's reserve/commit semantics). **Partially addressed in Phase 5 (F10.5):** sub-agent's derived `costUsd` is summed to the parent's `CostTracker` via `CostTracker.addSubagentCost(costUsd)`. Token attribution is intentionally NOT included (the sub-agent already tracks its own tokens in its own `CostTracker`; double-counting tokens at the parent would be wrong). Verifier LLM cost attribution for cross-agent verification is still TBD.
 
 7. **Hook decision semantics for add-context.** Today: all `add-context` are concatenated. Should they be per-tool, per-session, per-event? Recommend: current behavior (concat) is fine for v0; revisit if users complain.
 

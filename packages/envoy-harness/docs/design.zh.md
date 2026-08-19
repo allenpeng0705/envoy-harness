@@ -12,6 +12,21 @@
 > - [`../../pi`](../../pi) —— 极简扩展模型、TaggedError、Agent Skills 标准
 > - [`./improving-agent-network.en.md`](./improving-agent-network.en.md) —— MAP 协议、三元组 reputation、联邦 scoreboard
 
+> **状态(以 `phase-1/types` 上最新 commit 为准):**
+> - **Phase 0**(空 package)—— ✅ shipped
+> - **Phase 1**(v0 主干)—— ✅ shipped(Chunks 1–4d)
+> - **Phase 2**(mesh-native adapter)—— ✅ shipped(F7 + F8,monorepo restructure + `@envoymesh/envoy-harness-adapter`)
+> - **Phase 3**(自进化)—— ✅ shipped(5a–5e + F6 federated scoreboard)
+> - **Phase 4**(生产级)—— ✅ shipped(F9.1 per-call approval、F9.2 LSP、F9.3 team + cron、F9.4 `--json` trace、F9.5 跨 agent 验证)
+> - **Phase 5**(mesh-native sub-agents)—— ✅ shipped(F10.1 `MeshSubmitter` + `LocalMeshSubmitter` + `task` tool、F10.2 parallel fan-out + `maxSubagents=8` cap、F10.3 signer + `RemoteMeshSubmitter` + `RoutingHint`、F10.4 `FanOutSpec` + capability-driven fan-out、F10.5 cost aggregation + progress streaming、F10.6 `subagentOf` trace annotation)
+>
+> **本文档是什么:** 设计 —— what 和 why,带 code-shape 的 sketch 覆盖 load-bearing 表面。
+> **本文档不是什么:** 实现记录(per-sub-chunk commit 历史、per-module test inventory)—— 见 [`docs/implementation-plan.md`](./implementation-plan.md)。Boundary doc [`docs/boundary.en.md`](./boundary.en.md) 是 package 拆分的一页纸说明。
+>
+> **测试数:791 个测试,跨 52 个文件**(Package 1:699/42;Package 3:92/10)。`pnpm -r test` 全部通过。
+>
+> 下面带 **shipped in Phase 5** 标记的小节描述 mesh-native sub-agents 的最终形态;§10.3 / §15 的 sketch 早于实现,保留它们是为了保留设计意图,不是 source-of-truth 代码。要看代码,见 `packages/envoy-harness/src/subagent/` 和 `packages/envoy-harness-adapter/src/remote-mesh-submitter.ts`。
+
 ---
 
 ## 0. 如何读这份文档
@@ -1675,6 +1690,8 @@ export const gitTool: ToolDefinition<GitInput, GitOutput> = {
 
 ### 10.3 Task tool(mesh-native sub-agent)
 
+> **Status:shipped in Phase 5。** 下面的 sketch 早于实现;它捕捉设计意图(`task` tool 的 model-facing 形态),但 **真正的 seam** 是 `src/subagent/types.ts` 里的 `MeshSubmitter`(Package 1)和 `packages/envoy-harness-adapter/src/remote-mesh-submitter.ts` 里的 `RemoteMeshSubmitter`(Package 3)。v0 ship 了 `LocalMeshSubmitter`;`RemoteMeshSubmitter` 是一个 1 行的 wrapper,盖在 opaque `RemoteSubmitterTransport` 上(crypto、wire format、parent request 签名、worker result 验证都住在 transport 里,不在 adapter 里)。Routing(`RoutingHint`)和 result 签名(`SubagentResultSigner`)由 host 注入。完整分层见 [`docs/boundary.en.md`](./boundary.en.md),实现记录见 [`docs/implementation-plan.md`](./implementation-plan.md) §3 / §6.6。
+>
 > **位置:`@envoymesh/envoy-harness-adapter/src/chain-submit.ts`(Package 3),不是 envoy-harness。** Task tool 需要 mesh 连接。
 
 ```ts
@@ -2273,6 +2290,8 @@ export async function estimateCost(input: {
 ---
 
 ## 15. Sub-agent 协议(mesh-native 的流程)
+
+> **Status:shipped in Phase 5。** 下面是设计层的 narrative;真正的代码路径在 `src/subagent/local-mesh-submitter.ts`(Package 1)做本地执行,`packages/envoy-harness-adapter/src/remote-mesh-submitter.ts`(Package 3)做 mesh 路由执行。**单条规则**(见 [`docs/boundary.en.md`](./boundary.en.md)):routing 是 mesh 的事;envoy-harness 暴露 `MeshSubmitter` seam + `RoutingHint`,target 由 mesh 决定。
 
 当 `envoy task` 被调用,以下端到端发生:
 
@@ -2882,15 +2901,32 @@ Runner 读 TOML,执行每个 test,任何 test 失败 CI 就挂。
 - Owner 私钥签的 scoreboard entry。
 - 联邦 scoreboard opt-in(默认关)。
 
-### Phase 4 — 生产级(持续)
+### Phase 4 — 生产级(✅ shipped,5 sub-chunks:F9.1–F9.5)
 
-- LSP client(跟 claw-code lane 8 同步)。
-- Team + cron(跟 claw-code lane 6 同步,如果有用)。
-- Trace observability UI。
-- 每调用 approval 回调(Penguin 风格)。
-- 跨 agent 验证(MAP §CrossAgentDisagreementVerifier)。
+- ✅ **F9.1** 每调用 approval 回调(Penguin 风格)。Hook 返回 `ask` → agent 调 `askHandler` → handler 返回 `allow` / `deny` / `modify`。没有 handler → 安全 deny 默认。
+- ✅ **F9.2** LSP client + 4 个 tool(跟 claw-code lane 8 同步)。`LspClient` 是 seam;envoy-harness 提供 `Tool` 表面;host(Tauri、CLI)提供实际的 per-file `LspClient`。v0:不 auto-spawn。
+- ✅ **F9.3** Team + cron(跟 claw-code lane 6 同步)。手写极简 TOML reader(不依赖 `@iarna/toml`);顺序执行;`${input}` 替换;per-agent 失败 → `status: "failed"`。
+- ✅ **F9.4** `--json` trace + `AgentOptions.tracer`。JSON Lines:每行一个 JSON 对象;`droppedEvents` 计数器;`WritableStream` 结构类型。
+- ✅ **F9.5** 跨 agent 验证(MAP §CrossAgentDisagreementVerifier)。`verify()` 拼接 local + cross verdict;orchestrator 用 `combineVerdicts` 折叠。v0:`defaultCrossVerify` 在不同 adapter 上重跑。
 
-**到 v0 ship-ready 总计:约 12 周,1-2 个工程师。**
+### Phase 5 — Mesh-native sub-agents(✅ shipped,8 sub-chunks:F10.1–F10.6)
+
+"真能跑"的 sub-agent 路径。`task` tool 是父 agent 的 escape hatch;它把 sub-agent 提交给 `MeshSubmitter`;submitter 执行(或路由)sub-agent,返回结果。按设计不变式 #9(sub-agent 是 NEW session —— 自己的 id、AGENTS.md、hooks、permission)和 §10.3。
+
+- ✅ **F10.1** `MeshSubmitter` interface + `LocalMeshSubmitter` + `task` tool。每个 sub-agent 一个新的 local session(4 个 sub-chunks:types、noop submitter、local submitter + default factory、e2e)。
+- ✅ **F10.2** Parallel fan-out + `maxSubagents` cap(默认 8)。`executeToolCalls` helper 自动检测 "all task" → `Promise.all`;混合 iteration 保持 serial;超 cap 时拒绝 ALL。
+- ✅ **F10.3.1** `SubagentResultSigner` seam(`(result: SubagentResult) => string`)。可选;向后兼容:无 signer = 空 signature。
+- ✅ **F10.3.2** `RemoteMeshSubmitter`(Package 3)+ `RemoteSubmitterTransport` seam。薄 wrapper:1 行 `submit()` → `transport.send()`。Transport 承担 ALL crypto + wire format。**相对 F10.3 plan 的设计 pivot:**F10.3.1 plan 把 `workerPublicKey` + `parentPrivateKey` 放在 submitter 上;延后到 transport 的 contract(更干净的 seam;adapter 不需要知道 key)。
+- ✅ **F10.3.3** `RoutingHint { workerCapabilityTag, maxHops?, preferredRegions? }`(host-only;不在 model 的 `task` tool zod schema 里)。Mesh 来解释它。**Routing 是 mesh 的事;envoy-harness 暴露 hint,EnvoyMesh 决定 target。**
+- ✅ **F10.4.1** `FanOutSpec { capabilityTag, count, partition? }` + `FanOutRegistry`。Host-driven fan-out(对比 F10.2 的 model-driven)。当 model 发 ONE 个 `task` call 且 tag 匹配,tool 通过 `Promise.all`(F10.2 路径)展开成 N 个并行 sub-agent,然后聚合。**Worst-case 聚合**(status、verdict);content 用 `[sub-agent i/N]` header 拼接;`costUsd` 求和;`durationMs` 取最大;聚合 result 的 signature 为空。
+- ✅ **F10.5** Cost aggregation + progress streaming。`CostTracker.addSubagentCost(costUsd)`(additive;不做 token 归属 —— sub-agent 在自己的 `CostTracker` 里已经记过自己的 token;parent 只看派生的 `costUsd` 求和)。`LocalMeshSubmitterOptions.parentTracer?` + `defaultBuildSubagentFactory({parentTracer?})`(sub-agent 的 `TraceEvent` 流到 parent tracer,做 progress streaming)。
+- ✅ **F10.6** `subagentOf` trace annotation。`TraceBase.subagentOf?: string`(additive);6 个 `TraceEvent` variant 都继承它。`AgentOptions.subagentOf?: string` 是新 option(sub-agent 填,parent 不填)。私有的 `emit()` helper 集中处理 propagation(替换 9 处内联 `tracer.emit(...)`;一处改,处处生效)。`defaultBuildSubagentFactory({parentSessionId?})` —— host 传 parent 的 sessionId;factory 在闭包里捕获它。**为什么是这个而不是 per-sub-agent cost breakdown**(按用户在 F10.6 plan 里的取舍):breakdown 是 scope creep(host 有 workaround;数据在 trace event 里;会膨胀 `SubagentResult`)。`subagentOf` 字段在低成本下填了一个真实缺口(consumer 侧从 event 顺序推断在并行 sub-agent 下是脆弱的)。
+
+**到 v0 ship-ready 总计:约 12 周,1-2 个工程师**(Phase 0–3 是原估算;Phase 4 + 5 是 v0 之后的增量工作,现在都 ship 了)。
+
+---
+
+## 23. 决策总结(已决定 vs 暂不决定)
 
 ---
 
@@ -2940,7 +2976,7 @@ Runner 读 TOML,执行每个 test,任何 test 失败 CI 就挂。
 
 5. **联邦自进化:pull 模型还是 push 模型?** 目前:pull(peer B 拉 peer A 的规则)。要不要 push(peer A 的规则自动提供给所有跑同 runtime 的 envoy-harness 节点)?建议:pull,显式 opt-in。Pull 工作后再 push。
 
-6. **跨 mesh 的 cost 归属。** 当一个 chain step 跑在远程节点,费用由 requester 付。但 verifier LLM(用于跨 agent 验证)的费用谁付?建议:requester(跟 chain-budget-ledger 的 reserve/commit 语义一致)。
+6. **跨 mesh 的 cost 归属。** 当一个 chain step 跑在远程节点,费用由 requester 付。但 verifier LLM(用于跨 agent 验证)的费用谁付?建议:requester(跟 chain-budget-ledger 的 reserve/commit 语义一致)。**Phase 5 (F10.5) 部分已处理:** sub-agent 派生的 `costUsd` 通过 `CostTracker.addSubagentCost(costUsd)` 求和到 parent 的 `CostTracker`。**Token 归属被故意不做** —— sub-agent 在自己的 `CostTracker` 里已经记过自己的 token;在 parent 这边重复记 token 会算错。跨 agent 验证的 verifier LLM cost 归属仍 TBD。
 
 7. **add-context 的 hook 决策语义。** 目前:所有 `add-context` 拼接。要不要 per-tool、per-session、per-event?建议:当前行为(concat)v0 够用;用户抱怨时再回头看。
 
