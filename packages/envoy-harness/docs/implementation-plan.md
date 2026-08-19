@@ -10,9 +10,9 @@
 > (`docs/boundary.en.md`) says *what belongs in envoy-harness vs
 > EnvoyMesh*; this file assumes the boundary.
 >
-> **Status as of last commit:** F17.4 done on `phase-1/types`.
+> **Status as of last commit:** F14.2 done on `phase-1/types`.
 >
-> - **Total:** 894 tests across 60 files (envoy-harness 802 / 50
+> - **Total:** 1000 tests across 61 files (envoy-harness 908 / 51
 >   files + envoy-harness-adapter 92 / 10 files). All passing.
 > - **Typecheck:** clean (`pnpm -r typecheck`).
 > - **Phase 1 (v0 spine):** ✅ done (Chunks 1-4d, 220 tests)
@@ -20,9 +20,11 @@
 > - **Phase 3 (Self-evolution):** ✅ done (5a-5e + F6, 110 tests)
 > - **Phase 4 (Production-grade):** ✅ done (F9.1-F9.5, 5 sub-chunks)
 > - **Phase 5 (Mesh-native sub-agents):** ✅ done (F10.1-F10.6, 8 sub-chunks)
-> - **Phase 6 (REPL):** ⏳ in progress (F17.1 + F17.2 + F17.2.5 +
->   F17.3 + F17.4 + F17.5 + F17.6 done; Phase 6 fully
->   complete — see §6.7 + §11)
+> - **Phase 6 (REPL):** ✅ done (F17.1 + F17.2 + F17.2.5 +
+>   F17.3 + F17.4 + F17.5 + F17.6; 7 sub-chunks; `/undo`
+>   deferred to a future chunk — see §6.7 + §11)
+> - **Phase 7 (Persistence):** ⏳ in progress (F14.1
+>   + F14.2 done; F14.3 next — see §6.7 + §11)
 >
 > **How to read this document.** §1 is project context (1 page).
 > §2 is the status snapshot (test count + per-module inventory).
@@ -36,7 +38,7 @@
 >
 > **Top of doc:** the design discussion (what & why) for Phase 5 — the mesh-native sub-agents design rationale + type surface — now lives in [`docs/design.en.md`](./design.en.md) §10.3. The *implementation record* (what shipped) is in §3 (chronological by commit). The *plan-with-sub-chunks* (the F10.2, F10.3, etc. plans) is in §6.6.
 >
-> **Branch:** all work is on `phase-1/types`. 14 unpushed commits as of the latest (F10.6 + 2 doc restructure + 2 design/Phase-5 + README/F17 plan + F17.1 + F17.2 + commands sweep plan + F17.2.5 + F17.3 + F17.4 + F17.5 + F17.6); Phase 5 complete, Phase 6 (REPL) fully complete (F17.1 + F17.2 + F17.2.5 + F17.3 + F17.4 + F17.5 + F17.6 done). `/undo` deferred to a future chunk (action journal scope too big; "testability wins on tie").
+> **Branch:** all work is on `phase-1/types`. 19 unpushed commits as of the latest (F10.6 + 2 doc restructure + 2 design/Phase-5 + README/F17 plan + F17.1 + F17.2 + commands sweep plan + F17.2.5 + F17.3 + F17.4 + F17.5 + F17.6 + F14.1 + F14.2 + 1 misc); Phase 5 complete, Phase 6 (REPL) fully complete, Phase 7 (F14 persistence + bundled F18 commands) ⏳ in progress (F14.1 + F14.2 done; F14.3 next). `/undo` deferred to a future chunk (action journal scope too big; "testability wins on tie").
 
 ---
 
@@ -78,8 +80,9 @@ Per design §1.3, the four design targets are non-negotiable:
 | **Phase 4** | Production-grade (5 sub-chunks: F9.1 + F9.2 + F9.3 + F9.4 + F9.5) | ✅ done | +130 (vs Phase 3) |
 | **Phase 5** | Mesh-native sub-agents (8 sub-chunks: F10.1-F10.6) | ✅ done | +94 (vs Phase 4) |
 | **Phase 6** | Interactive REPL (7 sub-chunks done: F17.1 + F17.2 + F17.2.5 + F17.3 + F17.4 + F17.5 + F17.6) | ✅ **done** | +103 (F17.1 + F17.2 + F17.2.5 + F17.3 + F17.4 + F17.5 + F17.6) |
+| **Phase 7** | Persistence + bundled F18 REPL commands (F14.1 + F14.2 done; F14.3 next) | ⏳ in progress | +106 (F14.1 + F14.2) |
 
-**Cumulative:** 894 tests across 60 files (envoy-harness 802 + envoy-harness-adapter 92), all passing.
+**Cumulative:** 1000 tests across 61 files (envoy-harness 908 + envoy-harness-adapter 92), all passing.
 Typecheck clean (`pnpm -r typecheck`).
 
 **Per-module test inventory (47 envoy-harness files + 10 envoy-harness-adapter files = 865 tests):**
@@ -138,6 +141,7 @@ Typecheck clean (`pnpm -r typecheck`).
 | REPL tier 2 batch 1 (F17.5) | 12 | `test/repl-tier2.test.ts` | 3 real-feature commands: /new (fresh session, new id, empty transcript), /compact (drop oldest, keep last N; preserves system message), /init (writes AGENTS.md via one-shot model call, doesn't pollute main transcript); BUILTIN_TIER2_COMMANDS shape (3 names, no collisions); dispatch table covers all 20 |
 | REPL tier 2 batch 2 (F17.6) | 10 | `test/repl-tier2-batch2.test.ts` | 2 real-feature commands: /agents (lists spawned sub-agents from the SubagentRegistry; one line per record with status, cost, duration, truncated session id + objective), /diff (git diff vs HEAD; "no changes" on empty, stderr on non-git dir); BUILTIN_TIER2_BATCH2_COMMANDS shape (2 names); dispatch table covers all 22 |
 | Subagent registry (F17.6) | 7 | `test/subagent-registry.test.ts` | LocalMeshSubmitter.listSubagents(): empty before any submit, 1 record per submit, fields populated correctly (sessionId, capabilityTag, objective, startedAt, completedAt, durationMs, status, costUsd), failed sub-agents still get records, returns same array reference (read-only view), optional method on MeshSubmitter interface |
+| REPL persistence (F14.2) | 12 | `test/repl-persistence.test.ts` | runRepl with `sessionStore + resumeFromId` loads the persisted session + uses its id + writes new turns back; honors loaded session's cwd; `sessionStore` without `resumeFromId` throws; missing id throws; `createSession` factory called once + session is on disk; CLI: persist via one-shot → resume in REPL (transcript restored); CLI: --repl --resume <missing> throws CliError(EXIT_USAGE); CLI: --repl --resume + --persist mutually exclusive; CLI: --repl --persist creates + prints id; CLI: --repl (no flags) default in-memory |
 
 #### envoy-harness-adapter (Package 3, 92 tests / 10 files)
 
@@ -173,6 +177,8 @@ Typecheck clean (`pnpm -r typecheck`).
 | **Phase 3** | Self-evolution (3 weeks) | Chunks 5a-5e (5 commits) + F6 (4) | 110 | ✅ |
 | **Phase 4** | Production-grade | F9.1-F9.5 (5 sub-chunks) | +130 | ✅ |
 | **Phase 5** | Mesh-native sub-agents | F10.1-F10.6 (8 sub-chunks) | +94 | ✅ |
+| **Phase 6** | Interactive REPL | F17.1-F17.6 (7 sub-chunks) | +103 | ✅ |
+| **Phase 7** | Persistence + bundled F18 commands | F14.1 + F14.2 (2 sub-chunks so far) | +106 | ⏳ |
 
 **Phase-by-phase narrative:**
 
@@ -1850,6 +1856,69 @@ updated), §10 (change log entry).
 Recommend: don't start any of these until a
 real use case surfaces. "Testability wins on
 tie" is the tie-breaker.
+
+### F14.2 — REPL persistence + cross-tool E2E
+
+The REPL side of F14's persistence work. F14.1
+shipped the library + one-shot CLI; F14.2 wires
+the same plumbing into the REPL.
+
+**What shipped (~233 LoC + 12 tests):**
+- `ReplOptions.sessionStore?: SessionStore` +
+  `ReplOptions.resumeFromId?: string` (additive
+  options; default behavior unchanged).
+- `ReplOptions.createSession?: () => Promise<Session>`
+  for `--persist` REPL mode.
+- `runRepl` honors the three modes: `createSession`
+  factory (--persist), `sessionStore + resumeFromId`
+  pair (--resume), or default `InMemorySession`.
+  The loaded session's `metadata.cwd` wins (so
+  `--resume` is reproducible across invocations).
+- `RunOptions.lineReader?: LineReader` (additive)
+  so tests can inject a fake reader without
+  hanging on stdin.
+- CLI: `--repl --resume <id> --session-dir <path>`
+  loads the persisted session and threads it into
+  the REPL. `--repl --persist` (no `--resume`)
+  creates a new persisted session. `--resume` +
+  `--persist` are mutually exclusive (the loop
+  throws on the pair; the CLI also throws
+  `CliError(EXIT_USAGE)` for clean exit codes).
+- `envoy-harness --repl --resume <missing-id>`
+  → `CliError(EXIT_USAGE)` ("session not found").
+  The runner checks `store.exists()` before
+  handing off to the loop (cleaner error than
+  the loop's async-rejection).
+
+**Why this is F14's "round-trip" sub-chunk:**
+proves the persistence works end-to-end. Run
+one-shot CLI with `--persist`, get an id, then
+`envoy-harness --repl --resume <id>`, and the
+transcript is restored. Without F14.2, `--persist`
+in F14.1 was write-only from the REPL's
+perspective (no way to load). F14.3 (`/review`
+`/export`) is purely additive on top.
+
+**Out of scope for F14.2:** `--fork` in REPL
+mode (F14.3+ candidate); `/rewind` (action
+journal needed); write-on-keystroke (only
+writes on `appendMessage`, same as one-shot).
+
+**12 tests in test/repl-persistence.test.ts:**
+loop-level (sessionStore+resumeFromId loads +
+uses loaded id + writes new turns back; honors
+loaded cwd; missing resumeFromId throws; missing
+id throws; createSession factory called once +
+session is on disk) + CLI-level (--repl --resume
+end-to-end with transcript restore; --resume
+<missing> throws CliError; --resume + --persist
+mutually exclusive; --repl --persist creates +
+prints id; --repl (no flags) defaults to
+in-memory).
+
+Cumulative 921 + 93 = 1014 tests passing.
+Phase 7 (F14) ⏳ in progress: F14.1 ✅ + F14.2 ✅
++ F14.3 (next: /review + /export).
 
 ---
 
@@ -3731,10 +3800,14 @@ laptop has no Tauri app — they need a CLI REPL.
      `repl-e2e.test.ts` dispatch count: 20 → 22.
 
 8. **F14 — Persistent session log + Tier 2 batch 3 commands**
-   (3 sub-chunks, ~480 LoC + ~25 tests). **Bundles F14
+   (3 sub-chunks, ~720 LoC + ~106 tests). **Bundles F14
    + F18** — the persistence work + the 4 missing REPL
    commands identified by the codex/claudecode/pi
-   gap analysis.
+   gap analysis. **F14.1 ✅ done** (persistence
+   library + CLI + /rename + /copy + supporting
+   refactor + F9.1-fix mix-in). **F14.2 ✅ done**
+   (REPL persistence + cross-tool E2E). **F14.3
+   ⏳ next** (/review + /export).
 
    **Why bundle:** the user asked to "go through our
    own commands, don't miss important ones" against
@@ -3798,12 +3871,45 @@ laptop has no Tauri app — they need a CLI REPL.
 
    - **F14.2 — REPL persistence + cross-tool E2E**
      (~80 LoC + ~5 tests):
-     - `ReplOptions.sessionStore?` + `ReplOptions.resumeFromId?`.
+     - `ReplOptions.sessionStore?: SessionStore` +
+       `ReplOptions.resumeFromId?: string` (additive
+       options; default behavior unchanged).
+     - `runRepl` honors the pair: when both are set,
+       load the `PersistedSession` from the store and
+       pass it to the Agent (instead of creating a
+       fresh `InMemorySession`). When only
+       `sessionStore` is set, the loop throws
+       (`sessionStore requires resumeFromId`).
+     - The loaded session's `metadata.cwd` is
+       honored (the REPL's `opts.cwd` falls back to
+       `session.metadata.cwd` when the host didn't
+       override). This makes `--resume` reproducible
+       across invocations.
      - CLI: `--session-dir` + `--resume` work for
-       `envoy-harness --repl` too.
+       `envoy-harness --repl --resume <id> --session-dir <path>`
+       too. The REPL dispatch builds a `SessionStore`
+       from `defaultSessionDir(parsed)` and threads
+       `parsed.resume` into `runRepl`. Errors (missing
+       session, bad file) surface as `CliError`.
+     - `envoy-harness --repl --session-dir <path> --persist`:
+       new persisted session (fresh id, written to
+       disk). The id is printed to stderr on entry
+       so the user can `--resume` it later.
      - E2E: persist a session via single-shot CLI →
        run REPL with `--resume <id>` → verify the
-       transcript is restored.
+       transcript is restored + new turns are
+       appended to the same file.
+     - **Out of scope for F14.2:**
+       - `--fork` in REPL mode (F14.3+ candidate;
+         the same plumbing as one-shot but with the
+         REPL's long-lived lifecycle — needs an
+         explicit copy command or a "fork on next
+         turn" hook).
+       - `/rewind` (F14.3+; action journal needed
+         to roll back the persisted session).
+       - Writing to disk on every keystroke (only
+         writes on `appendMessage` — same
+         fire-and-forget chain as one-shot).
 
    - **F14.3 — `/review` + `/export`** (~120 LoC + ~6 tests):
      - `/review [staged]` — runs the model as a code
@@ -4033,6 +4139,40 @@ useful.
 
 ## 10. Change log
 
+- **2026-08-19 (F14.2 done — REPL persistence)**: F14.2
+  is the REPL side of F14's persistence work (F14.1
+  shipped the library + one-shot CLI; F14.2 wires
+  the same plumbing into the REPL). New additive
+  options: `ReplOptions.sessionStore?` +
+  `ReplOptions.resumeFromId?` +
+  `ReplOptions.createSession?`; `RunOptions.lineReader?`
+  for test injection. `runRepl` honors the three
+  modes: `createSession` factory (--persist),
+  `sessionStore + resumeFromId` pair (--resume),
+  or default `InMemorySession`. The loaded
+  session's `metadata.cwd` wins (so `--resume` is
+  reproducible across invocations). CLI:
+  `--repl --resume <id> --session-dir <path>` loads
+  the persisted session; `--repl --persist`
+  creates a new persisted session; `--resume` +
+  `--persist` are mutually exclusive (the loop
+  AND the CLI both check). `--repl --resume
+  <missing>` throws `CliError(EXIT_USAGE)` ("session
+  not found"). 12 new tests in
+  `test/repl-persistence.test.ts`: 7 loop-level
+  (load + reuse + write-back + cwd honor +
+  sessionStore-only-throws + missing-id-throws +
+  createSession-once) + 5 CLI-level (full E2E
+  persist→resume; missing throws; --resume+--persist
+  mutually exclusive; --persist creates + prints
+  id; --repl default is in-memory). Cumulative
+  921 + 93 = 1014 tests passing. Typecheck clean.
+  Updated §1 (Phase 6 + Phase 7 status), §2
+  (Phase 7 row added + REPL persistence test row
+  + cumulative bumped 894 → 1000), §3 (F14.2
+  section), §6.7 (F14 marked done, F14.1 + F14.2
+  marked ✅, F14.3 still ⏳), §10 (this entry).
+  **Next:** F14.3 (`/review` + `/export`).
 - **2026-08-19 (F17.6 done — Phase 6 complete)**:
   Tier 2 batch 2 — 2 real REPL commands (`/agents`,
   `/diff`) shipped; `/undo` deferred to F17.7 (action

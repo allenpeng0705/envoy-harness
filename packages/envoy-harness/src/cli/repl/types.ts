@@ -158,6 +158,61 @@ export interface ReplOptions {
    * undefined.
    */
   lastResponse?: string;
+  /**
+   * F14.2: when both `sessionStore` and `resumeFromId`
+   * are set, the loop loads the persisted session
+   * from the store and passes it to the Agent
+   * (instead of creating a fresh `InMemorySession`).
+   *
+   * **Why options on the loop, not via `Agent` setup:**
+   * the loop is the chokepoint — it builds the Agent
+   * from the loaded session. Threading the
+   * `SessionStore` through the loop's options
+   * matches the existing pattern (history file,
+   * LSP manager, subagent registry all follow the
+   * same shape: loop-level option, no Agent API
+   * change).
+   *
+   * **Mutual exclusion:** if `sessionStore` is set
+   * without `resumeFromId`, the loop throws
+   * (`sessionStore requires resumeFromId`).
+   *
+   * **For `--persist` REPL mode:** set
+   * `sessionStore` + a `createSession?: () => Promise<Session>`
+   * factory (NOT `resumeFromId`). The loop calls
+   * the factory to mint a fresh `PersistedSession`
+   * and uses that. v0 keeps this simple: the CLI
+   * runner's `runReplDispatch` builds the session
+   * itself when `parsed.persist` is set, then
+   * passes it via a different code path. Hosts
+   * that want a different shape can construct
+   * the session in `createSession`.
+   */
+  sessionStore?: import("../../session/index.js").SessionStore;
+  /**
+   * F14.2: the id of the persisted session to
+   * resume. Required when `sessionStore` is set
+   * (see `sessionStore` for the exception list).
+   */
+  resumeFromId?: string;
+  /**
+   * F14.2: optional factory for creating a new
+   * persisted session. When set, the loop calls
+   * this factory to mint a fresh `PersistedSession`
+   * (used by `--persist` REPL mode). When
+   * undefined, the loop uses the default
+   * `InMemorySession` (or, when `sessionStore +
+   * resumeFromId` are set, the loaded persisted
+   * session).
+   *
+   * The factory is async to accommodate the
+   * `mkdir -p` + `fs.writeFile` round-trip in
+   * `PersistedSession.create()`. The loop awaits
+   * it; errors propagate as REPL startup
+   * failures (the loop throws before reading the
+   * first line).
+   */
+  createSession?: () => Promise<import("../../session.js").Session>;
 }
 
 /**

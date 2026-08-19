@@ -62,16 +62,62 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
   const out = opts.stdout ?? stdout;
   const err = opts.stderr ?? stderr;
   const prompt = opts.prompt ?? "envoy> ";
-  const cwd = opts.cwd ?? opts.args.cwd ?? process.cwd();
+  // F14.2: `cwd` may be reassigned below when the
+  // loop loads a persisted session (the loaded
+  // session's metadata.cwd wins). Default to the
+  // host's `opts.cwd` (or argv, or pwd).
+  let cwd = opts.cwd ?? opts.args.cwd ?? process.cwd();
 
   // 1. Build the line reader.
   const lineReader = opts.lineReader ?? createReadlineLineReader(prompt);
 
   // 2. Build the Agent ONCE. The session id is stable across turns.
-  const session = newSession({
-    cwd,
-    sandbox: opts.args.sandbox ?? "read-only",
-  });
+  //
+  // F14.2: three session modes:
+  //   a. `createSession?: () => Promise<Session>` (set
+  //      by the CLI runner for `--persist` REPL mode):
+  //      await the factory and use its result.
+  //   b. `sessionStore + resumeFromId` (set by the
+  //      CLI runner for `--resume` REPL mode): load
+  //      the persisted session from the store.
+  //   c. Neither: create a fresh `InMemorySession`
+  //      (the v0 default — same as before F14.2).
+  //
+  // The loaded session's `metadata.cwd` is honored
+  // (it wins over `opts.cwd`); the user resumes
+  // exactly where they left off. The
+  // `permissionMode` similarly comes from the
+  // loaded session (it was set at session start;
+  // `/sandbox` can still change it live via
+  // `setPermissionMode`).
+  let session: Session;
+  if (opts.createSession) {
+    session = await opts.createSession();
+  } else if (opts.sessionStore && opts.resumeFromId) {
+    try {
+      session = await opts.sessionStore.load(opts.resumeFromId);
+    } catch (err) {
+      throw new Error(
+        `runRepl: failed to load session ${opts.resumeFromId}: ${(err as Error).message}`,
+      );
+    }
+    // The loaded session's cwd wins. The user might
+    // have changed cwd in a different shell; the
+    // resumed session still operates in the cwd
+    // it was created in.
+    cwd = session.metadata.cwd;
+  } else if (opts.sessionStore) {
+    // sessionStore without resumeFromId is an
+    // error: the user probably meant `--resume`.
+    throw new Error(
+      "runRepl: sessionStore requires resumeFromId (use createSession for --persist REPL mode)",
+    );
+  } else {
+    session = newSession({
+      cwd,
+      sandbox: opts.args.sandbox ?? "read-only",
+    });
+  }
   const tools = new ToolRegistry();
   for (const t of BUILTIN_TOOLS) tools.register(t);
   const hooks = opts.hooks ?? new HookRegistry();

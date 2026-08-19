@@ -98,6 +98,16 @@ export interface RunOptions {
    * service).
    */
   tracer?: import("../index.js").Tracer;
+  /**
+   * F14.2: when `args.repl` is set, the runner
+   * uses this line reader instead of opening
+   * readline on stdin. Tests inject a fake that
+   * yields predetermined lines (so the test
+   * doesn't hang on stdin). The bin script leaves
+   * this undefined (the default readline reader
+   * opens stdin).
+   */
+  lineReader?: import("./repl/index.js").LineReader;
 }
 
 /** Result of a successful `run` invocation. */
@@ -374,6 +384,21 @@ export const DEFAULT_MAX_COST_USD = 5.0;
  * symmetry with the one-shot path. The `content` field is empty
  * (the REPL already streamed output to stdout); the `iterations`
  * is the REPL's turn count; the `sessionId` is the shared session.
+ *
+ * **F14.2 persistence wiring:**
+ * - `--session-dir <path>` + `--resume <id>`: load the
+ *   persisted session and pass `sessionStore +
+ *   resumeFromId` to the loop.
+ * - `--session-dir <path>` + `--persist` (no `--resume`):
+ *   create a new persisted session and pass
+ *   `createSession` (a factory that the loop awaits).
+ * - Otherwise: the default in-memory session
+ *   (no `sessionStore` / `resumeFromId` / `createSession`).
+ *
+ * `CliError(EXIT_USAGE)` surfaces the "missing
+ * session" / "bad file" cases (so the bin script's
+ * exit code is 64, not 1). All other errors
+ * propagate as `Error` (a programming bug).
  */
 async function runReplDispatch(
   parsed: Extract<ParsedArgs, { subcommand: "run" }>,
@@ -386,11 +411,77 @@ async function runReplDispatch(
   // env vars.
   const model = resolveModel(parsed, options);
 
+  // F14.2: build the persistence options. Three modes
+  // (see also the same block in `runAgent` / `resolveSession`):
+  //   1. --resume <id>  → load the persisted session.
+  //   2. --persist      → create a new persisted session.
+  //   3. neither        → default in-memory.
+  // `--resume` + `--fork` are mutually exclusive (F14.1
+  // enforces this in `resolveSession` for the one-shot
+  // path; we don't accept `--fork` in REPL mode at
+  // all — it's a one-shot concept).
+  if (parsed.resume && parsed.persist) {
+    throw new CliError(
+      "--resume and --persist are mutually exclusive in --repl mode (pick one)",
+      EXIT_USAGE,
+    );
+  }
+
+  // We collect the persistence options for the
+  // `runRepl` call below. We need a SessionStore
+  // for both --resume and --persist; the Session
+  // instance itself is built lazily (either by
+  // `sessionStore.load(id)` for --resume, or by
+  // the `createSession` factory for --persist).
+  let sessionStore: import("../index.js").SessionStore | undefined;
+  let resumeFromId: string | undefined;
+  let createSession: (() => Promise<import("../index.js").Session>) | undefined;
+  if (parsed.resume || parsed.persist) {
+    sessionStore = new SessionStore({ dir: defaultSessionDir(parsed) });
+    if (parsed.resume) {
+      // Validate the session exists up front (the
+      // loop would also throw on `sessionStore.load`,
+      // but doing it here gives us a clean
+      // `CliError(EXIT_USAGE)` for the bin script).
+      if (!(await sessionStore.exists(parsed.resume))) {
+        throw new CliError(
+          `--resume: session not found: ${parsed.resume}`,
+          EXIT_USAGE,
+        );
+      }
+      resumeFromId = parsed.resume;
+      stderr.write(`resumed session: ${parsed.resume}\n`);
+    } else {
+      // --persist: create a new persisted session.
+      // We build a `SessionMetadata` from the parsed
+      // args (cwd + sandbox). The loop awaits the
+      // factory; the file is created on first call.
+      const meta: SessionMetadata = {
+        cwd: parsed.cwd ?? options.cwd ?? process.cwd(),
+        permissionMode: parsed.sandbox ?? "read-only",
+        startedAt: new Date().toISOString(),
+        title: "repl",
+      };
+      const store = sessionStore;
+      createSession = async () => {
+        const s = await store.create(meta);
+        // Print the new session id to stderr so the
+        // user can --resume it later.
+        stderr.write(`persisted session: ${s.id}\n`);
+        return s;
+      };
+    }
+  }
+
   const replResult = await runRepl({
     model,
     args: parsed,
     ...(options.hooks ? { hooks: options.hooks } : {}),
     ...(options.cwd ? { cwd: options.cwd } : {}),
+    ...(options.lineReader ? { lineReader: options.lineReader } : {}),
+    ...(sessionStore ? { sessionStore } : {}),
+    ...(resumeFromId ? { resumeFromId } : {}),
+    ...(createSession ? { createSession } : {}),
     stdout,
     stderr,
   });
