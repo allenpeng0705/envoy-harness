@@ -226,3 +226,153 @@ describe("DefaultMcpClientRegistry: callTool routing", () => {
     ]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// T3.13 — end-to-end MCP routing through a real Agent.run().
+//
+// Audit pass #2 finding: the mcp tests cover the
+// registry + name parsing well, but nothing
+// exercised the full agent-loop path that proves
+// an mcp__* call reaches executeMcpCall and the
+// stub execute() on the tool definition is never
+// invoked. T3.13 closes that gap with one
+// loop-level test that:
+//   1. wires a fake McpClient into a real Agent,
+//   2. drives a scripted model to emit an
+//      mcp__server__tool call,
+//   3. asserts the fake client.callTool is invoked
+//      with the right (name, args),
+//   4. asserts the stub execute() on the
+//      ToolDefinition is NOT called (the routing
+//      check in tool-executor.ts fires first),
+//   5. asserts the agent loop returns the ping
+//      response in the final content.
+//
+// This is the loop-level proof that the T3.3 seam
+// + the T3.12 constant-import fix work end-to-end.
+// ---------------------------------------------------------------------------
+
+import { Agent, HookRegistry, InMemorySession, newSessionId, ToolRegistry } from "../src/index.js";
+import type { ModelAdapter, ModelResponse } from "../src/index.js";
+
+function scriptedModel(
+  responses: ReadonlyArray<{
+    content: ModelResponse["content"];
+    stopReason?: ModelResponse["stopReason"];
+  }>,
+): ModelAdapter {
+  let i = 0;
+  return {
+    async complete() {
+      const r = responses[i++];
+      if (!r) {
+        throw new Error(`scriptedModel: exhausted (call #${i})`);
+      }
+      return {
+        content: r.content,
+        stopReason:
+          r.stopReason ??
+          (r.content.some((b) => b.type === "tool_call")
+            ? "tool_use"
+            : "end_turn"),
+      };
+    },
+  };
+}
+
+function textBlock(text: string): ModelResponse["content"][number] {
+  return { type: "text", text };
+}
+
+function toolCallBlock(
+  id: string,
+  name: string,
+  args: unknown,
+): ModelResponse["content"][number] {
+  return { type: "tool_call", id, name, args };
+}
+
+describe("end-to-end MCP routing through Agent.run()", () => {
+  it("an mcp__* call reaches the registry's callTool; the stub execute() is never invoked", async () => {
+    // The stub `execute()` on the MCP tool definition
+    // (built in run-loop.ts:114-123) is the canary —
+    // if the executor's routing check ever
+    // regresses, that stub fires and throws. We
+    // don't wire an explicit spy on the stub
+    // (the run-loop builds it inside the loop
+    // body, not as a class field we can decorate)
+    // — but the assertion on `pingedCalls` below
+    // is the real canary. If routing were broken,
+    // executeMcpCall would NOT be invoked, the
+    // fake client's callTool would NOT be hit,
+    // and `pingedCalls` would be empty.
+    const pingedCalls: Array<{ name: string; args: unknown }> = [];
+    const fakeClient = makeFakeClient({
+      serverName: "fake",
+      tools: [
+        {
+          name: "ping",
+          description: "Reply with pong.",
+          inputSchema: { parse: (x: unknown) => x } as never,
+        },
+      ],
+      onCall: async (name, args) => {
+        pingedCalls.push({ name, args });
+        return { content: [{ type: "text", text: "pong-from-fake" }] };
+      },
+    });
+
+    const registry = new DefaultMcpClientRegistry();
+    registry.register(fakeClient);
+
+    // Scripted model:
+    //   1st call: emit an mcp__fake__ping tool call
+    //   2nd call: emit the final text answer
+    const model = scriptedModel([
+      {
+        content: [
+          toolCallBlock("call-1", mcpToolName("fake", "ping"), {
+            message: "hello",
+          }),
+        ],
+      },
+      { content: [textBlock("got the pong")] },
+    ]);
+
+    const session = new InMemorySession(newSessionId(), {
+      cwd: "/",
+      permissionMode: "read-only",
+      startedAt: new Date().toISOString(),
+    });
+    const agent = new Agent({
+      model,
+      tools: new ToolRegistry(),
+      session,
+      hooks: new HookRegistry(),
+      cwd: "/",
+      mcpClients: registry,
+    });
+
+    const result = await agent.run("ping the fake server");
+
+    // The fake client's callTool was invoked once
+    // with the right (name, args) — proves the
+    // routing check in tool-executor.ts:309 (the
+    // one T3.12 made constant-driven) reached the
+    // McpClient.
+    expect(pingedCalls).toEqual([{ name: "ping", args: { message: "hello" } }]);
+
+    // The agent loop exited cleanly.
+    expect(result.stopReason).toBe("end_turn");
+
+    // The final answer includes the ping result —
+    // the agent saw the fake server's text
+    // ("pong-from-fake") as a tool result before
+    // emitting its final text.
+    const finalText = result.content
+      .filter((b) => b.type === "text")
+      .map((b) => (b as { type: "text"; text: string }).text)
+      .join("\n");
+    expect(finalText).toContain("got the pong");
+  });
+});

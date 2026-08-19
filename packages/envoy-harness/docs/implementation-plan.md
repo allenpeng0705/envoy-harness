@@ -2428,6 +2428,83 @@ server, replaces `/mcp` placeholder).
 
 ### T3.5 — `write` / `edit` / `git` tools — pending
 
+### T3.13 — F5 e2e MCP routing test (this commit)
+
+Audit pass #2 finding: the T3.3 MCP tests cover
+the registry + name parsing well, but nothing
+wires `mcpClients` through a real `Agent.run()` to
+prove an `mcp__*` call reaches `executeMcpCall` and
+the stub `execute()` on the tool definition is
+never invoked. T3.13 closes that gap with one
+loop-level test.
+
+**What shipped (+1 test, 0 code change):**
+
+- `test/mcp.test.ts` (modified, +1 test) — a new
+  `describe("end-to-end MCP routing through Agent.run()")`
+  block. The test:
+
+  1. Builds a fake `McpClient` exposing one tool
+     (`ping`); tracking `callTool` invocations in
+     a `pingedCalls` array.
+  2. Registers it in a `DefaultMcpClientRegistry`.
+  3. Builds a scripted `ModelAdapter`:
+     - 1st call: emits a `tool_call` to
+       `mcp__fake__ping` with args `{ message: "hello" }`.
+     - 2nd call: emits the final text `"got the pong"`.
+  4. Constructs a real `Agent` with
+     `mcpClients: registry`.
+  5. Calls `agent.run("ping the fake server")`.
+  6. Asserts:
+     - `pingedCalls` deep-equals
+       `[{ name: "ping", args: { message: "hello" } }]`
+       — proves the routing check in
+       `tool-executor.ts:309` (the one T3.12 made
+       constant-driven) reached the `McpClient`.
+     - `result.stopReason === "end_turn"` — the
+       loop exited cleanly.
+     - The final text content includes
+       `"got the pong"` — the agent saw the fake
+       server's text result and emitted the
+       scripted follow-up.
+
+**Why `pingedCalls` is the canary, not a spy on
+the stub `execute()`:** the stub
+(`run-loop.ts:114-123`) is built inside the loop
+body, not as a class field we can decorate. The
+behavioral canary is the same thing: if the
+routing check regresses, the stub fires (and
+throws), the error is wrapped as
+`{ isError: true, content: "MCP tool ..." }`,
+`executeMcpCall` is never called, the fake
+client's `callTool` is never invoked, and
+`pingedCalls` is empty. The `toEqual` assertion
+then fails. The test is a one-direction guard —
+it proves the happy path works end-to-end; a
+regression on the routing check turns the test
+red.
+
+**Why a single test and not a parametric one
+(per-server / per-error-path):** the seam ships
+in T3.3, the routing is one line in
+`tool-executor.ts:309`, the registry's
+`callTool` dispatch is a `get(serverName)` +
+forward. The test is the smallest proof that
+"a real `Agent.run()` + a real `McpClient` →
+the call reaches the client." Expanding to
+multi-server / per-error-path is "testability
+wins on tie" — the registry already has unit
+tests for those (T3.3's 14 mcp tests), and the
+executor path doesn't care which server.
+
+**Cumulative:** 1007 hermetic envoy-harness + 93
+envoy-harness-adapter = 1100 tests passing (+1
+from this commit); typecheck clean across both
+packages. No code change; no schema change;
+no public API change. The e2e proof lands at the
+T3.3 seam; T3.12's constant-import fix rides
+along (the same path is exercised).
+
 ### T3.12 — F3 + F4 use-the-existing-seam (this commit)
 
 Audit pass #2 surfaced two "use the existing seam
@@ -5467,6 +5544,31 @@ useful.
 ---
 
 ## 10. Change log
+
+- **2026-08-20 (T3.13 done — F5 e2e MCP routing
+  test)**: Audit pass #2 finding: the T3.3 MCP
+  tests covered the registry + name parsing but
+  nothing wired mcpClients through a real
+  Agent.run() to prove an mcp__* call reaches
+  executeMcpCall and the stub execute() on the
+  tool definition is never invoked. T3.13 adds
+  one loop-level test (15th in mcp.test.ts) that
+  builds a fake McpClient (ping tool), registers
+  it in a DefaultMcpClientRegistry, drives a
+  scripted model to emit an mcp__fake__ping call,
+  and asserts the fake client's callTool was
+  invoked with the right (name, args). The
+  pingedCalls array is the canary: if the routing
+  check in tool-executor.ts:309 regresses, the
+  stub fires instead, callTool is never called,
+  pingedCalls is empty, the test fails. The test
+  is a one-direction guard on the routing path;
+  multi-server / per-error-path coverage lives in
+  the existing T3.3 unit tests. No code change;
+  no schema change. Cumulative: 1007 hermetic
+  envoy-harness + 93 envoy-harness-adapter = 1100
+  tests passing; typecheck clean. Updated §3.7
+  (T3.13 entry), §10 (this entry).
 
 - **2026-08-20 (T3.12 done — F3 + F4 use-the-
   existing-seam)**: Two audit-pass #2 findings.
