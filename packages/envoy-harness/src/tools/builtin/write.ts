@@ -84,8 +84,20 @@ export const writeTool: Tool<
     }
     // workspace-write: the resolved path must be
     // under ctx.cwd OR under one of the writableRoots.
+    // Empty writableRoots falls back to [ctx.cwd] —
+    // matches `pathValidation` (bash) at
+    // `src/permissions/bash/path.ts:75-78` so the
+    // two surfaces agree. Without the fallback, a
+    // host that constructs {mode: "workspace-write",
+    // writableRoots: []} would deny even in-workspace
+    // writes, which is the conservative-but-wrong
+    // default for a "just give me cwd" caller.
     if (policy.mode === "workspace-write") {
-      const allowed = policy.writableRoots.some((root) => {
+      const roots =
+        policy.writableRoots.length > 0
+          ? policy.writableRoots
+          : [ctx.cwd];
+      const allowed = roots.some((root) => {
         const absRoot = path.resolve(root);
         return resolved === absRoot || resolved.startsWith(absRoot + path.sep);
       });

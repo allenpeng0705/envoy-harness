@@ -207,7 +207,7 @@ each needs a real use case before the next chunk lands.
 
 **Adjacent v0 honesty notes** (in code, not aspirational):
 
-- **Self-evolve is rule selection, not rule editing.** The committed `verifier-rules.json` is re-loadable via `loadRulesetFromFile` (T1.3) but the file holds *name selections* resolved to real rule objects, not rule bodies. The design still calls this "editing the ruleset" — v0 does not support inventing new rules (DeepSeek's "the verifier never loads" claim from the 2026-08-19 review is stale; the file IS loaded by `runSelfEvolve` at `run.ts:561`).
+- **Self-evolve is rule selection, not rule editing.** The committed `verifier-rules.json` is re-loadable via `loadRulesetFromFile` (T1.3) but the file holds *name selections* resolved to real rule objects, not rule bodies. The design still calls this "editing the ruleset" — v0 does not support inventing new rules (DeepSeek's "the verifier never loads" claim from the 2026-08-19 review is stale; the file IS loaded by `runSelfEvolve` at `run.ts:561`). **The narrower caveat that remains true:** the loaded ruleset currently only flows into the CLI's `self-evolve` subcommand + the in-process `runVerifierRules(rules, ctx)` call. `runLocalVerifier` in `envoy-harness-adapter` still defaults to `DEFAULT_RULES` unless the host explicitly passes the loaded ruleset through — so a mesh-side `verify()` call won't yet pick up the committed `verifier-rules.json` automatically. This is a trigger item for when the first real mesh verification lands, not a bug.
 - **`--approval` values are `unless-trusted | on-request | granular | never`.** README and help used to list `on-failure | untrusted`; fixed in T1.4 polish. The CLI parses and validates; REPL `/approval` uses the same vocabulary.
 - **`excludeSlashTmp` was renamed to `slashTmpWritable`** (T1.1) — the inverted semantic was confusing (`true` meant "/tmp IS writable", not "exclude /tmp"). 11 files, 23 LoC, no behavior change.
 - **`formatVersion: 1`** on both the persisted-session JSONL header (T1.2) and the committed self-evolve ruleset (T1.3). Forward-compat concession: v1 accepts missing field; v2+ must require the field.
@@ -2426,6 +2426,87 @@ server, replaces `/mcp` placeholder).
 ### T3.4 — OS sandbox backends — pending
 
 ### T3.5 — `write` / `edit` / `git` tools — pending
+
+### T3.9 — `write` / `edit` empty-`writableRoots` fallback (this commit)
+
+A bug caught in the post-Tier-1+2+3 audit pass.
+T3.5's `write` + `edit` tools both treat
+`SandboxPolicy.writableRoots` literally: when the
+host constructs
+`{mode: "workspace-write", writableRoots: []}`,
+`Array.some` on the empty array returns `false` and
+the tool denies even in-cwd writes. The conservative
+default that "no roots = nothing writable" is wrong
+in practice — a host that just wants "cwd is
+writable" shouldn't have to repeat `[ctx.cwd]`.
+
+The bash `pathValidation` validator at
+`src/permissions/bash/path.ts:75-78` already handles
+this case correctly: empty `writableRoots` falls
+back to `[cwd]`. T3.9 aligns `write` + `edit` with
+that behavior so the three surfaces (bash, write,
+edit) agree.
+
+**What shipped (~+30 LoC, +4 tests):**
+
+- `src/tools/builtin/write.ts` (modified) — the
+  `workspace-write` branch now mirrors
+  `pathValidation`: `roots = writableRoots.length > 0
+  ? writableRoots : [ctx.cwd]`, then `roots.some(...)`.
+  Added a comment block above the check pointing at
+  the bash validator so the next reader doesn't have
+  to dig.
+- `src/tools/builtin/edit.ts` (modified) — same fix
+  with the same comment shape; both tools share the
+  same permission-check pattern (the next refactor
+  could pull it into a shared `isPathWritable(path,
+  policy, cwd)` helper, deferred to a future chunk
+  per "testability wins on tie").
+- `test/tools-write-edit.test.ts` (modified, +4 tests):
+  - **write: allows in workspace-write with empty
+    `writableRoots` (falls back to `ctx.cwd`)** —
+    writes a file in cwd, asserts the file is on
+    disk + the result is not an error. The core
+    regression for the bug.
+  - **write: rejects `/etc/passwd` in workspace-write
+    with empty `writableRoots` (fallback is cwd
+    only)** — the cwd fallback doesn't widen the
+    boundary. Out-of-cwd paths are still denied.
+  - **edit: rejects in read-only mode** — covers
+    the read-only rejection path (was missing
+    from the edit tests; only write had it).
+  - **edit: allows in workspace-write with empty
+    `writableRoots` (falls back to `ctx.cwd`)** —
+    mirrors the write regression. The original
+    `a.txt` is written via the host `writeFile`
+    helper, the edit tool runs against it, and the
+    file content is asserted after.
+
+**Why not a shared helper:** the bash
+`pathValidation` does the same dance in a different
+shape (it iterates over `argv` to find path-like
+tokens, then `roots.some(...)` on each). The
+write/edit tools operate on a single resolved path
+per call. Hoisting them into one helper would
+require an `isPathWritable(path, policy, cwd)` that
+both can call — the API is clean, but the
+duplication is ~5 lines × 2 sites = 10 lines. Defer
+until a third caller surfaces (per the
+"testability wins on tie" rule).
+
+**Why the bash fix didn't catch this earlier:**
+`tools-write-edit.test.ts` (T3.5) had
+`writableRoots: [tmpDir]` in the default context
+factory (`makeContext`) — the empty-roots case
+was never exercised. The T3.5 test was thorough
+for the existing semantics, but the existing
+semantics were wrong. T3.9 adds the missing case.
+
+**Cumulative:** 1005 hermetic envoy-harness + 93
+envoy-harness-adapter = 1098 tests passing; typecheck
+clean across both packages. The "testability wins
+on tie" pattern is preserved (no new helper; no
+new seam).
 
 ### T3.8 — `QUICKSTART.md` "full for CLI" (this commit)
 
@@ -5140,6 +5221,34 @@ useful.
 ---
 
 ## 10. Change log
+
+- **2026-08-19 (T3.9 done — `write` / `edit`
+  empty-`writableRoots` fallback + self-evolve
+  doc refinement)**: A bug caught in the
+  post-Tier-1+2+3 audit pass: T3.5's `write` +
+  `edit` tools treat `writableRoots: []` as
+  "deny everything" (the bash path validator
+  already falls back to `[cwd]` in the same
+  case). T3.9 mirrors the bash pattern in both
+  tools so the three surfaces agree. 4 new
+  regression tests (write: cwd-allowed +
+  /etc/passwd-still-rejected; edit:
+  read-only-rejected + cwd-allowed). Also
+  refined the §2.5 "Self-evolve is rule
+  selection" note with the narrower mesh-side
+  caveat: the loaded ruleset flows into
+  `runSelfEvolve` + `runVerifierRules` but
+  `runLocalVerifier` in the adapter still
+  defaults to `DEFAULT_RULES` until a real
+  mesh verification wires the loaded ruleset
+  through (trigger item, not a bug). Cumulative:
+  1005 hermetic envoy-harness + 93
+  envoy-harness-adapter = 1098 tests passing;
+  typecheck clean. Updated §2.5 (caveat
+  added), §3.7 (T3.9 entry), §10 (this entry).
+  No shared helper — the duplication is ~10
+  lines × 2 sites; defer until a third caller
+  surfaces ("testability wins on tie").
 
 - **2026-08-19 (T3.8 done — `QUICKSTART.md`
   "full for CLI")**: The post-Tier-1+2+3 review

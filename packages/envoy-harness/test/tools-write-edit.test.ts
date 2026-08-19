@@ -9,12 +9,17 @@
  *    - rejects in read-only mode
  *    - rejects in workspace-write for paths outside writable roots
  *    - allows in workspace-write for paths under writable roots
+ *    - **allows in workspace-write with empty writableRoots** (falls
+ *      back to `ctx.cwd`, matching `pathValidation` in bash; T3.9
+ *      regression for a T3.5 gap)
  * 2. `edit`:
  *    - replace mode: replaces the unique occurrence
  *    - replace mode: fails on zero or multiple matches
  *    - replaceAll mode: replaces every occurrence
  *    - replaceAll mode: fails on zero matches
  *    - insertAfter mode: inserts at the right offset
+ *    - **allows in workspace-write with empty writableRoots** (T3.9
+ *      regression — same as write)
  * 3. `git`:
  *    - status / diff / log / branchList work
  *    - non-zero exit code is an error
@@ -128,6 +133,53 @@ describe("write: permission checks", () => {
     expect(result.isError).toBe(true);
     expect(result.content).toMatch(/writable root/);
   });
+
+  it("allows in workspace-write with empty writableRoots (falls back to ctx.cwd)", async () => {
+    // T3.9 regression: T3.5's write tool denied even
+    // in-cwd writes when writableRoots was empty
+    // (Array.some on [] returns false). bash's
+    // pathValidation already falls back to [cwd] in
+    // this case (src/permissions/bash/path.ts:75-78);
+    // T3.9 aligns write + edit with that behavior so
+    // a host that constructs
+    //   {mode: "workspace-write", writableRoots: []}
+    // gets cwd-writes, not blanket denial.
+    const result = await writeTool.execute(
+      { path: "in-cwd.txt", content: "hi" },
+      makeContext({
+        sandboxPolicy: {
+          mode: "workspace-write",
+          approval: "on-request",
+          backend: "none",
+          writableRoots: [],
+          networkAccess: false,
+          slashTmpWritable: false,
+        },
+      }),
+    );
+    expect(result.isError).toBeFalsy();
+    expect(await fs.readFile(path.join(tmpDir, "in-cwd.txt"), "utf8")).toBe("hi");
+  });
+
+  it("rejects /etc/passwd in workspace-write with empty writableRoots (fallback is cwd only)", async () => {
+    // The cwd-fallback doesn't widen the boundary —
+    // paths outside cwd are still denied.
+    const result = await writeTool.execute(
+      { path: "/etc/passwd", content: "x" },
+      makeContext({
+        sandboxPolicy: {
+          mode: "workspace-write",
+          approval: "on-request",
+          backend: "none",
+          writableRoots: [],
+          networkAccess: false,
+          slashTmpWritable: false,
+        },
+      }),
+    );
+    expect(result.isError).toBe(true);
+    expect(result.content).toMatch(/writable root/);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -182,6 +234,53 @@ describe("edit: replaceAll mode", () => {
     );
     expect(result.isError).toBeFalsy();
     expect(await fs.readFile(path.join(tmpDir, "a.txt"), "utf8")).toBe("b b b");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// edit: permission checks (T3.9)
+// ---------------------------------------------------------------------------
+
+describe("edit: permission checks", () => {
+  it("rejects in read-only mode", async () => {
+    await writeFile(path.join(tmpDir, "a.txt"), "old");
+    const result = await editTool.execute(
+      { path: "a.txt", oldText: "old", newText: "new" },
+      makeContext({
+        sandboxPolicy: {
+          mode: "read-only",
+          approval: "on-request",
+          backend: "none",
+          writableRoots: [],
+          networkAccess: false,
+          slashTmpWritable: false,
+        },
+      }),
+    );
+    expect(result.isError).toBe(true);
+    expect(result.content).toMatch(/read-only/);
+  });
+
+  it("allows in workspace-write with empty writableRoots (falls back to ctx.cwd)", async () => {
+    // T3.9 regression — mirrors the write-side test.
+    // T3.5's edit tool had the same empty-roots bug;
+    // T3.9 aligns it with bash pathValidation.
+    await writeFile(path.join(tmpDir, "a.txt"), "old text");
+    const result = await editTool.execute(
+      { path: "a.txt", oldText: "old", newText: "new" },
+      makeContext({
+        sandboxPolicy: {
+          mode: "workspace-write",
+          approval: "on-request",
+          backend: "none",
+          writableRoots: [],
+          networkAccess: false,
+          slashTmpWritable: false,
+        },
+      }),
+    );
+    expect(result.isError).toBeFalsy();
+    expect(await fs.readFile(path.join(tmpDir, "a.txt"), "utf8")).toBe("new text");
   });
 });
 
