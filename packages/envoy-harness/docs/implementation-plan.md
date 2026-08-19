@@ -20,7 +20,9 @@
 > - **Phase 3 (Self-evolution):** ✅ done (5a-5e + F6, 110 tests)
 > - **Phase 4 (Production-grade):** ✅ done (F9.1-F9.5, 5 sub-chunks)
 > - **Phase 5 (Mesh-native sub-agents):** ✅ done (F10.1-F10.6, 8 sub-chunks)
-> - **Phase 6 (REPL):** ⏳ in progress (F17.1 + F17.2 done; F17.3 + F17.4 pending)
+> - **Phase 6 (REPL):** ⏳ in progress (F17.1 + F17.2 done; F17.2.5
+>   + F17.3 + F17.4 + F17.5 + F17.6 planned — see §6.7 + §11 for
+>   the per-sub-chunk plan)
 >
 > **How to read this document.** §1 is project context (1 page).
 > §2 is the status snapshot (test count + per-module inventory).
@@ -75,7 +77,7 @@ Per design §1.3, the four design targets are non-negotiable:
 | **Phase 3** | Self-evolution (3 weeks) | ✅ done (5a-5e + F6) | 110 |
 | **Phase 4** | Production-grade (5 sub-chunks: F9.1 + F9.2 + F9.3 + F9.4 + F9.5) | ✅ done | +130 (vs Phase 3) |
 | **Phase 5** | Mesh-native sub-agents (8 sub-chunks: F10.1-F10.6) | ✅ done | +94 (vs Phase 4) |
-| **Phase 6** | Interactive REPL (2 sub-chunks done: F17.1 + F17.2; 2 pending: F17.3 + F17.4) | ⏳ in progress | +38 (F17.1 + F17.2) |
+| **Phase 6** | Interactive REPL (2 sub-chunks done: F17.1 + F17.2; 4 planned: F17.2.5 + F17.3 + F17.4 + F17.5 + F17.6) | ⏳ in progress | +38 (F17.1 + F17.2) |
 
 **Cumulative:** 829 tests across 54 files (envoy-harness 737 + envoy-harness-adapter 92), all passing.
 Typecheck clean (`pnpm -r typecheck`).
@@ -3035,6 +3037,56 @@ laptop has no Tauri app — they need a CLI REPL.
    ~100 LoC of tests. Total new tests: ~30 across the 4
    sub-chunks.
 
+5. **F17.2.5 — Tier 1 info commands** (8 commands, ~150 LoC).
+   F17.2 shipped the basics; Codex / Claude Code / pi
+   have a wider command set. Tier 1 fills the gap with
+   print/info commands — the `CostTracker` / `Session` /
+   `ReplContext` already have the data; commands just
+   format it. No new agent capabilities required.
+   - `/session` — print session id
+   - `/context` — print #messages + input/output tokens
+     (uses `agent.getCost()` + `session.messages.length`)
+   - `/scoreboard` — read + format the scoreboard YAML
+     (we have the loader from F6; just print the entries)
+   - `/rules` — print the active verifier rules
+   - `/lsp` — list active LSP servers (from `lspManager`)
+   - `/hooks` — list registered hooks (we have
+     `HookRegistry.list()`)
+   - `/mcp` — list MCP servers (we have the registry)
+   - `/profile [name]` — list or load a TOML profile
+     (from `~/.config/envoy-harness/config.toml`)
+
+6. **F17.5 — Tier 2 batch 1: real features** (~250 LoC).
+   The first set of "real" commands that need new
+   capabilities, not just new printers.
+   - `/compact` — context window compaction. The
+     `Compaction` package in `core/` already has the
+     algorithm; the REPL just wires it as a slash
+     command. Replaces the long transcript with a
+     summary + recent messages.
+   - `/init` — generate AGENTS.md. The LLM inspects the
+     cwd and writes an AGENTS.md. Needs a special
+     system prompt + a write to the cwd.
+   - `/new` — fresh session (clear transcript + new
+     session id). The `Agent` already has a
+     `clearSession()`; we add a `newSession()` that
+     rebuilds the in-memory session with a new id.
+
+7. **F17.6 — Tier 2 batch 2: real features** (~200 LoC).
+   The next set of real features.
+   - `/agents` — list spawned sub-agents. The
+     `LocalMeshSubmitter` doesn't currently keep a
+     registry of spawned sub-agents; we add one
+     (additive). The command lists each (sessionId,
+     capabilityTag, status, cost).
+   - `/diff` — `git diff` vs HEAD. Thin wrapper around
+     `git` tool (or `git` CLI). Shows the current
+     pending changes.
+   - `/undo` — undo the last tool action. Needs a
+     journaled action log (we don't have one yet).
+     This is the hardest of the three; may be deferred
+     to F17.7 if scope is too big.
+
 **Type sketch** (the load-bearing shapes — see `src/cli/repl/`):
 
 ```ts
@@ -5192,11 +5244,26 @@ in this chunk.
   (`setModel`, `setAskHandler`, `setPermissionMode`)
   + 2 helpers (`clearSession`, `getCost`) — all
   additive. 25 new tests. ~250 LoC.
+- ⏳ **F17.2.5** — Tier 1 info commands (8 commands:
+  `/session`, `/context`, `/scoreboard`, `/rules`,
+  `/lsp`, `/hooks`, `/mcp`, `/profile`). Print/info
+  only; no new agent capabilities. ~150 LoC + 8-10
+  tests. **Next chunk to build.**
 - ⏳ **F17.3** — History persistence
-  (`~/.local/state/envoy-harness/history`). ~50 LoC.
+  (`~/.local/state/envoy-harness/history`). ~50 LoC
+  + 4 tests.
 - ⏳ **F17.4** — Tests + e2e (wire tests across
-  F17.1-F17.3; end-to-end REPL session; snapshot
+  F17.1-F17.6; end-to-end REPL session; snapshot
   test for help text). ~100 LoC of tests.
+- ⏳ **F17.5** — Tier 2 batch 1 (3 real features:
+  `/compact` = context window compaction, `/init` =
+  AGENTS.md generation, `/new` = fresh session).
+  ~250 LoC + 6-8 tests.
+- ⏳ **F17.6** — Tier 2 batch 2 (3 real features:
+  `/agents` = list spawned sub-agents, `/diff` =
+  `git diff` vs HEAD, `/undo` = undo last tool action).
+  ~200 LoC + 6-8 tests. **/undo may be deferred to
+  F17.7** if the action journal scope is too big.
 
 **Why a separate "F17 archive" section (not in §6.6):**
 F17 is a Phase 6 feature, not Phase 5. §6.6 holds
