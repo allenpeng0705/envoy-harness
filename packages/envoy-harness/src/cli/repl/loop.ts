@@ -41,6 +41,7 @@ import {
 } from "../../index.js";
 import { BUILTIN_COMMANDS } from "./commands.js";
 import { BUILTIN_INFO_COMMANDS } from "./commands-info.js";
+import { BUILTIN_TIER2_COMMANDS } from "./commands-tier2.js";
 import { EXIT_NAMES, ReplCommandRegistry, dispatchCommand, parseCommandLine } from "./registry.js";
 import type { LineReader, ReplOptions, ReplResult } from "./types.js";
 
@@ -97,19 +98,21 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
 
   const agent = new Agent(agentOptions);
 
-  // 3. F17.2 + F17.2.5: build the command registry.
+  // 3. F17.2 + F17.2.5 + F17.5: build the command registry.
   //    Custom commands register FIRST; built-ins register
   //    LAST so they override on name collision. The plan
   //    says "Built-ins always win on name collision"; this
   //    order makes that contract true. BUILTIN_COMMANDS is
-  //    the F17.2 set (9 commands); BUILTIN_INFO_COMMANDS
-  //    is the F17.2.5 set (8 info commands).
+  //    the F17.2 set (9 commands); BUILTIN_INFO_COMMANDS is
+  //    the F17.2.5 set (8 info commands); BUILTIN_TIER2_COMMANDS
+  //    is the F17.5 set (3 commands: /new, /compact, /init).
   const registry = new ReplCommandRegistry();
   if (opts.customCommands) {
     registry.registerAll(opts.customCommands);
   }
   registry.registerAll(BUILTIN_COMMANDS);
   registry.registerAll(BUILTIN_INFO_COMMANDS);
+  registry.registerAll(BUILTIN_TIER2_COMMANDS);
 
   // 4. The loop.
   let turns = 0;
@@ -221,7 +224,7 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
     }
   }
 
-  return { exitCode: 0, turns, totalCostUsd, sessionId: session.id };
+  return { exitCode: 0, turns, totalCostUsd, sessionId: agent.getSessionId() };
 }
 
 // ---------------------------------------------------------------------------

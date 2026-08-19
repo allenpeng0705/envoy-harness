@@ -42,6 +42,7 @@ import {
   HookRegistry,
   type HookDecision,
 } from "./hooks/index.js";
+import { InMemorySession, newSessionId } from "./session.js";
 import type { ModelAdapter, ModelResponse } from "./model.js";
 import type { Session } from "./session.js";
 import type { ContentBlock, ToolRegistry } from "./tools/index.js";
@@ -418,6 +419,22 @@ export class Agent {
   }
 
   /**
+   * F17.5: read-only access to the current model adapter.
+   * The `/init` REPL command uses this to fire a one-shot
+   * model call without going through `agent.run` (which
+   * would pollute the main session transcript).
+   *
+   * **Why public:** the REPL's slash commands need to
+   * invoke the model outside the agent loop (e.g. for
+   * `AGENTS.md` generation). Exposing `getModel()` keeps
+   * the adapter identity encapsulated while letting
+   * commands fire their own `complete()` calls.
+   */
+  getModel(): ModelAdapter {
+    return this.model;
+  }
+
+  /**
    * F17.2: replace the per-call approval handler. Takes effect
    * on the next tool call. Pass `undefined` to remove the
    * handler (the agent falls back to the default deny behavior).
@@ -451,6 +468,67 @@ export class Agent {
    */
   clearSession(): void {
     this.session.clear();
+  }
+
+  /**
+   * F17.5: compact the session by dropping the oldest
+   * messages, keeping the last `keep` messages. The system
+   * message (if present) is always preserved at the
+   * start of the session.
+   *
+   * **v0 limitation:** this is the "drop oldest" version
+   * (truncation). A future chunk can add LLM-based
+   * summarization (replace the dropped messages with a
+   * summary block that the LLM generates).
+   *
+   * **Why public:** the REPL's `/compact` slash command
+   * uses this when the transcript gets long. The host
+   * (Tauri app) can also wire it to a manual button.
+   */
+  compact(keep: number): void {
+    const messages = this.session.messages;
+    if (messages.length <= keep) {
+      // Nothing to compact.
+      return;
+    }
+    // Find the system message (always at the start in v0
+    // per agent.run's logic; if present, preserve it).
+    const hasSystem = messages.length > 0 && messages[0]?.role === "system";
+    const systemMsg = hasSystem ? messages[0] : undefined;
+    const restMessages = messages.slice(hasSystem ? 1 : 0);
+    // Keep the last `keep` of the non-system messages.
+    const toKeep = restMessages.slice(-keep);
+    // Clear + re-append.
+    this.session.clear();
+    if (systemMsg) {
+      this.session.appendMessage("system", systemMsg.content);
+    }
+    for (const m of toKeep) {
+      this.session.appendMessage(m.role, m.content);
+    }
+  }
+
+  /**
+   * F17.5: rebuild the session with a new id. The current
+   * session is replaced by a fresh `InMemorySession`; the
+   * transcript is gone (start from scratch). The agent's
+   * tools, hooks, model, and AGENTS.md are preserved.
+   *
+   * **Why public:** the REPL's `/new` command needs to start
+   * a fresh session without rebuilding the whole agent
+   * (the user might have set a custom model, sandbox, hooks).
+   *
+   * **Why a new id:** the session id is the audit-trail key.
+   * A new id makes the boundary between "old session" and
+   * "new session" explicit in logs.
+   */
+  newSession(): void {
+    this.session = new InMemorySession(newSessionId(), {
+      cwd: this.cwd,
+      permissionMode: this.session.metadata.permissionMode ?? "workspace-write",
+      startedAt: new Date().toISOString(),
+      title: "repl",
+    });
   }
 
   /**

@@ -180,6 +180,7 @@ export {
   EXIT_USAGE,
   BUILTIN_COMMANDS,
   BUILTIN_INFO_COMMANDS,
+  BUILTIN_TIER2_COMMANDS,
   ReplCommandRegistry,
   defaultAskHandler,
   dispatchCommand,

@@ -12,7 +12,7 @@
 >
 > **Status as of last commit:** F17.4 done on `phase-1/types`.
 >
-> - **Total:** 865 tests across 57 files (envoy-harness 773 / 47
+> - **Total:** 877 tests across 58 files (envoy-harness 785 / 48
 >   files + envoy-harness-adapter 92 / 10 files). All passing.
 > - **Typecheck:** clean (`pnpm -r typecheck`).
 > - **Phase 1 (v0 spine):** ✅ done (Chunks 1-4d, 220 tests)
@@ -21,7 +21,7 @@
 > - **Phase 4 (Production-grade):** ✅ done (F9.1-F9.5, 5 sub-chunks)
 > - **Phase 5 (Mesh-native sub-agents):** ✅ done (F10.1-F10.6, 8 sub-chunks)
 > - **Phase 6 (REPL):** ⏳ in progress (F17.1 + F17.2 + F17.2.5 +
->   F17.3 + F17.4 done; F17.5 + F17.6 pending — see §6.7 + §11)
+>   F17.3 + F17.4 + F17.5 done; F17.6 pending — see §6.7 + §11)
 >
 > **How to read this document.** §1 is project context (1 page).
 > §2 is the status snapshot (test count + per-module inventory).
@@ -35,7 +35,7 @@
 >
 > **Top of doc:** the design discussion (what & why) for Phase 5 — the mesh-native sub-agents design rationale + type surface — now lives in [`docs/design.en.md`](./design.en.md) §10.3. The *implementation record* (what shipped) is in §3 (chronological by commit). The *plan-with-sub-chunks* (the F10.2, F10.3, etc. plans) is in §6.6.
 >
-> **Branch:** all work is on `phase-1/types`. 12 unpushed commits as of the latest (F10.6 + 2 doc restructure + 2 design/Phase-5 + README/F17 plan + F17.1 + F17.2 + commands sweep plan + F17.2.5 + F17.3 + F17.4); Phase 5 complete, Phase 6 (REPL) in progress (F17.1 + F17.2 + F17.2.5 + F17.3 + F17.4 done; F17.5 + F17.6 pending).
+> **Branch:** all work is on `phase-1/types`. 13 unpushed commits as of the latest (F10.6 + 2 doc restructure + 2 design/Phase-5 + README/F17 plan + F17.1 + F17.2 + commands sweep plan + F17.2.5 + F17.3 + F17.4 + F17.5); Phase 5 complete, Phase 6 (REPL) in progress (F17.1 + F17.2 + F17.2.5 + F17.3 + F17.4 + F17.5 done; F17.6 pending).
 
 ---
 
@@ -76,9 +76,9 @@ Per design §1.3, the four design targets are non-negotiable:
 | **Phase 3** | Self-evolution (3 weeks) | ✅ done (5a-5e + F6) | 110 |
 | **Phase 4** | Production-grade (5 sub-chunks: F9.1 + F9.2 + F9.3 + F9.4 + F9.5) | ✅ done | +130 (vs Phase 3) |
 | **Phase 5** | Mesh-native sub-agents (8 sub-chunks: F10.1-F10.6) | ✅ done | +94 (vs Phase 4) |
-| **Phase 6** | Interactive REPL (5 sub-chunks done: F17.1 + F17.2 + F17.2.5 + F17.3 + F17.4; 2 planned: F17.5 + F17.6) | ⏳ in progress | +74 (F17.1 + F17.2 + F17.2.5 + F17.3 + F17.4) |
+| **Phase 6** | Interactive REPL (6 sub-chunks done: F17.1 + F17.2 + F17.2.5 + F17.3 + F17.4 + F17.5; 1 planned: F17.6) | ⏳ in progress | +86 (F17.1 + F17.2 + F17.2.5 + F17.3 + F17.4 + F17.5) |
 
-**Cumulative:** 865 tests across 57 files (envoy-harness 773 + envoy-harness-adapter 92), all passing.
+**Cumulative:** 877 tests across 58 files (envoy-harness 785 + envoy-harness-adapter 92), all passing.
 Typecheck clean (`pnpm -r typecheck`).
 
 **Per-module test inventory (47 envoy-harness files + 10 envoy-harness-adapter files = 865 tests):**
@@ -134,6 +134,7 @@ Typecheck clean (`pnpm -r typecheck`).
 | REPL info (F17.2.5) | 19 | `test/repl-info.test.ts` | 8 info commands (session/context/scoreboard/rules/lsp/hooks/mcp/profile); BUILTIN_COMMANDS + BUILTIN_INFO_COMMANDS no name collisions; /help lists all 8 |
 | REPL history (F17.3) | 9 | `test/repl-history.test.ts` | load on start, write on exit, persists across restarts, missing file OK, dedupe consecutive, cap (FIFO), historyPath:'' disables, ENVOY_HARNESS_HISTORY override |
 | REPL e2e (F17.4) | 8 | `test/repl-e2e.test.ts` | full multi-command session; session continuity; model swap via /provider; error resilience (model throw, unknown cmd, handler throw); /help snapshot; dispatch table covers 17 commands |
+| REPL tier 2 batch 1 (F17.5) | 12 | `test/repl-tier2.test.ts` | 3 real-feature commands: /new (fresh session, new id, empty transcript), /compact (drop oldest, keep last N; preserves system message), /init (writes AGENTS.md via one-shot model call, doesn't pollute main transcript); BUILTIN_TIER2_COMMANDS shape (3 names, no collisions); dispatch table covers all 20 |
 
 #### envoy-harness-adapter (Package 3, 92 tests / 10 files)
 
@@ -1497,6 +1498,171 @@ row + per-module test inventory + REPL e2e row),
 **Next: F17.5** (Tier 2 batch 1: `/compact` = context
 window compaction, `/init` = AGENTS.md generation,
 `/new` = fresh session; ~250 LoC + 6-8 tests).
+
+### F17.5 — Tier 2 batch 1: /new /compact /init (✅ done)
+
+3 real-feature commands that go beyond print/info:
+fresh session, context compaction, AGENTS.md
+generation. The first set of REPL commands that
+need new `Agent` capabilities, not just new
+printers.
+
+**What it covers:**
+
+- `/new` — start a fresh session. The Agent's
+  `newSession()` method rebuilds the in-memory
+  session with a new id; transcript is gone;
+  agent's tools / hooks / model / AGENTS.md are
+  preserved. After `/new`, `/session` reports the
+  new id; `/context` reports 0 messages.
+- `/compact [keep]` — context window compaction.
+  The Agent's `compact(keep)` method drops the
+  oldest messages and keeps the last `keep` (default
+  20). The system message (when present) is always
+  preserved at the start of the session. Accepts an
+  optional `<keep>` arg; rejects non-numeric input
+  with an error. No-op when the session is shorter
+  than `keep`. v0 is the "drop oldest" version
+  (truncation); LLM-based summarization is a
+  F17.5+ candidate.
+- `/init` — generate `AGENTS.md` for the cwd. Fires
+  a one-shot model call with a built-in system
+  prompt ("examine the cwd, write a concise
+  AGENTS.md"). The result is written to
+  `<cwd>/AGENTS.md` (overwrites existing). The
+  model call is NOT added to the main session
+  transcript (it's a side effect, like `git init`)
+  — the command bypasses `agent.run` and calls the
+  model adapter directly. Model errors (throw,
+  empty response) print to stderr; the REPL
+  continues. A future chunk can add a proper tool
+  loop (read_file + list_dir) for richer cwd
+  inspection.
+
+**New Agent API (additive):**
+- `Agent.newSession()` — rebuild the in-memory
+  session with a new id; preserves cwd +
+  permission mode.
+- `Agent.compact(keep)` — drop oldest messages,
+  keep last `keep`; preserves the system message
+  at the start.
+- `Agent.getModel()` — read-only access to the
+  current model adapter. The `/init` command uses
+  this to fire a one-shot `complete()` call without
+  going through `agent.run` (which would pollute
+  the main transcript).
+
+**Files touched (5):**
+- `src/agent.ts` (edit) — 3 new methods
+  (`newSession`, `compact`, `getModel`). Imports
+  `InMemorySession` + `newSessionId` from
+  `./session.js`.
+- `src/cli/repl/commands-tier2.ts` (new) — the 3
+  Tier 2 batch 1 commands + `BUILTIN_TIER2_COMMANDS`
+  array (defined last to avoid forward-reference
+  issues in `const` arrays, same pattern as
+  `BUILTIN_COMMANDS` and `BUILTIN_INFO_COMMANDS`).
+  `/init` uses `ctx.agent.getModel()` for the
+  one-shot call.
+- `src/cli/repl/loop.ts` (edit) — wire
+  `BUILTIN_TIER2_COMMANDS` into the registry
+  (registered after `BUILTIN_INFO_COMMANDS`;
+  built-ins always win on name collision).
+  Also fix `ReplResult.sessionId` to read from
+  `agent.getSessionId()` instead of the local
+  `session` variable — the previous code returned
+  the original session id even after `/new`
+  swapped the session.
+- `src/cli/repl/index.ts` (edit) — re-export
+  `BUILTIN_TIER2_COMMANDS`.
+- `src/cli/index.ts` (edit) — re-export
+  `BUILTIN_TIER2_COMMANDS`.
+- `src/index.ts` (edit) — re-export
+  `BUILTIN_TIER2_COMMANDS` (the package's public
+  surface).
+- `test/repl-e2e.test.ts` (edit) — update the
+  dispatch table test from 17 → 20; include
+  `BUILTIN_TIER2_COMMANDS` in the union.
+- `test/repl-tier2.test.ts` (new) — 12 tests.
+
+**Self-review caught 3 real issues + 1 missing wiring:**
+
+1. **Forward-reference error.** `BUILTIN_TIER2_COMMANDS`
+   was originally placed at the top of
+   `commands-tier2.ts`, but the 3 command consts
+   it references are declared after. TypeScript
+   errored with `TS2448: Block-scoped variable
+   'newCommand' used before its declaration`.
+   **Fixed:** moved the array to the bottom of
+   the file (matches the `BUILTIN_COMMANDS` /
+   `BUILTIN_INFO_COMMANDS` pattern).
+
+2. **`ctx.agent["model"]` bracket access.** The
+   `/init` handler originally reached into the
+   Agent's private `model` field via bracket
+   notation to call `complete()` directly. That
+   works but is a code smell (no type safety;
+   bypasses the public API). **Fixed:** added a
+   public `Agent.getModel()` getter. The handler
+   now reads `ctx.agent.getModel()`. The bracket
+   access is gone.
+
+3. **Fake-session hack.** The first draft of
+   `/init` constructed a fake `Session`-shaped
+   object with no-op `appendMessage` /
+   `lastMessage` / `clear` methods, just to hold
+   the message array for `complete()`. The
+   adapter's `complete()` doesn't use those
+   methods; it only reads `messages`. **Fixed:**
+   pass a plain `Message[]` to `complete()`
+   directly. The fake-session scaffold is gone;
+   the code is now ~10 LoC shorter.
+
+4. **Bonus: `ReplResult.sessionId` reflected
+   the wrong session.** The loop captured the
+   local `session` variable at construction and
+   returned `session.id` in the result. After
+   `agent.newSession()`, the agent's session is
+   a new object — the local variable still
+   pointed to the old one. The result was the
+   ORIGINAL id even after `/new`. **Fixed:**
+   the loop now reads `agent.getSessionId()`
+   at exit. The result is the LAST session id
+   (matches the docstring contract: "the
+   session id (shared across all turns)" —
+   the session that's currently shared is the
+   one we return).
+
+**Test count:** 12 new tests in
+`test/repl-tier2.test.ts`:
+- `BUILTIN_TIER2_COMMANDS has the 3 expected commands` (1)
+- `BUILTIN_COMMANDS + BUILTIN_INFO_COMMANDS + BUILTIN_TIER2_COMMANDS have no name collisions` (1)
+- `/new > starts a fresh session (new id, empty transcript)` (1)
+- `/new > the fresh session has zero messages (verified via /context)` (1)
+- `/compact > drops oldest messages and keeps the last 20 by default` (1)
+- `/compact > honors a custom <keep> arg` (1)
+- `/compact > rejects a non-numeric <keep> arg` (1)
+- `/compact > is a no-op when the session is shorter than <keep>` (1)
+- `/init > writes AGENTS.md to the cwd via the model` (1)
+- `/init > prints to stderr when the model throws; REPL continues` (1)
+- `/init > prints to stderr when the model returns no text` (1)
+- `F17.5 dispatch table > the dispatch table covers all 20 built-in commands` (1)
+
+**Total: 877 tests across 58 files** (envoy-harness
+785 + envoy-harness-adapter 92). F17.5 is done.
+F17.6 (Tier 2 batch 2: /agents /diff /undo) is the
+next sub-chunk.
+
+Updated §1 (status line), §2 (status table Phase 6
+row + per-module test inventory + REPL tier 2 row),
+§3 (this entry), §6.7 (F17.5 marked ✅), §11
+(F17 archive updated), §10 (change log entry).
+
+**Next: F17.6** (Tier 2 batch 2: `/agents` = list
+spawned sub-agents, `/diff` = git diff vs HEAD,
+`/undo` = undo last tool action; ~200 LoC + 6-8
+tests. `/undo` may be deferred to F17.7 if the
+action journal scope is too big).
 
 ---
 
@@ -3298,21 +3464,14 @@ laptop has no Tauri app — they need a CLI REPL.
    - `/profile [name]` — list or load a TOML profile
      (host injects a `profileLoader` via `ReplOptions`)
 
-6. **F17.5 — Tier 2 batch 1: real features** (~250 LoC).
-   The first set of "real" commands that need new
-   capabilities, not just new printers.
-   - `/compact` — context window compaction. The
-     `Compaction` package in `core/` already has the
-     algorithm; the REPL just wires it as a slash
-     command. Replaces the long transcript with a
-     summary + recent messages.
-   - `/init` — generate AGENTS.md. The LLM inspects the
-     cwd and writes an AGENTS.md. Needs a special
-     system prompt + a write to the cwd.
+6. **~~F17.5 — Tier 2 batch 1: real features~~** ✅ **DONE**
+   (~280 LoC + 12 tests, see §3.5).
+   - `/compact` — context window compaction (drop
+     oldest, keep last N; preserves system message).
+   - `/init` — generate AGENTS.md via a one-shot
+     model call; writes to `<cwd>/AGENTS.md`.
    - `/new` — fresh session (clear transcript + new
-     session id). The `Agent` already has a
-     `clearSession()`; we add a `newSession()` that
-     rebuilds the in-memory session with a new id.
+     session id).
 
 7. **F17.6 — Tier 2 batch 2: real features** (~200 LoC).
    The next set of real features.
@@ -3538,6 +3697,24 @@ useful.
 
 ## 10. Change log
 
+- **2026-08-19 (F17.5 done)**: Tier 2 batch 1 — 3 real
+  REPL commands (`/new`, `/compact`, `/init`) shipped.
+  12 new tests in `test/repl-tier2.test.ts`. 3 new
+  additive `Agent` methods (`newSession`, `compact`,
+  `getModel`). Self-review caught 3 real issues: a
+  forward-reference error (moved the `BUILTIN_TIER2_COMMANDS`
+  array to the bottom of `commands-tier2.ts`),
+  `ctx.agent["model"]` bracket access (replaced with
+  the new public `getModel()` getter), the
+  fake-session scaffold in `/init` (replaced with a
+  plain `Message[]`). Also fixed `ReplResult.sessionId`
+  to read from `agent.getSessionId()` instead of the
+  local variable (the previous code returned the
+  ORIGINAL session id even after `/new`). 877 tests
+  across 58 files, all passing; typecheck clean.
+  Updated §1, §2, §3 (F17.5 section), §6.7 (F17.5
+  marked done), §11 (F17 archive), §10 (this entry).
+  Next: F17.6 (`/agents` + `/diff` + `/undo`).
 - **2026-08-18**: Initial implementation plan. Phase 1 (1-4d)
   and Phase 3 (5a-5e) complete. 305 tests, 27 source files,
   16 test files. F6 (federated scoreboard) is the next
@@ -5511,15 +5688,22 @@ in this chunk.
   test for help text). 8 new tests. ~150 LoC of
   tests. **No new code** — just integration-level
   tests that exercise the wire-up of F17.1-F17.3.
-- ⏳ **F17.5** — Tier 2 batch 1 (3 real features:
+- ✅ **F17.5** — Tier 2 batch 1 (3 real features:
   `/compact` = context window compaction, `/init` =
   AGENTS.md generation, `/new` = fresh session).
-  ~250 LoC + 6-8 tests. **Next chunk to build.**
+  ~280 LoC + 12 tests. **Done.** 3 new additive
+  `Agent` methods (`newSession`, `compact`,
+  `getModel`). The `/init` command bypasses
+  `agent.run` and calls the model adapter
+  directly so the AGENTS.md generator prompt
+  doesn't pollute the main session transcript.
+  See §3.5 for the full record.
 - ⏳ **F17.6** — Tier 2 batch 2 (3 real features:
   `/agents` = list spawned sub-agents, `/diff` =
   `git diff` vs HEAD, `/undo` = undo last tool action).
-  ~200 LoC + 6-8 tests. **/undo may be deferred to
-  F17.7** if the action journal scope is too big.
+  ~200 LoC + 6-8 tests. **Next chunk to build.**
+  **/undo may be deferred to F17.7** if the
+  action journal scope is too big.
 
 **Why a separate "F17 archive" section (not in §6.6):**
 F17 is a Phase 6 feature, not Phase 5. §6.6 holds
@@ -5535,5 +5719,5 @@ becomes read-only history.
 - Test inventory: §2 (per-module test table,
   "REPL loop (F17.1)" row).
 
-**Next chunk:** F17.2.
+**Next chunk:** F17.6.
 
