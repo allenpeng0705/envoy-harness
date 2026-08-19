@@ -42,6 +42,7 @@ import {
 import { BUILTIN_COMMANDS } from "./commands.js";
 import { BUILTIN_INFO_COMMANDS } from "./commands-info.js";
 import { BUILTIN_TIER2_BATCH2_COMMANDS } from "./commands-tier2-batch2.js";
+import { BUILTIN_TIER2_BATCH3_COMMANDS } from "./commands-tier2-batch3.js";
 import { BUILTIN_TIER2_COMMANDS } from "./commands-tier2.js";
 import { EXIT_NAMES, ReplCommandRegistry, dispatchCommand, parseCommandLine } from "./registry.js";
 import type { LineReader, ReplOptions, ReplResult } from "./types.js";
@@ -67,7 +68,10 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
   const lineReader = opts.lineReader ?? createReadlineLineReader(prompt);
 
   // 2. Build the Agent ONCE. The session id is stable across turns.
-  const session = newSession();
+  const session = newSession({
+    cwd,
+    sandbox: opts.args.sandbox ?? "read-only",
+  });
   const tools = new ToolRegistry();
   for (const t of BUILTIN_TOOLS) tools.register(t);
   const hooks = opts.hooks ?? new HookRegistry();
@@ -116,7 +120,7 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
     }
   }
 
-  // 3. F17.2 + F17.2.5 + F17.5 + F17.6: build the command registry.
+  // 3. F17.2 + F17.2.5 + F17.5 + F17.6 + F14.1: build the command registry.
   //    Custom commands register FIRST; built-ins register
   //    LAST so they override on name collision. The plan
   //    says "Built-ins always win on name collision"; this
@@ -125,8 +129,9 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
   //    the F17.2.5 set (8 info commands); BUILTIN_TIER2_COMMANDS
   //    is the F17.5 set (3 commands: /new, /compact, /init);
   //    BUILTIN_TIER2_BATCH2_COMMANDS is the F17.6 set
-  //    (2 commands: /agents, /diff). `/undo` is deferred
-  //    to F17.7.
+  //    (2 commands: /agents, /diff); BUILTIN_TIER2_BATCH3_COMMANDS
+  //    is the F14.1 set (2 commands: /rename, /copy).
+  //    `/undo` is deferred to F17.7.
   const registry = new ReplCommandRegistry();
   if (opts.customCommands) {
     registry.registerAll(opts.customCommands);
@@ -135,6 +140,7 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
   registry.registerAll(BUILTIN_INFO_COMMANDS);
   registry.registerAll(BUILTIN_TIER2_COMMANDS);
   registry.registerAll(BUILTIN_TIER2_BATCH2_COMMANDS);
+  registry.registerAll(BUILTIN_TIER2_BATCH3_COMMANDS);
 
   // 4. The loop.
   let turns = 0;
@@ -144,6 +150,11 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
   // `runRepl`). Returning would skip the `finally` block
   // that writes the history file.
   let exiting = false;
+  // F14.1: track the last assistant text so `/copy`
+  // can print it. Initialized from `opts.lastResponse`
+  // (used by tests for deterministic assertions);
+  // the loop overwrites it on every turn.
+  let lastResponse: string | undefined = opts.lastResponse;
 
   // F17.3: history. We maintain our own array (the
   // readline interface's history is per-session and not
@@ -192,6 +203,7 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
           ...(opts.verifierRules ? { verifierRules: opts.verifierRules } : {}),
           ...(opts.profileLoader ? { profileLoader: opts.profileLoader } : {}),
           ...(subagentRegistry ? { subagentRegistry } : {}),
+          ...(lastResponse !== undefined ? { lastResponse } : {}),
         };
         const result = await dispatchCommand(registry, parsed.name, parsed.args, ctx);
         switch (result.kind) {
@@ -225,6 +237,13 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
           .filter((b): b is Extract<typeof b, { type: "text" }> => b.type === "text")
           .map((b) => b.text)
           .join("\n");
+        // F14.1: track the last assistant text so the
+        // `/copy` command can print it. Empty text is
+        // a valid response (the model returned a tool
+        // call only); we still set it to "" so the
+        // user gets a clear "no text" message from
+        // /copy rather than a stale previous response.
+        lastResponse = text;
         if (!opts.args.quiet) {
           out.write(text + "\n");
         }
@@ -309,11 +328,18 @@ function createReadlineLineReader(prompt: string): LineReader {
  * Build a fresh `Session` for the REPL. The session id is what
  * gets returned in `ReplResult.sessionId` so the caller can
  * correlate.
+ *
+ * The permission mode honors `--sandbox` (default read-only,
+ * per design invariant #1). v0 hardcoded workspace-write here,
+ * which ignored `envoy --repl --sandbox read-only`.
  */
-function newSession(): Session {
+function newSession(opts: {
+  cwd: string;
+  sandbox: NonNullable<SessionMetadata["permissionMode"]>;
+}): Session {
   const meta: SessionMetadata = {
-    cwd: process.cwd(),
-    permissionMode: "workspace-write",
+    cwd: opts.cwd,
+    permissionMode: opts.sandbox,
     startedAt: new Date().toISOString(),
     title: "repl",
   };

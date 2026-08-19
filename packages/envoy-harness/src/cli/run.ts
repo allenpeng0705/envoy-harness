@@ -30,6 +30,7 @@
  */
 
 import { promises as fs } from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 
 import {
@@ -41,10 +42,13 @@ import {
   InMemorySession,
   JsonLinesTracer,
   LocalPeerSource,
+  loadRulesetFromFile,
   ModelHypothesisProvider,
   NullTracer,
+  VerboseTracer,
   newSessionId,
   SelfEvolve,
+  SessionStore,
   Team,
   ToolRegistry,
   VERSION,
@@ -250,13 +254,32 @@ async function runAgent(
 
   // 3. Build the agent.
   const cwd = parsed.cwd ?? options.cwd ?? process.cwd();
+  // F-fix: `--plan` forces a read-only session (plan mode is
+  // read + think, no writes) regardless of `--sandbox`.
+  const effectiveMode: SessionMetadata["permissionMode"] = parsed.plan
+    ? "read-only"
+    : parsed.sandbox ?? "read-only";
   const meta: SessionMetadata = {
     cwd,
-    permissionMode: parsed.sandbox ?? "workspace-write",
+    ...(effectiveMode !== undefined ? { permissionMode: effectiveMode } : {}),
     startedAt: new Date().toISOString(),
     title: prompt.slice(0, 60),
   };
-  const session: Session = new InMemorySession(newSessionId(), meta);
+  // For SessionMetadata, `permissionMode` is optional but
+  // not nullable under exactOptionalPropertyTypes. When we
+  // spread `meta` later (e.g. in the --fork path), we
+  // need a clean copy without the optional `undefined`.
+  // This helper gives us that.
+  // (no helper needed — see resolveSession below)
+
+  // F14.1: resolve the session. Three modes:
+  //   1. `--resume <id>`  → load from disk, pass to Agent.
+  //   2. `--fork <id>`    → load from disk, copy messages to
+  //                         a NEW session (fresh id), persist.
+  //   3. `--persist`      → create a new persisted session.
+  //   4. (none of the above) → in-memory session (current behavior).
+  const session: Session = await resolveSession(parsed, meta, stderr);
+
   const tools = new ToolRegistry();
   for (const t of BUILTIN_TOOLS) tools.register(t);
   const hooks = options.hooks ?? new HookRegistry();
@@ -273,6 +296,22 @@ async function runAgent(
   }
   if (parsed.maxCostUsd !== undefined) {
     agentOptions.maxCostUsd = parsed.maxCostUsd;
+  } else {
+    // F-fix: the CLI help promises a default $5.00 ceiling;
+    // apply it (the library's Agent itself stays uncapped).
+    agentOptions.maxCostUsd = DEFAULT_MAX_COST_USD;
+  }
+  if (parsed.approval !== undefined) {
+    agentOptions.approval = parsed.approval as
+      | "unless-trusted"
+      | "on-request"
+      | "granular"
+      | "never";
+  }
+  if (parsed.plan) {
+    agentOptions.systemPrompt =
+      "You are in PLAN MODE. Investigate and produce a plan only — " +
+      "do not make any changes to the workspace. Your session is read-only.";
   }
   if (options.askHandler) {
     agentOptions.askHandler = options.askHandler;
@@ -287,6 +326,10 @@ async function runAgent(
   // the stream.
   if (parsed.json) {
     agentOptions.tracer = new JsonLinesTracer(stdout);
+  } else if (parsed.verbose) {
+    // F-fix: `--verbose` prints human-readable tool-call lines
+    // to stderr (JSON Lines takes precedence when both are set).
+    agentOptions.tracer = new VerboseTracer(stderr);
   } else if (options.tracer) {
     // Programmatic injection takes precedence (the host
     // might want a different sink — file, websocket, etc.).
@@ -318,6 +361,9 @@ async function runAgent(
     toolCalls: result.toolCalls,
   };
 }
+
+/** F-fix: default cost ceiling for the CLI (design §19: 5.00). */
+export const DEFAULT_MAX_COST_USD = 5.0;
 
 // ---------------------------------------------------------------------------
 // F17.1: --repl dispatch
@@ -408,7 +454,12 @@ async function runSelfEvolve(
   // 3. Wire the components.
   const hypothesisProvider = new ModelHypothesisProvider(model);
   const benchmarkRunner = new DefaultBenchmarkRunner();
-  const currentRules: ReadonlyArray<VerifierRule> = DEFAULT_RULES;
+  // F-fix: build on the committed ruleset when one exists
+  // (the protocol is now real: candidates select rule names,
+  // and the committed file is re-loadable). Fresh installs
+  // fall back to DEFAULT_RULES.
+  const committed = await loadRulesetFromFile(paths.ruleset, DEFAULT_RULES);
+  const currentRules: ReadonlyArray<VerifierRule> = committed ?? DEFAULT_RULES;
 
   // 4. Run the cycle.
   const evolve = new SelfEvolve({
@@ -624,6 +675,112 @@ function resolveModel(
   } catch (err) {
     throw new CliError((err as Error).message, EXIT_USAGE);
   }
+}
+
+/**
+ * Resolve the default session directory.
+ *
+ * Order:
+ * 1. `--session-dir <path>` (if set)
+ * 2. `$ENVOY_HARNESS_SESSION_DIR` (if set)
+ * 3. `~/.local/state/envoy-harness/sessions`
+ */
+function defaultSessionDir(parsed: Extract<ParsedArgs, { subcommand: "run" }>): string {
+  if (parsed.sessionDir) return parsed.sessionDir;
+  const env = process.env["ENVOY_HARNESS_SESSION_DIR"];
+  if (env && env.length > 0) return env;
+  return `${process.env["HOME"] ?? os.homedir()}/.local/state/envoy-harness/sessions`;
+}
+
+/**
+ * F14.1: resolve the session for the `run` subcommand.
+ *
+ * Four modes:
+ * 1. `--resume <id>`  → load from disk, pass to Agent.
+ * 2. `--fork <id>`    → load from disk, copy messages to
+ *                       a NEW session (fresh id), persist.
+ * 3. `--persist`      → create a new persisted session.
+ * 4. (none of the above) → in-memory session (current behavior).
+ *
+ * **Mutual exclusion:** `--resume` and `--fork` are
+ * mutually exclusive (you can resume a session OR
+ * fork a session, not both). The argv parser doesn't
+ * enforce this; we do it here.
+ */
+async function resolveSession(
+  parsed: Extract<ParsedArgs, { subcommand: "run" }>,
+  meta: SessionMetadata,
+  stderr: NodeJS.WritableStream,
+): Promise<Session> {
+  // --resume and --fork are mutually exclusive.
+  if (parsed.resume && parsed.fork) {
+    throw new CliError(
+      "--resume and --fork are mutually exclusive (pick one)",
+      EXIT_USAGE,
+    );
+  }
+
+  // Default: in-memory session.
+  if (!parsed.resume && !parsed.fork && !parsed.persist) {
+    return new InMemorySession(newSessionId(), meta);
+  }
+
+  // --resume, --fork, --persist all need a SessionStore.
+  const store = new SessionStore({ dir: defaultSessionDir(parsed) });
+
+  // --resume: load and return.
+  if (parsed.resume) {
+    try {
+      const session = await store.load(parsed.resume);
+      // The session's cwd + permissionMode come from when
+      // it was created. We don't override (the user might
+      // have changed cwd since then; that's their call).
+      return session;
+    } catch (err) {
+      throw new CliError(
+        `failed to load session ${parsed.resume}: ${(err as Error).message}`,
+        EXIT_USAGE,
+      );
+    }
+  }
+
+  // --fork: load the source, copy messages to a new session.
+  if (parsed.fork) {
+    let source;
+    try {
+      source = await store.load(parsed.fork);
+    } catch (err) {
+      throw new CliError(
+        `failed to load session ${parsed.fork} for fork: ${(err as Error).message}`,
+        EXIT_USAGE,
+      );
+    }
+    // Create a new persisted session with a fresh id.
+    // Inherit the source's title if set, else use the new
+    // session's title (the user can /rename later).
+    const newMeta: SessionMetadata = {
+      cwd: meta.cwd,
+      ...(meta.permissionMode !== undefined
+        ? { permissionMode: meta.permissionMode }
+        : {}),
+      startedAt: meta.startedAt,
+      title: source.metadata.title ?? meta.title ?? "forked session",
+    };
+    const forked = await store.createWithId(newSessionId(), newMeta);
+    // Copy the source's messages.
+    for (const m of source.messages) {
+      forked.appendMessage(m.role, m.content);
+    }
+    stderr.write(
+      `forked session ${parsed.fork} -> new session ${forked.id}\n`,
+    );
+    return forked;
+  }
+
+  // --persist: create a new persisted session.
+  const session = await store.create(meta);
+  stderr.write(`persisted session: ${session.id}\n`);
+  return session;
 }
 
 

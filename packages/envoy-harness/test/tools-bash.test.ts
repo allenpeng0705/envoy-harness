@@ -98,6 +98,66 @@ describe("bash: permission validation", () => {
     );
     expect(result.isError).toBe(true);
   });
+
+  it("blocks no-space redirects in read-only mode (real tokenizer)", async () => {
+    const ctx = makeCtx("read-only");
+    const result = await bashTool.execute(
+      { command: "echo hi>file" },
+      ctx,
+    );
+    expect(result.isError).toBe(true);
+    expect(result.content).toMatch(/bash blocked/);
+  });
+
+  it("blocks fd redirects to real files in read-only mode", async () => {
+    const ctx = makeCtx("read-only");
+    const result = await bashTool.execute(
+      { command: "ls 2>/tmp/out.txt" },
+      ctx,
+    );
+    expect(result.isError).toBe(true);
+  });
+
+  it("blocks relative paths that escape cwd in workspace-write", async () => {
+    const ctx = makeCtx("workspace-write");
+    const result = await bashTool.execute(
+      { command: "echo hi > ../outside.txt" },
+      ctx,
+    );
+    expect(result.isError).toBe(true);
+    expect(result.content).toMatch(/bash blocked/);
+  });
+
+  it("honors the live sandboxPolicy over session metadata", async () => {
+    // Session says workspace-write, but the agent's live policy
+    // is read-only (e.g. after `/sandbox read-only`). The bash
+    // tool must enforce the live policy.
+    const meta: SessionMetadata = {
+      cwd: os.tmpdir(),
+      permissionMode: "workspace-write",
+      startedAt: new Date().toISOString(),
+    };
+    const session = new InMemorySession(newSessionId(), meta);
+    const ctx: ToolContext = {
+      cwd: os.tmpdir(),
+      session,
+      abortSignal: AbortSignal.timeout(5000),
+      sandboxPolicy: {
+        mode: "read-only",
+        approval: "on-request",
+        backend: "linux-landlock",
+        writableRoots: [],
+        networkAccess: false,
+        excludeSlashTmp: true,
+      },
+    };
+    const result = await bashTool.execute(
+      { command: "touch /tmp/envoy-harness-live-policy-deny" },
+      ctx,
+    );
+    expect(result.isError).toBe(true);
+    expect(result.content).toMatch(/bash blocked/);
+  });
 });
 
 describe("bash: execution", () => {

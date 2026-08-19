@@ -189,13 +189,13 @@ describe("bash parity: validateBash() on the 200-command fixture", () => {
     }
   });
 
-  it("Group 11: shell injection all block", async () => {
+  it("Group 11: shell injection behaves as the fixture declares", async () => {
     for (const row of ALL_BASH_COMMANDS.filter((r) =>
       r.tag.startsWith("g11-"),
     )) {
       const verdict = await validateBash(inputFromFixture(row));
       expect(verdict.kind, `g11 row ${row.tag}: ${row.command}`).toBe(
-        "block",
+        row.expected,
       );
     }
   });
@@ -265,6 +265,82 @@ describe("readOnlyValidation", () => {
   it("allows read-only commands in read-only mode", async () => {
     const input = makeInput("ls -la", ["ls", "-la"], READ_ONLY);
     expect(await v.validate(input)).toEqual({ kind: "allow" });
+  });
+});
+
+describe("readOnlyValidation: redirect + write-verb hardening", () => {
+  const v: BashValidator = readOnlyValidation;
+
+  it("blocks no-space redirects", async () => {
+    const input = makeInput("echo hi>file", ["echo", "hi>file"], READ_ONLY);
+    expect((await v.validate(input)).kind).toBe("block");
+  });
+
+  it("blocks fd redirects to real files", async () => {
+    const input = makeInput("ls 2>/tmp/out.txt", ["ls"], READ_ONLY);
+    expect((await v.validate(input)).kind).toBe("block");
+  });
+
+  it("blocks combined &> redirects", async () => {
+    const input = makeInput("cmd &>/tmp/out.txt", ["cmd"], READ_ONLY);
+    expect((await v.validate(input)).kind).toBe("block");
+  });
+
+  it("blocks read-write open <>", async () => {
+    const input = makeInput("cmd <>file", ["cmd"], READ_ONLY);
+    expect((await v.validate(input)).kind).toBe("block");
+  });
+
+  it("allows fd duplication (2>&1, >&2)", async () => {
+    const a = makeInput("cmd 2>&1", ["cmd"], READ_ONLY);
+    const b = makeInput("cmd >&2", ["cmd"], READ_ONLY);
+    expect((await v.validate(a)).kind).toBe("allow");
+    expect((await v.validate(b)).kind).toBe("allow");
+  });
+
+  it("allows redirects to /dev/null", async () => {
+    const a = makeInput("ls 2>/dev/null", ["ls"], READ_ONLY);
+    const b = makeInput("cmd > /dev/null", ["cmd"], READ_ONLY);
+    expect((await v.validate(a)).kind).toBe("allow");
+    expect((await v.validate(b)).kind).toBe("allow");
+  });
+
+  it("blocks git mutating commands in read-only", async () => {
+    for (const cmd of [
+      "git add .",
+      "git commit -m msg",
+      "git push origin main",
+      "git checkout -b feature",
+      "git reset --hard HEAD",
+    ]) {
+      const input = makeInput(cmd, [], READ_ONLY);
+      expect((await v.validate(input)).kind, cmd).toBe("block");
+    }
+  });
+
+  it("allows read-only git commands", async () => {
+    for (const cmd of ["git status", "git diff", "git log --oneline -5"]) {
+      const input = makeInput(cmd, [], READ_ONLY);
+      expect((await v.validate(input)).kind, cmd).toBe("allow");
+    }
+  });
+
+  it("blocks dd writes and package-manager installs", async () => {
+    for (const cmd of [
+      "dd if=/dev/zero of=out.bin bs=1M",
+      "npm i",
+      "yarn add lodash",
+      "pnpm install",
+      "bun add zod",
+    ]) {
+      const input = makeInput(cmd, [], READ_ONLY);
+      expect((await v.validate(input)).kind, cmd).toBe("block");
+    }
+  });
+
+  it("matches tee without requiring a trailing space", async () => {
+    const input = makeInput("echo hi | tee>out.txt", [], READ_ONLY);
+    expect((await v.validate(input)).kind).toBe("block");
   });
 });
 
@@ -413,6 +489,48 @@ describe("pathValidation", () => {
     const input = makeInput("rm ~/foo", ["rm", "~/foo"], policy);
     expect(await v.validate(input)).toEqual({ kind: "allow" });
   });
+
+  it("blocks relative paths that escape writable_roots", async () => {
+    const input = makeInput(
+      "rm -rf ../secret",
+      ["rm", "-rf", "../secret"],
+      WORKSPACE_WRITE,
+    );
+    expect((await v.validate(input)).kind).toBe("block");
+  });
+
+  it("blocks `..` (parent directory) in workspace-write", async () => {
+    const input = makeInput("cd ..", ["cd", ".."], WORKSPACE_WRITE);
+    expect((await v.validate(input)).kind).toBe("block");
+  });
+
+  it("allows relative paths that resolve inside writable_roots", async () => {
+    const input = makeInput(
+      "sed -i s/a/b/ ../project/file.txt",
+      ["sed", "-i", "s/a/b/", "../project/file.txt"],
+      WORKSPACE_WRITE,
+      "/home/alice/project/sub",
+    );
+    expect((await v.validate(input)).kind).toBe("allow");
+  });
+
+  it("is boundary-aware (sibling of a root is outside)", async () => {
+    const input = makeInput(
+      "rm /home/alice/project2/x",
+      ["rm", "/home/alice/project2/x"],
+      WORKSPACE_WRITE,
+    );
+    expect((await v.validate(input)).kind).toBe("block");
+  });
+
+  it("skips flag-like tokens", async () => {
+    const input = makeInput(
+      "find /home/alice/project -name '*.ts'",
+      ["find", "/home/alice/project", "-name", "*.ts"],
+      WORKSPACE_WRITE,
+    );
+    expect((await v.validate(input)).kind).toBe("allow");
+  });
 });
 
 describe("commandSemanticsValidation", () => {
@@ -459,6 +577,18 @@ describe("helper functions", () => {
 
     it("returns false for an even mix", () => {
       expect(hasUnbalancedQuotes(`echo "a" 'b'`)).toBe(false);
+    });
+
+    it("returns false for escaped quotes (backslash)", () => {
+      expect(hasUnbalancedQuotes(`echo a\\"b`)).toBe(false);
+    });
+
+    it("returns false for an apostrophe inside double quotes", () => {
+      expect(hasUnbalancedQuotes(`echo "it's"`)).toBe(false);
+    });
+
+    it("returns true for an unclosed quote after an escape", () => {
+      expect(hasUnbalancedQuotes('echo "a\\"')).toBe(true);
     });
   });
 

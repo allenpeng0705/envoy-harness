@@ -39,6 +39,8 @@ const RUN_FLAGS = new Set([
   "--max-cost-usd",
   "--resume",
   "--fork",
+  "--persist",
+  "--session-dir",
   "--plan",
   "--repl",
   "--no-color",
@@ -78,6 +80,7 @@ const RUN_VALUED_FLAGS = new Set([
   "--max-cost-usd",
   "--resume",
   "--fork",
+  "--session-dir",
 ]);
 
 /** A flag that takes a value for the self-evolve subcommand. */
@@ -128,6 +131,23 @@ export interface RunParsedArgs {
   resume: string | undefined;
   /** `--fork <session-id>`: fork a saved session. */
   fork: string | undefined;
+  /**
+   * F14.1: `--persist` (no value). Opt in to disk
+   * persistence for the new session. When set,
+   * the runner creates a `PersistedSession`
+   * instead of an `InMemorySession` and writes
+   * the session id to stderr for `--resume` later.
+   */
+  persist: boolean;
+  /**
+   * F14.1: `--session-dir <path>`: where to
+   * store / load persisted sessions. Default
+   * `~/.local/state/envoy-harness/sessions`.
+   * Override via `ENVOY_HARNESS_SESSION_DIR` env
+   * var (set in `run.ts` when not specified on
+   * the CLI).
+   */
+  sessionDir: string | undefined;
   /** `--plan`: plan-only mode. */
   plan: boolean;
   /** `--repl`: enter the interactive REPL (F17.1). */
@@ -255,6 +275,8 @@ function parseRunArgs(argv: ReadonlyArray<string>): RunParsedArgs {
     maxCostUsd: undefined,
     resume: undefined,
     fork: undefined,
+    persist: false,
+    sessionDir: undefined,
     plan: false,
     repl: false,
     noColor: false,
@@ -283,6 +305,10 @@ function parseRunArgs(argv: ReadonlyArray<string>): RunParsedArgs {
         out.repl = true;
         continue;
       }
+      if (arg === "--persist") {
+        out.persist = true;
+        continue;
+      }
       // Valued flags: consume the next arg.
       if (RUN_VALUED_FLAGS.has(arg)) {
         const value = argv[++i];
@@ -299,6 +325,16 @@ function parseRunArgs(argv: ReadonlyArray<string>): RunParsedArgs {
             out.sandbox = value;
             break;
           case "--approval":
+            if (
+              value !== "unless-trusted" &&
+              value !== "on-request" &&
+              value !== "granular" &&
+              value !== "never"
+            ) {
+              throw new ArgvError(
+                `invalid --approval: ${value} (expected unless-trusted | on-request | granular | never)`,
+              );
+            }
             out.approval = value;
             break;
           case "--model":
@@ -331,6 +367,9 @@ function parseRunArgs(argv: ReadonlyArray<string>): RunParsedArgs {
             break;
           case "--fork":
             out.fork = value;
+            break;
+          case "--session-dir":
+            out.sessionDir = value;
             break;
         }
         continue;
@@ -511,6 +550,8 @@ export function formatHelp(version: string): string {
     "  --max-cost-usd <n>     cost ceiling (default 5.00)",
     "  --resume <session-id>  resume a previous session",
     "  --fork <session-id>    fork a previous session",
+    "  --persist              persist this session to disk (for --resume later)",
+    "  --session-dir <path>   session storage dir (default ~/.local/state/envoy-harness/sessions)",
     "  --plan                 read + plan only, no writes",
     "  --repl                 interactive REPL (no positional prompt)",
     "  --json                 JSON Lines output (machine-readable)",

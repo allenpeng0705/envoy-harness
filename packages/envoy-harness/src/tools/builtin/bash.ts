@@ -31,11 +31,10 @@ import { spawn } from "node:child_process";
 
 import { z } from "zod";
 
-import {
-  type BashValidationInput,
-  validateBash,
-} from "../../permissions/bash/index.js";
-import type { PermissionMode, SandboxPolicy } from "../../types.js";
+import { validateBash } from "../../permissions/bash/index.js";
+import { tokenizeShellCommand } from "../../permissions/bash/tokenize.js";
+import { policyFromMode } from "../../permissions/policy.js";
+import type { BashValidationInput, SandboxPolicy } from "../../types.js";
 import type { Tool } from "../types.js";
 
 /** Default timeout for a bash command, in milliseconds. */
@@ -86,12 +85,18 @@ export const bashTool: Tool<
   }),
   async execute({ command, timeoutMs, maxOutputBytes }, ctx) {
     const mode = ctx.session.metadata.permissionMode ?? "read-only";
-    const policy = policyFromMode(mode, ctx.cwd);
+    // Prefer the agent's live policy (so `/sandbox` and plan-mode
+    // changes take effect); fall back to deriving from the session
+    // for direct tool callers that don't pass one.
+    const policy: SandboxPolicy = ctx.sandboxPolicy ?? policyFromMode(mode, ctx.cwd);
 
     // 1. Validate against the permission policy.
     const input: BashValidationInput = {
       command,
-      argv: [],
+      // Tokenize the command so `pathValidation` can see the
+      // actual operands (v0 passed `[]`, which made path
+      // validation a no-op).
+      argv: tokenizeShellCommand(command),
       env: envRecord(),
       cwd: ctx.cwd,
       policy,
@@ -113,38 +118,6 @@ export const bashTool: Tool<
     return runBash(command, ctx, timeoutMs, maxOutputBytes, undefined);
   },
 };
-
-/**
- * Build a `SandboxPolicy` from the session's `PermissionMode`.
- * This is the v0 mapping; the policy layer in Phase 2 lets the
- * user customize this in `~/.config/envoy/config.toml`.
- *
- * | mode               | backend              | network |
- * |--------------------|----------------------|---------|
- * | read-only          | linux-landlock       | no      |
- * | workspace-write    | linux-landlock       | no      |
- * | danger-full-access | none                 | yes     |
- */
-function policyFromMode(mode: PermissionMode, cwd: string): SandboxPolicy {
-  if (mode === "danger-full-access") {
-    return {
-      mode,
-      approval: "never",
-      backend: "none",
-      writableRoots: [],
-      networkAccess: true,
-      excludeSlashTmp: true,
-    };
-  }
-  return {
-    mode,
-    approval: "on-request",
-    backend: "linux-landlock",
-    writableRoots: mode === "workspace-write" ? [cwd] : [],
-    networkAccess: false,
-    excludeSlashTmp: true,
-  };
-}
 
 /** Convert `process.env` to a `Record<string, string>` (filtering undefined). */
 function envRecord(): Record<string, string> {

@@ -22,22 +22,41 @@
 import type { BashValidationInput, BashValidator, BashVerdict } from "../../types.js";
 
 /**
- * Count single and double quotes in a string. Return true if either
- * count is odd (unbalanced).
+ * Return true if the command has unbalanced shell quotes.
  *
- * Note: this is a naive count; it doesn't handle escaped quotes inside
- * the same string. For a stricter check, a proper shell parser would
- * be needed. The current behavior errs on the side of "block
- * ambiguous" rather than "allow dangerous".
+ * This is a small state machine rather than a raw character count:
+ * - single quotes: nothing is escaped inside them (POSIX);
+ * - double quotes: backslash escapes the next character;
+ * - outside quotes: backslash escapes the next character;
+ * - a quote inside a differently-quoted region is literal
+ *   (`"it's"` has a balanced apostrophe; the old char-count
+ *   version blocked it as a false positive).
+ *
+ * Unclosed regions at end of input are unbalanced.
  */
 export function hasUnbalancedQuotes(command: string): boolean {
-  let singleCount = 0;
-  let doubleCount = 0;
+  let inSingle = false;
+  let inDouble = false;
+  let escaped = false;
   for (const ch of command) {
-    if (ch === "'") singleCount++;
-    else if (ch === '"') doubleCount++;
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === "\\" && !inSingle) {
+      escaped = true;
+      continue;
+    }
+    if (ch === "'" && !inDouble) {
+      inSingle = !inSingle;
+      continue;
+    }
+    if (ch === '"' && !inSingle) {
+      inDouble = !inDouble;
+      continue;
+    }
   }
-  return singleCount % 2 === 1 || doubleCount % 2 === 1;
+  return inSingle || inDouble;
 }
 
 /**

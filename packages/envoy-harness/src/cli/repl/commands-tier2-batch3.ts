@@ -1,0 +1,197 @@
+/**
+ * F14.1 — Tier 2 batch 3 commands.
+ *
+ * Two real-feature commands that complete the F14
+ * REPL surface (the F18 commands identified by the
+ * codex/claudecode/pi gap analysis that weren't
+ * already shipped by F17.5 or F17.6):
+ *
+ * - `/rename <title>` — set the session's display
+ *   title. Calls `ctx.agent.setTitle(title)`
+ *   (or, if the session is in-memory, mutates the
+ *   metadata directly). For `PersistedSession` this
+ *   also rewrites the JSONL header on disk so the
+ *   new title survives `--resume`.
+ * - `/copy` — print the last assistant text. Reads
+ *   `ctx.lastResponse` (the loop tracks the last
+ *   turn's text in this field). When no turn has
+ *   happened yet, prints "no response yet".
+ *
+ * **Why a separate file from F17.5 / F17.6:** the
+ * F14 phase bundles the persistence work with the
+ * F18 gap-analysis commands. F14.1 ships 2 commands
+ * (`/rename`, `/copy`); F14.3 ships the other 2
+ * (`/review`, `/export`). The original F14 plan
+ * listed 3 batch-3 commands (`/new`, `/rename`,
+ * `/copy`), but F17.5 already shipped `/new`
+ * (start a fresh session — new id + new transcript),
+ * which is the codex-equivalent semantic. The
+ * `/clear` vs `/new` distinction in codex/
+ * claudecode is preserved: F17.2 `/clear` resets
+ * the transcript (keeps id, keeps AGENTS.md);
+ * F17.5 `/new` mints a new session id.
+ *
+ * **v0 limitations:**
+ * - `/rename` does NOT validate the title (no
+ *   length cap, no character restriction). A
+ *   future chunk can add a max-length + character
+ *   policy.
+ * - `/copy` prints to stdout, NOT the system
+ *   clipboard. "Copy" in the v0 sense is "print
+ *   the text so the user can copy it manually
+ *   (or pipe to pbcopy/xclip)". A real clipboard
+ *   integration is a host concern (the Tauri app
+ *   can wire it; the v0 CLI doesn't).
+ * - `/copy` only tracks the LAST response. There's
+ *   no `/copy <n>` for older turns. A future
+ *   chunk can add a message index.
+ */
+import type { ReplCommand } from "./types.js";
+
+// ---------------------------------------------------------------------------
+// 1. /rename <title> — set the session's display title
+// ---------------------------------------------------------------------------
+
+/**
+ * Maximum title length. codex uses 100; claudecode
+ * uses ~80. We default to 100 to match the codex
+ * convention. Titles longer than this are truncated
+ * with a warning (the session still works; the
+ * truncation is for display only).
+ */
+const MAX_TITLE_LENGTH = 100;
+
+/**
+ * `/rename <title>` — update the session's display
+ * title. The title is shown by `/session` (F17.2.5)
+ * and is persisted in the `PersistedSession` JSONL
+ * header. When the session is in-memory, the title
+ * is mutated in place.
+ *
+ * **v0 argument shape:** all whitespace-separated
+ * tokens after `/rename` are joined with a single
+ * space. The title is a single line (no embedded
+ * newlines). Empty title → "title cannot be empty"
+ * to stderr.
+ *
+ * **Why "title" and not "name":** codex/claudecode
+ * both use the word "rename" but treat the value
+ * as a label (e.g. "fix login bug"). We use "title"
+ * internally (matches the `SessionMetadata.title`
+ * field) but the user-facing command is `/rename`
+ * (matches the codex/claudecode convention).
+ */
+const renameCommand: ReplCommand = {
+  name: "/rename",
+  description: "set the session's display title (visible in /session and persisted sessions)",
+  handler(args, ctx) {
+    if (args.length === 0) {
+      ctx.stderr.write("error: /rename requires a title argument\n");
+      return;
+    }
+    const raw = args.join(" ").trim();
+    if (raw.length === 0) {
+      ctx.stderr.write("error: title cannot be empty\n");
+      return;
+    }
+    // Collapse internal whitespace to single spaces;
+    // strip leading/trailing whitespace. The session
+    // metadata is intended for single-line display.
+    const title = raw.replace(/\s+/g, " ");
+    let final = title;
+    let truncated = false;
+    if (title.length > MAX_TITLE_LENGTH) {
+      final = title.slice(0, MAX_TITLE_LENGTH - 1) + "…";
+      truncated = true;
+    }
+    // Use the Agent's public setTitle (it delegates to
+    // `Session.setTitle`; the session field itself is
+    // private). Persisted sessions write through to disk.
+    ctx.agent.setTitle(final);
+    if (truncated) {
+      ctx.stdout.write(`renamed: ${final} (truncated to ${MAX_TITLE_LENGTH} chars)\n`);
+    } else {
+      ctx.stdout.write(`renamed: ${final}\n`);
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------
+// 2. /copy — print the last assistant response
+// ---------------------------------------------------------------------------
+
+/**
+ * `/copy` — print the last assistant text from the
+ * most recent agent turn. The REPL's loop tracks
+ * this in `ReplContext.lastResponse` (set after
+ * every turn's `agent.run` call). When no turn
+ * has happened yet, prints "no response yet" to
+ * stderr.
+ *
+ * **Why print, not clipboard:** the v0 CLI runs in
+ * a non-interactive environment (CI, scripted
+ * runs, `envoy-harness --repl` in a tmux pane).
+ * The "copy" verb in the user-facing sense is
+ * "give me the text so I can do something with
+ * it" — piping to `pbcopy`, `xclip`, or just
+ * reading the terminal scrollback. A real
+ * clipboard integration is a host concern
+ * (the Tauri app can wire it; the v0 CLI
+ * shouldn't try).
+ *
+ * **v0 limitations:**
+ * - Only the LAST response. No `/copy <n>` for
+ *   older turns. A future chunk can add a
+ *   message index (F14.3+ candidate, or skip).
+ * - Empty responses (model returned a tool call
+ *   only) print "(no text in last response)".
+ *   The user can still `/diff` or inspect the
+ *   session file.
+ */
+const copyCommand: ReplCommand = {
+  name: "/copy",
+  description: "print the last assistant response (so you can copy it manually)",
+  handler(_args, ctx) {
+    const text = ctx.lastResponse;
+    if (text === undefined) {
+      ctx.stderr.write("no response yet (run a turn first)\n");
+      return;
+    }
+    if (text.length === 0) {
+      ctx.stdout.write("(no text in last response)\n");
+      return;
+    }
+    ctx.stdout.write(text);
+    if (!text.endsWith("\n")) {
+      ctx.stdout.write("\n");
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Public surface
+// ---------------------------------------------------------------------------
+
+/**
+ * F14.1: list of the 2 Tier 2 batch 3 commands. The
+ * runner includes this in the default registry after
+ * `BUILTIN_TIER2_BATCH2_COMMANDS` (built-ins always
+ * win on name collision).
+ *
+ * **Defined last** because each entry is a `const`
+ * declared above. Forward references in `const`
+ * arrays would force us to either inline the
+ * literals (less readable) or convert each command
+ * to a function declaration (less idiomatic for a
+ * data literal). The bottom-of-file position is
+ * the cleanest fix (same pattern as
+ * `BUILTIN_COMMANDS` in `commands.ts`,
+ * `BUILTIN_INFO_COMMANDS` in `commands-info.ts`,
+ * `BUILTIN_TIER2_COMMANDS` in `commands-tier2.ts`,
+ * and `BUILTIN_TIER2_BATCH2_COMMANDS` in
+ * `commands-tier2-batch2.ts`).
+ */
+export const BUILTIN_TIER2_BATCH3_COMMANDS: ReadonlyArray<ReplCommand> = [
+  renameCommand,
+  copyCommand,
+];

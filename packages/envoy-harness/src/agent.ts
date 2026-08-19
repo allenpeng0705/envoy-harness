@@ -48,6 +48,7 @@ import type { Session } from "./session.js";
 import type { ContentBlock, ToolRegistry } from "./tools/index.js";
 import type { AskHandler, AskRequest, SandboxPolicy } from "./types.js";
 import { CostTracker } from "./cost.js";
+import { policyFromMode } from "./permissions/policy.js";
 import type { LspManager } from "./lsp/index.js";
 import { makeLspTools } from "./lsp/tools.js";
 import { NullTracer } from "./trace/null-tracer.js";
@@ -96,7 +97,9 @@ export interface AgentOptions {
    * `costTracker.total().costUsd` exceeds this number, the
    * agent aborts (sets `stopReason: "aborted"`). The check
    * happens after every model call that reports `usage`.
-   * Default: no cap.
+   * `0` means "no cap" (the cross-verify path passes 0 as
+   * "free"; a $0 ceiling would abort on the first token
+   * spend). Default: no cap.
    */
   maxCostUsd?: number;
   /**
@@ -220,6 +223,21 @@ export interface AgentOptions {
    * `sessionId` for the child node.
    */
   subagentOf?: string;
+  /**
+   * Approval policy for the session. Controls how `ask`
+   * hook decisions are resolved:
+   *
+   * - `never`: asks are denied unconditionally (fail-closed,
+   *   even if a host installed an allow-ing `askHandler`).
+   * - `unless-trusted` / `on-request` / `granular`: asks are
+   *   delegated to `askHandler` (default: deny when no handler
+   *   is installed).
+   *
+   * Default: `on-request` (delegate). v0 has no per-tool
+   * trust metadata, so `unless-trusted` and `granular` behave
+   * like `on-request` until such metadata exists.
+   */
+  approval?: import("./types.js").AskForApproval;
 }
 
 /** What `Agent.run()` returns. */
@@ -305,6 +323,8 @@ export class Agent {
    *  attribute events without consumer-side
    *  inference. Undefined for the root agent. */
   private subagentOf: string | undefined;
+  /** F-fix: approval policy. Defaults to `on-request`. */
+  private approval: import("./types.js").AskForApproval;
 
   constructor(options: AgentOptions) {
     this.model = options.model;
@@ -313,7 +333,10 @@ export class Agent {
     this.hooks = options.hooks ?? defaultRegistry;
     this.cwd = options.cwd ?? process.cwd();
     this.maxIterations = options.maxIterations ?? DEFAULT_MAX_ITERATIONS;
-    this.maxCostUsd = options.maxCostUsd;
+    this.maxCostUsd =
+      options.maxCostUsd !== undefined && options.maxCostUsd > 0
+        ? options.maxCostUsd
+        : undefined;
     this.askHandler = options.askHandler;
     this.lspManager = options.lspManager;
     this.tracer = options.tracer ?? new NullTracer();
@@ -321,6 +344,7 @@ export class Agent {
     this.fanOutRegistry = options.fanOutRegistry;
     this.maxSubagents = options.maxSubagents ?? DEFAULT_MAX_SUBAGENTS;
     this.subagentOf = options.subagentOf;
+    this.approval = options.approval ?? "on-request";
     // F9.2: register the 4 LSP tools when the host provides
     // a manager. We do this AFTER the constructor sets
     // `this.tools` so the registry is available.
@@ -343,12 +367,24 @@ export class Agent {
         if (result.costUsd > 0) {
           this.costTracker.addSubagentCost(result.costUsd);
         }
+        // F-fix: sub-agent costs count toward the parent's cap.
+        // The cap check normally runs after model calls; this is
+        // the only point where sub-agent costs enter the tracker.
+        if (this.maxCostUsd !== undefined) {
+          const total = this.costTracker.total();
+          if (total.costUsd > this.maxCostUsd) {
+            this.abortController.abort(
+              `max-cost-usd exceeded (incl. sub-agent costs): $${total.costUsd.toFixed(4)} > $${this.maxCostUsd}`,
+            );
+          }
+        }
       };
       this.tools.register(
         makeTaskTool({
           submitter: this.meshSubmitter,
           ...(this.fanOutRegistry ? { fanOutRegistry: this.fanOutRegistry } : {}),
           onSubagentComplete,
+          maxSubagents: this.maxSubagents,
         }),
       );
     }
@@ -370,9 +406,9 @@ export class Agent {
     }
     this.systemPrompt = options.systemPrompt;
     // Build the sandbox policy from the session's permission mode.
-    // The bash tool re-derives this; here we use it for the verifier
-    // and the AgentResult so callers can audit what was enforced.
-    this.sandboxPolicy = policyFromSessionMode(
+    // The bash tool uses this (via ToolContext) so runtime policy
+    // changes (`setPermissionMode`) take effect on the next call.
+    this.sandboxPolicy = policyFromMode(
       this.session.metadata.permissionMode ?? "read-only",
       this.cwd,
     );
@@ -483,7 +519,17 @@ export class Agent {
   setPermissionMode(
     mode: NonNullable<Session["metadata"]["permissionMode"]>,
   ): void {
-    this.sandboxPolicy = policyFromSessionMode(mode, this.cwd);
+    this.sandboxPolicy = policyFromMode(mode, this.cwd);
+  }
+
+  /**
+   * F-fix: the current effective permission mode (the live
+   * policy, which `/sandbox` can change after session start).
+   * Used by the REPL's `/init` to refuse writes in read-only
+   * sessions.
+   */
+  getPermissionMode(): PermissionMode {
+    return this.sandboxPolicy.mode;
   }
 
   /**
@@ -550,7 +596,9 @@ export class Agent {
   newSession(): void {
     this.session = new InMemorySession(newSessionId(), {
       cwd: this.cwd,
-      permissionMode: this.session.metadata.permissionMode ?? "workspace-write",
+      // Preserve the LIVE policy mode (the `/sandbox` command may
+      // have changed it after session start).
+      permissionMode: this.sandboxPolicy.mode,
       startedAt: new Date().toISOString(),
       title: "repl",
     });
@@ -571,6 +619,15 @@ export class Agent {
    */
   getSessionId(): string {
     return this.session.id;
+  }
+
+  /**
+   * F14.1: set the session's display title. Persisted
+   * implementations (`PersistedSession`) write through to
+   * disk so the title survives a `--resume`.
+   */
+  setTitle(title: string): void {
+    this.session.setTitle(title);
   }
 
   /**
@@ -655,6 +712,7 @@ export class Agent {
         response = await this.model.complete({
           messages: this.session.messages,
           tools: this.tools.list(),
+          signal: this.abortController.signal,
         });
       } catch (err) {
         // Model errors are surfaced as a synthetic assistant
@@ -698,10 +756,22 @@ export class Agent {
       if (this.maxCostUsd !== undefined) {
         const total = this.costTracker.total();
         if (total.costUsd > this.maxCostUsd) {
-          this.abortController.abort(
-            `max-cost-usd exceeded: $${total.costUsd.toFixed(4)} > $${this.maxCostUsd}`,
+          const reason = `max-cost-usd exceeded: $${total.costUsd.toFixed(4)} > $${this.maxCostUsd}`;
+          this.abortController.abort(reason);
+          // Surface the abort reason in the transcript AND the
+          // result content so the model/user sees why the run
+          // stopped (v0 omitted this — the user saw a silent
+          // "aborted" stop reason with the last response text).
+          const note: ContentBlock = {
+            type: "text",
+            text: `\n\n[aborted] ${reason}`,
+          };
+          this.session.appendMessage("assistant", [note]);
+          return this.makeResult(
+            [...response.content, note],
+            "aborted",
+            iterations,
           );
-          return this.makeResult(response.content, "aborted", iterations);
         }
       }
 
@@ -743,7 +813,7 @@ export class Agent {
       // `bash`) stay serial (bash is
       // order-dependent). The model's pattern
       // is the driver; the host doesn't opt in.
-      await this.executeToolCalls(toolCalls);
+      await this.executeToolCalls(toolCalls, iterations);
 
       // If model said "max_tokens" and we have tool calls, treat
       // as end-of-turn; the agent shouldn't loop on a truncated
@@ -802,6 +872,7 @@ export class Agent {
    */
   private async executeToolCalls(
     calls: ReadonlyArray<Extract<ContentBlock, { type: "tool_call" }>>,
+    iteration: number,
   ): Promise<void> {
     if (calls.length === 0) return;
 
@@ -827,7 +898,7 @@ export class Agent {
       // own session; abort propagation is wired
       // via the submitter (F10.1.2).
       await Promise.all(
-        calls.map((call) => this.executeToolCall(call)),
+        calls.map((call) => this.executeToolCall(call, iteration)),
       );
       return;
     }
@@ -839,12 +910,13 @@ export class Agent {
     //   dependencies)
     for (const call of calls) {
       if (this.abortController.signal.aborted) break;
-      await this.executeToolCall(call);
+      await this.executeToolCall(call, iteration);
     }
   }
 
   private async executeToolCall(
     call: Extract<ContentBlock, { type: "tool_call" }>,
+    iteration: number,
   ): Promise<void> {
     this.toolCallCount++;
     const tool = this.tools.get(call.name);
@@ -860,6 +932,16 @@ export class Agent {
     // to approve. We call the host's handler (if any)
     // and act on the decision. No handler → safe deny.
     if (preDecision.kind === "ask") {
+      // Approval mode `never` fails closed regardless of any
+      // host-installed askHandler.
+      if (this.approval === "never") {
+        this.appendToolResult(
+          call.id,
+          `denied: approval mode is 'never' (${preDecision.question})`,
+          true,
+        );
+        return;
+      }
       const askReq: AskRequest = {
         tool: call.name,
         args: call.args,
@@ -887,6 +969,12 @@ export class Agent {
       // the tool runner.
     }
 
+    // PreToolUse modify: the hook changed the tool call's args.
+    // We re-validate against the tool's zod schema below.
+    if (preDecision.kind === "modify") {
+      call = { ...call, args: preDecision.modified };
+    }
+
     if (!tool) {
       // F9.4: emit tool_call + tool_result even for
       // unknown tools (the trace records the attempt
@@ -895,14 +983,14 @@ export class Agent {
       this.emit({
         kind: "tool_call",
         ts: new Date().toISOString(),
-        iteration: this.toolCallCount,
+        iteration,
         call,
       });
       this.appendToolResult(call.id, `unknown tool: ${call.name}`, true);
       this.emit({
         kind: "tool_result",
         ts: new Date().toISOString(),
-        iteration: this.toolCallCount,
+        iteration,
         callId: call.id,
         result: { content: `unknown tool: ${call.name}`, isError: true },
         durationMs: 0,
@@ -915,11 +1003,10 @@ export class Agent {
     // see the call in the next iteration; the trace
     // gets it now. Even if arg validation fails, the
     // trace records the attempt.
-    const toolCallEventIteration = this.toolCallCount;
     this.emit({
       kind: "tool_call",
       ts: new Date().toISOString(),
-      iteration: toolCallEventIteration,
+      iteration,
       call,
     });
 
@@ -935,7 +1022,7 @@ export class Agent {
       this.emit({
         kind: "tool_result",
         ts: new Date().toISOString(),
-        iteration: toolCallEventIteration,
+        iteration,
         callId: call.id,
         result: {
           content: `invalid arguments: ${parsed.error.message}`,
@@ -961,6 +1048,9 @@ export class Agent {
         cwd: this.cwd,
         session: this.session,
         abortSignal: this.abortController.signal,
+        // Pass the live policy so the bash tool enforces the
+        // current mode, not the session-start mode.
+        sandboxPolicy: this.sandboxPolicy,
       });
       resultContent = result.content;
       isError = result.isError ?? false;
@@ -976,7 +1066,7 @@ export class Agent {
     this.emit({
       kind: "tool_result",
       ts: new Date().toISOString(),
-      iteration: toolCallEventIteration,
+      iteration,
       callId: call.id,
       result: { content: resultContent, ...(isError ? { isError } : {}) },
       durationMs: toolDurationMs,
@@ -1108,37 +1198,4 @@ function normalizeStopReason(
   modelReason: ModelResponse["stopReason"],
 ): AgentResult["stopReason"] {
   return modelReason;
-}
-
-/**
- * Build a `SandboxPolicy` from a session's permission mode.
- * Same shape as the bash tool's `policyFromMode` — they MUST
- * stay in sync. If you change one, change the other. The
- * duplication exists because the agent needs the policy for
- * its result (verifier visibility) while the bash tool needs
- * it for validation. The two are computed independently and
- * compared at test time.
- */
-function policyFromSessionMode(
-  mode: NonNullable<Session["metadata"]["permissionMode"]>,
-  cwd: string,
-): SandboxPolicy {
-  if (mode === "danger-full-access") {
-    return {
-      mode,
-      approval: "never",
-      backend: "none",
-      writableRoots: [],
-      networkAccess: true,
-      excludeSlashTmp: true,
-    };
-  }
-  return {
-    mode,
-    approval: "on-request",
-    backend: "linux-landlock",
-    writableRoots: mode === "workspace-write" ? [cwd] : [],
-    networkAccess: false,
-    excludeSlashTmp: true,
-  };
 }

@@ -31,6 +31,7 @@ import {
   BUILTIN_COMMANDS,
   BUILTIN_INFO_COMMANDS,
   BUILTIN_TIER2_BATCH2_COMMANDS,
+  BUILTIN_TIER2_BATCH3_COMMANDS,
   BUILTIN_TIER2_COMMANDS,
   runRepl,
   type LineReader,
@@ -116,6 +117,8 @@ function makeArgs(): RunParsedArgs {
     maxCostUsd: undefined,
     resume: undefined,
     fork: undefined,
+    persist: false,
+    sessionDir: undefined,
     plan: false,
     repl: false,
     noColor: false,
@@ -363,28 +366,30 @@ describe("snapshot: /help and dispatch table", () => {
       stderr: new StringWritable(),
       historyPath: "",
     });
-    // Every F17.2 + F17.2.5 + F17.5 + F17.6 command shows up in /help.
+    // Every F17.2 + F17.2.5 + F17.5 + F17.6 + F14.1 command shows up in /help.
     const allNames = [
       ...BUILTIN_COMMANDS,
       ...BUILTIN_INFO_COMMANDS,
       ...BUILTIN_TIER2_COMMANDS,
       ...BUILTIN_TIER2_BATCH2_COMMANDS,
+      ...BUILTIN_TIER2_BATCH3_COMMANDS,
     ].map((c) => c.name).sort();
     for (const name of allNames) {
       expect(out.data).toContain(name);
     }
   });
 
-  it("the dispatch table covers all 22 built-in commands (no missing, no collisions)", () => {
-    // 9 from F17.2 + 8 from F17.2.5 + 3 from F17.5 + 2 from F17.6 = 22.
-    // /undo is deferred to F17.7.
+  it("the dispatch table covers all 24 built-in commands (no missing, no collisions)", () => {
+    // 9 from F17.2 + 8 from F17.2.5 + 3 from F17.5 + 2 from F17.6
+    // + 2 from F14.1 (/rename, /copy) = 24. /undo is deferred.
     const allNames = [
       ...BUILTIN_COMMANDS,
       ...BUILTIN_INFO_COMMANDS,
       ...BUILTIN_TIER2_COMMANDS,
       ...BUILTIN_TIER2_BATCH2_COMMANDS,
+      ...BUILTIN_TIER2_BATCH3_COMMANDS,
     ].map((c) => c.name);
     expect(new Set(allNames).size).toBe(allNames.length);
-    expect(allNames.length).toBe(22);
+    expect(allNames.length).toBe(24);
   });
 });

@@ -64,6 +64,25 @@ export interface Session {
   lastMessage(): Message | null;
   /** Remove all messages. Test-only utility. */
   clear(): void;
+  /**
+   * F14.1: update the session's display title. The
+   * `metadata.title` field is the user-facing label
+   * (e.g. shown by the REPL's `/session` command and
+   * persisted to disk in F14's persisted session).
+   *
+   * **Why a setter, not a direct field write:** the
+   * `metadata` field is `readonly` (the object
+   * reference can't change), but the OBJECT's
+   * properties are mutable. A dedicated method
+   * documents the intent and lets `PersistedSession`
+   * (F14) also write through to disk in the same call.
+   *
+   * **Add-on:** implementations that don't persist
+   * (like the in-memory one) can just mutate
+   * `metadata.title`. `PersistedSession` does the
+   * same + flushes the header line.
+   */
+  setTitle(title: string): void;
 }
 
 /**
@@ -103,6 +122,18 @@ export class InMemorySession implements Session {
 
   clear(): void {
     this._messages = [];
+  }
+
+  /**
+   * F14.1: set the session's display title. The
+   * `metadata.title` field is mutable (the object
+   * reference is `readonly` on the class field, but
+   * the object's properties are not). Just assign
+   * — no side effects (the in-memory session doesn't
+   * persist; the persisted one does, separately).
+   */
+  setTitle(title: string): void {
+    this.metadata.title = title;
   }
 }
 

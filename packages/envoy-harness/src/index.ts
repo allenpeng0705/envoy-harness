@@ -108,6 +108,16 @@ export {
   type SessionMetadata,
 } from "./session.js";
 
+// F14.1: re-export the persistence layer (PersistedSession
+// + SessionStore). Hosts wire these via `Agent(session: ...)`
+// or via the CLI's --resume / --fork / --persist flags.
+export {
+  PersistedSession,
+  type PersistedSessionCreateOptions,
+  SessionStore,
+  type SessionStoreOptions,
+} from "./session/index.js";
+
 // Re-export the agent loop (§3.4 of the design doc)
 export {
   Agent,
@@ -181,6 +191,7 @@ export {
   BUILTIN_COMMANDS,
   BUILTIN_INFO_COMMANDS,
   BUILTIN_TIER2_BATCH2_COMMANDS,
+  BUILTIN_TIER2_BATCH3_COMMANDS,
   BUILTIN_TIER2_COMMANDS,
   ReplCommandRegistry,
   defaultAskHandler,
@@ -251,6 +262,8 @@ export {
 export {
   JsonLinesTracer,
   NullTracer,
+  VerboseTracer,
+  formatVerbose,
   type AgentEndEvent,
   type AgentStartEvent,
   type ErrorEvent,
@@ -315,6 +328,7 @@ export {
   appendEntry,
   buildHypothesisPrompt,
   hashRuleset,
+  loadRulesetFromFile,
   parseHypothesisFromLlm,
   readAdoptions,
   readBenchmark,

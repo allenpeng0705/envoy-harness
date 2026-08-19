@@ -24,10 +24,10 @@
  * | 8 | 10 | sed -i on user path (allow) |
  * | 9 | 15 | Path inside writable_roots (allow in workspace-write) |
  * | 10 | 15 | Path outside writable_roots (block in workspace-write) |
- * | 11 | 10 | Shell injection (block) |
+ * | 11 | 11 | Shell injection (block) |
  * | 12 | 20 | Edge cases (empty, unicode, very long, multi-line) |
  *
- * **Total: 200 commands** (40+20+20+15+15+10+10+10+15+15+10+20 = 200).
+ * **Total: 201 commands** (40+20+20+15+15+10+10+10+15+15+11+20 = 201).
  *
  * **Adding more:** append entries; the test loop picks them up.
  * **Removing:** delete entries; the test count drops correspondingly.
@@ -362,6 +362,7 @@ const GROUP_11_INJECTION: BashCommandFixture[] = [
   { command: "`rm -rf /`", argv: ["`rm -rf /`"], cwd: "/tmp", policy: DANGER_FULL_ACCESS, expected: "block", tag: "g11-backticks-rm-root" },
   { command: "cat /etc/passwd `rm /etc/hosts`", argv: ["cat", "/etc/passwd", "`rm /etc/hosts`"], cwd: "/tmp", policy: DANGER_FULL_ACCESS, expected: "block", tag: "g11-backticks-mixed" },
   { command: "echo a\"b", argv: ["echo", "a\"b"], cwd: "/tmp", policy: READ_ONLY_POLICY, expected: "block", tag: "g11-unbalanced-odd" },
+  { command: "echo a\\\"b", argv: ["echo", "a\"b"], cwd: "/tmp", policy: READ_ONLY_POLICY, expected: "allow", tag: "g11-escaped-quote" },
 ];
 
 // ---------------------------------------------------------------------------
@@ -410,9 +411,9 @@ export const ALL_BASH_COMMANDS: ReadonlyArray<BashCommandFixture> = [
   ...GROUP_12_EDGE_CASES,
 ];
 
-/** Assert at module load: the fixture has 200 entries. */
-if (ALL_BASH_COMMANDS.length !== 200) {
+/** Assert at module load: the fixture has 201 entries. */
+if (ALL_BASH_COMMANDS.length !== 201) {
   throw new Error(
-    `Bash parity fixture has ${ALL_BASH_COMMANDS.length} entries, expected 200`,
+    `Bash parity fixture has ${ALL_BASH_COMMANDS.length} entries, expected 201`,
   );
 }

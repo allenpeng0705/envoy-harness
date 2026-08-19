@@ -145,6 +145,19 @@ export interface ReplOptions {
    * a real `LocalMeshSubmitter`.
    */
   subagentRegistry?: SubagentRegistry;
+  /**
+   * F14.1: seed value for `ReplContext.lastResponse`.
+   * When set, the loop uses this as the initial
+   * `lastResponse` (before any turns have run).
+   * Used by tests to exercise the `/copy` command
+   * without going through a real agent turn.
+   *
+   * The loop overwrites this field on every turn
+   * (so it's only the initial value that's
+   * controlled). For runtime hosts, leave it
+   * undefined.
+   */
+  lastResponse?: string;
 }
 
 /**
@@ -247,6 +260,22 @@ export interface ReplContext {
    *  "no sub-agents (the agent has no meshSubmitter
    *  or the submitter doesn't implement listSubagents)". */
   subagentRegistry?: SubagentRegistry;
+  /**
+   * F14.1: the last assistant text from the most recent
+   * agent turn. The loop updates this after every turn;
+   * the `/copy` command reads it. `undefined` before
+   * the first turn (no response yet to copy).
+   *
+   * **Why a context field, not a method on Agent:**
+   * the REPL's loop is the chokepoint — it knows when
+   * a turn completes and what the assistant text was
+   * (it already prints it to stdout). Threading the
+   * text through a single field keeps the contract
+   * simple. Tests inject a value via the
+   * `lastResponse` field below for deterministic
+   * assertions.
+   */
+  lastResponse?: string;
 }
 
 /**

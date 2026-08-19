@@ -20,7 +20,8 @@
 
 import type { BashValidationInput, BashValidator, BashVerdict } from "../../types.js";
 
-const NETWORK_PATTERN = /\bcurl\b|\bwget\b|\bnc\b|\bssh\b|\bnslookup\b/;
+const NETWORK_PATTERN =
+  /\bcurl\b|\bwget\b|\bnc\b|\bssh\b|\bnslookup\b|\bgit\s+(?:fetch|pull|push|clone|ls-remote)\b/;
 
 export const modeValidation: BashValidator = {
   name: "mode",

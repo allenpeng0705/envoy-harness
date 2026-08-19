@@ -82,6 +82,15 @@ export interface ToolContext {
   cwd: string;
   session: Session;
   abortSignal: AbortSignal;
+  /**
+   * The agent's current effective `SandboxPolicy`. Tools that
+   * enforce permissions (e.g. `bash`) use this instead of
+   * re-deriving from session metadata, so runtime policy
+   * changes (`/sandbox`, plan mode) take effect immediately.
+   * Optional for backward compatibility with callers that
+   * construct a `ToolContext` directly.
+   */
+  sandboxPolicy?: import("../types.js").SandboxPolicy;
 }
 
 // ---------------------------------------------------------------------------

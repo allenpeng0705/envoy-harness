@@ -3726,13 +3726,99 @@ laptop has no Tauri app — they need a CLI REPL.
      `cli/index.ts` + `src/index.ts`.
      `repl-e2e.test.ts` dispatch count: 20 → 22.
 
-8. **F17.7 candidate: `/undo`** (deferred from
-   F17.6) — needs a journaled action log + tool-
-   specific undo logic. v0 has no journal. Adding
-   one for `/undo` is a big lift (~300+ LoC; most
-   tools don't have clean inverses). Re-evaluate
-   when a real undo need surfaces. "Testability
-   wins on tie" is the tie-breaker.
+8. **F14 — Persistent session log + Tier 2 batch 3 commands**
+   (3 sub-chunks, ~480 LoC + ~25 tests). **Bundles F14
+   + F18** — the persistence work + the 4 missing REPL
+   commands identified by the codex/claudecode/pi
+   gap analysis.
+
+   **Why bundle:** the user asked to "go through our
+   own commands, don't miss important ones" against
+   codex / claude code / pi. Gap analysis: missing
+   `/review`, `/copy`, `/export`, `/rename`. The
+   original list also had `/new` as an alias of
+   `/clear`, but F17.5 already shipped `/new` (start
+   a fresh session — new id + new transcript), which
+   is the codex-equivalent semantic. The plan is
+   adjusted: F14.1 batch 3 ships **2 commands**
+   (`/rename`, `/copy`), not 3. The `/clear` vs
+   `/new` distinction in codex/claudecode is preserved:
+   F17.2 `/clear` resets the transcript (keeps id,
+   keeps AGENTS.md), F17.5 `/new` mints a new session
+   id. The 4 commands + the persistence work fit
+   naturally in one phase. **`/plan`, `/tree`,
+   `/rewind` → defer** (different scope).
+
+   **Sub-chunk plan (3 commits):**
+
+   - **F14.1 — Persistence library + CLI + 2 light commands**
+     (~280 LoC + ~14 tests):
+     - `PersistedSession` class (implements `Session`,
+       JSONL-backed; one file per session id at
+       `<session-dir>/<id>.jsonl`).
+     - `SessionStore` class (load/save/list/exists by
+       id; knows the session dir).
+     - `Session.setTitle(title)` — additive method on
+       the `Session` interface (for `/rename`).
+     - CLI: `--session-dir <path>` (default
+       `~/.local/state/envoy-harness/sessions`),
+       `--resume <id>` (loads from disk, passes to
+       Agent), `--fork <id>` (loads + creates new id +
+       copies messages), `--persist` (opt-in disk
+       persistence for new sessions).
+     - **Supporting refactor (came out of F14.1):**
+       extracted `policyFromMode` to a shared
+       `src/permissions/policy.ts` module (was
+       duplicated as `policyFromSessionMode` between
+       `agent.ts` and the bash tool — implementation-
+       plan risk 5.1). The Agent now also passes the
+       live `sandboxPolicy` to the bash tool's
+       `ToolContext` so `/sandbox` mode changes take
+       effect on the next call (was: only used the
+       session-start mode). v0: `--sandbox` defaults
+       to `read-only` (was `workspace-write` — safer
+       default for `--persist` resume).
+     - **Tokenization refactor:** the bash tool
+       previously passed `[]` for `argv` (which made
+       `pathValidation` a no-op). Added
+       `tokenizeShellCommand` (`src/permissions/bash/
+       tokenize.ts`) and pass the real tokenized
+       argv. Documented limitations (no globbing,
+       no `$(...)` expansion, no heredoc).
+     - `ReplContext.lastResponse?: string` — tracks
+       the last assistant text (for `/copy`).
+     - 2 new REPL commands (`/rename`, `/copy`).
+     - `BUILTIN_TIER2_BATCH3_COMMANDS` registered in
+       the loop (after `BUILTIN_TIER2_BATCH2_COMMANDS`).
+     - **E2E dispatch count: 22 → 24.**
+
+   - **F14.2 — REPL persistence + cross-tool E2E**
+     (~80 LoC + ~5 tests):
+     - `ReplOptions.sessionStore?` + `ReplOptions.resumeFromId?`.
+     - CLI: `--session-dir` + `--resume` work for
+       `envoy-harness --repl` too.
+     - E2E: persist a session via single-shot CLI →
+       run REPL with `--resume <id>` → verify the
+       transcript is restored.
+
+   - **F14.3 — `/review` + `/export`** (~120 LoC + ~6 tests):
+     - `/review [staged]` — runs the model as a code
+       reviewer. Reads `git diff` (default) or
+       `git diff --cached` (with `staged` arg) and
+       sends to the model with a system prompt. Prints
+       the review. No diff (clean tree) → "no changes
+       to review". Non-git dir → error to stderr.
+     - `/export [format] [path]` — exports the current
+       session. Formats: `jsonl` (default) and `md`
+       (Markdown). Path: defaults to
+       `<cwd>/<sessionId>.<ext>`. Writes a file the
+       user can share / archive.
+
+   **Deferred (post-F14):** `/plan` (model concern;
+   needs plan mode), `/tree` (session tree; needs
+   tree structure), `/rewind` (subsumed by `/resume`
+   after F14), `/undo` (F17.7 candidate, action
+   journal).
 
 **Type sketch** (the load-bearing shapes — see `src/cli/repl/`):
 
