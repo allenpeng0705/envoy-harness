@@ -70,6 +70,7 @@ EnvoyMesh's home-team agent harness. Production-grade CLI agent with four design
 
 **Test count: 1094 tests across 74 files** (envoy-harness 1001 / 64 files + envoy-harness-adapter 93 / 10 files). All passing on `pnpm -r test`. Plus 3 opt-in live tests under `pnpm test:live` (real network; off by default).
 
+
 ## Installation
 
 ```sh
