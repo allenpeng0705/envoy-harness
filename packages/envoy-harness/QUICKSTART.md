@@ -32,6 +32,51 @@ tells you which one is missing).
 export ANTHROPIC_API_KEY=sk-...
 ```
 
+### CLI Quick Reference
+
+The CLI has 3 subcommands + the default one-shot. The full flag
+set + the 26 built-in REPL commands are below; this table is the
+scannable overview.
+
+**Subcommands:**
+
+| Subcommand | Purpose |
+|---|---|
+| `envoy [flags] "<prompt>"` | One-shot: read prompt, run, print result. Default mode. |
+| `envoy --repl` | Long-lived interactive loop. 26 slash commands. |
+| `envoy team <team.toml>` | Sequential multi-agent run from a TOML config. |
+| `envoy self-evolve` | Shadow self-evolution cycle (verifier rules). Off by default. |
+
+**Common flags** (for `run` + `--repl`):
+
+| Flag | Default | What it does |
+|---|---|---|
+| `--provider <name>` | (env) | `openai` / `anthropic` / `deepseek` / `ollama` |
+| `--model <id>` | provider default | Model identifier (e.g. `gpt-4o`, `claude-sonnet-4-6`) |
+| `--cwd <path>` | `process.cwd()` | Working directory for tool execution |
+| `--sandbox <mode>` | `read-only` | `read-only` / `workspace-write` / `danger-full-access` |
+| `--approval <policy>` | `on-request` | `unless-trusted` / `on-request` / `granular` / `never` |
+| `--max-turns <n>` | 50 | Max agent iterations before force-stop |
+| `--max-cost-usd <usd>` | unlimited | Cost ceiling; aborts the run when reached |
+| `--config <path>` | (env / default) | TOML config file; overrides env + default |
+| `--session-dir <path>` | `~/.local/state/envoy-harness/sessions` | Where persisted sessions live |
+| `--resume <id>` | none | Continue a saved session |
+| `--fork <id>` | none | Copy a saved session + new id |
+| `--persist` | off | Save the run's session to disk |
+| `--json` | off | JSON Lines trace output (machine-readable) |
+| `--plan` | off | Plan-only mode (no tool execution) |
+| `--no-color` / `--verbose` / `--quiet` | off | Output knobs |
+
+**Environment variables:**
+
+| Var | Purpose |
+|---|---|
+| `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `DEEPSEEK_API_KEY` | Provider API key (one required) |
+| `ENVOY_HARNESS_CONFIG` | Path to the user-config TOML file (overrides default) |
+| `ENVOY_HARNESS_SESSION_DIR` | Default `--session-dir` (overrides the XDG default) |
+| `OLLAMA_BASE_URL` | Override the Ollama endpoint (default `http://localhost:11434/v1`) |
+| `RUN_LIVE_TESTS=1` | Opt-in for the `pnpm test:live` lane (developer only) |
+
 ### One-shot run
 
 ```sh
@@ -54,11 +99,94 @@ echo "summarize the diff" | envoy -
 envoy --json "explain this" | tee /tmp/envoy-trace.jsonl
 ```
 
+### Permission modes
+
+Three modes, set via `--sandbox <mode>` (or `permission_mode` in
+the TOML config). The default is `read-only`.
+
+| Mode | Reads | Writes | Bash mutations | Sub-agents |
+|---|---|---|---|---|
+| `read-only` | ✓ | ✗ | ✗ (6 validators + interpreter blocking) | ✓ |
+| `workspace-write` | ✓ | cwd + `writable_roots` | within allowed paths | ✓ |
+| `danger-full-access` | ✓ | anywhere | anywhere (no validators) | ✓ |
+
+The REPL `/sandbox` slash command swaps mode mid-session; the
+new mode takes effect on the next tool call (live-getter pattern
+in `ToolExecutor` so the bash / write / edit tools re-read policy
+on every invocation).
+
+### Approval policy
+
+Four values, set via `--approval <policy>` (or `ask_for_approval`
+in the TOML config). The default is `on-request`.
+
+| Value | Behavior |
+|---|---|
+| `unless-trusted` | Strict; only bash commands that pass `is_safe_command()` auto-approve. Anything else asks. |
+| `on-request` | **Default.** The model decides when to ask. Pre-tool hooks can still block. |
+| `granular` | Per-tool on/off via config (e.g. allow `read_file`, ask on `bash`, deny `write`). |
+| `never` | Auto-approve everything. The 6 bash validators still apply; this only bypasses the prompt. |
+
+The REPL `/approval` slash command swaps policy mid-session; takes
+effect on the next tool call.
+
+### Configuration (TOML)
+
+The v0 config layer is a single TOML file. Three resolution paths
+(highest priority first):
+
+1. `--config <path>` (per-invocation)
+2. `$ENVOY_HARNESS_CONFIG` (per-shell)
+3. `~/.config/envoy-harness/config.toml` (per-user; respects `$XDG_CONFIG_HOME`)
+
+Missing file = `{}` (the loader returns an empty config; the CLI
+defaults apply). The schema is zod `.strict()` — a typo in any
+field name surfaces as `ConfigLoadError` instead of being silently
+ignored.
+
+**6 fields** ship in v0:
+
+| Field | Type | Effect |
+|---|---|---|
+| `permission_mode` | enum | Initial sandbox mode for the agent |
+| `ask_for_approval` | enum | Initial approval policy |
+| `sandbox_backend` | string | Future use (kernel sandbox backend name) |
+| `network_access` | bool | Future use (allow network in restricted modes) |
+| `slash_tmp_writable` | bool | If `true`, `/tmp` is writable in `workspace-write` (default: `false`) |
+| `writable_roots` | array of paths | Additional paths allowed in `workspace-write` beyond `cwd` |
+
+Example `~/.config/envoy-harness/config.toml`:
+
+```toml
+permission_mode = "workspace-write"
+ask_for_approval = "on-request"
+slash_tmp_writable = false
+writable_roots = ["/Users/me/projects"]
+```
+
+Precedence: **CLI > config > default**. So
+`envoy --sandbox=danger-full-access` wins over the config file's
+`permission_mode`. (Design §20.1.)
+
 ### Interactive REPL
 
 The REPL is the long-lived loop: one `Agent`, one `Session`, many
 turns. Hooks, AGENTS.md, and permission state are preserved across
-turns. 26 built-in slash commands.
+turns. 26 built-in slash commands, in 5 files.
+
+| Group | Commands |
+|---|---|
+| **Core (9)** | `/help` · `/model` · `/provider` · `/sandbox` · `/approval` · `/clear` · `/cost` · `/status` · `/quit` |
+| **Info (8)** | `/session` · `/context` · `/scoreboard` · `/rules` · `/lsp` · `/hooks` · `/mcp` · `/profile` |
+| **Tier 2 (3)** | `/new` · `/compact` · `/init` |
+| **Batch 2 (2)** | `/agents` · `/diff` |
+| **Batch 3 (2)** | `/rename` · `/copy` |
+| **Batch 4 (2)** | `/review` · `/export` |
+
+The `/mcp` command reads the real `McpClientRegistry` (T3.3);
+`/lsp` reads the `LspManager`; `/hooks` lists the active
+`HookRegistry`. The info commands are read-only — they don't
+mutate the session.
 
 ```sh
 envoy --repl
@@ -111,6 +239,61 @@ cat ~/.local/state/envoy-harness/sessions/<id>.jsonl
 
 Override the storage location per-invocation (`--session-dir`) or per-environment (`ENVOY_HARNESS_SESSION_DIR`).
 
+### Subcommands
+
+Beyond the default one-shot and `--repl`, two subcommands ship
+in v0:
+
+**`envoy team <team.toml>`** — multi-agent run from a TOML config.
+Agents run sequentially; `${input}` is substituted into each
+agent's `objective`; `depends_on` wires the dependency graph.
+Output: each agent's transcript + result.
+
+```toml
+# team.toml
+[team]
+name = "release-prep"
+input = "release v0.1.0"
+
+[[team.agents]]
+name = "writer"
+objective = "draft release notes from ${input}"
+model = "claude-sonnet-4-6"
+
+[[team.agents]]
+name = "reviewer"
+objective = "review the writer's output for ${input}"
+model = "claude-sonnet-4-6"
+depends_on = ["writer"]
+```
+
+```sh
+envoy team ./team.toml
+envoy team ./team.toml --input "release v0.2.0" --json
+```
+
+**`envoy self-evolve`** — the shadow self-evolution cycle
+(design §13.1). Reads the committed `verifier-rules.json`,
+runs N cycles, and either prints what would change (default
+shadow) or writes a new ruleset (`--commit`).
+
+```sh
+# Shadow run (default; doesn't write). Reads verifier-rules.json,
+# runs N cycles, prints what would change. No file writes.
+envoy self-evolve
+
+# Commit run: actually write the candidate ruleset on kept.
+envoy self-evolve --commit
+
+# Opt in to federated pull (off by default per design §13.3).
+envoy self-evolve --pull --peer-id <your-peer-id>
+```
+
+The cycle is: read recent scoreboard failures → propose a rule
+swap → run the verifier → shadow-apply on `kept` → record
+adoption (sign + hash). The federated cycle NEVER commits
+even when kept (v0: pull-only, no auto-adopt; design §13.3).
+
 ### Sub-agents
 
 The `task` tool spawns a sub-agent in a **new session** (own id, own
@@ -130,6 +313,27 @@ envoy> /agents                # list spawned sub-agents + their status
 The agent's `MeshSubmitter` is the swap point: `LocalMeshSubmitter`
 (default) vs `RemoteMeshSubmitter` (Package 3). The same `task` tool
 call works either way.
+
+### Capabilities at a glance
+
+These ship but aren't central to the CLI flow. The CLI exposes them
+via flags, env vars, or REPL commands; the API for embedding them
+lives in Part 2.
+
+| Capability | Where it's exposed | API surface |
+|---|---|---|
+| **AGENTS.md discovery** | Always on (read-only, on every run) | `discoverAgentsMd(cwd, options?)` in `src/agents-md/` |
+| **Hooks** (12 events, Codex-compatible names) | Always on; the REPL `/hooks` command lists them | `HookRegistry` + `agent.hooks` |
+| **LSP tools** (`lsp_*`, 4 tools) | On when an `LspManager` is wired; REPL `/lsp` lists status | `LspManager` + `makeLspTools(...)` in `src/lsp/` |
+| **Verifier** (rule / llm / cross sources) | `envoy self-evolve` + REPL `/rules` | `DEFAULT_RULES` + `runVerifierRules(rules, ctx)` in `src/verifier/` |
+| **Scoreboard + federated adoptions** | `envoy self-evolve --pull` + REPL `/scoreboard` | `FederatedScoreboard` in `src/scoreboard/` |
+| **Self-evolve** | `envoy self-evolve [--commit] [--pull]` | `SelfEvolve.runOneCycle(...)` in `src/scoreboard/self-evolve.ts` |
+| **JSON Lines trace** | `envoy --json` | `JsonLinesTracer` in `src/trace/` |
+| **MCP (type seam)** | REPL `/mcp` (reads the real `McpClientRegistry`) | `McpClientRegistry` in `src/mcp/` (stdio transport pending) |
+| **TOML config** | `--config <path>` + `$ENVOY_HARNESS_CONFIG` | `loadConfig({filePath?})` in `src/config/` |
+| **Cost tracking** | Always on; `envoy --max-cost-usd` cap | `CostTracker` in `src/cost.ts` |
+| **Cross-agent verification** | `agent.crossVerify?: CrossVerifyFn` | `defaultCrossVerify` in `src/verifier/cross.ts` |
+| **5 built-in tools** | `read_file`, `bash`, `write`, `edit`, `git` (read-only subset) | `BUILTIN_TOOLS` in `src/tools/builtin/` |
 
 ---
 

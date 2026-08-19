@@ -2427,6 +2427,104 @@ server, replaces `/mcp` placeholder).
 
 ### T3.5 — `write` / `edit` / `git` tools — pending
 
+### T3.8 — `QUICKSTART.md` "full for CLI" (this commit)
+
+The post-Tier-1+2+3 review pass surfaced that
+`QUICKSTART.md` — the user-facing recipe doc — only
+covered ~30% of the actual CLI surface: 7 of 26
+slash commands, 1 of 3 subcommands, 8 of 17 flags,
+and none of the capability rows (TOML config, AGENTS.md,
+hooks, LSP, verifier, scoreboard, self-evolve). T3.8
+fills the gap so users have one place to learn the
+CLI without bouncing between README + design + argv.ts.
+
+**What shipped (1 file, +204 LoC):**
+
+- `QUICKSTART.md` (modified) — Part 1 ("Use it")
+  expanded from 5 sub-sections to 12. The new
+  sub-sections are all CLI-focused and reference
+  the actual flag names, enum values, and command
+  names from `src/cli/argv.ts` + the 5 REPL command
+  files. The new sub-sections:
+
+  1. **CLI Quick Reference** — 3 subcommand table
+     (one-shot, --repl, team, self-evolve) + 17-flag
+     table for the common run/REPL path + 5 env-var
+     table. The scannable overview.
+  2. **Permission modes** — 3-mode table
+     (`read-only` / `workspace-write` /
+     `danger-full-access`) with what each allows
+     per tool family. Notes the live-getter pattern
+     so REPL `/sandbox` takes effect on the next
+     tool call.
+  3. **Approval policy** — 4-value table
+     (`unless-trusted` / `on-request` / `granular` /
+     `never`) with the semantic per value. Notes
+     that the 6 bash validators still apply even
+     when `never` is set.
+  4. **Configuration (TOML)** — 3-path priority
+     (--config > env > XDG default) + 6-field table
+     + example `~/.config/envoy-harness/config.toml`
+     + the CLI > config > default precedence rule
+     (design §20.1).
+  5. **Interactive REPL — 26 commands** — the
+     existing prose paragraph replaced with a 6-row
+     grouped table (Core 9 / Info 8 / Tier 2 3 /
+     Batch 2 2 / Batch 3 2 / Batch 4 2). The
+     existing 7-command example block is preserved
+     underneath as the "feel for a session"
+     example.
+  6. **Subcommands** — `envoy team <toml>` with
+     a worked TOML example + `envoy self-evolve`
+     with the shadow-default / --commit / --pull
+     pattern. Both examples are copy-paste-runnable.
+  7. **Capabilities at a glance** — 12-row table
+     mapping capability → where-the-CLI-exposes-it
+     → API-surface-path. The "where to look" index
+     for the rest of the doc + Part 2's embed API.
+
+**Why QUICKSTART (not README):** README is the
+reference (full feature surface + tables); QUICKSTART
+is the recipe (concrete, runnable, opinionated). The
+user review explicitly asked for "one place" — the
+recipe doc is the right place because it's the entry
+point. The user-facing tables here are copy-paste-runnable;
+the README's tables are reference material.
+
+**What is NOT in this commit:** the package README's
+test-count line is still stale (1025 → 1094); that's
+in the user's README-polish stash. The §2.5 matrix
+fix is in T3.7. The 26 REPL commands and the 17
+flags are sourced from the current code (argv.ts +
+the 5 commands-*.ts files) and re-verified against
+the typecheck run before commit.
+
+**Out of scope:**
+
+- **zh translation** of the new tables. T3.8 is
+  English-only; the bilingual sync is a separate
+  doc-sync pass per `docs/AGENTS.md` (and only
+  triggered by explicit user invocation of
+  `dsh-translate-docs`).
+- **Adding a `--help` output that mirrors the
+  QUICKSTART tables.** The CLI already prints
+  `formatHelp(...)` in `src/cli/run.ts`; expanding
+  it to ~30 lines of flag-table would make `--help`
+  scroll. The QUICKSTART tables are the "long form"
+  for users who want the full surface; `--help` is
+  the quick reminder.
+- **T3.3 / T3.4 / T3.5 narrative sections** in §3.9.
+  T3.3-T3.5 shipped with the §2.5 matrix updates
+  (T3.7) but their own §3.9 sections are still
+  pending. Deferred until a use case forces the
+  narrative; the matrix + index.ts are the
+  source-of-truth for what shipped.
+
+Cumulative: 1001 hermetic envoy-harness + 93
+envoy-harness-adapter = 1094 tests passing;
+typecheck clean across both packages. QUICKSTART
+line count: 443 → 647 (+204).
+
 ### T3.7 — sync stale doc references (this commit)
 
 Three stale-doc catches in the post-Tier-1+2+3 review (this
@@ -5042,6 +5140,39 @@ useful.
 ---
 
 ## 10. Change log
+
+- **2026-08-19 (T3.8 done — `QUICKSTART.md`
+  "full for CLI")**: The post-Tier-1+2+3 review
+  pass surfaced that QUICKSTART only covered ~30%
+  of the actual CLI surface (7 of 26 slash commands,
+  1 of 3 subcommands, 8 of 17 flags, and no
+  capability rows). T3.8 expands Part 1 ("Use it")
+  from 5 to 12 sub-sections. New sub-sections: CLI
+  Quick Reference (subcommand table + 17-flag table
+  + 5-env-var table), Permission modes (3-mode
+  table with per-tool allow-list), Approval policy
+  (4-value table), Configuration (TOML — 3-path
+  priority + 6-field table + example), the REPL
+  section's 26-command grouped table, Subcommands
+  (`envoy team` with worked TOML + `envoy
+  self-evolve` with shadow-default / --commit /
+  --pull pattern), and Capabilities at a glance
+  (12-row index: capability → where-CLI-exposes-it
+  → API-path). All flag / enum / subcommand names
+  are sourced from current `src/cli/argv.ts` +
+  the 5 `commands-*.ts` files and re-verified
+  against the typecheck run before commit. No
+  code, no test-count change, no schema change.
+  Cumulative: 1001 hermetic envoy-harness + 93
+  envoy-harness-adapter = 1094 tests passing;
+  typecheck clean. QUICKSTART: 443 → 647 lines
+  (+204). Updated §3.7 (T3.8 entry), §10 (this
+  entry). Out of scope: zh translation of the new
+  tables (per `docs/AGENTS.md` — explicit user
+  invocation only); `--help` output expansion
+  (CLI scroll concerns); T3.3 / T3.4 / T3.5
+  narrative sections (matrix + index.ts are the
+  source-of-truth).
 
 - **2026-08-19 (T3.7 done — sync stale doc
   references)**: Three doc-only catches from the
