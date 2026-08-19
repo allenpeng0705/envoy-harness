@@ -37,6 +37,7 @@ import {
   type SessionMetadata,
 } from "../../index.js";
 import { BUILTIN_COMMANDS } from "./commands.js";
+import { BUILTIN_INFO_COMMANDS } from "./commands-info.js";
 import { ReplCommandRegistry, dispatchCommand, parseCommandLine } from "./registry.js";
 import type { LineReader, ReplOptions, ReplResult } from "./types.js";
 
@@ -79,6 +80,9 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
   if (opts.args.maxCostUsd !== undefined) {
     agentOptions.maxCostUsd = opts.args.maxCostUsd;
   }
+  if (opts.lspManager) {
+    agentOptions.lspManager = opts.lspManager;
+  }
   // F9.4: when --json is set, wire a JsonLinesTracer to stdout.
   // The trace events stream alongside the agent's final text;
   // downstream tools (jq, a viewer) parse the stream.
@@ -90,16 +94,19 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
 
   const agent = new Agent(agentOptions);
 
-  // 3. F17.2: build the command registry. Custom commands
-  //    register FIRST; built-ins register LAST so they
-  //    override on name collision. The plan says
-  //    "Built-ins always win on name collision"; this
-  //    order makes that contract true.
+  // 3. F17.2 + F17.2.5: build the command registry.
+  //    Custom commands register FIRST; built-ins register
+  //    LAST so they override on name collision. The plan
+  //    says "Built-ins always win on name collision"; this
+  //    order makes that contract true. BUILTIN_COMMANDS is
+  //    the F17.2 set (9 commands); BUILTIN_INFO_COMMANDS
+  //    is the F17.2.5 set (8 info commands).
   const registry = new ReplCommandRegistry();
   if (opts.customCommands) {
     registry.registerAll(opts.customCommands);
   }
   registry.registerAll(BUILTIN_COMMANDS);
+  registry.registerAll(BUILTIN_INFO_COMMANDS);
 
   // 4. The loop.
   let turns = 0;
@@ -120,6 +127,9 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
           turns,
           totalCostUsd,
           registry,
+          ...(opts.scoreboard ? { scoreboard: opts.scoreboard } : {}),
+          ...(opts.verifierRules ? { verifierRules: opts.verifierRules } : {}),
+          ...(opts.profileLoader ? { profileLoader: opts.profileLoader } : {}),
         };
         const result = await dispatchCommand(registry, parsed.name, parsed.args, ctx);
         switch (result.kind) {

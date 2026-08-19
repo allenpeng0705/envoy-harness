@@ -462,6 +462,47 @@ export class Agent {
   }
 
   /**
+   * F17.2.5: the session id. Used by `/session` to print
+   * the current session's id (useful for log correlation
+   * + resume).
+   */
+  getSessionId(): string {
+    return this.session.id;
+  }
+
+  /**
+   * F17.2.5: the message count of the current session.
+   * Used by `/context` to print the transcript size.
+   */
+  getMessageCount(): number {
+    return this.session.messages.length;
+  }
+
+  /**
+   * F17.2.5: snapshot of LSP servers registered with the
+   * `lspManager` (when one is configured). Returns an
+   * empty array when no `lspManager` is set.
+   *
+   * The shape is intentionally minimal: just the
+   * language and rootUri per server. The 4 LSP tools
+   * (lsp_definition, lsp_references, lsp_hover,
+   * lsp_diagnostics) do the actual work; this is just
+   * for the `/lsp` slash command.
+   */
+  getLspServers(): ReadonlyArray<{ language: string; rootUri: string }> {
+    if (!this.lspManager) return [];
+    return this.lspManager.listServers();
+  }
+
+  /**
+   * F17.2.5: snapshot of registered hooks. Returns the
+   * event name + handler count per event. Used by `/hooks`.
+   */
+  getHooks(): ReadonlyArray<{ event: string; handlerCount: number }> {
+    return this.hooks.list();
+  }
+
+  /**
    * Run the agent loop with the given prompt. Returns the final
    * assistant content blocks and metadata about the run.
    *

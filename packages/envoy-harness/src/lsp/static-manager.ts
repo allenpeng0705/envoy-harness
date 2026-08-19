@@ -43,8 +43,9 @@ export type LspClientMap = ReadonlyMap<string, LspClient>;
 export class StaticLspManager implements LspManager {
   private readonly map: LspClientMap;
   private readonly literalMap: ReadonlyMap<string, LspClient>;
+  private readonly rootUri: string;
 
-  constructor(map: LspClientMap) {
+  constructor(map: LspClientMap, opts: { rootUri?: string } = {}) {
     this.map = map;
     // Per-file literal entries (key starts with "/") take
     // precedence over extension lookups. The host can
@@ -53,6 +54,7 @@ export class StaticLspManager implements LspManager {
     this.literalMap = new Map(
       Array.from(map.entries()).filter(([k]) => k.startsWith("/")),
     );
+    this.rootUri = opts.rootUri ?? process.cwd();
   }
 
   forFile(file: string): LspClient | null {
@@ -65,6 +67,25 @@ export class StaticLspManager implements LspManager {
     if (lastDot <= lastSlash) return null; // no extension
     const ext = file.slice(lastDot);
     return this.map.get(ext) ?? null;
+  }
+
+  /**
+   * F17.2.5: list the (language, rootUri) pairs for every
+   * unique client. The language is the file extension
+   * (e.g. ".ts" → "ts"); literal-path entries are skipped
+   * (they're per-file overrides, not "language servers").
+   * Used by `/lsp`.
+   */
+  listServers(): ReadonlyArray<{ language: string; rootUri: string }> {
+    const seen = new Set<LspClient>();
+    const result: Array<{ language: string; rootUri: string }> = [];
+    for (const [ext, client] of this.map.entries()) {
+      if (ext.startsWith("/")) continue; // skip literal paths
+      if (seen.has(client)) continue;
+      seen.add(client);
+      result.push({ language: ext.replace(/^\./, ""), rootUri: this.rootUri });
+    }
+    return result;
   }
 
   async closeAll(): Promise<void> {

@@ -148,8 +148,22 @@ export class HookRegistry {
     const idx = existing.findIndex((s) => s.input === handler);
     if (idx === -1) return false;
     existing.splice(idx, 1);
-    if (existing.length === 0) this.handlers.delete(eventName);
     return true;
+  }
+
+  /**
+   * F17.2.5: list the (event, handlerCount) pairs for every
+   * event with at least one registered handler. Used by
+   * `/hooks`. Returns events in registration order (the
+   * order in which the first handler was registered).
+   */
+  list(): ReadonlyArray<{ event: string; handlerCount: number }> {
+    const out: Array<{ event: string; handlerCount: number }> = [];
+    for (const [event, handlers] of this.handlers.entries()) {
+      if (handlers.length === 0) continue;
+      out.push({ event, handlerCount: handlers.length });
+    }
+    return out;
   }
 
   /**

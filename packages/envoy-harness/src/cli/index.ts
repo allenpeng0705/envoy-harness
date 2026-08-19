@@ -40,6 +40,7 @@ export {
 
 export {
   BUILTIN_COMMANDS,
+  BUILTIN_INFO_COMMANDS,
   ReplCommandRegistry,
   dispatchCommand,
   parseCommandLine,
@@ -49,5 +50,7 @@ export {
   type ReplCommand,
   type ReplContext,
   type ReplOptions,
+  type ReplProfile,
+  type ReplProfileLoader,
   type ReplResult,
 } from "./repl/index.js";

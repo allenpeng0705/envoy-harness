@@ -10,9 +10,9 @@
 > (`docs/boundary.en.md`) says *what belongs in envoy-harness vs
 > EnvoyMesh*; this file assumes the boundary.
 >
-> **Status as of last commit:** F17.2 done on `phase-1/types`.
+> **Status as of last commit:** F17.2.5 done on `phase-1/types`.
 >
-> - **Total:** 829 tests across 54 files (envoy-harness 737 / 44
+> - **Total:** 848 tests across 55 files (envoy-harness 756 / 45
 >   files + envoy-harness-adapter 92 / 10 files). All passing.
 > - **Typecheck:** clean (`pnpm -r typecheck`).
 > - **Phase 1 (v0 spine):** ✅ done (Chunks 1-4d, 220 tests)
@@ -20,9 +20,8 @@
 > - **Phase 3 (Self-evolution):** ✅ done (5a-5e + F6, 110 tests)
 > - **Phase 4 (Production-grade):** ✅ done (F9.1-F9.5, 5 sub-chunks)
 > - **Phase 5 (Mesh-native sub-agents):** ✅ done (F10.1-F10.6, 8 sub-chunks)
-> - **Phase 6 (REPL):** ⏳ in progress (F17.1 + F17.2 done; F17.2.5
->   + F17.3 + F17.4 + F17.5 + F17.6 planned — see §6.7 + §11 for
->   the per-sub-chunk plan)
+> - **Phase 6 (REPL):** ⏳ in progress (F17.1 + F17.2 + F17.2.5 done;
+>   F17.3 + F17.4 + F17.5 + F17.6 pending — see §6.7 + §11)
 >
 > **How to read this document.** §1 is project context (1 page).
 > §2 is the status snapshot (test count + per-module inventory).
@@ -36,7 +35,7 @@
 >
 > **Top of doc:** the design discussion (what & why) for Phase 5 — the mesh-native sub-agents design rationale + type surface — now lives in [`docs/design.en.md`](./design.en.md) §10.3. The *implementation record* (what shipped) is in §3 (chronological by commit). The *plan-with-sub-chunks* (the F10.2, F10.3, etc. plans) is in §6.6.
 >
-> **Branch:** all work is on `phase-1/types`. 9 unpushed commits as of the latest (F10.6 + 2 doc restructure + 2 design/Phase-5 + README/F17 plan + F17.1 + F17.2); Phase 5 complete, Phase 6 (REPL) in progress (F17.1 + F17.2 done; F17.3 + F17.4 pending).
+> **Branch:** all work is on `phase-1/types`. 10 unpushed commits as of the latest (F10.6 + 2 doc restructure + 2 design/Phase-5 + README/F17 plan + F17.1 + F17.2 + commands sweep plan + F17.2.5); Phase 5 complete, Phase 6 (REPL) in progress (F17.1 + F17.2 + F17.2.5 done; F17.3 + F17.4 + F17.5 + F17.6 pending).
 
 ---
 
@@ -77,14 +76,14 @@ Per design §1.3, the four design targets are non-negotiable:
 | **Phase 3** | Self-evolution (3 weeks) | ✅ done (5a-5e + F6) | 110 |
 | **Phase 4** | Production-grade (5 sub-chunks: F9.1 + F9.2 + F9.3 + F9.4 + F9.5) | ✅ done | +130 (vs Phase 3) |
 | **Phase 5** | Mesh-native sub-agents (8 sub-chunks: F10.1-F10.6) | ✅ done | +94 (vs Phase 4) |
-| **Phase 6** | Interactive REPL (2 sub-chunks done: F17.1 + F17.2; 4 planned: F17.2.5 + F17.3 + F17.4 + F17.5 + F17.6) | ⏳ in progress | +38 (F17.1 + F17.2) |
+| **Phase 6** | Interactive REPL (3 sub-chunks done: F17.1 + F17.2 + F17.2.5; 3 planned: F17.3 + F17.4 + F17.5 + F17.6) | ⏳ in progress | +57 (F17.1 + F17.2 + F17.2.5) |
 
-**Cumulative:** 829 tests across 54 files (envoy-harness 737 + envoy-harness-adapter 92), all passing.
+**Cumulative:** 848 tests across 55 files (envoy-harness 756 + envoy-harness-adapter 92), all passing.
 Typecheck clean (`pnpm -r typecheck`).
 
-**Per-module test inventory (44 envoy-harness files + 10 envoy-harness-adapter files = 829 tests):**
+**Per-module test inventory (45 envoy-harness files + 10 envoy-harness-adapter files = 848 tests):**
 
-#### envoy-harness (Package 1, 737 tests / 44 files)
+#### envoy-harness (Package 1, 756 tests / 45 files)
 
 | Module | Tests | File | What it covers |
 |--------|-------|------|----------------|
@@ -132,6 +131,7 @@ Typecheck clean (`pnpm -r typecheck`).
 | Sub-agent subagentOf (F10.6) | 5 | `test/subagent-subagent-of.test.ts` | TraceBase.subagentOf, parent events omit, sub-agent events carry |
 | REPL loop (F17.1) | 13 | `test/repl-loop.test.ts` | --repl flag; /quit + /exit + EOF exit; blank-line skip; unknown-slash placeholder; agent reuse across turns; turns + totalCostUsd accounting |
 | REPL commands (F17.2) | 25 | `test/repl-commands.test.ts` | parseCommandLine; ReplCommandRegistry; dispatchCommand; 9 built-ins (help/model/provider/sandbox/approval/clear/cost/status/quit); customCommands; built-in wins on collision |
+| REPL info (F17.2.5) | 19 | `test/repl-info.test.ts` | 8 info commands (session/context/scoreboard/rules/lsp/hooks/mcp/profile); BUILTIN_COMMANDS + BUILTIN_INFO_COMMANDS no name collisions; /help lists all 8 |
 
 #### envoy-harness-adapter (Package 3, 92 tests / 10 files)
 
@@ -1254,6 +1254,102 @@ Updated §1 (status line), §2 (status table Phase 6
 row + per-module test inventory + REPL commands row),
 §3 (this entry), §6.7 (F17.2 marked ✅), §11 (F17
 archive updated).
+
+**Next: F17.3** (history persistence:
+`~/.local/state/envoy-harness/history`).
+
+### F17.2.5 — Tier 1 info commands (✅ done)
+
+8 print/info commands that fill the gap between the
+F17.2 basics and what codex / claude-code / pi ship.
+Tier 1 = no new agent capabilities; just data display
+from sources that already exist.
+
+**What it ships:**
+- `/session` — print session id
+  (uses `agent.getSessionId()`)
+- `/context` — print #messages + input/output tokens
+  (uses `agent.getMessageCount()` + `agent.getCost()`)
+- `/scoreboard` — print entry count (when a scoreboard
+  is loaded via `ReplOptions.scoreboard`); otherwise
+  "no scoreboard loaded"
+- `/rules` — print the active verifier rules (from
+  `ReplOptions.verifierRules`; falls back to
+  `DEFAULT_RULES`)
+- `/lsp` — list active LSP servers (from
+  `agent.getLspServers()`, which delegates to
+  `lspManager.listServers()`)
+- `/hooks` — list registered hooks (uses
+  `HookRegistry.list()`, which returns event +
+  handlerCount pairs)
+- `/mcp` — v0 placeholder (the MCP integration lands
+  in a future chunk)
+- `/profile [name]` — list profile names (no args) or
+  show a specific profile's settings (host injects a
+  `profileLoader` via `ReplOptions`)
+
+**Agent getters added (additive):**
+- `getSessionId()` — the session id
+- `getMessageCount()` — number of messages in the
+  session transcript
+- `getLspServers()` — array of `{ language, rootUri }`
+- `getHooks()` — array of `{ event, handlerCount }`
+
+**Other infrastructure:**
+- `LspManager.listServers()` — interface addition;
+  `StaticLspManager` impl iterates the extension map
+  (skips literal-path entries) and emits one entry
+  per unique client
+- `HookRegistry.list()` — returns registered events +
+  handler counts
+- `ReplContext` + `ReplOptions` — 4 new optional
+  fields: `scoreboard`, `verifierRules`, `profileLoader`,
+  `lspManager`. Each is `undefined` by default; the
+  command handles the "not configured" case gracefully.
+- `BUILTIN_INFO_COMMANDS` — new array in
+  `src/cli/repl/commands-info.ts`; the runner registers
+  it after `BUILTIN_COMMANDS` (built-ins always win on
+  collision).
+- `BUILTIN_COMMANDS + BUILTIN_INFO_COMMANDS` have
+  no name collisions (asserted by a test).
+
+**Files touched (3 new + 4 edited):**
+- `src/cli/repl/commands-info.ts` (new) — 8 commands
+  + `BUILTIN_INFO_COMMANDS`
+- `src/cli/repl/types.ts` (edit) — `ReplProfile`,
+  `ReplProfileLoader`, 4 new optional fields on
+  `ReplContext` + `ReplOptions`
+- `src/cli/repl/loop.ts` (edit) — register
+  `BUILTIN_INFO_COMMANDS`; pass new options to agent
+  + context
+- `src/cli/repl/index.ts` (edit) + `src/cli/index.ts`
+  (edit) + `src/index.ts` (edit) — re-exports
+- `src/agent.ts` (edit) — 4 new getters (additive)
+- `src/lsp/types.ts` (edit) + `src/lsp/static-manager.ts`
+  (edit) — `listServers()` on the interface + impl
+- `src/hooks/registry.ts` (edit) — `list()` method
+- `test/repl-info.test.ts` (new) — 19 tests
+
+**Self-review caught 1 weak test + 1 missing wiring:**
+1. The /lsp test originally had a weak assertion
+   (`/no LSP|ts|py/`) because the REPL didn't expose
+   `lspManager`. **Fixed:** added `ReplOptions.lspManager?`
+   + wired it to `AgentOptions.lspManager` in the loop.
+   The 4 LSP tools are auto-registered when the manager
+   is set; the test now asserts the populated case
+   (`.ts` + `.py` + rootUri).
+2. The original test mock for `HookFn` returned a
+   sync value; the interface requires `Promise<HookDecision>`.
+   **Fixed:** changed the test's mock to `async`.
+
+**Total: 848 tests across 55 files** (envoy-harness
+756 + envoy-harness-adapter 92). F17.2.5 is done.
+F17.3 (history persistence) is the next sub-chunk.
+
+Updated §1 (status line), §2 (status table Phase 6
+row + per-module test inventory + REPL info row),
+§3 (this entry), §6.7 (F17.2.5 marked ✅), §11
+(F17 archive updated).
 
 **Next: F17.3** (history persistence:
 `~/.local/state/envoy-harness/history`).
@@ -3037,24 +3133,24 @@ laptop has no Tauri app — they need a CLI REPL.
    ~100 LoC of tests. Total new tests: ~30 across the 4
    sub-chunks.
 
-5. **F17.2.5 — Tier 1 info commands** (8 commands, ~150 LoC).
-   F17.2 shipped the basics; Codex / Claude Code / pi
-   have a wider command set. Tier 1 fills the gap with
-   print/info commands — the `CostTracker` / `Session` /
-   `ReplContext` already have the data; commands just
+5. ✅ **F17.2.5 — Tier 1 info commands** (planned 1dbe02b;
+   next commit). 8 print/info commands — the
+   `CostTracker` / `Session` / `LspManager` /
+   `HookRegistry` already have the data; commands just
    format it. No new agent capabilities required.
    - `/session` — print session id
    - `/context` — print #messages + input/output tokens
-     (uses `agent.getCost()` + `session.messages.length`)
+     (uses `agent.getCost()` + `agent.getMessageCount()`)
    - `/scoreboard` — read + format the scoreboard YAML
      (we have the loader from F6; just print the entries)
    - `/rules` — print the active verifier rules
    - `/lsp` — list active LSP servers (from `lspManager`)
    - `/hooks` — list registered hooks (we have
      `HookRegistry.list()`)
-   - `/mcp` — list MCP servers (we have the registry)
+   - `/mcp` — list MCP servers (v0 placeholder: MCP
+     integration lands in a future chunk)
    - `/profile [name]` — list or load a TOML profile
-     (from `~/.config/envoy-harness/config.toml`)
+     (host injects a `profileLoader` via `ReplOptions`)
 
 6. **F17.5 — Tier 2 batch 1: real features** (~250 LoC).
    The first set of "real" commands that need new
@@ -5244,14 +5340,20 @@ in this chunk.
   (`setModel`, `setAskHandler`, `setPermissionMode`)
   + 2 helpers (`clearSession`, `getCost`) — all
   additive. 25 new tests. ~250 LoC.
-- ⏳ **F17.2.5** — Tier 1 info commands (8 commands:
+- ✅ **F17.2.5** — Tier 1 info commands (8 commands:
   `/session`, `/context`, `/scoreboard`, `/rules`,
   `/lsp`, `/hooks`, `/mcp`, `/profile`). Print/info
-  only; no new agent capabilities. ~150 LoC + 8-10
-  tests. **Next chunk to build.**
+  only; no new agent capabilities. 19 new tests.
+  ~200 LoC. Agent gained 4 more getters
+  (`getSessionId`, `getMessageCount`, `getLspServers`,
+  `getHooks`). `LspManager` gained `listServers()`;
+  `HookRegistry` gained `list()`. `ReplContext` +
+  `ReplOptions` gained 4 new optional fields
+  (`scoreboard`, `verifierRules`, `profileLoader`,
+  `lspManager`).
 - ⏳ **F17.3** — History persistence
   (`~/.local/state/envoy-harness/history`). ~50 LoC
-  + 4 tests.
+  + 4 tests. **Next chunk to build.**
 - ⏳ **F17.4** — Tests + e2e (wire tests across
   F17.1-F17.6; end-to-end REPL session; snapshot
   test for help text). ~100 LoC of tests.

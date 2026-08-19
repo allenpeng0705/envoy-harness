@@ -20,6 +20,7 @@
 import type { HookRegistry } from "../../hooks/registry.js";
 import type { ModelAdapter } from "../../model.js";
 import type { Agent } from "../../agent.js";
+import type { VerifierRule } from "../../verifier/types.js";
 import type { RunParsedArgs } from "../argv.js";
 import type { ReplCommandRegistry } from "./registry.js";
 
@@ -76,6 +77,34 @@ export interface ReplOptions {
    * project-specific commands (e.g. `/pr`, `/deploy`).
    */
   customCommands?: ReadonlyArray<ReplCommand>;
+  /**
+   * F17.2.5: optional scoreboard (F6). The `/scoreboard`
+   * command reads this; when undefined, the command prints
+   * "no scoreboard loaded".
+   */
+  scoreboard?: { entries?: () => ReadonlyArray<unknown> };
+  /**
+   * F17.2.5: optional verifier rules. The `/rules` command
+   * reads this; when undefined, falls back to DEFAULT_RULES.
+   * Shape matches the public `VerifierRule` type from
+   * `src/verifier/types.ts`.
+   */
+  verifierRules?: ReadonlyArray<VerifierRule>;
+  /**
+   * F17.2.5: optional profile loader. The `/profile` command
+   * reads this; when undefined, prints "no profile loader".
+   * The host reads the TOML config and adapts it to the
+   * `ReplProfileLoader` shape.
+   */
+  profileLoader?: ReplProfileLoader;
+  /**
+   * F17.2.5: optional LSP manager. When set, the 4 LSP
+   * tools are auto-registered (F9.2) and the `/lsp`
+   * command lists the active servers. When undefined,
+   * the LSP tools are not registered and `/lsp` prints
+   * "no LSP servers configured".
+   */
+  lspManager?: import("../../lsp/index.js").LspManager;
 }
 
 /**
@@ -92,6 +121,27 @@ export interface ReplResult {
   totalCostUsd: number;
   /** The session id (shared across all turns). */
   sessionId: string;
+}
+
+/**
+ * F17.2.5: a profile loaded from the TOML config. The keys
+ * are open-ended; the runner formats whatever the host
+ * provides. The well-known keys are `provider`, `model`,
+ * `sandbox`, `approval` (per the README).
+ */
+export type ReplProfile = Readonly<Record<string, unknown>>;
+
+/**
+ * F17.2.5: the profile loader. The host injects one via
+ * `ReplOptions.profileLoader`. The runner calls `list()`
+ * for `/profile` (no args) and `get(name)` for `/profile
+ * <name>`.
+ */
+export interface ReplProfileLoader {
+  /** List the available profile names. */
+  list(): ReadonlyArray<string>;
+  /** Get a profile by name, or `null` if it doesn't exist. */
+  get(name: string): ReplProfile | null;
 }
 
 /**
@@ -121,6 +171,16 @@ export interface ReplContext {
    *  the runner always sets it; if a host constructs a
    *  custom context (in tests), the field is required. */
   registry: ReplCommandRegistry;
+  /** F17.2.5: optional scoreboard (F6). The `/scoreboard`
+   *  command reads this; when undefined, the command prints
+   *  "no scoreboard loaded". */
+  scoreboard?: { entries?: () => ReadonlyArray<unknown> };
+  /** F17.2.5: optional verifier rules. The `/rules` command
+   *  reads this; when undefined, falls back to DEFAULT_RULES. */
+  verifierRules?: ReadonlyArray<VerifierRule>;
+  /** F17.2.5: optional profile loader. The `/profile` command
+   *  reads this; when undefined, prints "no profile loader". */
+  profileLoader?: ReplProfileLoader;
 }
 
 /**

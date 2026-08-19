@@ -133,6 +133,13 @@ export interface LspManager {
    * a structured error.
    */
   forFile(file: string): LspClient | null;
+  /**
+   * F17.2.5: list the (language, rootUri) pairs for every
+   * configured server. Used by `/lsp` to print the active
+   * servers. Returns an empty array when no servers are
+   * configured.
+   */
+  listServers(): ReadonlyArray<{ language: string; rootUri: string }>;
   /** Close all clients. Called when the agent finishes. */
   closeAll(): Promise<void>;
 }
