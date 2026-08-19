@@ -8,9 +8,9 @@
 > and *why*. This file says *what shipped*, *where it lives*,
 > and *what's still open*.
 >
-> **Status as of last commit:** (next commit, F10.4.1 done) on `phase-1/types`.
-> Total: 778 tests across 50 files (envoy-harness 686 / 40 files + envoy-harness-adapter 92 / 10 files).
-> Phase 3 fully complete (F6 done). Phase 2 fully complete (F7 + F8 done, F8 polish done). **Phase 4 complete (F9.1 + F9.2 + F9.3 + F9.4 + F9.5 done).** **Phase 5 in progress: F10.1 + F10.2 + F10.3.1 + F10.3.2 + F10.3.3 + F10.4.1 done** (mesh-native sub-agents + parallel fan-out + maxSubagents cap + `SubagentResultSigner` seam + cross-node `RemoteMeshSubmitter` + federated routing seam + `FanOutSpec` capability-driven fan-out). F10.5+ pending (cost aggregation, progress streaming).
+> **Status as of last commit:** (next commit, F10.5 done) on `phase-1/types`.
+> Total: 786 tests across 51 files (envoy-harness 694 / 41 files + envoy-harness-adapter 92 / 10 files).
+> Phase 3 fully complete (F6 done). Phase 2 fully complete (F7 + F8 done, F8 polish done). **Phase 4 complete (F9.1 + F9.2 + F9.3 + F9.4 + F9.5 done).** **Phase 5 in progress: F10.1 + F10.2 + F10.3.1 + F10.3.2 + F10.3.3 + F10.4.1 + F10.5 done** (mesh-native sub-agents + parallel fan-out + maxSubagents cap + `SubagentResultSigner` seam + cross-node `RemoteMeshSubmitter` + federated routing seam + `FanOutSpec` capability-driven fan-out + cost aggregation + progress streaming).
 
 ---
 
@@ -339,9 +339,9 @@ Per design §1.3, the four design targets are non-negotiable:
 | **Phase 2** | Mesh-native (4 weeks) | ✅ done (F7 + F8) | 540 |
 | **Phase 3** | Self-evolution (3 weeks) | ✅ done (5a-5e + F6) | 110 |
 | **Phase 4** | Production-grade (5 sub-chunks: F9.1 + F9.2 + F9.3 + F9.4 + F9.5) | ✅ done | +130 (vs Phase 3) |
-| **Phase 5** | Mesh-native sub-agents (in progress) | ⏳ F10.1 ✅, F10.2 ✅, F10.3.1 ✅, F10.3.2 ✅, F10.3.3 ✅, F10.4.1 ✅, F10.5+ pending | +81 (vs Phase 4) |
+| **Phase 5** | Mesh-native sub-agents (in progress) | ⏳ F10.1 ✅, F10.2 ✅, F10.3.1 ✅, F10.3.2 ✅, F10.3.3 ✅, F10.4.1 ✅, F10.5 ✅ | +89 (vs Phase 4) |
 
-**Cumulative:** 778 tests across 50 files (envoy-harness 686 + envoy-harness-adapter 92), all passing.
+**Cumulative:** 786 tests across 51 files (envoy-harness 694 + envoy-harness-adapter 92), all passing.
 Typecheck clean (`pnpm -r typecheck`).
 
 **Per-module test inventory:**
@@ -2882,7 +2882,7 @@ swaps in for cross-node execution without code changes.
 | **F10.2** | Parallel sub-agent fan-out (auto-detect "all N task calls" → `Promise.all`) + `maxSubagents` cap (default 8, host-configurable; refuses ALL when exceeded). 1 sub-chunk. | `src/agent.ts`, `test/subagent-parallel.test.ts` | ✅ done (F10.2.1) |
 | **F10.3** | Cross-node `RemoteMeshSubmitter` (Package 3) + `SubagentResultSigner` seam (Package 1) + `RemoteSubmitterTransport` interface + `routingHint` field. 3 sub-chunks. | `src/subagent/signer.ts` (new), `src/subagent/local-mesh-submitter.ts` (additive), `packages/envoy-harness-adapter/src/remote-mesh-submitter.ts` (new) | ✅ done (3 sub-chunks: F10.3.1 + F10.3.2 + F10.3.3) |
 | **F10.4** | `FanOutSpec` + `FanOutRegistry` (capability-driven fan-out, the user's F10.2 ask). 1 sub-chunk in v0; cost aggregation + progress streaming deferred to F10.5+. | `src/subagent/fan-out.ts` (new), `src/subagent/tools.ts` (additive), `src/agent.ts` (additive `fanOutRegistry?` option), 1 test file | ✅ F10.4.1 done |
-| **F10.5** | Cost aggregation (sub-agent `CostTracker` → parent) + progress streaming (sub-agent `TraceEvent`s → parent tracer). 1 sub-chunk. | `src/cost.ts` (additive `addSubagentCost`), `src/subagent/local-mesh-submitter.ts` (additive `parentTracer?`), `src/subagent/tools.ts` (additive `onSubagentComplete?`), `src/agent.ts` (wires both), 1 test file | 🔄 F10.5.1 in progress |
+| **F10.5** | Cost aggregation (sub-agent `CostTracker` → parent) + progress streaming (sub-agent `TraceEvent`s → parent tracer). 1 sub-chunk. | `src/cost.ts` (additive `addSubagentCost`), `src/subagent/local-mesh-submitter.ts` (additive `parentTracer?`), `src/subagent/tools.ts` (additive `onSubagentComplete?`), `src/agent.ts` (wires both), 1 test file | ✅ done |
 
 **Why the sub-agent path is the mesh-native contract, not in-process:**
 Codex and Claude Code create in-process sub-agents — same process, shared
@@ -4722,4 +4722,133 @@ streaming) or push 1 unpushed commit, user's pick.**
   (envoy-harness) + 92 in envoy-harness-adapter =
   778 across 50 files (monorepo). Updated §1, §2,
   §3, §6.6, §7, §10.
+
+---
+
+### F10.5 — done
+
+**F10.5 (this commit) — sub-agent → parent cost +
+trace forwarding.** The mesh-native sub-agent path
+is now fully sewn up: parent can spawn, route, sign,
+fan out, aggregate cost, see progress.
+
+**Type changes (Package 1):**
+- `CostTracker.addSubagentCost(costUsd: number)` —
+  new method. Adds the sub-agent's `costUsd` to the
+  parent's running total. **No token attribution**:
+  the sub-agent already tracked its own tokens in
+  its own `CostTracker`; the parent only sees the
+  derived `costUsd` sum. Adding tokens would
+  double-count.
+- `MakeTaskToolOptions.onSubagentComplete?` callback:
+  fires after the `MeshSubmitter` (or F10.4.1
+  fan-out aggregator) returns. For fan-out, the
+  callback receives the AGGREGATED result (with
+  summed `costUsd`), not the N individual results.
+- `makeTaskTool` now accepts the callback; calls
+  it after the result is ready.
+- `Agent` constructor wires `onSubagentComplete`
+  to call `this.costTracker.addSubagentCost`. F10.5
+  wiring is automatic; the host doesn't need to
+  do anything (just provide a `meshSubmitter`; the
+  rest follows).
+- `LocalMeshSubmitterOptions.parentTracer?` — new
+  field. When set, the sub-agent's `TraceEvent`s
+  flow to the parent tracer (progress streaming).
+- `defaultBuildSubagentFactory` accepts
+  `parentTracer?` and passes it to the new `Agent`'s
+  tracer option.
+
+**8 new tests in
+`test/subagent-cost-trace.test.ts`:**
+1. `CostTracker.addSubagentCost` adds to the
+   running total (no token attribution).
+2. `addSubagentCost(0)` is a no-op (defensive;
+   the tool's callback skips 0-cost results).
+3. End-to-end: a sub-agent's `costUsd` flows
+   into the parent's tracker via the
+   `onSubagentComplete` callback.
+4. Fan-out: aggregated result's `costUsd` (sum
+   of N) flows into the parent's tracker.
+5. Sub-agent's `TraceEvent`s flow to the parent
+   tracer when `parentTracer` is set
+   (`agent_start`, `model_response`, `agent_end`
+   all visible).
+6. `parentTracer` is OPTIONAL — backward compat
+   with F10.1.2 (no tracer = `NullTracer`).
+7. A custom `buildSubagent` factory can use the
+   `parentTracer` (the factory closes over the
+   tracer).
+8. The `onSubagentComplete` callback receives
+   the AGGREGATED result for fan-out (fires
+   once, not N times).
+
+**Self-review caught 1 issue:** the `scriptedModel`
+function signature was wrong
+(`ReadonlyArray<ModelResponse['content']>`
+should be `ReadonlyArray<{content, stopReason?}>`).
+The first run reported the wrong type for the test
+model; the sub-agent errored because the model
+threw when the test passed an object instead of
+an array. Fixed by matching the F10.1.4 pattern.
+
+**Total: 694 tests across 41 files** (envoy-harness,
++8 from F10.5) + 92 in envoy-harness-adapter =
+**786 across 51 files** (monorepo). F10.5 is done.
+
+**Phase 5 status:** F10.1, F10.2, F10.3.1, F10.3.2,
+F10.3.3, F10.4.1, F10.5 — all done. The mesh-native
+sub-agent path is **complete**:
+- **Spawn** (F10.1: `MeshSubmitter` + `LocalMeshSubmitter`
+  + `task` tool)
+- **Route** (F10.2: parallel fan-out + `maxSubagents` cap)
+- **Trust** (F10.3.1: `SubagentResultSigner` + signed
+  results; F10.3.2: cross-node `RemoteMeshSubmitter`;
+  F10.3.3: federated routing hint)
+- **Fan-out** (F10.4.1: `FanOutSpec` + host-driven fan-out)
+- **Aggregate** (F10.5: sub-agent cost + trace flow to
+  parent)
+
+Updated §1 (status line), §2 (status table Phase 5
+row), §3 (this entry), §6.6 (F10.5 row, F10.5 ✅),
+§7 (template preserved), §10 (this entry).
+**Next: F10.6+ (per-sub-agent cost breakdown,
+`subagentOf` field on trace events) or push the
+unpushed commits, user's pick.**
+- **2026-08-19 (F10.5)**: Sub-agent → parent cost +
+  trace forwarding. The mesh-native sub-agent path
+  is fully sewn up. Type changes (Package 1):
+  `CostTracker.addSubagentCost` (additive method;
+  no token attribution, just adds the derived
+  `costUsd`); `MakeTaskToolOptions.onSubagentComplete?`
+  callback (fires after submitter or fan-out
+  aggregator returns; for fan-out, receives the
+  AGGREGATED result); `LocalMeshSubmitterOptions.parentTracer?`
+  + `defaultBuildSubagentFactory({parentTracer?})`
+  (sub-agent's `TraceEvent`s flow to the parent
+  tracer for progress streaming); `Agent`
+  constructor wires the callback to
+  `addSubagentCost` automatically. 8 new tests in
+  `test/subagent-cost-trace.test.ts`:
+  addSubagentCost adds to running total (no token
+  attribution), addSubagentCost(0) is a no-op,
+  end-to-end cost aggregation, fan-out cost
+  aggregation (sum of N flows to parent), trace
+  events flow to parent tracer, parentTracer
+  optional (backward compat), custom factory uses
+  parentTracer, callback receives AGGREGATED
+  result for fan-out. **Self-review caught 1 issue:**
+  scriptedModel function signature was wrong
+  (passed object instead of `ContentBlock[]`);
+  fixed by matching the F10.1.4 pattern.
+  **F10.5 ✅ done. Phase 5 status: ALL 7 sub-chunks
+  done** (F10.1, F10.2, F10.3.1, F10.3.2, F10.3.3,
+  F10.4.1, F10.5). The mesh-native sub-agent path
+  is complete: spawn (F10.1), route (F10.2 parallel
+  + cap), trust (F10.3.1 signer + F10.3.2
+  cross-node + F10.3.3 routing hint), fan-out
+  (F10.4.1), aggregate (F10.5 cost + trace). Total:
+  694 tests across 41 files (envoy-harness) + 92
+  in envoy-harness-adapter = 786 across 51 files
+  (monorepo). Updated §1, §2, §3, §6.6, §7, §10.
 
