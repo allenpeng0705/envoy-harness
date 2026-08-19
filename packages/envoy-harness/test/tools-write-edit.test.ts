@@ -219,7 +219,7 @@ describe("git: read-only operations", () => {
   it("status on a clean repo returns empty", async () => {
     const result = await gitTool.execute({ op: "status" }, makeContext());
     expect(result.isError).toBeFalsy();
-    expect(result.content.trim()).toBe("");
+    expect((result.content as string).trim()).toBe("");
   });
 
   it("status detects untracked files", async () => {

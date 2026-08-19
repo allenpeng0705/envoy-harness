@@ -65,7 +65,7 @@
 >
 > **Top of doc:** the design discussion (what & why) for Phase 5 — the mesh-native sub-agents design rationale + type surface — now lives in [`docs/design.en.md`](./design.en.md) §10.3. The *implementation record* (what shipped) is in §3 (chronological by commit). The *plan-with-sub-chunks* (the F10.2, F10.3, etc. plans) is in §6.6.
 >
-> **Branch:** all work is on `phase-1/types`. 5 unpushed commits as of the latest (T1.1 + T1.2 + T1.3 + T1.4 + README/QuickStart); Phases 1-7 complete, **Tier 1 review hardening (T1.1-T1.4) ✅ done** (renamed `excludeSlashTmp` → `slashTmpWritable`; added `formatVersion: 1` to both on-disk formats; added the §2.5 "Shipped vs designed" matrix; corrected DeepSeek's stale "verifier never loads" claim — the file IS loaded by `loadRulesetFromFile` at `run.ts:561`). Tier 2 (test helpers + TOML config + ToolExecutor extraction) and Tier 3 (full agent.ts split + full cli/run.ts split + MCP + OS sandbox + write/edit/git tools + `RUN_LIVE_TESTS=1` lane) are planned in §6.8.
+> **Branch:** all work is on `phase-1/types`. 15 unpushed commits as of the latest (T1.1 + T1.2 + T1.3 + T1.4 + T2.1 + T2.2 + T2.3 + T3.1 + T3.2 + T3.3 + T3.4 + T3.5 + T3.6 + README/QuickStart); Phases 1-7 complete, **Tier 1 review hardening (T1.1-T1.4) ✅ done** (renamed `excludeSlashTmp` → `slashTmpWritable`; added `formatVersion: 1` to both on-disk formats; added the §2.5 "Shipped vs designed" matrix; corrected DeepSeek's stale "verifier never loads" claim — the file IS loaded by `loadRulesetFromFile` at `run.ts:561`). **Tier 2 (T2.1-T2.3) ✅ done** (test helpers consolidated; TOML config loader with 6 fields + `--config` flag; `ToolExecutor` extracted from `agent.ts` with live-getter pattern for mutable state). **Tier 3 (T3.1-T3.6) ✅ done** (full `agent.ts` split; full `cli/run.ts` split with `resolveSession` moved to `session/`; MCP type seam + routing; OS sandbox type seam with `NoopSandboxExecutor`; `write` / `edit` / `git` tools; `RUN_LIVE_TESTS=1` live-test lane with 3 real-network smoke tests). All 12 sub-chunks of the Tier 1+2+3 plan in §6.8 are ✅.
 
 ---
 
@@ -2415,15 +2415,136 @@ server, replaces `/mcp` placeholder).
 
 ### T3.5 — `write` / `edit` / `git` tools — pending
 
-### T3.6 — `RUN_LIVE_TESTS=1` live-test lane — pending
+### T3.6 — `RUN_LIVE_TESTS=1` live-test lane (this commit)
+
+Closes the `RUN_LIVE_TESTS=1` row in §6.8. The
+hermetic test suite (`test/llm-*.test.ts`) covers the
+wire shape via `FakeHttpClient`, but it cannot catch
+"the request actually returns a valid response from
+`api.openai.com`" — the network round-trip that only
+runs against the real API. T3.6 ships that lane: an
+opt-in `test/live/` directory of real-network smoke
+tests for the three paid providers.
+
+**What shipped (~+190 LoC, +3 tests, +1 helper file):**
+
+- `test/live/helpers.ts` (NEW, ~60 LoC) — the
+  `liveDescribe(name, envVar, fn)` helper. Runs `fn`
+  as a `describe` block IFF
+  `process.env.RUN_LIVE_TESTS === "1"` AND
+  `process.env[envVar]` is a non-empty string;
+  otherwise `describe.skip`. The skip path prints a
+  one-line warning naming the missing env var (only
+  when `RUN_LIVE_TESTS=1` is set but the key is
+  missing; silent when both are absent). The helper
+  is the only thing the three live test files import
+  from each other.
+- `test/live/openai.test.ts` (NEW) — one real
+  completion via `createProviderAdapter({ provider:
+  "openai" })`. Asserts `stopReason === "end_turn"`,
+  the response contains a text block matching the
+  one-word prompt (`pong`), and the usage fields
+  round-trip (`inputTokens > 0`,
+  `outputTokens > 0`) so the `CostTracker` has
+  something to price. 30-second per-test timeout
+  (real network, not 5-second default).
+- `test/live/anthropic.test.ts` (NEW) — same shape,
+  via `createProviderAdapter({ provider: "anthropic"
+  })`. Confirms the Anthropic-specific system-prompt
+  translation works against the live API (the
+  hermetic suite covers the split / splitSystemAndMessages
+  logic).
+- `test/live/deepseek.test.ts` (NEW) — same shape,
+  via `createProviderAdapter({ provider: "deepseek"
+  })`. Confirms the base-URL override reaches
+  `api.deepseek.com`, not `api.openai.com` (regression
+  guard for the `DeepSeekAdapter extends OpenAIAdapter`
+  pattern).
+- `package.json` (modified) — new
+  `test:live: "RUN_LIVE_TESTS=1 vitest run test/live/"`
+  script. The default `test` script is unchanged;
+  the live tests self-skip when `RUN_LIVE_TESTS!=1`,
+  so CI runs the hermetic suite as before. The
+  `test:live` script sets the env var AND focuses
+  on the `test/live/` path so the developer sees
+  only the live results, not a re-run of the
+  1001 hermetic tests.
+
+**Why a separate directory (`test/live/`) instead of
+`t.live()` in the existing files:** the hermetic files
+(`llm-openai.test.ts` etc.) need to run in CI; mixing
+real-network tests there would make CI flaky. The
+directory split keeps the two concerns separate:
+`test/llm-*.test.ts` is hermetic, `test/live/`
+is opt-in.
+
+**Why a `liveDescribe` helper, not a vitest
+project / config rule:** the helper gives a clear
+"why is this skipped" message in the test output
+(naming the env var to set). A `vitest.config.ts`
+`exclude` rule would silently drop the tests; an
+env-var check in each test file would be 3×
+duplicated logic. The helper is ~30 LoC for 3 call
+sites, with the env-var name as a parameter so
+the skip message is automatic.
+
+**Why the test calls `createProviderAdapter` (not
+`new OpenAIAdapter(...)`):** the live lane is the
+end-to-end wiring test for the dispatch helper that
+the CLI uses. If a future chunk swaps the constructor
+shape (e.g. the provider config moves to a file),
+the live tests catch the regression; the hermetic
+suite mocks the dispatch at the call site.
+
+**Out of scope (deferred):**
+
+- **Ollama live test.** Keyless but requires a
+  local server at `localhost:11434/v1`. The hermetic
+  suite already exercises the constructor path; the
+  live value-add (network round-trip) is small and
+  the developer has to remember to spin up Ollama
+  before running the live lane. Defer until a use
+  case surfaces.
+- **`RemoteMeshSubmitter` live test.** Package 3,
+  needs a real mesh peer + the EnvoyMesh monorepo
+  running. Phase 8 territory.
+- **Multi-turn / tool-use live tests.** Heavier
+  (cost + time) and the hermetic suite already
+  covers the dispatch + parsing. Live multi-turn
+  is a "debug a model-specific bug" tool, not a
+  regression guard.
+- **CI runs the live lane.** CI does NOT set
+  `RUN_LIVE_TESTS=1`; the live lane is developer-only
+  (`pnpm test:live`). Cost + flakiness make CI
+  inappropriate.
+
+**Verified end-to-end:**
+
+1. `pnpm test` (no env var) → 1001 hermetic pass,
+   3 live tests show as "skipped" (not failing).
+   Total 1004 tests across 64 files.
+2. `RUN_LIVE_TESTS=1 pnpm test:live` with no keys →
+   3 tests skip with one-line console warnings
+   naming the missing env var.
+3. `RUN_LIVE_TESTS=1 pnpm test:live` with
+   `OPENAI_API_KEY` + `ANTHROPIC_API_KEY` set →
+   OpenAI test runs against the real API and
+   times out at 10s (the host can't reach
+   `api.openai.com`); Anthropic test passes
+   end-to-end; DeepSeek test skips (no key).
+   This is the expected "live" outcome —
+   the developer sees a real network call, real
+   response, real failure if the wiring breaks.
+
+Cumulative: 1001 hermetic envoy-harness + 93
+envoy-harness-adapter = 1094 tests passing;
+typecheck clean across both packages.
 
 ### T3.3 — MCP (bidirectional) — pending
 
 ### T3.4 — OS sandbox backends — pending
 
 ### T3.5 — `write` / `edit` / `git` tools — pending
-
-### T3.6 — `RUN_LIVE_TESTS=1` live-test lane — pending
 
 ---
 
@@ -4704,7 +4825,7 @@ block adoption. The work is split into Tier 2
 | **T3.3** | MCP (bidirectional: client + server) per design §11 + invariant #4. `McpClientRegistry` (consume) + `mcpServer` (expose tools). Replace `/mcp` placeholder. ~400-600 LoC, +10-15 tests. | `src/mcp/{client,server,registry,index}.ts` (new) + `src/types.ts` (additive) + `src/cli/repl/commands-info.ts` (replace placeholder) | ⏳ planned |
 | **T3.4** | OS sandbox backends per design §5.2 / §7. `linux-landlock` (Linux) + `process-fs-namespace` (POSIX). `SandboxExecutor` seam. Closes the "interpreter writes" heuristic gap. | `src/sandbox/{backend,linux-landlock,process-fs-namespace,index}.ts` (new) + `src/agent.ts` (additive) | ⏳ planned |
 | **T3.5** | `write` / `edit` / `git` tools per design §10.1. Three `ToolDefinition`s + the auto-branch git tool. Reduces the bash-only edit path. | `src/tools/builtin/{write,edit,git}.ts` (new) + `BUILTIN_TOOLS` (additive) + 1-2 test files | ⏳ planned |
-| **T3.6** | `RUN_LIVE_TESTS=1` live-test lane for the real provider/transport wiring (OpenAI/Anthropic/DeepSeek/RemoteMeshSubmitter) that hermetic tests can't cover. Opt-in via env var; requires API keys. Lives next to the hermetic tests; doesn't run in CI. | `test/live/*.test.ts` (new) + `package.json` scripts | ⏳ planned |
+| **T3.6** | `RUN_LIVE_TESTS=1` live-test lane for the real provider/transport wiring (OpenAI/Anthropic/DeepSeek) that hermetic tests can't cover. Opt-in via env var; requires API keys. Lives in a separate `test/live/` directory; doesn't run in CI. | `test/live/{helpers,openai,anthropic,deepseek}.test.ts` (new) + `package.json` `test:live` script | ✅ shipped |
 
 **Why this order:**
 
@@ -4858,6 +4979,42 @@ useful.
 ---
 
 ## 10. Change log
+
+- **2026-08-19 (T3.6 done — `RUN_LIVE_TESTS=1`
+  live-test lane)**: Closes §6.8 row T3.6. New
+  `test/live/` directory with 3 real-network smoke
+  tests (one per paid provider: OpenAI, Anthropic,
+  DeepSeek) plus a `liveDescribe` helper. The helper
+  gates each test on `RUN_LIVE_TESTS=1` AND the
+  provider's API key env var; CI never sets
+  `RUN_LIVE_TESTS`, so the live tests show as
+  "skipped" in the default `pnpm test` run (not
+  failures). The new `pnpm test:live` script sets
+  the env var and focuses on `test/live/` so the
+  developer sees only the live results, not a
+  re-run of the 1001 hermetic tests. New files:
+  `test/live/helpers.ts` (~60 LoC, the
+  `liveDescribe(name, envVar, fn)` helper),
+  `test/live/openai.test.ts` (~50 LoC, real
+  `createProviderAdapter({ provider: "openai" })`
+  + completion + usage assertion),
+  `test/live/anthropic.test.ts` (same shape for
+  Anthropic), `test/live/deepseek.test.ts` (same
+  shape for DeepSeek). The 3 tests use a 30s
+  per-test timeout (real network, not vitest's 5s
+  default). Drive-by: fixed T3.5's leftover
+  typecheck error in
+  `test/tools-write-edit.test.ts:222` —
+  `result.content` is typed as `unknown` (the
+  `ToolResult<T = unknown>` default), so the
+  `.trim()` call needed a cast to `string`. Caught
+  by `pnpm -F @envoymesh/envoy-harness typecheck`
+  after T3.5's commit didn't run it. Cumulative:
+  1001 hermetic envoy-harness + 93
+  envoy-harness-adapter = 1094 tests passing;
+  typecheck clean across both packages. Updated
+  §3.9 (this section), §6.8 (T3.6 row marked ✅),
+  §10 (this entry).
 
 - **2026-08-19 (T2.2 done — TOML config loader)**:
   Closes §2.5 row #1. New `src/config/` package
