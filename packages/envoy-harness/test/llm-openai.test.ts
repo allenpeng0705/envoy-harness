@@ -415,6 +415,55 @@ describe("FetchHttpClient", () => {
     expect(resp.body).toBe("hello world");
     expect(resp.headers["x-trace-id"]).toBe("abc");
   });
+
+  it("forwards the abort signal to fetch", async () => {
+    const mock = vi.fn<typeof globalThis.fetch>(
+      async (_url: string | URL | Request, _init?: RequestInit) => {
+        return new Response("ok", { status: 200 });
+      },
+    );
+    globalThis.fetch = mock;
+
+    const c = new FetchHttpClient();
+    const controller = new AbortController();
+    const p = c.request({
+      method: "POST",
+      url: "https://api.example.com/v1/x",
+      headers: {},
+      body: "{}",
+      signal: controller.signal,
+    });
+    controller.abort();
+    await p;
+    const [_, calledInit] = mock.mock.calls[0] ?? [];
+    // The composite signal forwarded to fetch must reflect the
+    // caller's abort.
+    expect(calledInit?.signal?.aborted).toBe(true);
+  });
+
+  it("aborts the request when the timeout elapses", async () => {
+    const mock = vi.fn<typeof globalThis.fetch>(
+      async (_url: string | URL | Request, init?: RequestInit) => {
+        await new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            reject(new DOMException("Aborted", "AbortError"));
+          });
+        });
+        return new Response("ok", { status: 200 });
+      },
+    );
+    globalThis.fetch = mock;
+
+    const c = new FetchHttpClient({ timeoutMs: 10 });
+    await expect(
+      c.request({
+        method: "POST",
+        url: "https://api.example.com/v1/x",
+        headers: {},
+        body: "{}",
+      }),
+    ).rejects.toThrow(/Abort/);
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -17,8 +17,10 @@
  *
  * 2. **Collect doc paths.** From the project root down to the cwd
  *    (inclusive), at each directory, look for `AGENTS_MD_FILENAME`
- *    and any `fallbackFilenames`. The list is ordered leaf-first so
- *    closer (more specific) docs are read first.
+ *    and any `fallbackFilenames`. The list is ordered root-first
+ *    (project root first, cwd last) so the byte budget favors the
+ *    project root's instructions — the Codex pattern. The design
+ *    doc §9 sketch (which reverses the walk) is authoritative.
  *
  * 3. **Read each doc, respecting `maxBytes`.** Truncate the LAST doc
  *    that would exceed the budget; never start a new one. This is the
@@ -110,7 +112,7 @@ export async function discoverAgentsMd(
   // 1. Find the project root.
   const projectRoot = await findProjectRoot(cwd, projectRootMarkers);
 
-  // 2. Collect doc paths (leaf-first).
+  // 2. Collect doc paths (root-first).
   const docPaths = collectDocPaths({
     fromDir: projectRoot,
     toDir: cwd,
@@ -183,10 +185,10 @@ async function findProjectRoot(
 }
 
 /**
- * Collect every `{dir}/{filename}` for each dir in the leaf-to-root
- * range, returning the paths in leaf-first order. The cwd (leaf) is
- * first; the project root is last. Closest-to-cwd docs are read first
- * so the byte budget favors the most specific instructions.
+ * Collect every `{dir}/{filename}` for each dir in the root-to-leaf
+ * range, returning the paths in root-first order. The project root
+ * is first; the cwd (leaf) is last. The byte budget therefore
+ * favors the project root's instructions, matching Codex.
  */
 function collectDocPaths(input: {
   fromDir: string;
@@ -208,7 +210,7 @@ function collectDocPaths(input: {
     if (parent === dir) break;
     dir = parent;
   }
-  return out;
+  return out.reverse();
 }
 
 /**
@@ -229,20 +231,48 @@ async function tryReadDoc(
   } catch {
     return null; // missing file, permission error, etc.
   }
-  // Truncate by character count to stay within budget. Byte length
-  // is computed AFTER truncation. This is a conservative approximation;
-  // a more precise impl would truncate by byte count using a UTF-8
-  // chunker, but the budget is generous (32 KB) and a few bytes of
-  // overshoot is fine.
-  const trimmed =
-    contents.length > remaining ? contents.slice(0, remaining) : contents;
-  const byteLength = Buffer.byteLength(trimmed, "utf8");
+  // Truncate by BYTE count (not character count) so multi-byte
+  // encodings (e.g. CJK) cannot overshoot the budget by 2-3x.
+  // The slice is backed off to a UTF-8 character boundary so the
+  // last character is never split mid-sequence.
+  const buf = Buffer.from(contents, "utf8");
+  const slice =
+    buf.byteLength > remaining ? truncateUtf8(buf, remaining) : buf;
+  const trimmed = slice.toString("utf8");
+  const byteLength = slice.byteLength;
+  // Truncation produced nothing usable (e.g. a 1-byte budget with a
+  // 3-byte leading character) — skip the entry instead of adding an
+  // empty doc.
+  if (buf.byteLength > remaining && trimmed.length === 0) return null;
   return {
     path: p,
     contents: trimmed,
     origin,
     byteLength,
   };
+}
+
+/**
+ * Return the largest prefix of `buf` that is at most `maxBytes`
+ * bytes AND ends on a UTF-8 character boundary.
+ */
+function truncateUtf8(buf: Buffer, maxBytes: number): Buffer {
+  if (buf.byteLength <= maxBytes) return buf;
+  let end = maxBytes;
+  // Back off while the byte before `end` is a continuation byte
+  // (we're mid-character).
+  while (end > 0 && (buf[end - 1]! & 0xc0) === 0x80) end--;
+  if (end === 0) return buf.subarray(0, maxBytes);
+  // The byte at `end - 1` is a leading byte. Compute how many
+  // bytes its character needs; if more are required than remain
+  // between `end - 1` and the original `maxBytes`, cut before it.
+  const lead = buf[end - 1]!;
+  let charLen = 1;
+  if ((lead & 0xe0) === 0xc0) charLen = 2;
+  else if ((lead & 0xf0) === 0xe0) charLen = 3;
+  else if ((lead & 0xf8) === 0xf0) charLen = 4;
+  if (end - 1 + charLen > maxBytes) end -= 1;
+  return buf.subarray(0, end);
 }
 
 /** Promise-friendly `fs.access` (returns boolean, not throws). */

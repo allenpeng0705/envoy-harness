@@ -170,7 +170,7 @@ describe("readAdoptions / appendAdoption", () => {
 // ---------------------------------------------------------------------------
 
 describe("FederatedScoreboard.adopt with adoptionsFile", () => {
-  it("records kept candidates", async () => {
+  it("records the no-rule-bodies rejection with an audit record", async () => {
     const paths = makePaths();
     const bench: Benchmark = {
       name: "t",
@@ -185,13 +185,7 @@ describe("FederatedScoreboard.adopt with adoptionsFile", () => {
     const runner: BenchmarkRunner = {
       async run() {
         callCount++;
-        const isBaseline = callCount === 1;
-        return {
-          passRate: isBaseline ? 0.5 : 1.0,
-          meanScore: isBaseline ? 0.5 : 1.0,
-          nRuns: 1,
-          tasks: [{ id: "t1", pass: !isBaseline }],
-        };
+        throw new Error("local gate must not run without rule bodies");
       },
     };
     const evolve = makeSelfEvolve(paths, runner);
@@ -202,12 +196,17 @@ describe("FederatedScoreboard.adopt with adoptionsFile", () => {
       adoptionsFile,
       peerId: "p1",
     });
-    expect(adoptResult.adopted).toHaveLength(1);
+    // v0 federated entries carry no rule bodies, so the local gate
+    // cannot evaluate them; candidates are rejected explicitly.
+    expect(adoptResult.adopted).toHaveLength(0);
+    expect(adoptResult.rejected).toHaveLength(1);
+    expect(callCount).toBe(0);
 
     const adoptions = await readAdoptions(adoptionsFile);
     expect(adoptions).toHaveLength(1);
     expect(adoptions[0]?.peerId).toBe("p1");
-    expect(adoptions[0]?.kept).toBe(true);
+    expect(adoptions[0]?.kept).toBe(false);
+    expect(adoptions[0]?.reason).toMatch(/no rule bodies/);
     expect(adoptions[0]?.sourceEntry.hypothesis).toBe("improve");
   });
 
@@ -240,10 +239,10 @@ describe("FederatedScoreboard.adopt with adoptionsFile", () => {
     const adoptions = await readAdoptions(adoptionsFile);
     expect(adoptions).toHaveLength(1);
     expect(adoptions[0]?.kept).toBe(false);
-    expect(adoptions[0]?.reason).toMatch(/local-pass-rate-did-not-improve/);
+    expect(adoptions[0]?.reason).toMatch(/no rule bodies/);
   });
 
-  it("records every evaluation (kept + rejected) when multiple candidates are pulled", async () => {
+  it("records every rejection when multiple candidates are pulled", async () => {
     const paths = makePaths();
     const bench: Benchmark = {
       name: "t",
@@ -255,27 +254,9 @@ describe("FederatedScoreboard.adopt with adoptionsFile", () => {
     const e2 = await makeEntry({ version: 2, hypothesis: "bad" });
     const peer: PeerScoreboard = { peerId: "p1", entries: [e1, e2] };
 
-    let callCount = 0;
     const runner: BenchmarkRunner = {
       async run() {
-        callCount++;
-        // First candidate: 0.5 → 1.0 (kept). Second: 0.5 → 0.5 (rejected).
-        // Track via callCount: 1=baseline1, 2=cand1, 3=baseline2, 4=cand2.
-        const idx = callCount;
-        if (idx === 1 || idx === 2) {
-          return {
-            passRate: idx === 1 ? 0.5 : 1.0,
-            meanScore: 0.7,
-            nRuns: 1,
-            tasks: [{ id: "t1", pass: idx === 2 }],
-          };
-        }
-        return {
-          passRate: idx === 3 ? 0.5 : 0.5,
-          meanScore: 0.5,
-          nRuns: 1,
-          tasks: [{ id: "t1", pass: false }],
-        };
+        throw new Error("local gate must not run without rule bodies");
       },
     };
     const evolve = makeSelfEvolve(paths, runner);
@@ -285,7 +266,7 @@ describe("FederatedScoreboard.adopt with adoptionsFile", () => {
     await fed.adopt(pullResult, evolve, { adoptionsFile, peerId: "p1" });
     const adoptions = await readAdoptions(adoptionsFile);
     expect(adoptions).toHaveLength(2);
-    expect(adoptions[0]?.kept).toBe(true);
+    expect(adoptions[0]?.kept).toBe(false);
     expect(adoptions[1]?.kept).toBe(false);
   });
 
@@ -303,21 +284,15 @@ describe("FederatedScoreboard.adopt with adoptionsFile", () => {
     const runner: BenchmarkRunner = {
       async run() {
         callCount++;
-        // Baseline 0.5, candidate 1.0 (strict improvement).
-        const isBaseline = callCount === 1;
-        return {
-          passRate: isBaseline ? 0.5 : 1.0,
-          meanScore: isBaseline ? 0.5 : 1.0,
-          nRuns: 1,
-          tasks: [{ id: "t1", pass: !isBaseline }],
-        };
+        throw new Error("local gate must not run without rule bodies");
       },
     };
     const evolve = makeSelfEvolve(paths, runner);
     const fed = new FederatedScoreboard(new MockPeerSource([peer]));
     const pullResult = await fed.pull({ optIn: true });
     const adoptResult = await fed.adopt(pullResult, evolve); // no adoptionsFile
-    expect(adoptResult.adopted).toHaveLength(1);
+    expect(adoptResult.adopted).toHaveLength(0);
+    expect(adoptResult.rejected).toHaveLength(1);
     // No file should be created.
     const adoptionsFile = path.join(tmpDir, "should-not-exist.yaml");
     expect(await fs.access(adoptionsFile).catch(() => null)).toBeNull();

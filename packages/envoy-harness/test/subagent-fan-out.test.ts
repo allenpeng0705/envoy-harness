@@ -241,6 +241,28 @@ describe("F10.4.1: task tool with FanOutRegistry", () => {
     await tool.execute(baseArgs, makeCtx());
     expect(callCount).toBe(3);
   });
+
+  it("refuses expansion when FanOutSpec.count exceeds maxSubagents", async () => {
+    const submitted: string[] = [];
+    const submitter: MeshSubmitter = {
+      async submit(input) {
+        submitted.push(input.objective);
+        return makeResult({ text: "x" });
+      },
+    };
+    const registry = new FanOutRegistry();
+    registry.register({ capabilityTag: "research", count: 5 });
+    const tool = makeTaskTool({
+      submitter,
+      fanOutRegistry: registry,
+      maxSubagents: 3,
+    });
+    const result = await tool.execute(baseArgs, makeCtx());
+    expect(submitted).toHaveLength(0);
+    const content = (result as { content: SubagentResult }).content;
+    expect(content.status).toBe("failed");
+    expect(JSON.stringify(content.content)).toContain("maxSubagents reached");
+  });
 });
 
 // ---------------------------------------------------------------------------

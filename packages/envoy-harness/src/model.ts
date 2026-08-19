@@ -91,6 +91,12 @@ export interface CompleteInput {
    * can ignore it.
    */
   maxTokens?: number;
+  /**
+   * Optional abort signal. When provided, adapters forward it
+   * to the HTTP layer so an aborted agent cancels in-flight
+   * model calls instead of hanging until they return.
+   */
+  signal?: AbortSignal;
 }
 
 /**

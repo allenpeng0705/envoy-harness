@@ -58,13 +58,14 @@ describe("discoverAgentsMd", () => {
       const result = await discoverAgentsMd({
         cwd: FIX("root-and-cwd/sub"),
       });
-      // Should find AGENTS.md at the leaf (sub) AND at the root.
+      // Should find AGENTS.md at the root AND at the leaf (sub),
+      // in root-first order.
       expect(result.entries).toHaveLength(2);
       expect(result.entries[0]?.path).toBe(
-        path.join(FIX("root-and-cwd/sub"), AGENTS_MD_FILENAME),
+        path.join(FIX("root-and-cwd"), AGENTS_MD_FILENAME),
       );
       expect(result.entries[1]?.path).toBe(
-        path.join(FIX("root-and-cwd"), AGENTS_MD_FILENAME),
+        path.join(FIX("root-and-cwd/sub"), AGENTS_MD_FILENAME),
       );
     });
 
@@ -105,21 +106,22 @@ describe("discoverAgentsMd", () => {
     });
   });
 
-  describe("step 2: doc path collection (leaf-first)", () => {
-    it("orders leaf-first when collecting from root to leaf", async () => {
+  describe("step 2: doc path collection (root-first)", () => {
+    it("orders root-first when collecting from root to leaf", async () => {
       const result = await discoverAgentsMd({
         cwd: FIX("deep-nested/mid/leaf"),
       });
-      // Three docs: leaf, mid, root — in that order.
+      // Three docs: root, mid, leaf — in that order (the Codex
+      // pattern; the byte budget favors the project root).
       expect(result.entries).toHaveLength(3);
       expect(result.entries[0]?.path).toBe(
-        path.join(FIX("deep-nested/mid/leaf"), AGENTS_MD_FILENAME),
+        path.join(FIX("deep-nested"), AGENTS_MD_FILENAME),
       );
       expect(result.entries[1]?.path).toBe(
         path.join(FIX("deep-nested/mid"), AGENTS_MD_FILENAME),
       );
       expect(result.entries[2]?.path).toBe(
-        path.join(FIX("deep-nested"), AGENTS_MD_FILENAME),
+        path.join(FIX("deep-nested/mid/leaf"), AGENTS_MD_FILENAME),
       );
     });
 
@@ -153,59 +155,58 @@ describe("discoverAgentsMd", () => {
   describe("step 3: maxBytes budget", () => {
     it("respects a tight maxBytes and truncates the doc to fit", async () => {
       // maxbytes fixture: AGENTS.md at root (7 bytes) + a 5007-byte file
-      // at maxbytes-leaf. The walk is LEAF-FIRST, so the leaf is read
-      // first. With maxBytes=100, the leaf doesn't fit; it's truncated
-      // to 100 bytes. The root is never reached (budget exhausted).
+      // at maxbytes-leaf. The walk is ROOT-FIRST, so the root (7 bytes)
+      // is read first. With maxBytes=100, the leaf gets the remaining
+      // 93 bytes (truncated).
       const result = await discoverAgentsMd({
         cwd: FIX("maxbytes/maxbytes-leaf"),
         maxBytes: 100,
       });
-      // Leaf is in result (truncated).
+      // Root is in result (read first, fits).
+      expect(
+        result.entries.some(
+          (e) => e.path === path.join(FIX("maxbytes"), AGENTS_MD_FILENAME),
+        ),
+      ).toBe(true);
+      // Leaf is in result (truncated to the remaining budget).
       const leafPath = path.join(
         FIX("maxbytes/maxbytes-leaf"),
         AGENTS_MD_FILENAME,
       );
       const leafEntry = result.entries.find((e) => e.path === leafPath);
       expect(leafEntry).toBeDefined();
-      expect(leafEntry?.byteLength).toBeLessThanOrEqual(100);
-      // Root is NOT in result (budget exhausted by the truncated leaf).
-      const rootInResult = result.entries.some(
-        (e) => e.path === path.join(FIX("maxbytes"), AGENTS_MD_FILENAME),
-      );
-      expect(rootInResult).toBe(false);
+      expect(leafEntry?.byteLength).toBe(93);
       // Total bytes ≤ maxBytes.
-      expect(result.totalBytes).toBeLessThanOrEqual(100);
+      expect(result.totalBytes).toBe(100);
     });
 
-    it("truncates the leaf to fit a small budget", async () => {
-      // Leaf is 5007 bytes; with maxBytes=20, the leaf (read first)
-      // is truncated to 20 bytes.
+    it("truncates the leaf to fit a small budget (root first)", async () => {
+      // Leaf is 5008 bytes; with maxBytes=20, the root (7 bytes)
+      // is read first, then the leaf is truncated to the remaining 13.
       const result = await discoverAgentsMd({
         cwd: FIX("maxbytes/maxbytes-leaf"),
         maxBytes: 20,
       });
-      // The leaf is the only entry; it's truncated to 20 bytes.
-      expect(result.entries).toHaveLength(1);
-      const last = result.entries[result.entries.length - 1];
-      expect(last?.byteLength).toBe(20);
-      // Total equals the truncated leaf's bytes.
+      // Root (7) + truncated leaf (13).
+      expect(result.entries).toHaveLength(2);
+      expect(result.entries[0]?.byteLength).toBe(7);
+      const leafEntry = result.entries[1];
+      expect(leafEntry?.byteLength).toBe(13);
       expect(result.totalBytes).toBe(20);
     });
 
-    it("includes the leaf fully and skips the root when budget is tight", async () => {
-      // The leaf is 5008 bytes (5000 'x's + "# Leaf\n" + trailing \n
-      // added by Python's print). With maxBytes=5008, the leaf fits
-      // exactly. There's 0 bytes left, so the root (7 bytes) is
-      // skipped — its iteration breaks on the next loop guard.
+    it("includes the root fully and truncates the leaf when budget is tight", async () => {
+      // The leaf is 5008 bytes (5000 'x's + "# Leaf\n" + trailing \n).
+      // With maxBytes=5008, the root (7 bytes) is read first, so the
+      // leaf is truncated to the remaining 5001 bytes.
       const result = await discoverAgentsMd({
         cwd: FIX("maxbytes/maxbytes-leaf"),
         maxBytes: 5008,
       });
-      // Leaf is read fully (5008 bytes), root is NOT included.
-      expect(result.entries).toHaveLength(1);
-      const leafEntry = result.entries[0];
-      expect(leafEntry?.byteLength).toBe(5008);
-      // Total equals the leaf's bytes.
+      // Root (7) + leaf truncated to 5001.
+      expect(result.entries).toHaveLength(2);
+      expect(result.entries[0]?.byteLength).toBe(7);
+      expect(result.entries[1]?.byteLength).toBe(5001);
       expect(result.totalBytes).toBe(5008);
     });
 
@@ -354,6 +355,31 @@ describe("discoverAgentsMd", () => {
       expect(Buffer.byteLength(multiByteContent, "utf8")).toBeGreaterThan(
         multiByteContent.length,
       );
+    });
+
+    it("truncates multi-byte content to the byte budget without splitting characters", async () => {
+      // CJK chars are 3 bytes each. A budget of 10 bytes must never
+      // produce >10 bytes or a U+FFFD replacement char (split char).
+      const cjk = "你好世界你好世界"; // 6 chars × 3 bytes = 18 bytes
+      const dir = path.join(
+        (await import("node:os")).tmpdir(),
+        `envoy-agents-md-${Date.now()}-${Math.floor(Math.random() * 1e6)}`,
+      );
+      const { promises: fs } = await import("node:fs");
+      await fs.mkdir(path.join(dir, "sub"), { recursive: true });
+      await fs.writeFile(path.join(dir, "AGENTS.md"), cjk, "utf8");
+      await fs.writeFile(path.join(dir, "sub", "AGENTS.md"), cjk, "utf8");
+      try {
+        const result = await discoverAgentsMd({
+          cwd: path.join(dir, "sub"),
+          projectRootMarkers: [],
+          maxBytes: 10,
+        });
+        expect(result.totalBytes).toBeLessThanOrEqual(10);
+        expect(result.assembled).not.toContain("\uFFFD");
+      } finally {
+        await fs.rm(dir, { recursive: true, force: true });
+      }
     });
   });
 

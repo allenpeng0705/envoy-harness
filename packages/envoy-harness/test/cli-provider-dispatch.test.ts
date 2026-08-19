@@ -345,6 +345,13 @@ describe("Agent.maxCostUsd cap", () => {
     expect(result.stopReason).toBe("aborted");
     expect(result.iterations).toBe(1);
     expect(result.metrics.costUsd).toBeGreaterThan(1.0);
+    // The abort reason is visible in the transcript + content
+    // (v0 returned the last response silently).
+    const text = result.content
+      .filter((b) => b.type === "text")
+      .map((b) => b.text)
+      .join("\n");
+    expect(text).toMatch(/\[aborted\] max-cost-usd exceeded/);
   });
 
   it("does not abort when cost is under the cap", async () => {
@@ -358,13 +365,13 @@ describe("Agent.maxCostUsd cap", () => {
     expect(result.metrics.costUsd).toBeLessThan(1.0);
   });
 
-  it("cap=0 aborts on the first call with usage", async () => {
+  it("cap=0 means no cap (unlimited)", async () => {
     const adapter = scriptedAdapter([
       textResponse("hi", { inputTokens: 1, outputTokens: 0 }),
     ]);
     const { agent } = agentWith(adapter, 0);
     const result = await agent.run("hi");
-    expect(result.stopReason).toBe("aborted");
+    expect(result.stopReason).toBe("end_turn");
   });
 
   it("no cap (undefined) means no check", async () => {

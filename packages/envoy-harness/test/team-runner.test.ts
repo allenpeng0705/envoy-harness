@@ -281,8 +281,10 @@ describe("Team.runOnce — per-agent failure", () => {
     const result = await team.runOnce();
     expect(result.status).toBe("failed");
     expect(result.error).toMatch(/agent b aborted/);
-    // A's result is still present.
-    expect(result.agents.map((a) => a.id)).toEqual(["a"]);
+    // A's result is present, and B's (failed) output is now
+    // recorded too — the error text is useful context.
+    expect(result.agents.map((a) => a.id)).toEqual(["a", "b"]);
     expect(result.agents[0]?.finalText).toBe("ok");
+    expect(result.agents[1]?.stopReason).toBe("aborted");
   });
 });

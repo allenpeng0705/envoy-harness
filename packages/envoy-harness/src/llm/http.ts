@@ -33,6 +33,11 @@ export interface HttpRequest {
   url: string;
   headers: Record<string, string>;
   body: string;
+  /**
+   * Optional abort signal. When provided, the fetch is canceled
+   * if the signal fires (e.g. the agent was aborted mid-call).
+   */
+  signal?: AbortSignal;
 }
 
 /** A single HTTP response. Body is always a string (caller parses). */
@@ -56,26 +61,44 @@ export interface HttpClient {
  * has `fetch` built-in (via undici); this works without
  * any external dependency.
  *
- * **Why no timeout?** v0 trusts the adapter's caller to
- * set timeouts. A future chunk can add `timeoutMs` to
- * `HttpRequest` and use `AbortController` to enforce it.
- * (Per the `agent-memory` rule: RPC timeout must exceed
- * runtime retry budget — a 30s default; long-running
- * 120s; the runner is the one enforcing it.)
+ * **Timeout:** optional `timeoutMs` (default: none — callers
+ * that want a bound pass one). The agent's abort signal is
+ * also honored via `HttpRequest.signal`, so a user cancel
+ * aborts an in-flight model call instead of hanging.
  */
 export class FetchHttpClient implements HttpClient {
+  private readonly timeoutMs: number | undefined;
+
+  constructor(options: { timeoutMs?: number } = {}) {
+    this.timeoutMs = options.timeoutMs;
+  }
+
   async request(req: HttpRequest): Promise<HttpResponse> {
-    const response = await fetch(req.url, {
-      method: req.method,
-      headers: req.headers,
-      body: req.body,
-    });
-    const body = await response.text();
-    const headers: Record<string, string> = {};
-    response.headers.forEach((value, key) => {
-      headers[key] = value;
-    });
-    return { status: response.status, headers, body };
+    const signals: AbortSignal[] = [];
+    if (req.signal) signals.push(req.signal);
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    if (this.timeoutMs !== undefined && this.timeoutMs > 0) {
+      const controller = new AbortController();
+      timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
+      signals.push(controller.signal);
+    }
+    const signal = signals.length > 0 ? AbortSignal.any(signals) : undefined;
+    try {
+      const response = await fetch(req.url, {
+        method: req.method,
+        headers: req.headers,
+        body: req.body,
+        ...(signal ? { signal } : {}),
+      });
+      const body = await response.text();
+      const headers: Record<string, string> = {};
+      response.headers.forEach((value, key) => {
+        headers[key] = value;
+      });
+      return { status: response.status, headers, body };
+    } finally {
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
+    }
   }
 }
 

@@ -79,6 +79,8 @@ export interface AnthropicAdapterOptions {
   anthropicVersion?: string;
   /** Default `max_tokens` when the caller doesn't pass one. Default: `1024`. */
   defaultMaxTokens?: number;
+  /** Optional HTTP timeout in ms. No timeout by default. */
+  timeoutMs?: number;
 }
 
 const DEFAULT_BASE_URL = "https://api.anthropic.com";
@@ -159,7 +161,11 @@ export class AnthropicAdapter implements ModelAdapter {
     this.apiKey = options.apiKey;
     this.model = options.model;
     this.baseUrl = options.baseUrl ?? DEFAULT_BASE_URL;
-    this.http = options.httpClient ?? new FetchHttpClient();
+    this.http =
+      options.httpClient ??
+      new FetchHttpClient(
+        options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {},
+      );
     this.version = options.anthropicVersion ?? DEFAULT_VERSION;
     this.defaultMaxTokens = options.defaultMaxTokens ?? DEFAULT_MAX_TOKENS;
   }
@@ -189,6 +195,7 @@ export class AnthropicAdapter implements ModelAdapter {
         "anthropic-version": this.version,
       },
       body: JSON.stringify(body),
+      ...(input.signal ? { signal: input.signal } : {}),
     });
     if (!is2xx(response.status)) {
       throw new Error(parseError(response));

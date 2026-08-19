@@ -23,6 +23,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   FederatedScoreboard,
+  readAdoptions,
   readScoreboard,
   SelfEvolve,
   signEntry,
@@ -239,7 +240,7 @@ describe("FederatedScoreboard.adopt", () => {
     expect(result.adopted).toEqual([]);
   });
 
-  it("calls the local gate for each validated candidate", async () => {
+  it("rejects candidates without rule bodies without running the local gate", async () => {
     const paths = makePaths();
     const bench: Benchmark = {
       name: "t",
@@ -275,13 +276,18 @@ describe("FederatedScoreboard.adopt", () => {
     const pullResult = await fed.pull({ optIn: true });
     expect(pullResult.validatedCandidates).toHaveLength(2);
     const adoptResult = await fed.adopt(pullResult, evolve);
-    // Both candidates were evaluated by the local gate.
-    // callCount: 2 candidates × 2 (baseline + candidate) = 4.
-    expect(callCount).toBe(4);
-    expect(adoptResult.adopted).toHaveLength(2);
+    // v0 federated entries don't ship rule bodies, and the local
+    // gate cannot evaluate a ruleset it doesn't have. Running the
+    // benchmark with zero rules produced pass rate 0 (never kept)
+    // while polluting the local cycle counter — so candidates are
+    // rejected explicitly instead of being "evaluated".
+    expect(callCount).toBe(0);
+    expect(adoptResult.adopted).toHaveLength(0);
+    expect(adoptResult.rejected).toHaveLength(2);
+    expect(adoptResult.rejected[0]?.reason).toMatch(/no rule bodies/);
   });
 
-  it("splits adopted vs rejected based on the local pass rate", async () => {
+  it("records the rejection in the adoptions audit file", async () => {
     const paths = makePaths();
     const bench: Benchmark = {
       name: "t",
@@ -290,24 +296,11 @@ describe("FederatedScoreboard.adopt", () => {
     await writeBenchmark(paths.benchmark, bench);
 
     const e1 = await makeEntry({ version: 1, hypothesis: "improving" });
-    const e2 = await makeEntry({ version: 2, hypothesis: "no-improvement" });
-    const peer: PeerScoreboard = { peerId: "p1", entries: [e1, e2] };
+    const peer: PeerScoreboard = { peerId: "p1", entries: [e1] };
 
-    let callCount = 0;
     const runner: BenchmarkRunner = {
       async run() {
-        callCount++;
-        // First candidate: 0.5 → 1.0 (improving). Second: 0.5 → 0.5 (no change).
-        // We need to alternate per candidate. callCount is global;
-        // 1 = baseline for e1; 2 = candidate for e1; 3 = baseline for e2; 4 = candidate for e2.
-        const isBaseline = callCount % 2 === 1;
-        const isFirstCycle = callCount <= 2;
-        return {
-          passRate: isBaseline ? 0.5 : isFirstCycle ? 1.0 : 0.5,
-          meanScore: 0.7,
-          nRuns: 1,
-          tasks: [{ id: "t1", pass: !isBaseline && isFirstCycle }],
-        };
+        throw new Error("should not run");
       },
     };
     const evolve = makeSelfEvolve(
@@ -317,10 +310,15 @@ describe("FederatedScoreboard.adopt", () => {
     );
     const fed = new FederatedScoreboard(new MockPeerSource([peer]));
     const pullResult = await fed.pull({ optIn: true });
-    const adoptResult = await fed.adopt(pullResult, evolve);
-    expect(adoptResult.adopted).toHaveLength(1);
-    expect(adoptResult.adopted[0]?.entry.hypothesis).toBe("improving");
+    const adoptionsFile = path.join(paths.snapshotDir, "..", "adoptions.yaml");
+    const adoptResult = await fed.adopt(pullResult, evolve, { adoptionsFile });
+    expect(adoptResult.adopted).toHaveLength(0);
     expect(adoptResult.rejected).toHaveLength(1);
-    expect(adoptResult.rejected[0]?.entry.hypothesis).toBe("no-improvement");
+    // The audit record is written WITHOUT a localEntry (the cycle
+    // never ran), which must pass the schema (version 0 previously
+    // failed `positive()` validation).
+    const records = await readAdoptions(adoptionsFile);
+    expect(records).toHaveLength(1);
+    expect(records[0]?.localEntry).toBeUndefined();
   });
 });

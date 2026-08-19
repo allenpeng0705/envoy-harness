@@ -263,6 +263,41 @@ describe("tool_call + tool_result events", () => {
     if (result?.kind !== "tool_result") return;
     expect(result.result).toEqual({ content: "boom", isError: true });
   });
+
+  it("uses the loop iteration (not the cumulative tool count) for tool calls", async () => {
+    const stream = new MemoryStream();
+    const tracer = new JsonLinesTracer(stream);
+    const echo: Tool = {
+      name: "echo",
+      description: "echo",
+      parameters: z.object({ s: z.string() }),
+      async execute({ s }) {
+        return { content: s };
+      },
+    };
+    const { agent } = buildAgent({
+      model: scriptedModel([
+        {
+          content: [
+            toolCallBlock("t1", "echo", { s: "a" }),
+            toolCallBlock("t2", "echo", { s: "b" }),
+          ],
+        },
+        { content: [textBlock("done")] },
+      ]),
+      tracer,
+      tool: echo,
+    });
+    await agent.run("run");
+    const events = parseTrace(stream);
+    const calls = events.filter((e) => e.kind === "tool_call");
+    expect(calls).toHaveLength(2);
+    // Both tool calls happened inside loop iteration 1, so both
+    // events carry iteration 1 (not cumulative counts 1 and 2).
+    expect(
+      calls.map((c) => (c.kind === "tool_call" ? c.iteration : -1)),
+    ).toEqual([1, 1]);
+  });
 });
 
 // ---------------------------------------------------------------------------

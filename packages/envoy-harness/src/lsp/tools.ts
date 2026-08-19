@@ -29,6 +29,8 @@
  */
 
 import { z } from "zod";
+import { promises as fs } from "node:fs";
+import * as path from "node:path";
 
 import type { LspManager } from "./types.js";
 import type { Tool } from "../tools/types.js";
@@ -152,11 +154,11 @@ export function makeLspTools(manager: LspManager): Tool[] {
       name: "lsp_diagnostics",
       description:
         "Get the current diagnostics (errors, warnings, hints) " +
-        "for a file. The language server publishes these as the " +
-        "file is edited. Useful for catching type errors and " +
-        "lint issues before reading the full file.",
+        "for a file. The tool opens the document in the language " +
+        "server and waits for its diagnostics. Useful for catching " +
+        "type errors and lint issues before reading the full file.",
       parameters: fileParams,
-      async execute({ file }, _ctx) {
+      async execute({ file }, ctx) {
         const client = manager.forFile(file);
         if (!client) {
           return {
@@ -165,7 +167,17 @@ export function makeLspTools(manager: LspManager): Tool[] {
           };
         }
         try {
-          const diagnostics = await client.diagnostics(file);
+          const resolved = path.isAbsolute(file)
+            ? file
+            : path.resolve(ctx.cwd, file);
+          // Open the document so the server actually produces
+          // diagnostics (v0 never sent didOpen, so diagnostics()
+          // was always empty for unseen files).
+          const text = await fs.readFile(resolved, "utf8");
+          await client.didOpen(resolved, text);
+          const diagnostics =
+            (await client.awaitDiagnostics?.(resolved)) ??
+            (await client.diagnostics(resolved));
           return { content: { diagnostics } };
         } catch (e) {
           return {

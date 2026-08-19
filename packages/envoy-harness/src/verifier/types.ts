@@ -96,8 +96,10 @@ export async function runVerifierRules(
  *    The first fail wins; the orchestrator should stop here.
  * 2. Empty input → `disputed` (verifier produced nothing).
  * 3. All `pass` → average the scores; confidence based on count.
- * 4. Mixed `pass` / `partial` → `partial` (verifier disagreement).
- * 5. `disputed` only → return that.
+ * 4. Any `disputed` → `disputed` (the verifier needs a human;
+ *    a disputed signal must not be silently downgraded to
+ *    partial — that loses the `needsHuman` flag).
+ * 5. Mixed `pass` / `partial` → `partial` (verifier disagreement).
  *
  * **No LLM source in v0.** Phase 2 adds the 4-source cascade
  * (per design §12.4): rules first, then LLM, then human/cross.
@@ -124,9 +126,19 @@ export function combineVerdicts(verdicts: ReadonlyArray<Verdict>): Verdict {
       confidence: scores.length >= 3 ? "high" : "medium",
     };
   }
-  // Some pass, some partial, some disputed → degrade to partial.
-  // The "verifier disagreement" reason is generic; the specific
-  // disagreements land in the VerdictEntry signals (Phase 2).
+  // Any disputed signal needs a human. Aggregate the signals so
+  // the escalation path has context.
+  const disputed = verdicts.filter(
+    (v): v is Extract<Verdict, { kind: "disputed" }> => v.kind === "disputed",
+  );
+  if (disputed.length > 0) {
+    return {
+      kind: "disputed",
+      needsHuman: true,
+      signals: disputed.flatMap((v) => v.signals),
+    };
+  }
+  // Mixed pass / partial → partial (verifier disagreement).
   return {
     kind: "partial",
     score: 0.5,

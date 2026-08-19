@@ -54,6 +54,7 @@ export {
   ModelHypothesisProvider,
   SelfEvolve,
   buildHypothesisPrompt,
+  loadRulesetFromFile,
   parseHypothesisFromLlm,
   type BenchmarkRunner,
   type Hypothesis,

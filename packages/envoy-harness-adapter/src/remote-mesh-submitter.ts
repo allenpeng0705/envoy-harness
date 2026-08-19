@@ -182,6 +182,15 @@ export class RemoteMeshSubmitter implements MeshSubmitter {
     input: SubagentInput,
     signal: AbortSignal,
   ): Promise<SubagentResult> {
-    return this.transport.send(input, this.targetPeerId, signal);
+    const result = await this.transport.send(input, this.targetPeerId, signal);
+    // The class contract says cross-node results are signed and
+    // verified by the transport; enforce that the signature is
+    // present so an unsigned result can't silently pass through.
+    if (!result.signature || result.signature.length === 0) {
+      throw new Error(
+        "RemoteMeshSubmitter: transport returned an unsigned SubagentResult",
+      );
+    }
+    return result;
   }
 }

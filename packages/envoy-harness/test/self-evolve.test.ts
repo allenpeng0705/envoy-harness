@@ -25,6 +25,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   buildHypothesisPrompt,
   DefaultBenchmarkRunner,
+  loadRulesetFromFile,
   ModelHypothesisProvider,
   parseHypothesisFromLlm,
   SelfEvolve,
@@ -141,6 +142,23 @@ describe("buildHypothesisPrompt (contamination guard)", () => {
 // ---------------------------------------------------------------------------
 
 describe("parseHypothesisFromLlm", () => {
+  const KNOWN: ReadonlyArray<VerifierRule> = [
+    {
+      name: "x",
+      description: "rule x",
+      async check() {
+        return { kind: "pass" as const, score: 1.0, confidence: "high" as const };
+      },
+    },
+    {
+      name: "a",
+      description: "rule a",
+      async check() {
+        return { kind: "partial" as const, score: 0.5, reason: "a" };
+      },
+    },
+  ];
+
   function makeResponse(text: string): ModelResponse {
     return {
       content: [{ type: "text", text }],
@@ -148,40 +166,52 @@ describe("parseHypothesisFromLlm", () => {
     };
   }
 
-  it("parses a well-formed JSON hypothesis", () => {
+  it("parses a well-formed JSON hypothesis", async () => {
     const r = parseHypothesisFromLlm(
       makeResponse(JSON.stringify({
         text: "Add a stricter check",
         ruleChanges: [{ name: "x", description: "y" }],
       })),
+      KNOWN,
     );
     expect(r?.text).toBe("Add a stricter check");
     expect(r?.ruleChanges).toHaveLength(1);
     expect(r?.ruleChanges[0]?.name).toBe("x");
+    // The check implementation is inherited from the current ruleset
+    // (rule bodies are code, not model output).
+    expect(await r?.ruleChanges[0]?.check({} as never, "")).toEqual({
+      kind: "pass",
+      score: 1.0,
+      confidence: "high",
+    });
   });
 
   it("extracts JSON from surrounding prose", () => {
     const r = parseHypothesisFromLlm(
       makeResponse(`Here is my proposal: ${JSON.stringify({ text: "x", ruleChanges: [{ name: "a", description: "b" }] })} -- end`),
+      KNOWN,
     );
     expect(r?.text).toBe("x");
+    expect(r?.ruleChanges[0]?.name).toBe("a");
   });
 
   it("returns null on empty ruleChanges (no-op)", () => {
     const r = parseHypothesisFromLlm(
       makeResponse(JSON.stringify({ text: "no actionable", ruleChanges: [] })),
+      KNOWN,
     );
     expect(r).toBeNull();
   });
 
   it("returns null on malformed JSON", () => {
-    expect(parseHypothesisFromLlm(makeResponse("not json"))).toBeNull();
+    expect(parseHypothesisFromLlm(makeResponse("not json"), KNOWN)).toBeNull();
   });
 
   it("returns null when text is missing", () => {
     expect(
       parseHypothesisFromLlm(
         makeResponse(JSON.stringify({ ruleChanges: [{ name: "x", description: "y" }] })),
+        KNOWN,
       ),
     ).toBeNull();
   });
@@ -190,8 +220,27 @@ describe("parseHypothesisFromLlm", () => {
     expect(
       parseHypothesisFromLlm(
         makeResponse(JSON.stringify({ text: "x", ruleChanges: "not-an-array" })),
+        KNOWN,
       ),
     ).toBeNull();
+  });
+
+  it("rejects rule names that are not in the current ruleset", () => {
+    const r = parseHypothesisFromLlm(
+      makeResponse(
+        JSON.stringify({ text: "x", ruleChanges: [{ name: "invented" }] }),
+      ),
+      KNOWN,
+    );
+    expect(r).toBeNull();
+  });
+
+  it("accepts a subset of the current ruleset", () => {
+    const r = parseHypothesisFromLlm(
+      makeResponse(JSON.stringify({ text: "keep only x", ruleChanges: [{ name: "x" }] })),
+      KNOWN,
+    );
+    expect(r?.ruleChanges.map((rule) => rule.name)).toEqual(["x"]);
   });
 });
 
@@ -391,6 +440,67 @@ describe("SelfEvolve.runOneCycle", () => {
     // The snapshot file should exist.
     const files = await fs.readdir(paths.snapshotDir);
     expect(files.some((f) => f.startsWith("v1."))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// loadRulesetFromFile
+// ---------------------------------------------------------------------------
+
+describe("loadRulesetFromFile", () => {
+  it("resolves committed rule names back to real rules", async () => {
+    const file = path.join(tmpDir, "ruleset.json");
+    await fs.writeFile(
+      file,
+      JSON.stringify([{ name: "non-empty-content" }, { name: "mesh-task-shape" }]),
+      "utf8",
+    );
+    const loaded = await loadRulesetFromFile(file, DEFAULT_RULES);
+    expect(loaded?.map((r) => r.name)).toEqual([
+      "non-empty-content",
+      "mesh-task-shape",
+    ]);
+    // The check functions are the real ones, not placeholders.
+    expect(await loaded?.[0]?.check({ content: [] } as never, "")).toMatchObject({
+      kind: "fail",
+    });
+  });
+
+  it("returns null when the file is missing", async () => {
+    expect(
+      await loadRulesetFromFile(path.join(tmpDir, "missing.json"), DEFAULT_RULES),
+    ).toBeNull();
+  });
+
+  it("returns null when a name is unknown to the code ruleset", async () => {
+    const file = path.join(tmpDir, "ruleset.json");
+    await fs.writeFile(
+      file,
+      JSON.stringify([{ name: "invented-rule" }]),
+      "utf8",
+    );
+    expect(await loadRulesetFromFile(file, DEFAULT_RULES)).toBeNull();
+  });
+
+  it("runOneCycle throws when the frozen benchmark is missing", async () => {
+    const paths = makePaths();
+    const evolve = new SelfEvolve({
+      paths,
+      currentRules: SAMPLE_RULES,
+      hypothesisProvider: {
+        async proposeHypothesis(): Promise<Hypothesis> {
+          return { text: "x", ruleChanges: [] };
+        },
+      },
+      benchmarkRunner: {
+        async run() {
+          return { passRate: 0, meanScore: 0, nRuns: 0, tasks: [] };
+        },
+      },
+    });
+    // The benchmark path doesn't exist; a missing benchmark is an
+    // operator error, not a silent empty run.
+    await expect(evolve.runOneCycle()).rejects.toThrow(/ENOENT/);
   });
 });
 

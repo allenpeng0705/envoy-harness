@@ -69,6 +69,8 @@
  * `LspProcess` (interface). Additive.
  */
 
+import * as path from "node:path";
+
 import type {
   LspClient,
   LspDiagnostic,
@@ -132,6 +134,12 @@ export interface StdioLspClientOptions {
    * unexpected server messages). Off by default.
    */
   log?: (msg: string) => void;
+  /**
+   * Timeout for request/response round-trips, in ms.
+   * Default: 15000. A server that never answers rejects
+   * the pending request instead of hanging the tool call.
+   */
+  requestTimeoutMs?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -185,6 +193,7 @@ export class StdioLspClient implements LspClient {
   private readonly rootUri: string;
   private readonly clientCapabilities: Record<string, unknown>;
   private readonly log: (msg: string) => void;
+  private readonly requestTimeoutMs: number;
 
   private nextId = 1;
   private readonly pending = new Map<
@@ -192,6 +201,11 @@ export class StdioLspClient implements LspClient {
     { resolve: (v: unknown) => void; reject: (e: unknown) => void }
   >();
   private readonly diagnosticsMap = new Map<string, LspDiagnostic[]>();
+  /** Resolvers waiting for the next publishDiagnostics per file. */
+  private readonly diagnosticsWaiters = new Map<
+    string,
+    Array<{ resolve: () => void; timer: ReturnType<typeof setTimeout> }>
+  >();
   private _initialized = false;
   /**
    * Set to `true` by `close()` once the shutdown/exit
@@ -220,6 +234,7 @@ export class StdioLspClient implements LspClient {
       },
     };
     this.log = options.log ?? (() => {});
+    this.requestTimeoutMs = options.requestTimeoutMs ?? 15_000;
 
     this.dataListener = (chunk) => this.onData(chunk);
     this.process.stdout.on("data", this.dataListener);
@@ -271,6 +286,14 @@ export class StdioLspClient implements LspClient {
         reject(new Error("StdioLspClient: closed"));
       }
       this.pending.clear();
+      // Resolve any diagnostics waiters with whatever we have.
+      for (const waiters of this.diagnosticsWaiters.values()) {
+        for (const w of waiters) {
+          clearTimeout(w.timer);
+          w.resolve();
+        }
+      }
+      this.diagnosticsWaiters.clear();
       this.process.kill();
       this._closed = true;
     }
@@ -330,7 +353,68 @@ export class StdioLspClient implements LspClient {
     // Diagnostics are pushed by the server via
     // `textDocument/publishDiagnostics`. We don't request;
     // we read what the server has sent.
-    return this.diagnosticsMap.get(file) ?? [];
+    return this.diagnosticsMap.get(normalizePath(file)) ?? [];
+  }
+
+  /**
+   * Open a document (LSP `textDocument/didOpen`). Servers
+   * publish diagnostics for opened documents; without this,
+   * `diagnostics()` is always empty for files the server has
+   * never seen.
+   */
+  async didOpen(file: string, text: string): Promise<void> {
+    this.assertInitialized();
+    this.assertOpen();
+    const uri = pathToUri(file);
+    await this.sendNotification("textDocument/didOpen", {
+      textDocument: {
+        uri,
+        languageId: languageIdFromPath(file),
+        version: 1,
+        text,
+      },
+    });
+  }
+
+  /** Close a document (LSP `textDocument/didClose`). */
+  async didClose(file: string): Promise<void> {
+    this.assertInitialized();
+    this.assertOpen();
+    await this.sendNotification("textDocument/didClose", {
+      textDocument: { uri: pathToUri(file) },
+    });
+    this.diagnosticsMap.delete(normalizePath(file));
+  }
+
+  /**
+   * Wait for the server's next `publishDiagnostics` for `file`
+   * (after a `didOpen`), resolving with the current diagnostics
+   * when they arrive or after `timeoutMs` (default: the request
+   * timeout). This makes the diagnostics tool actually usable:
+   * open the file, wait for the push, read the map.
+   */
+  awaitDiagnostics(
+    file: string,
+    timeoutMs?: number,
+  ): Promise<ReadonlyArray<LspDiagnostic>> {
+    this.assertInitialized();
+    this.assertOpen();
+    const key = normalizePath(file);
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        const waiters = this.diagnosticsWaiters.get(key) ?? [];
+        const idx = waiters.findIndex((w) => w.timer === timer);
+        if (idx !== -1) waiters.splice(idx, 1);
+        if (waiters.length === 0) this.diagnosticsWaiters.delete(key);
+        resolve(this.diagnosticsMap.get(key) ?? []);
+      }, timeoutMs ?? this.requestTimeoutMs);
+      const waiters = this.diagnosticsWaiters.get(key) ?? [];
+      waiters.push({
+        resolve: () => resolve(this.diagnosticsMap.get(key) ?? []),
+        timer,
+      });
+      this.diagnosticsWaiters.set(key, waiters);
+    });
   }
 
   // --- internals ---
@@ -352,7 +436,25 @@ export class StdioLspClient implements LspClient {
     const id = this.nextId++;
     const msg: JsonRpcRequest = { jsonrpc: "2.0", id, method, params };
     return new Promise<unknown>((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      // Time out requests that the server never answers so the
+      // agent's tool call cannot hang forever.
+      const timer = setTimeout(() => {
+        const pending = this.pending.get(id);
+        if (!pending) return;
+        this.pending.delete(id);
+        pending.reject(
+          new Error(`LSP request timed out after ${this.requestTimeoutMs}ms: ${method}`),
+        );
+      }, this.requestTimeoutMs);
+      // Keep the timer alive with the pending entry so close()
+      // can clear it.
+      this.pending.set(id, {
+        resolve,
+        reject: (e) => {
+          clearTimeout(timer);
+          reject(e);
+        },
+      });
       this.writeMessage(msg);
     });
   }
@@ -466,7 +568,7 @@ export class StdioLspClient implements LspClient {
           source?: string;
         }>;
       };
-      const file = uriToPath(params.uri);
+      const file = normalizePath(uriToPath(params.uri));
       const diags: LspDiagnostic[] = params.diagnostics.map((d) => ({
         file,
         line: d.range.start.line,
@@ -483,12 +585,34 @@ export class StdioLspClient implements LspClient {
       } else {
         this.diagnosticsMap.set(file, diags);
       }
+      // Wake any awaitDiagnostics waiters for this file.
+      const waiters = this.diagnosticsWaiters.get(file);
+      if (waiters && waiters.length > 0) {
+        const copy = [...waiters];
+        this.diagnosticsWaiters.delete(file);
+        for (const w of copy) {
+          clearTimeout(w.timer);
+          w.resolve();
+        }
+      }
       return;
     }
     // Other notifications (window/logMessage, $/progress,
     // etc.) are ignored in v0.
     this.log(`StdioLspClient: ignoring notification ${msg.method}`);
   }
+}
+
+/** Normalize a path for diagnostics-map keys (both sides). */
+function normalizePath(p: string): string {
+  return path.normalize(p);
+}
+
+/** A coarse languageId from the file extension (LSP servers accept this). */
+function languageIdFromPath(p: string): string {
+  const idx = p.lastIndexOf(".");
+  if (idx === -1) return "plaintext";
+  return p.slice(idx + 1);
 }
 
 // ---------------------------------------------------------------------------

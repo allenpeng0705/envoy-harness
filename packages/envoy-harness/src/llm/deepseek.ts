@@ -43,6 +43,8 @@ export interface DeepSeekAdapterOptions {
   baseUrl?: string;
   /** The HTTP client. Default: `new FetchHttpClient()` (via OpenAIAdapter). */
   httpClient?: HttpClient;
+  /** Optional HTTP timeout in ms. No timeout by default. */
+  timeoutMs?: number;
 }
 
 const DEFAULT_BASE_URL = "https://api.deepseek.com/v1";
@@ -60,6 +62,7 @@ export class DeepSeekAdapter extends OpenAIAdapter {
       model: options.model ?? DEFAULT_MODEL,
       baseUrl: options.baseUrl ?? DEFAULT_BASE_URL,
       ...(options.httpClient ? { httpClient: options.httpClient } : {}),
+      ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
     });
   }
 }

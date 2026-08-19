@@ -195,6 +195,80 @@ describe("LocalMeshSubmitter.submit", () => {
   });
 });
 
+describe("LocalMeshSubmitter deadline + throw handling", () => {
+  it("aborts the sub-agent when the deadline elapses", async () => {
+    let completeResolve: (() => void) | undefined;
+    const hangingModel: ModelAdapter = {
+      async complete() {
+        // Never returns until the test releases it.
+        await new Promise<void>((resolve) => {
+          completeResolve = resolve;
+        });
+        return {
+          content: [textBlock("late")],
+          stopReason: "end_turn",
+        };
+      },
+    };
+    const submitter = new LocalMeshSubmitter({
+      buildSubagent: defaultBuildSubagentFactory({ model: hangingModel }),
+      workerPeerId: "local",
+    });
+    const start = Date.now();
+    const resultP = submitter.submit(
+      subagentInput({ deadlineMs: 30 }),
+      new AbortController().signal,
+    );
+    const result = await resultP;
+    // The deadline abort produces a failed (aborted) result.
+    expect(result.status).toBe("failed");
+    expect(result.content[0]).toMatchObject({
+      type: "text",
+      text: expect.stringContaining("deadline exceeded"),
+    });
+    expect(Date.now() - start).toBeLessThan(5000);
+    completeResolve?.();
+  });
+
+  it("converts a throwing agent.run into a failed result + completed record", async () => {
+    // Force a real throw via maxIterations by always returning a
+    // tool call (a model error is caught by agent.run internally).
+    const loopModel: ModelAdapter = {
+      async complete() {
+        return {
+          content: [
+            {
+              type: "tool_call",
+              id: "t",
+              name: "bash",
+              args: { command: "echo" },
+            },
+          ],
+          stopReason: "tool_use",
+        };
+      },
+    };
+    const loopSubmitter = new LocalMeshSubmitter({
+      buildSubagent: defaultBuildSubagentFactory({
+        model: loopModel,
+      }),
+      workerPeerId: "local",
+    });
+    const result = await loopSubmitter.submit(
+      subagentInput(),
+      new AbortController().signal,
+    );
+    expect(result.status).toBe("failed");
+    expect(result.content[0]).toMatchObject({
+      type: "text",
+      text: expect.stringContaining("sub-agent failed"),
+    });
+    const records = loopSubmitter.listSubagents();
+    expect(records[0]?.status).toBe("failed");
+    expect(records[0]?.completedAt).toBeDefined();
+  });
+});
+
 // ---------------------------------------------------------------------------
 // 7. Verdict synthesis
 // ---------------------------------------------------------------------------

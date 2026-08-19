@@ -251,15 +251,28 @@ export class FederatedScoreboard {
     const peerId = options.peerId ?? "unknown";
 
     for (const entry of pullResult.validatedCandidates) {
-      // The peer's hypothesis text + an empty rule list —
-      // federated entries don't ship full rule bodies. The
-      // operator's local re-implementation is the source of
-      // truth; the entry records "we tried this hypothesis
-      // and the local pass rate improved".
+      // Federated entries don't ship rule bodies in v0, and the
+      // local 5-step gate cannot evaluate a ruleset it doesn't
+      // have. Running the benchmark with zero rules produced a
+      // pass rate of 0 (never kept) while polluting the local
+      // cycle counter — so we reject such candidates explicitly
+      // instead of pretending to evaluate them.
       const hypothesis: Hypothesis = {
         text: entry.hypothesis,
         ruleChanges: [],
       };
+      if (hypothesis.ruleChanges.length === 0) {
+        const reason =
+          "federated candidate carries no rule bodies (v0) — the local gate needs a concrete ruleset to evaluate";
+        rejected.push({ entry, reason });
+        if (options.adoptionsFile) {
+          await appendAdoption(
+            options.adoptionsFile,
+            buildRecord(peerId, entry, undefined, false, reason),
+          );
+        }
+        continue;
+      }
       let cycle;
       try {
         cycle = await selfEvolve.runOneCycleAgainst(hypothesis);
@@ -317,17 +330,15 @@ function buildRecord(
       passRateAfter: sourceEntry.passRateAfter,
       ownerSignature: sourceEntry.ownerSignature,
     },
-    localEntry: localEntry
+    ...(localEntry
       ? {
-          version: localEntry.version,
-          passRateBefore: localEntry.passRateBefore,
-          passRateAfter: localEntry.passRateAfter,
+          localEntry: {
+            version: localEntry.version,
+            passRateBefore: localEntry.passRateBefore,
+            passRateAfter: localEntry.passRateAfter,
+          },
         }
-      : {
-          version: 0,
-          passRateBefore: 0,
-          passRateAfter: 0,
-        },
+      : {}),
     kept,
     adoptedAt: new Date().toISOString(),
     ...(reason !== undefined ? { reason } : {}),

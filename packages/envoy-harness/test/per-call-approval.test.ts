@@ -79,6 +79,7 @@ function scriptedModel(
 /** Build an Agent with a custom ask handler. */
 function agentWith(opts: {
   askHandler?: AskHandler;
+  approval?: "unless-trusted" | "on-request" | "granular" | "never";
   hook?: (e: HookEvent) => Promise<HookDecision>;
   bashCalls?: Array<{ command: string }>;
   model: ModelAdapter;
@@ -101,6 +102,7 @@ function agentWith(opts: {
     hooks,
     cwd: "/tmp",
     ...(opts.askHandler ? { askHandler: opts.askHandler } : {}),
+    ...(opts.approval ? { approval: opts.approval } : {}),
   });
   return { agent, toolRegistry: tools };
 }
@@ -349,6 +351,32 @@ describe("F9.1 per-call approval — no handler", () => {
     const bashCalls: Array<{ command: string }> = [];
     const { agent } = agentWith({
       // no askHandler
+      hook: async (e) =>
+        e.name === "PreToolUse" ? { kind: "ask", question: "x" } : { kind: "continue" },
+      bashCalls,
+      model: scriptedModel([
+        {
+          content: [
+            {
+              type: "tool_call",
+              id: "t1",
+              name: "bash",
+              args: { command: "rm -rf /" },
+            },
+          ],
+        },
+        { content: [{ type: "text", text: "ok" }] },
+      ]),
+    });
+    await agent.run("hi");
+    expect(bashCalls).toEqual([]);
+  });
+
+  it("approval mode 'never' fails closed even with an allow-ing handler", async () => {
+    const bashCalls: Array<{ command: string }> = [];
+    const { agent } = agentWith({
+      askHandler: async () => ({ kind: "allow" }),
+      approval: "never",
       hook: async (e) =>
         e.name === "PreToolUse" ? { kind: "ask", question: "x" } : { kind: "continue" },
       bashCalls,

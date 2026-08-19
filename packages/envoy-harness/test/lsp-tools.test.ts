@@ -24,6 +24,9 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { promises as fs } from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 
 import {
   Agent,
@@ -248,14 +251,17 @@ describe("lsp_hover tool", () => {
 });
 
 describe("lsp_diagnostics tool", () => {
-  it("calls client.diagnostics and returns diagnostics array", async () => {
+  it("opens the document, waits for diagnostics, and returns them", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "envoy-lsp-diag-"));
+    const file = path.join(dir, "a.ts");
+    await fs.writeFile(file, "const x: number = 's';", "utf8");
     const ts = new MockLspClient({
       diagnostics: new Map([
         [
-          "/a.ts",
+          file,
           [
             {
-              file: "/a.ts",
+              file,
               line: 0,
               column: 0,
               severity: "error" as const,
@@ -268,11 +274,11 @@ describe("lsp_diagnostics tool", () => {
     const m = new StaticLspManager(new Map([[".ts", ts]]));
     const tool = makeLspTools(m).find((t: import("@envoymesh/envoy-harness").Tool) => t.name === "lsp_diagnostics")!;
     const result = await tool.execute(
-      { file: "/a.ts" },
+      { file },
       {
-        cwd: "/",
+        cwd: dir,
         session: new InMemorySession(newSessionId(), {
-          cwd: "/",
+          cwd: dir,
           permissionMode: "read-only",
           startedAt: new Date().toISOString(),
         }),
@@ -281,9 +287,14 @@ describe("lsp_diagnostics tool", () => {
     );
     expect(result.content).toEqual({
       diagnostics: [
-        { file: "/a.ts", line: 0, column: 0, severity: "error", message: "boom" },
+        { file, line: 0, column: 0, severity: "error", message: "boom" },
       ],
     });
+    // The tool opened the document so the server would publish.
+    expect(ts.calls.some((c) => c.op === "didOpen" && c.file === file)).toBe(
+      true,
+    );
+    await fs.rm(dir, { recursive: true, force: true });
   });
 });
 

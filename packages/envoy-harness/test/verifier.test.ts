@@ -307,6 +307,33 @@ describe("combineVerdicts", () => {
       reason: "verifier disagreement",
     });
   });
+
+  it("propagates disputed (does not downgrade to partial)", () => {
+    const verdict = combineVerdicts([
+      { kind: "disputed", needsHuman: true, signals: ["cross-verify failed"] },
+    ]);
+    expect(verdict).toEqual({
+      kind: "disputed",
+      needsHuman: true,
+      signals: ["cross-verify failed"],
+    });
+  });
+
+  it("a disputed mixed with passes escalates to disputed", () => {
+    const verdict = combineVerdicts([
+      { kind: "pass", score: 1.0, confidence: "high" },
+      { kind: "disputed", needsHuman: true, signals: ["model disagreement"] },
+    ]);
+    expect(verdict.kind).toBe("disputed");
+  });
+
+  it("a fail beats disputed", () => {
+    const verdict = combineVerdicts([
+      { kind: "disputed", needsHuman: true, signals: ["x"] },
+      { kind: "fail", reason: "empty output", rollback: true },
+    ]);
+    expect(verdict.kind).toBe("fail");
+  });
 });
 
 // ---------------------------------------------------------------------------

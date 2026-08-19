@@ -24,6 +24,9 @@
  */
 
 import { Writable } from "node:stream";
+import { promises as fs } from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -33,6 +36,7 @@ import {
   BUILTIN_TIER2_BATCH2_COMMANDS,
   BUILTIN_TIER2_BATCH3_COMMANDS,
   BUILTIN_TIER2_COMMANDS,
+  HookRegistry,
   runRepl,
   type LineReader,
   type ModelAdapter,
@@ -102,7 +106,7 @@ function fakeLineReader(lines: ReadonlyArray<string>): LineReader {
   };
 }
 
-function makeArgs(): RunParsedArgs {
+function makeArgs(overrides: Partial<RunParsedArgs> = {}): RunParsedArgs {
   return {
     subcommand: "run",
     help: false,
@@ -125,6 +129,7 @@ function makeArgs(): RunParsedArgs {
     verbose: false,
     quiet: false,
     positional: [],
+    ...overrides,
   };
 }
 
@@ -250,6 +255,110 @@ describe("e2e: model swap via /provider", () => {
         process.env["ANTHROPIC_API_KEY"] = prevKey;
       }
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F-fix: /sandbox and /approval actually affect enforcement
+// ---------------------------------------------------------------------------
+
+describe("e2e: /sandbox affects tool enforcement", () => {
+  it("a read-only session blocks bash writes even though the model tries", async () => {
+    const model = scriptedModel([
+      {
+        content: [
+          {
+            type: "tool_call",
+            id: "t1",
+            name: "bash",
+            args: { command: "touch /tmp/envoy-repl-sandbox-test" },
+          },
+        ],
+        stopReason: "tool_use",
+      },
+      { content: [textBlock("done")] },
+    ]);
+    const out = new StringWritable();
+    const err = new StringWritable();
+    await runRepl({
+      model,
+      args: makeArgs({ json: true }),
+      lineReader: fakeLineReader(["/sandbox read-only", "write please", "/quit"]),
+      stdout: out,
+      stderr: err,
+      historyPath: "",
+    });
+    expect(out.data).toContain("bash blocked");
+  });
+
+  it("/sandbox workspace-write allows writes inside the workspace", async () => {
+    const model = scriptedModel([
+      {
+        content: [
+          {
+            type: "tool_call",
+            id: "t1",
+            name: "bash",
+            args: { command: "echo hi > envoy-repl-write-test.txt" },
+          },
+        ],
+        stopReason: "tool_use",
+      },
+      { content: [textBlock("done")] },
+    ]);
+    const out = new StringWritable();
+    const err = new StringWritable();
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "envoy-repl-sandbox-"));
+    try {
+      await runRepl({
+        model,
+        args: makeArgs({ json: true, cwd }),
+        lineReader: fakeLineReader([
+          "/sandbox workspace-write",
+          "write please",
+          "/quit",
+        ]),
+        stdout: out,
+        stderr: err,
+        historyPath: "",
+      });
+      expect(out.data).not.toContain("bash blocked");
+    } finally {
+      await fs.rm(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("e2e: /approval never fails closed", () => {
+  it("denies hook asks even when a host handler would allow", async () => {
+    const model = scriptedModel([
+      {
+        content: [
+          {
+            type: "tool_call",
+            id: "t1",
+            name: "bash",
+            args: { command: "echo hi" },
+          },
+        ],
+        stopReason: "tool_use",
+      },
+      { content: [textBlock("done")] },
+    ]);
+    const hooks = new HookRegistry();
+    hooks.on("PreToolUse", async () => ({ kind: "ask", question: "go?" }));
+    const out = new StringWritable();
+    const err = new StringWritable();
+    await runRepl({
+      model,
+      args: makeArgs({ json: true }),
+      hooks,
+      lineReader: fakeLineReader(["/approval never", "run it", "/quit"]),
+      stdout: out,
+      stderr: err,
+      historyPath: "",
+    });
+    expect(out.data).toContain("approval mode is 'never'");
   });
 });
 

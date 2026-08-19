@@ -112,6 +112,24 @@ export interface LspClient {
   ): Promise<LspHover | null>;
   /** Get all current diagnostics for a file. */
   diagnostics(file: string): Promise<ReadonlyArray<LspDiagnostic>>;
+  /**
+   * Optional: wait for the server's next `publishDiagnostics`
+   * for `file` (useful right after `didOpen`). When absent,
+   * callers fall back to `diagnostics()`.
+   */
+  awaitDiagnostics?(
+    file: string,
+    timeoutMs?: number,
+  ): Promise<ReadonlyArray<LspDiagnostic>>;
+  /**
+   * Open a document in the server (LSP `textDocument/didOpen`).
+   * Servers publish diagnostics for opened documents; without
+   * this, `diagnostics()` would always return [] for files the
+   * server has never seen.
+   */
+  didOpen(file: string, text: string): Promise<void>;
+  /** Close a document in the server (LSP `textDocument/didClose`). */
+  didClose(file: string): Promise<void>;
   /** Release server resources. After `close`, all methods throw. */
   close(): Promise<void>;
 }

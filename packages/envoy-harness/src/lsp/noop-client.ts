@@ -57,6 +57,14 @@ export class NoopLspClient implements LspClient {
     return [];
   }
 
+  async didOpen(_file: string, _text: string): Promise<void> {
+    // no-op
+  }
+
+  async didClose(_file: string): Promise<void> {
+    // no-op
+  }
+
   async close(): Promise<void> {
     // no-op
   }

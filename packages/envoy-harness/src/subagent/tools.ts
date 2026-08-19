@@ -155,6 +155,13 @@ export interface MakeTaskToolOptions {
    * flexible than N callbacks.
    */
   onSubagentComplete?: (result: SubagentResult) => void;
+  /**
+   * F10.2: the parent's `maxSubagents` cap. The fan-out expansion
+   * must honor it too: when `FanOutSpec.count > maxSubagents`, the
+   * tool refuses ALL (same semantics as the parallel path). v0
+   * expanded unconditionally, bypassing the cap.
+   */
+  maxSubagents?: number;
 }
 
 /**
@@ -196,6 +203,10 @@ export function makeTaskTool(
     "submit" in submitterOrOptions
       ? undefined
       : submitterOrOptions.onSubagentComplete;
+  const maxSubagents: number | undefined =
+    "submit" in submitterOrOptions
+      ? undefined
+      : submitterOrOptions.maxSubagents;
 
   return {
     name: "task",
@@ -245,6 +256,27 @@ export function makeTaskTool(
             verdict: {
               kind: "fail",
               reason: "invalid FanOutSpec count",
+              rollback: false,
+            },
+            signature: "",
+          };
+        } else if (maxSubagents !== undefined && spec.count > maxSubagents) {
+          // F10.2 cap applies to the expanded count too.
+          result = {
+            status: "failed",
+            content: [
+              {
+                type: "text",
+                text: `maxSubagents reached: FanOutSpec for "${spec.capabilityTag}" expands to ${spec.count} sub-agents (cap is ${maxSubagents}). Refused.`,
+              },
+            ],
+            workerPeerId: "",
+            workerRuntime: "envoy-harness",
+            costUsd: 0,
+            durationMs: 0,
+            verdict: {
+              kind: "fail",
+              reason: "maxSubagents exceeded by FanOutSpec",
               rollback: false,
             },
             signature: "",

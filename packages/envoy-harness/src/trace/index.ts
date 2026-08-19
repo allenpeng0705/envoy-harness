@@ -32,3 +32,4 @@ export type {
 
 export { NullTracer } from "./null-tracer.js";
 export { JsonLinesTracer, type WritableStream } from "./json-lines.js";
+export { VerboseTracer, formatVerbose, type VerboseStream } from "./verbose-tracer.js";

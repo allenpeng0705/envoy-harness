@@ -210,13 +210,16 @@ export class EnvoyHarnessAdapter implements AgentAdapter {
       throw new Error("MAP execute aborted before start");
     }
     const startedAt = Date.now();
+    // Build the prompt ONCE (v0 called buildPrompt twice, producing
+    // two identical strings for the worker).
+    const prompt = this.buildPrompt(input);
     const agent = this.buildAgent({
       skillId: input.skillId,
-      objective: this.buildPrompt(input),
+      objective: prompt,
       costCeilingUsd: input.costCeilingUsd,
       signal: input.signal,
     });
-    const localResult = await agent.run(this.buildPrompt(input));
+    const localResult = await agent.run(prompt);
     if (input.signal.aborted) {
       throw new Error("MAP execute aborted during run");
     }
@@ -350,9 +353,16 @@ export function defaultBuildAgentFactory(opts: {
 }): BuildAgentFn {
   const cwd = opts.cwd ?? process.cwd();
   return ({ skillId, objective, costCeilingUsd, signal }) => {
+    // `objective` is the full prompt (per the adapter's contract);
+    // the default factory sends it as the user message via
+    // `agent.run` — no system-prompt duplication.
+    void objective;
     const session: Session = new InMemorySession(newSessionId(), {
       cwd,
-      permissionMode: "read-only",
+      // code-edit is the write skill; the default executor needs
+      // workspace-write for bash to be able to edit files. All
+      // other skills stay read-only.
+      permissionMode: skillId === "code-edit" ? "workspace-write" : "read-only",
       startedAt: new Date().toISOString(),
     });
     const toolNames = new Set(getToolsForSkill(skillId));
@@ -369,7 +379,11 @@ export function defaultBuildAgentFactory(opts: {
       hooks: new HookRegistry(),
       cwd,
       maxCostUsd: costCeilingUsd,
-      systemPrompt: objective,
+      // v0 set `systemPrompt: objective`, which duplicated the
+      // full prompt (execute() also sends it as the user message).
+      // The prompt now travels once, as the user message; custom
+      // factories may still use the `objective` param for their
+      // own system prompts.
       ...(signal ? { abortSignal: signal } : {}),
     });
   };

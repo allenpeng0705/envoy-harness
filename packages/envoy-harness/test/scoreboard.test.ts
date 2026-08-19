@@ -124,6 +124,13 @@ describe("scoreboard file I/O", () => {
     expect(board).toEqual([]);
   });
 
+  it("returns an empty scoreboard for a present-but-empty file", async () => {
+    const file = path.join(tmpDir, "empty.yaml");
+    await fs.writeFile(file, "", "utf8");
+    const board = await readScoreboard(file);
+    expect(board).toEqual([]);
+  });
+
   it("appends to an existing scoreboard", async () => {
     const file = path.join(tmpDir, "scoreboard.yaml");
     await appendEntry(file, makeEntry({ version: 1 }));

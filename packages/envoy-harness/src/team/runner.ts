@@ -120,6 +120,14 @@ export class Team {
         : objective;
       try {
         const { text, stopReason } = await this.runAgent(spec, prompt);
+        // Record the agent's output even when it failed (the
+        // transcript / error text is useful context).
+        results.set(spec.id, {
+          id: spec.id,
+          finalText: text,
+          stopReason,
+          durationMs: Date.now() - startedAt,
+        });
         if (stopReason === "aborted") {
           // The agent's run caught an internal error
           // (e.g. a model error) and returned an
@@ -132,12 +140,6 @@ export class Team {
             error: `agent ${spec.id} aborted (see transcript for details)`,
           };
         }
-        results.set(spec.id, {
-          id: spec.id,
-          finalText: text,
-          stopReason,
-          durationMs: Date.now() - startedAt,
-        });
       } catch (err) {
         return {
           teamName: this.config.name,

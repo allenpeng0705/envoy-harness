@@ -41,7 +41,7 @@ const posKey = (file: string, line: number, column: number): PosKey =>
 
 /** A recorded call: which op, with which args. */
 export interface MockLspCall {
-  op: "definition" | "references" | "hover" | "diagnostics";
+  op: "definition" | "references" | "hover" | "diagnostics" | "didOpen" | "didClose";
   file: string;
   line?: number;
   column?: number;
@@ -111,6 +111,22 @@ export class MockLspClient implements LspClient {
     this.assertOpen();
     this._calls.push({ op: "diagnostics", file });
     return this.responses.diagnostics.get(file) ?? [];
+  }
+
+  async awaitDiagnostics(
+    file: string,
+  ): Promise<ReadonlyArray<LspDiagnostic>> {
+    return this.diagnostics(file);
+  }
+
+  async didOpen(file: string, _text: string): Promise<void> {
+    this.assertOpen();
+    this._calls.push({ op: "didOpen", file });
+  }
+
+  async didClose(file: string): Promise<void> {
+    this.assertOpen();
+    this._calls.push({ op: "didClose", file });
   }
 
   async close(): Promise<void> {

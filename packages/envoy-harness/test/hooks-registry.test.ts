@@ -248,11 +248,41 @@ describe("HookRegistry: decision composition", () => {
     expect(d).toEqual({ kind: "modify", modified: "last" });
   });
 
-  it("modify on non-PostToolUse: treated as continue (no payload to modify)", async () => {
+  it("modify on PreToolUse: returned for the agent to apply", async () => {
     const r = new HookRegistry();
     r.on("PreToolUse", async () => ({ kind: "modify", modified: "x" }));
     const d = await r.fire("PreToolUse", {});
-    expect(d).toEqual({ kind: "continue" });
+    expect(d).toEqual({ kind: "modify", modified: "x" });
+  });
+
+  it("an ask beats a concurrent add-context on PreToolUse", async () => {
+    const r = new HookRegistry();
+    r.on("PreToolUse", async () => ({
+      kind: "add-context",
+      content: "some context",
+    }));
+    r.on("PreToolUse", async () => ({ kind: "ask", question: "approve?" }));
+    const d = await r.fire("PreToolUse", {});
+    expect(d).toEqual({ kind: "ask", question: "approve?" });
+  });
+
+  it("a throwing inline handler becomes a block, not a crash", async () => {
+    const r = new HookRegistry();
+    r.on("PreToolUse", async () => {
+      throw new Error("boom");
+    });
+    const d = await r.fire("PreToolUse", {});
+    expect(d.kind).toBe("block");
+    expect(d.kind === "block" && d.reason).toContain("boom");
+  });
+
+  it("a throwing middleware becomes a block", async () => {
+    const r = new HookRegistry();
+    r.use(async () => {
+      throw new Error("middleware boom");
+    });
+    const d = await r.fire("PreToolUse", {});
+    expect(d.kind).toBe("block");
   });
 
   it("block beats add-context and modify", async () => {

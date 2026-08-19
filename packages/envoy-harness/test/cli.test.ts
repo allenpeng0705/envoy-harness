@@ -116,6 +116,11 @@ describe("parseArgs", () => {
     expect(() => parseArgs(["--not-a-flag"])).toThrow(ArgvError);
   });
 
+  it("rejects invalid --approval values", () => {
+    expect(() => parseArgs(["--approval", "maybe"])).toThrow(/invalid --approval/);
+    expect(() => parseArgs(["--approval", "never"])).not.toThrow();
+  });
+
   it("throws when a valued flag has no value", () => {
     expect(() => parseArgs(["--sandbox"])).toThrow(ArgvError);
     expect(() => parseArgs(["--model"])).toThrow(ArgvError);
@@ -292,6 +297,97 @@ describe("run: with a fake model", () => {
     if (result.subcommand !== "run") throw new Error("expected run subcommand");
     expect(result.content).toBe("should-not-appear");
     expect(out.data).toBe("");
+  });
+
+  it("--plan injects a plan-mode system prompt", async () => {
+    const out = new StringWritable();
+    const err = new StringWritable();
+    let sawSystemPrompt = false;
+    const fakeModel: ModelAdapter = {
+      async complete(input): Promise<ModelResponse> {
+        if (
+          input.messages.some(
+            (m) =>
+              m.role === "system" &&
+              m.content.some(
+                (b) => b.type === "text" && b.text.includes("PLAN MODE"),
+              ),
+          )
+        ) {
+          sawSystemPrompt = true;
+        }
+        return {
+          content: [{ type: "text", text: "plan" }],
+          stopReason: "end_turn",
+        };
+      },
+    };
+    await run({
+      argv: ["--plan", "explore", "the", "code"],
+      model: fakeModel,
+      stdout: out,
+      stderr: err,
+    });
+    expect(sawSystemPrompt).toBe(true);
+  });
+
+  it("applies the default $5.00 cost ceiling and surfaces the abort reason", async () => {
+    const out = new StringWritable();
+    const err = new StringWritable();
+    const fakeModel: ModelAdapter = {
+      async complete(): Promise<ModelResponse> {
+        return {
+          content: [{ type: "text", text: "expensive" }],
+          stopReason: "end_turn",
+          model: "gpt-4o",
+          usage: { inputTokens: 3_000_000, outputTokens: 0 }, // $7.50 > $5
+        };
+      },
+    };
+    const result = await run({
+      argv: ["hi"],
+      model: fakeModel,
+      stdout: out,
+      stderr: err,
+    });
+    if (result.subcommand !== "run") throw new Error("expected run");
+    expect(result.stopReason).toBe("aborted");
+    expect(result.content).toMatch(/\[aborted\] max-cost-usd exceeded/);
+  });
+
+  it("--verbose prints tool calls to stderr", async () => {
+    const out = new StringWritable();
+    const err = new StringWritable();
+    let calls = 0;
+    const fakeModel: ModelAdapter = {
+      async complete(): Promise<ModelResponse> {
+        calls++;
+        return calls === 1
+          ? {
+              content: [
+                {
+                  type: "tool_call",
+                  id: "t1",
+                  name: "read_file",
+                  args: { path: "README.md" },
+                },
+              ],
+              stopReason: "tool_use",
+            }
+          : {
+              content: [{ type: "text", text: "done" }],
+              stopReason: "end_turn",
+            };
+      },
+    };
+    const result = await run({
+      argv: ["--verbose", "go"],
+      model: fakeModel,
+      stdout: out,
+      stderr: err,
+    });
+    if (result.subcommand !== "run") throw new Error("expected run");
+    expect(err.data).toContain("[verbose] tool_call read_file");
   });
 });
 

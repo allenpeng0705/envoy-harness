@@ -56,6 +56,8 @@ export interface OpenAIAdapterOptions {
   httpClient?: HttpClient;
   /** Optional organization ID (sent as `OpenAI-Organization`). */
   organization?: string;
+  /** Optional HTTP timeout in ms. No timeout by default. */
+  timeoutMs?: number;
 }
 
 const DEFAULT_BASE_URL = "https://api.openai.com/v1";
@@ -103,7 +105,11 @@ export class OpenAIAdapter implements ModelAdapter {
     // `http.ts` is already loaded at the top of this file for the
     // message/tool converters, so `new FetchHttpClient()` is a plain
     // constructor call — no extra module cost.
-    this.httpClient = options.httpClient ?? new FetchHttpClient();
+    this.httpClient =
+      options.httpClient ??
+      new FetchHttpClient(
+        options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {},
+      );
     this.organization = options.organization;
   }
 
@@ -125,6 +131,7 @@ export class OpenAIAdapter implements ModelAdapter {
         ...(this.organization ? { "OpenAI-Organization": this.organization } : {}),
       },
       body: JSON.stringify(body),
+      ...(input.signal ? { signal: input.signal } : {}),
     });
     if (!is2xx(response.status)) {
       throw new Error(parseError(response));

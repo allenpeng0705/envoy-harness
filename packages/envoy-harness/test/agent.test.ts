@@ -297,6 +297,42 @@ describe("Agent: hooks", () => {
       "MODIFIED",
     );
   });
+
+  it("honors PreToolUse modify — the tool receives the modified args", async () => {
+    const hooks = new HookRegistry();
+    hooks.on("PreToolUse", async () => ({
+      kind: "modify",
+      modified: { message: "MODIFIED-ARG" },
+    }));
+    const received: Array<{ message: string }> = [];
+    const model = new FakeModel([
+      {
+        content: [
+          { type: "tool_call", id: "tc1", name: "echo", args: { message: "x" } },
+        ],
+        stopReason: "tool_use",
+      },
+      textResponse("ok"),
+    ]);
+    const tools = new ToolRegistry();
+    tools.register({
+      name: "echo",
+      description: "echo a message",
+      parameters: z.object({ message: z.string() }),
+      async execute(args) {
+        received.push(args);
+        return { content: args.message };
+      },
+    });
+    const session = new InMemorySession(newSessionId(), {
+      cwd: process.cwd(),
+      permissionMode: "workspace-write",
+      startedAt: new Date().toISOString(),
+    });
+    const agent = new Agent({ model, tools, session, hooks });
+    await agent.run("go");
+    expect(received).toEqual([{ message: "MODIFIED-ARG" }]);
+  });
 });
 
 describe("Agent: limits and abort", () => {

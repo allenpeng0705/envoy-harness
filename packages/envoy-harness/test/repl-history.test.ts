@@ -102,6 +102,8 @@ function makeArgs(): RunParsedArgs {
     maxCostUsd: undefined,
     resume: undefined,
     fork: undefined,
+    persist: false,
+    sessionDir: undefined,
     plan: false,
     repl: false,
     noColor: false,

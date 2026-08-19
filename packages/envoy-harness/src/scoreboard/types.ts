@@ -104,12 +104,13 @@ export const FederatedAdoptionRecordSchema = z.object({
     passRateAfter: z.number().min(0).max(1),
     ownerSignature: z.string().min(1),
   }),
-  /** The local scoreboard entry produced by the evaluation. */
+  /** The local scoreboard entry produced by the evaluation.
+   *  Absent when the local cycle errored before producing one. */
   localEntry: z.object({
     version: z.number().int().positive(),
     passRateBefore: z.number().min(0).max(1),
     passRateAfter: z.number().min(0).max(1),
-  }),
+  }).optional(),
   /** Whether the local gate kept the candidate. */
   kept: z.boolean(),
   /** ISO 8601 timestamp. */

@@ -193,7 +193,17 @@ export class HookRegistry {
   ): Promise<HookDecision> {
     // Middlewares first. They can short-circuit.
     for (const middleware of this.middlewares) {
-      const decision = await middleware(eventName, payload);
+      let decision: HookDecision;
+      try {
+        decision = await middleware(eventName, payload);
+      } catch (err) {
+        // A throwing middleware is a hook failure, not a runtime
+        // crash. Convert to a block so the agent loop can react.
+        return {
+          kind: "block",
+          reason: `hook middleware threw: ${(err as Error).message}`,
+        };
+      }
       if (decision.kind === "block") return decision;
     }
 
@@ -206,11 +216,24 @@ export class HookRegistry {
     const contexts: string[] = [];
 
     for (const handler of matched) {
-      const decision = await handler.run({ name: eventName, payload });
+      let decision: HookDecision;
+      try {
+        decision = await handler.run({ name: eventName, payload });
+      } catch (err) {
+        // Inline HookFn handlers can throw (module/shell runners
+        // already convert to block). A throw is a hook failure —
+        // surface it as a block instead of crashing the run.
+        return {
+          kind: "block",
+          reason: `hook threw: ${(err as Error).message}`,
+        };
+      }
       if (decision.kind === "block") return decision;
       if (decision.kind === "modify") {
-        if (eventName === "PostToolUse") {
-          // Only PostToolUse accepts modify.
+        if (eventName === "PostToolUse" || eventName === "PreToolUse") {
+          // PostToolUse modifies the result; PreToolUse modifies the
+          // tool call's args (the agent re-validates against the
+          // tool's zod schema).
           lastModify = decision;
         }
         // For other events, treat modify as continue (no payload to
@@ -230,11 +253,15 @@ export class HookRegistry {
       }
     }
 
+    // Precedence for PreToolUse: an `ask` (approval) must not be
+    // suppressed by a concurrent `add-context` from another handler
+    // (add-context isn't actionable at PreToolUse anyway). A
+    // `modify` is returned for the agent to apply.
+    if (lastAsk) return lastAsk;
     if (contexts.length > 0) {
       return { kind: "add-context", content: contexts.join("\n\n") };
     }
     if (lastModify) return lastModify;
-    if (lastAsk) return lastAsk;
     return { kind: "continue" };
   }
 

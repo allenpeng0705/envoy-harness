@@ -139,6 +139,18 @@ const initCommand: ReplCommand = {
     const cwd = ctx.args.cwd ?? process.cwd();
     const target = path.join(cwd, "AGENTS.md");
 
+    // F-fix: `/init` writes a file. In a read-only session
+    // (default, or after `/sandbox read-only`) that must be
+    // refused — the sandbox policy applies to the REPL's own
+    // commands too.
+    if (ctx.agent.getPermissionMode() === "read-only") {
+      ctx.stderr.write(
+        "error: /init writes AGENTS.md, but the session is read-only " +
+          "(use /sandbox workspace-write first)\n",
+      );
+      return;
+    }
+
     // 1. Fire the model directly (NOT through `agent.run`).
     //
     //    **Why bypass agent.run:** `/init` is a one-shot

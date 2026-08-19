@@ -236,8 +236,28 @@ export class LocalMeshSubmitter implements MeshSubmitter {
     }
 
     const startedAt = Date.now();
+    // F-fix: enforce the deadline. v0 mentioned the deadline in
+    // the system prompt but never aborted the sub-agent when it
+    // elapsed. A hard timer races `agent.run` (abort alone can't
+    // interrupt a hanging model call), guaranteeing bounded
+    // execution.
+    let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
     try {
-      const result = await agent.run(input.objective);
+      const result = await Promise.race([
+        agent.run(input.objective),
+        new Promise<never>((_resolve, reject) => {
+          deadlineTimer = setTimeout(() => {
+            agent.abort(
+              `sub-agent deadline exceeded (${input.deadlineMs}ms)`,
+            );
+            reject(
+              new Error(
+                `sub-agent deadline exceeded (${input.deadlineMs}ms)`,
+              ),
+            );
+          }, input.deadlineMs);
+        }),
+      ]);
       const subagentResult = this.synthesizeSubagentResult(result, startedAt);
       // F17.6: update the record with the final
       // status + cost + duration. The record was
@@ -249,7 +269,39 @@ export class LocalMeshSubmitter implements MeshSubmitter {
       record.durationMs = subagentResult.durationMs;
       record.completedAt = new Date().toISOString();
       return subagentResult;
+    } catch (err) {
+      // `agent.run` can throw (max iterations). Convert to a
+      // failed SubagentResult so the parent sees a normal
+      // tool_result and the /agents record completes.
+      const base: SubagentResult = {
+        status: "failed",
+        content: [
+          {
+            type: "text",
+            text: `sub-agent failed: ${(err as Error).message}`,
+          },
+        ],
+        workerPeerId: this.workerPeerId,
+        workerRuntime: "envoy-harness",
+        costUsd: 0,
+        durationMs: Date.now() - startedAt,
+        verdict: {
+          kind: "fail",
+          reason: "sub-agent threw",
+          rollback: false,
+        },
+        signature: "",
+      };
+      const failed: SubagentResult = this.signer
+        ? { ...base, signature: this.signer(base) }
+        : base;
+      record.status = "failed";
+      record.costUsd = 0;
+      record.durationMs = failed.durationMs;
+      record.completedAt = new Date().toISOString();
+      return failed;
     } finally {
+      if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
       signal.removeEventListener("abort", onAbort);
     }
   }

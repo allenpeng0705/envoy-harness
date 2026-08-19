@@ -106,6 +106,8 @@ function makeArgs(overrides: Partial<RunParsedArgs> = {}): RunParsedArgs {
     maxCostUsd: undefined,
     resume: undefined,
     fork: undefined,
+    persist: false,
+    sessionDir: undefined,
     plan: false,
     repl: false,
     noColor: false,
@@ -123,6 +125,8 @@ function makeNoopLspClient(): LspClient {
     async references() { return []; },
     async hover() { return null; },
     async diagnostics() { return []; },
+    async didOpen() {},
+    async didClose() {},
     async close() {},
   };
 }

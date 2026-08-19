@@ -112,6 +112,8 @@ function makeArgs(overrides: Partial<RunParsedArgs> = {}): RunParsedArgs {
     maxCostUsd: undefined,
     resume: undefined,
     fork: undefined,
+    persist: false,
+    sessionDir: undefined,
     plan: false,
     repl: false,
     noColor: false,
@@ -358,7 +360,7 @@ describe("/init", () => {
     const err = new StringWritable();
     const result = await runRepl({
       model: initModel,
-      args: makeArgs({ cwd: tempCwd }),
+      args: makeArgs({ cwd: tempCwd, sandbox: "workspace-write" }),
       lineReader: fakeLineReader(["/init", "/quit"]),
       stdout: out,
       stderr: err,
@@ -387,7 +389,7 @@ describe("/init", () => {
     const err = new StringWritable();
     const result = await runRepl({
       model: throwingModel,
-      args: makeArgs({ cwd: tempCwd }),
+      args: makeArgs({ cwd: tempCwd, sandbox: "workspace-write" }),
       lineReader: fakeLineReader([
         "first prompt",
         "/init",
@@ -423,7 +425,7 @@ describe("/init", () => {
     const err = new StringWritable();
     await runRepl({
       model: emptyModel,
-      args: makeArgs({ cwd: tempCwd }),
+      args: makeArgs({ cwd: tempCwd, sandbox: "workspace-write" }),
       lineReader: fakeLineReader(["/init", "/quit"]),
       stdout: out,
       stderr: err,
@@ -438,6 +440,25 @@ describe("/init", () => {
       exists = false;
     }
     expect(exists).toBe(false);
+  });
+
+  it("refuses to write AGENTS.md in a read-only session", async () => {
+    const initModel = scriptedModel([
+      { content: [textBlock("# Project")] },
+    ]);
+    const out = new StringWritable();
+    const err = new StringWritable();
+    await runRepl({
+      model: initModel,
+      // Default session mode is read-only (design invariant #1).
+      args: makeArgs({ cwd: tempCwd }),
+      lineReader: fakeLineReader(["/init", "/quit"]),
+      stdout: out,
+      stderr: err,
+      historyPath: "",
+    });
+    expect(initModel.callCount()).toBe(0);
+    expect(err.data).toContain("session is read-only");
   });
 });
 

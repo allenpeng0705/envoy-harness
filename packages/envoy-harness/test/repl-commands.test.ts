@@ -115,6 +115,8 @@ function makeArgs(overrides: Partial<RunParsedArgs> = {}): RunParsedArgs {
     maxCostUsd: undefined,
     resume: undefined,
     fork: undefined,
+    persist: false,
+    sessionDir: undefined,
     plan: false,
     repl: false,
     noColor: false,

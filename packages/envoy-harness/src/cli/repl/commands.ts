@@ -155,42 +155,54 @@ const sandboxCommand: ReplCommand = {
 };
 
 /**
- * `/approval <mode>` — change the per-call approval
- * policy. Valid modes match the CLI: `never` | `on-request`
- * | `on-failure` | `untrusted`. The agent's `setAskHandler`
- * is wired such that `never` removes the handler (the agent
- * defaults to deny); the others install handlers that
- * delegate to the host (a future chunk will wire a real
- * per-REPL host handler).
+ * `/approval <mode>` — change the per-call approval policy.
+ * Valid modes match the CLI: `unless-trusted` | `on-request`
+ * | `granular` | `never`.
+ *
+ * **v0 semantics (fail-closed):** the REPL has no UI handler,
+ * so every mode delegates to the agent's default (deny) —
+ * `never` makes that explicit by installing a deny-all
+ * handler, and the others remove any host-installed handler
+ * so the safe default applies. (v0 installed an always-ALLOW
+ * handler for non-`never` modes, which inverted the meaning:
+ * `/approval on-request` auto-approved every ask.)
  */
 const approvalCommand: ReplCommand = {
   name: "/approval",
-  description: "change approval policy (never | on-request | on-failure | untrusted)",
+  description: "change approval policy (unless-trusted | on-request | granular | never)",
   handler(args, ctx) {
-    const VALID = new Set(["never", "on-request", "on-failure", "untrusted"]);
+    const VALID = new Set([
+      "unless-trusted",
+      "on-request",
+      "granular",
+      "never",
+    ]);
     if (args.length === 0) {
       const current = ctx.args.approval ?? "(none)";
       ctx.stdout.write(`current approval: ${current}\n`);
-      ctx.stdout.write("usage: /approval <never | on-request | on-failure | untrusted>\n");
+      ctx.stdout.write(
+        "usage: /approval <unless-trusted | on-request | granular | never>\n",
+      );
       return;
     }
     const mode = args[0];
     if (mode === undefined || !VALID.has(mode)) {
       ctx.stderr.write(
-        `error: invalid approval mode: ${mode} (expected never | on-request | on-failure | untrusted)\n`,
+        `error: invalid approval mode: ${mode} (expected unless-trusted | on-request | granular | never)\n`,
       );
       return;
     }
     ctx.args.approval = mode;
     if (mode === "never") {
-      ctx.agent.setAskHandler(undefined);
+      // Fail-closed: explicitly deny every ask.
+      ctx.agent.setAskHandler(async () => ({
+        kind: "deny",
+        reason: `approval mode is 'never'`,
+      }));
     } else {
-      // F17.2 v0: for the non-`never` modes, install a
-      // handler that always allows (a future chunk will
-      // wire a real per-REPL host handler). This means
-      // `/approval on-request` is currently equivalent to
-      // `/approval never` for non-bash tools.
-      ctx.agent.setAskHandler(async () => ({ kind: "allow" }));
+      // No UI handler in the v0 REPL: delegate to the agent's
+      // default (deny) rather than auto-allowing.
+      ctx.agent.setAskHandler(undefined);
     }
     ctx.stdout.write(`approval: ${mode}\n`);
   },

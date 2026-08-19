@@ -24,6 +24,15 @@
  *    the candidate iff `candidate.passRate > baseline.passRate`
  *    (strict greater; ties are reverting to be conservative).
  *
+ * **Candidates are rule SELECTIONS, not new rule bodies.** The
+ * model proposes a (possibly reordered/subset) set of rule NAMES
+ * from the current ruleset; `parseHypothesisFromLlm` resolves
+ * them back to the real rule objects. v0 fabricated placeholder
+ * always-pass `check` functions for names the model invented,
+ * which made the "after" pass rate ~1.0 and the protocol always
+ * "kept". Rule bodies remain code; evolution optimizes the rule
+ * set, not the implementation.
+ *
  * 5. **COMMIT / REVERT** — append a `ScoreboardEntry` to the
  *    scoreboard (the audit trail). If kept, copy the candidate
  *    over the live ruleset. If reverted, do nothing (the
@@ -146,7 +155,7 @@ export class ModelHypothesisProvider implements HypothesisProvider {
       ],
       tools: [],
     });
-    return parseHypothesisFromLlm(response);
+    return parseHypothesisFromLlm(response, input.currentRules);
   }
 }
 
@@ -191,22 +200,34 @@ ${rulesJson}
 ${failuresJson}
 
 # Task
-Propose ONE specific, falsifiable change to the ruleset that would catch more
-of the failures above. Be conservative: small, targeted changes only.
+Propose ONE specific, falsifiable change to the RULE SET that would catch
+more of the failures above. Be conservative: small, targeted changes only.
 
 Output JSON only, in this exact shape:
 { "text": "<one-sentence hypothesis>", "ruleChanges": [ <full new ruleset> ] }
 
 Constraints:
-- ruleChanges is a FULL new ruleset, not a patch.
-- Each rule has { name, description, check } — but you only need to provide
-  name and description; the implementation is in TypeScript.
+- ruleChanges is a FULL new ruleset, not a patch: a list of rule names
+  chosen from the CURRENT ruleset above. You may reorder, subset, or
+  keep the full set — but you MUST NOT invent new rule names (the
+  implementation lives in TypeScript; unknown names are rejected).
+- Each entry has the shape { "name": "<existing rule name>" }.
 - If you cannot propose a meaningful change, output { "text": "no actionable
   hypothesis", "ruleChanges": [] } and the cycle will be recorded as a no-op.`;
 }
 
-/** Parse the model's response into a Hypothesis. Tolerant of bad shape. */
-export function parseHypothesisFromLlm(response: ModelResponse): Hypothesis | null {
+/**
+ * Parse the model's response into a Hypothesis. Tolerant of bad shape.
+ *
+ * **Rule-name resolution:** every proposed rule name MUST exist in
+ * `currentRules`; unknown names reject the whole hypothesis (the model
+ * cannot create rule bodies). The `check` implementation is inherited
+ * from the current ruleset, so candidates are always executable.
+ */
+export function parseHypothesisFromLlm(
+  response: ModelResponse,
+  currentRules: ReadonlyArray<VerifierRule>,
+): Hypothesis | null {
   // Concatenate all text blocks.
   const text = response.content
     .filter((b): b is Extract<typeof b, { type: "text" }> => b.type === "text")
@@ -224,27 +245,32 @@ export function parseHypothesisFromLlm(response: ModelResponse): Hypothesis | nu
       // Explicit "no actionable hypothesis".
       return null;
     }
-    // Validate each rule has at least name and description.
+    // Validate each rule references an EXISTING rule by name and
+    // inherit its `check` implementation.
+    const byName = new Map(currentRules.map((r) => [r.name, r]));
     const rules: VerifierRule[] = parsed.ruleChanges.map((r: unknown) => {
       if (typeof r !== "object" || r === null) {
         throw new Error("rule must be an object");
       }
-      const obj = r as { name?: unknown; description?: unknown };
-      if (typeof obj.name !== "string" || typeof obj.description !== "string") {
-        throw new Error("rule must have name and description");
+      const obj = r as { name?: unknown };
+      if (typeof obj.name !== "string" || obj.name.length === 0) {
+        throw new Error("rule must have a name");
       }
-      // The model can't provide a real `check` function; the
-      // caller is expected to keep the implementation from
-      // the original rule and merge by name.
+      const existing = byName.get(obj.name);
+      if (!existing) {
+        throw new Error(
+          `rule "${obj.name}" is not in the current ruleset (rule bodies are code; only existing rules can be selected)`,
+        );
+      }
+      // Inherit the real implementation. A proposed description
+      // (when provided) is kept as metadata; the check is the
+      // current rule's check.
       return {
-        name: obj.name,
-        description: obj.description,
-        // Placeholder: a real cycle would carry the original
-        // rule's `check` function by name. The test provider
-        // does this explicitly.
-        async check() {
-          return { kind: "pass" as const, score: 1.0, confidence: "low" as const };
-        },
+        name: existing.name,
+        ...(existing.description !== undefined
+          ? { description: existing.description }
+          : {}),
+        check: existing.check,
       };
     });
     return { text: parsed.text, ruleChanges: rules };
@@ -271,6 +297,8 @@ export class DefaultBenchmarkRunner implements BenchmarkRunner {
     benchmark: Benchmark,
   ): Promise<BenchmarkResult> {
     const results: Array<{ id: string; pass: boolean }> = [];
+    let scoreSum = 0;
+    let scoreCount = 0;
     for (const task of benchmark.tasks) {
       const result = buildStubResult(task);
       const verdicts = await runVerifierRules(result, task.objective, rules);
@@ -282,11 +310,15 @@ export class DefaultBenchmarkRunner implements BenchmarkRunner {
         ? combined.kind === task.expectedVerdict
         : combined.kind === "pass";
       results.push({ id: task.id, pass });
+      if (combined.kind === "pass") {
+        scoreSum += combined.score;
+        scoreCount++;
+      }
     }
     const passed = results.filter((r) => r.pass).length;
     return {
       passRate: results.length === 0 ? 0 : passed / results.length,
-      meanScore: results.length === 0 ? 0 : passed / results.length,
+      meanScore: scoreCount === 0 ? 0 : scoreSum / scoreCount,
       nRuns: results.length,
       tasks: results,
     };
@@ -490,7 +522,8 @@ export class SelfEvolve {
       });
       if (!hypothesis) {
         const entry = await this.recordNoOp(version, recent);
-        const bench = await readBenchmarkSafe(this.paths.benchmark);
+        const { readBenchmark } = await import("./storage.js");
+        const bench = await readBenchmark(this.paths.benchmark);
         const before = await this.benchmarkRunner.run(this.currentRules, bench);
         return { kept: false, entry, before, after: before };
       }
@@ -511,7 +544,8 @@ export class SelfEvolve {
     await this.writeCandidate(candidatePath, hypothesis.ruleChanges);
 
     // 4. EVALUATE
-    const bench = await readBenchmarkSafe(this.paths.benchmark);
+    const { readBenchmark } = await import("./storage.js");
+    const bench = await readBenchmark(this.paths.benchmark);
     const before = await this.benchmarkRunner.run(this.currentRules, bench);
     const after = await this.benchmarkRunner.run(hypothesis.ruleChanges, bench);
 
@@ -554,12 +588,30 @@ export class SelfEvolve {
   /** Snapshot the current state to `dest`. */
   async snapshot(dest: string): Promise<void> {
     await fs.mkdir(path.dirname(dest), { recursive: true });
+    // Snapshot the rules (names + descriptions), the scoreboard
+    // (audit trail), and the user AGENTS.md (when present) so a
+    // future cycle can roll back to this exact state.
+    let scoreboard: unknown = [];
+    try {
+      const { readScoreboard } = await import("./storage.js");
+      scoreboard = await readScoreboard(this.paths.scoreboard);
+    } catch {
+      // No scoreboard yet — snapshot with an empty one.
+    }
+    let agentsMd: string | undefined;
+    try {
+      agentsMd = await fs.readFile(this.paths.agentsMd, "utf8");
+    } catch {
+      // No AGENTS.md yet — omit.
+    }
     const payload = {
       timestamp: new Date().toISOString(),
       rules: this.currentRules.map((r) => ({
         name: r.name,
         description: r.description,
       })),
+      scoreboard,
+      ...(agentsMd !== undefined ? { agentsMd } : {}),
     };
     await fs.writeFile(dest, JSON.stringify(payload, null, 2), "utf8");
   }
@@ -636,12 +688,39 @@ export class SelfEvolve {
   }
 }
 
-/** Read a benchmark; if missing, return an empty benchmark (v0 grace). */
-async function readBenchmarkSafe(filePath: string): Promise<Benchmark> {
+/**
+ * Load a committed ruleset file (list of `{ name, description }`
+ * written by `commitCandidate`) and resolve the names back to real
+ * rule objects from `knownRules`. Returns `null` when the file
+ * doesn't exist or no names resolve (fresh install / incompatible
+ * ruleset). This makes `envoy self-evolve` build on the committed
+ * rule set instead of always starting from `DEFAULT_RULES`.
+ */
+export async function loadRulesetFromFile(
+  filePath: string,
+  knownRules: ReadonlyArray<VerifierRule>,
+): Promise<ReadonlyArray<VerifierRule> | null> {
+  let raw: string;
   try {
-    const { readBenchmark } = await import("./storage.js");
-    return await readBenchmark(filePath);
+    raw = await fs.readFile(filePath, "utf8");
   } catch {
-    return { name: "empty", tasks: [] };
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return null;
+    const byName = new Map(knownRules.map((r) => [r.name, r]));
+    const resolved: VerifierRule[] = [];
+    for (const entry of parsed) {
+      if (typeof entry !== "object" || entry === null) return null;
+      const name = (entry as { name?: unknown }).name;
+      if (typeof name !== "string") return null;
+      const rule = byName.get(name);
+      if (!rule) return null; // incompatible with the code ruleset
+      resolved.push(rule);
+    }
+    return resolved.length > 0 ? resolved : null;
+  } catch {
+    return null;
   }
 }

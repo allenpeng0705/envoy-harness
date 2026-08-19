@@ -46,7 +46,13 @@ import { InMemorySession, newSessionId } from "./session.js";
 import type { ModelAdapter, ModelResponse } from "./model.js";
 import type { Session } from "./session.js";
 import type { ContentBlock, ToolRegistry } from "./tools/index.js";
-import type { AskHandler, AskRequest, SandboxPolicy } from "./types.js";
+import type {
+  AskForApproval,
+  AskHandler,
+  AskRequest,
+  PermissionMode,
+  SandboxPolicy,
+} from "./types.js";
 import { CostTracker } from "./cost.js";
 import { policyFromMode } from "./permissions/policy.js";
 import type { LspManager } from "./lsp/index.js";
@@ -324,7 +330,7 @@ export class Agent {
    *  inference. Undefined for the root agent. */
   private subagentOf: string | undefined;
   /** F-fix: approval policy. Defaults to `on-request`. */
-  private approval: import("./types.js").AskForApproval;
+  private approval: AskForApproval;
 
   constructor(options: AgentOptions) {
     this.model = options.model;
@@ -924,7 +930,24 @@ export class Agent {
     // PreToolUse hook (audit log, rate limit, block, ask).
     const preDecision = await this.firePreToolUse(call);
     if (preDecision.kind === "block") {
+      this.emit({
+        kind: "tool_call",
+        ts: new Date().toISOString(),
+        iteration,
+        call,
+      });
       this.appendToolResult(call.id, `blocked by PreToolUse: ${preDecision.reason}`, true);
+      this.emit({
+        kind: "tool_result",
+        ts: new Date().toISOString(),
+        iteration,
+        callId: call.id,
+        result: {
+          content: `blocked by PreToolUse: ${preDecision.reason}`,
+          isError: true,
+        },
+        durationMs: 0,
+      });
       return;
     }
 
@@ -935,11 +958,26 @@ export class Agent {
       // Approval mode `never` fails closed regardless of any
       // host-installed askHandler.
       if (this.approval === "never") {
+        this.emit({
+          kind: "tool_call",
+          ts: new Date().toISOString(),
+          iteration,
+          call,
+        });
+        const denial = `denied: approval mode is 'never' (${preDecision.question})`;
         this.appendToolResult(
           call.id,
-          `denied: approval mode is 'never' (${preDecision.question})`,
+          denial,
           true,
         );
+        this.emit({
+          kind: "tool_result",
+          ts: new Date().toISOString(),
+          iteration,
+          callId: call.id,
+          result: { content: denial, isError: true },
+          durationMs: 0,
+        });
         return;
       }
       const askReq: AskRequest = {
@@ -953,11 +991,26 @@ export class Agent {
         ? await this.askHandler(askReq)
         : { kind: "deny" as const, reason: "no ask handler configured" };
       if (decision.kind === "deny") {
+        this.emit({
+          kind: "tool_call",
+          ts: new Date().toISOString(),
+          iteration,
+          call,
+        });
+        const denial = `denied by user: ${decision.reason}`;
         this.appendToolResult(
           call.id,
-          `denied by user: ${decision.reason}`,
+          denial,
           true,
         );
+        this.emit({
+          kind: "tool_result",
+          ts: new Date().toISOString(),
+          iteration,
+          callId: call.id,
+          result: { content: denial, isError: true },
+          durationMs: 0,
+        });
         return;
       }
       if (decision.kind === "modify") {

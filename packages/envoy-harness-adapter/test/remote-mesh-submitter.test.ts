@@ -260,4 +260,28 @@ describe("F10.3.2: RemoteMeshSubmitter", () => {
     // already verified; the submitter is a thin wrapper.)
     expect(result).toEqual(expected);
   });
+
+  it("rejects an unsigned result from the transport", async () => {
+    const transport: RemoteSubmitterTransport = {
+      async send() {
+        return {
+          status: "completed",
+          content: [],
+          workerPeerId: "w1",
+          workerRuntime: "envoy-harness",
+          costUsd: 0,
+          durationMs: 10,
+          verdict: { kind: "pass", score: 1, confidence: "high" },
+          signature: "",
+        };
+      },
+    };
+    const submitter = new RemoteMeshSubmitter({
+      transport,
+      targetPeerId: "w1",
+    });
+    await expect(
+      submitter.submit(makeInput(), new AbortController().signal),
+    ).rejects.toThrow(/unsigned/);
+  });
 });

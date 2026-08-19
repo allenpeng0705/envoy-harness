@@ -1891,13 +1891,14 @@ From design §4 and our own additions during implementation:
 
 ## 5. In-flight risks & known issues
 
-### 5.1 `policyFromMode` duplication
-**Where:** `src/tools/builtin/bash.ts:46` (`policyFromMode`)
-and `src/agent.ts` (`policyFromSessionMode`) independently
-derive `SandboxPolicy` from the session's `permissionMode`.
-They MUST stay in sync. If you change one, change the other.
-**Fix:** extract a single helper in a follow-up. Tracked as
-risk #1 in `.github/PHASE-1-3-REVIEW.md`.
+### 5.1 ~~`policyFromMode` duplication~~ FIXED
+**Where:** both the bash tool and the agent used to derive
+`SandboxPolicy` in two separate copies. **Fix:** a single
+shared helper in `src/permissions/policy.ts` is now the only
+place that builds the policy; the agent passes its LIVE policy
+to tools via `ToolContext.sandboxPolicy`, so `/sandbox` (and
+plan mode) take effect on the next tool call instead of being
+cosmetic.
 
 ### 5.2 `defaultRegistry` is module-level state
 **Where:** `src/hooks/registry.ts` — exposed as a singleton
@@ -1906,11 +1907,14 @@ for the orchestrator's convenience. Tests don't touch it
 risk in v0. The convention is documented in the
 `defaultRegistry` JSDoc.
 
-### 5.3 `Agent.abort()` does not cancel in-flight model calls
+### 5.3 ~~`Agent.abort()` does not cancel in-flight model calls~~ PARTIALLY FIXED
 **Where:** `src/agent.ts` — `agent.abort()` sets the flag
 but doesn't interrupt a `model.complete()` already running.
-The current iteration finishes, then the loop checks the
-flag and exits. Streaming cancellation is a v0+ concern.
+**Fix:** `CompleteInput.signal` is now forwarded to the HTTP
+adapters, and `FetchHttpClient` honors it (plus an optional
+`timeoutMs`), so an aborted agent cancels an in-flight model
+call instead of hanging. The loop still finishes the current
+iteration before exiting; streaming cancellation is v0+.
 
 ### 5.4 Sign entry is SHA-256, not Ed25519
 **Where:** `src/scoreboard/storage.ts:signEntry` — v0 signs
@@ -6099,3 +6103,96 @@ becomes read-only history.
 **Next chunk:** F17.7 candidate (`/undo`)
 — but only when a real undo need surfaces.
 
+---
+
+## 12. Review hardening pass (2026-08-19)
+
+A full phase-by-phase review of design vs implementation found
+and fixed the following. Each fix has regression tests; the
+monorepo suite (both packages) is green.
+
+### Phase 1 — permission/security spine
+- **Real argv for path validation.** The bash tool now
+  tokenizes the command (`src/permissions/bash/tokenize.ts`)
+  and passes real argv to `validateBash`. `pathValidation`
+  was dead code (argv was `[]`); workspace-write now blocks
+  `../` escapes and absolute paths outside writable roots
+  (boundary-aware matching, flags skipped).
+- **Read-only redirect hardening.** `>`, `>>`, `2>`, `&>`,
+  `<>`, and no-space forms (`echo hi>file`) are blocked in
+  read-only mode; fd duplication (`2>&1`, `>&2`) and
+  `/dev/null` redirects remain allowed. Added git mutating
+  verbs (`git add/commit/push/checkout/...`), `dd`, package
+  managers (`npm i`, `yarn add`, ...), and word-boundary
+  `tee`. Interpreter writes remain a documented heuristic
+  limitation (needs the OS sandbox, design §7).
+- **CLI default is read-only** (was workspace-write),
+  including the REPL session. `--plan` forces read-only +
+  a plan-mode system prompt.
+- **`--approval` is validated and wired** (was parsed-but-
+  ignored): `never` fails closed; other modes delegate to
+  the askHandler. REPL `/approval` uses the CLI vocabulary
+  and no longer installs an always-allow handler.
+- **`/sandbox` actually changes enforcement**: the agent
+  passes its live `SandboxPolicy` via `ToolContext`.
+- **`--verbose` prints tool calls/results** (VerboseTracer).
+  `--resume`/`--fork`/`--persist` were implemented in F14
+  (concurrent work) and are covered by `cli-persistence.test.ts`.
+- **Hook composition**: PreToolUse `modify` is honored,
+  `ask` is not suppressed by `add-context`, and throwing
+  handlers/middlewares become blocks instead of crashing.
+- **`combineVerdicts` propagates `disputed`** (was downgraded
+  to partial, losing `needsHuman`).
+- **AGENTS.md discovery is root-first** (design §9/Codex
+  pattern; was leaf-first, which dropped the root doc under
+  a byte budget) and truncates by BYTES on UTF-8 boundaries.
+- **Quote validator is a real state machine** (escaped
+  quotes and `"it's"` no longer false-positive).
+- **Cost-cap abort reason is in the transcript/content.**
+
+### Phase 2 — adapters
+- `defaultCrossVerify` no longer aborts (0 = no cap).
+- `EnvoyHarnessAdapter.execute` builds the prompt once; the
+  default factory no longer duplicates it as system prompt.
+- `code-edit` default executor runs workspace-write (was
+  read-only, so the advertised edit skill couldn't edit).
+- `FetchHttpClient` honors abort signals + optional timeout.
+
+### Phase 3 — self-evolution
+- Candidates are rule-name SELECTIONS resolved to real rule
+  objects (`parseHypothesisFromLlm(response, currentRules)`);
+  invented names are rejected. The committed ruleset file is
+  re-loadable (`loadRulesetFromFile`) so cycles build on it.
+- Missing/malformed frozen benchmark now throws (was silently
+  swallowed into meaningless `reverted` entries).
+- `FederatedScoreboard.adopt` rejects rule-body-less
+  candidates explicitly (no fake evaluation, no cycle-counter
+  pollution); the audit record's `localEntry` is optional
+  (error path no longer writes an invalid version 0).
+- Snapshots include the scoreboard + AGENTS.md; empty
+  scoreboard files parse as `[]`.
+
+### Phase 4 — LSP/team/trace
+- LSP: request timeouts (no more hung tool calls),
+  `didOpen`/`awaitDiagnostics` (the diagnostics tool now
+  actually receives server diagnostics), normalized path keys,
+  and waiter cleanup on close.
+- Team: a failed agent's output is included in the result.
+- Trace: `tool_call`/`tool_result` use the loop iteration
+  (was cumulative tool count); blocked/denied tool calls are
+  now visible in the trace.
+
+### Phase 5 — sub-agents
+- `deadlineMs` is enforced (a hard timer races `agent.run`).
+- `FanOutSpec.count` honors `maxSubagents` (was bypassed).
+- `LocalMeshSubmitter` converts thrown runs into failed
+  results + completed records (was: record stuck "running").
+- `RemoteMeshSubmitter` rejects unsigned transport results.
+- Sub-agent costs count toward the parent's `maxCostUsd`.
+
+### Phase 6 — REPL
+- `--repl` honors `--sandbox` (default read-only); `/sandbox`
+  now affects the bash tool.
+- `/approval` semantics fixed (fail-closed; vocabulary
+  matches the CLI).
+- `/init` refuses to write in read-only sessions.

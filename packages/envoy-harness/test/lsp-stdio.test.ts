@@ -429,6 +429,87 @@ describe("StdioLspClient diagnostics (publish-driven)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// F-fix: didOpen / awaitDiagnostics / request timeout
+// ---------------------------------------------------------------------------
+
+describe("StdioLspClient didOpen + awaitDiagnostics", () => {
+  async function initialized(opts?: { requestTimeoutMs?: number }) {
+    const fake = new FakeStdio();
+    const client = new StdioLspClient({
+      process: fake as LspProcess,
+      rootUri: "file:///proj",
+      ...(opts?.requestTimeoutMs !== undefined
+        ? { requestTimeoutMs: opts.requestTimeoutMs }
+        : {}),
+    });
+    const p = client.initialize();
+    await flush();
+    fake.sendFromServer({ jsonrpc: "2.0", id: 1, result: {} });
+    await p;
+    return { client, fake };
+  }
+
+  it("didOpen sends a textDocument/didOpen notification with the file text", async () => {
+    const { client, fake } = await initialized();
+    await client.didOpen("/a.ts", "const x = 1;");
+    const sent = fake.messagesToServer.find(
+      (m) =>
+        (m as { method?: string }).method === "textDocument/didOpen",
+    ) as { params?: { textDocument?: { uri?: string; text?: string } } };
+    expect(sent?.params?.textDocument?.uri).toBe("file:///a.ts");
+    expect(sent?.params?.textDocument?.text).toBe("const x = 1;");
+  });
+
+  it("awaitDiagnostics resolves when publishDiagnostics arrives", async () => {
+    const { client, fake } = await initialized();
+    const p = client.awaitDiagnostics("/a.ts");
+    fake.sendFromServer({
+      jsonrpc: "2.0",
+      method: "textDocument/publishDiagnostics",
+      params: {
+        uri: "file:///a.ts",
+        diagnostics: [
+          {
+            range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } },
+            severity: 1,
+            message: "boom",
+          },
+        ],
+      },
+    });
+    const got = await p;
+    expect(got).toHaveLength(1);
+    expect(got[0]?.message).toBe("boom");
+  });
+
+  it("awaitDiagnostics times out with the current (possibly empty) state", async () => {
+    const { client } = await initialized();
+    const got = await client.awaitDiagnostics("/a.ts", 10);
+    expect(got).toEqual([]);
+  });
+});
+
+describe("StdioLspClient request timeout", () => {
+  it("rejects a request the server never answers", async () => {
+    const { client } = await (async () => {
+      const fake = new FakeStdio();
+      const client = new StdioLspClient({
+        process: fake as LspProcess,
+        rootUri: "file:///proj",
+        requestTimeoutMs: 20,
+      });
+      const p = client.initialize();
+      await flush();
+      fake.sendFromServer({ jsonrpc: "2.0", id: 1, result: {} });
+      await p;
+      return { client, fake };
+    })();
+    const p = client.definition("/a.ts", 0, 0);
+    await expect(p).rejects.toThrow(/timed out/);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 6. Concurrent in-flight requests
 // ---------------------------------------------------------------------------
 

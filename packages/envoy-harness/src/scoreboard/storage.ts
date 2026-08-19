@@ -51,6 +51,8 @@ export async function readScoreboard(filePath: string): Promise<Scoreboard> {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw err;
   }
+  // A present-but-empty file is an empty scoreboard (a fresh peer).
+  if (raw.trim().length === 0) return [];
   const parsed = parseYaml(raw);
   return ScoreboardSchema.parse(parsed);
 }
@@ -132,6 +134,7 @@ export async function readAdoptions(
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw err;
   }
+  if (raw.trim().length === 0) return [];
   const parsed = parseYaml(raw);
   return FederatedAdoptionsSchema.parse(parsed);
 }
