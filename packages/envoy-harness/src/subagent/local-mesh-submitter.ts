@@ -53,6 +53,7 @@ import { ToolRegistry } from "../tools/index.js";
 import type { ModelAdapter } from "../model.js";
 import type { PermissionMode } from "../types.js";
 import type { Verdict } from "../verifier/types.js";
+import type { Tracer } from "../trace/index.js";
 
 import type { MeshSubmitter, SubagentInput, SubagentResult } from "./types.js";
 import type { SubagentResultSigner } from "./signer.js";
@@ -106,6 +107,37 @@ export interface LocalMeshSubmitterOptions {
    * doesn't.
    */
   signer?: SubagentResultSigner;
+  /**
+   * F10.5: optional parent tracer. When set, the
+   * sub-agent's `TraceEvent`s flow to the parent
+   * tracer. v0 default: no parent tracer → the
+   * sub-agent uses a `NullTracer` (its events are
+   * not visible to the parent).
+   *
+   * **Why the seam:** the sub-agent is a separate
+   * session (own CostTracker, own hooks, own
+   * permission) but its trace events are useful
+   * to the parent for progress streaming. The
+   * host injects the tracer; the submitter wires
+   * it through the factory to the sub-agent.
+   *
+   * **Progress streaming:** when set, the parent's
+   * UI / log sees the sub-agent's `agent_start`,
+   * `model_response`, `tool_call`, `tool_result`,
+   * `agent_end`, `error` events in real time. The
+   * events are interleaved with the parent's own
+   * events (no per-session filter in v0; future:
+   * the tracer could enrich events with a
+   * `subagentOf: sessionId` field).
+   *
+   * **Why the seam, not a child tracer:** a
+   * "child tracer" wrapper would add a field to
+   * every event (the parent's sessionId) — useful,
+   * but a separate concern. v0: the parent tracer
+   * sees the events as-is. F10.6+ could add
+   * `subagentOf` if needed.
+   */
+  parentTracer?: Tracer;
 }
 
 /**
@@ -264,6 +296,21 @@ export interface DefaultBuildSubagentFactoryOptions {
    *  prompt is `prefix + "Sub-agent objective: " +
    *  objective`. */
   systemPromptPrefix?: string;
+  /**
+   * F10.5: optional parent tracer. When set, the
+   * sub-agent's `TraceEvent`s flow to the parent
+   * tracer (for progress streaming). v0 default:
+   * no parent tracer → the sub-agent uses a
+   * `NullTracer` (its events are not visible to
+   * the parent).
+   *
+   * **When to set:** when the host wants the
+   * parent to see the sub-agent's progress
+   * (e.g. for a streaming UI). Most hosts want
+   * this; it's the default for production. v0:
+   * opt-in via this field; the host decides.
+   */
+  parentTracer?: Tracer;
 }
 
 /**
@@ -312,6 +359,7 @@ export function defaultBuildSubagentFactory(
       cwd,
       maxCostUsd: input.costCeilingUsd,
       systemPrompt,
+      ...(options.parentTracer ? { tracer: options.parentTracer } : {}),
     });
   };
 }

@@ -51,7 +51,7 @@ import type { LspManager } from "./lsp/index.js";
 import { makeLspTools } from "./lsp/tools.js";
 import { NullTracer } from "./trace/null-tracer.js";
 import type { Tracer } from "./trace/index.js";
-import type { MeshSubmitter } from "./subagent/index.js";
+import type { MeshSubmitter, SubagentResult } from "./subagent/index.js";
 import { makeTaskTool } from "./subagent/tools.js";
 import type { FanOutRegistry } from "./subagent/fan-out.js";
 
@@ -301,10 +301,22 @@ export class Agent {
     // provides a MeshSubmitter. Without one, the
     // model never sees the tool (opt-in).
     if (this.meshSubmitter) {
+      // F10.5: cost aggregation callback. When the
+      // task tool returns a SubagentResult (single
+      // or fan-out aggregated), the parent adds the
+      // result's costUsd to its own CostTracker. The
+      // callback is wired through the tool to keep
+      // the tool ignorant of the parent's tracker.
+      const onSubagentComplete = (result: SubagentResult): void => {
+        if (result.costUsd > 0) {
+          this.costTracker.addSubagentCost(result.costUsd);
+        }
+      };
       this.tools.register(
         makeTaskTool({
           submitter: this.meshSubmitter,
           ...(this.fanOutRegistry ? { fanOutRegistry: this.fanOutRegistry } : {}),
+          onSubagentComplete,
         }),
       );
     }

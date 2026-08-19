@@ -49,7 +49,7 @@ import { z } from "zod";
 
 import type { ContentBlock, Tool } from "../tools/types.js";
 import { aggregateFanOutResults, type FanOutRegistry } from "./fan-out.js";
-import type { MeshSubmitter, SubagentInput } from "./types.js";
+import type { MeshSubmitter, SubagentInput, SubagentResult } from "./types.js";
 
 /** The tool's input schema (zod). */
 export const TaskInputSchema = z.object({
@@ -128,6 +128,33 @@ export interface MakeTaskToolOptions {
    * results into ONE.
    */
   fanOutRegistry?: FanOutRegistry;
+  /**
+   * F10.5: called after the `MeshSubmitter` (or the
+   * F10.4.1 fan-out aggregator) returns. The parent
+   * uses this to aggregate sub-agent cost into its
+   * own `CostTracker` (via `addSubagentCost`).
+   *
+   * **Why the callback (not direct `CostTracker`
+   * injection):** the tool doesn't know about the
+   * parent's `CostTracker`. The callback hides the
+   * wiring. The parent's `Agent` constructor wires
+   * this callback to its own `costTracker.addSubagentCost`.
+   *
+   * **For fan-out:** the callback receives the
+   * AGGREGATED result (with summed `costUsd`),
+   * not the N individual results. The parent adds
+   * the sum; the per-sub-agent breakdown is
+   * available via the individual `SubagentResult`s
+   * (not exposed in v0; future F10.6+).
+   *
+   * **The `SubagentResult` parameter:** the FULL
+   * result, not just `costUsd`. The parent may
+   * want to inspect other fields (e.g. `verdict`,
+   * `durationMs`); keeping the surface small (one
+   * callback with the whole result) is more
+   * flexible than N callbacks.
+   */
+  onSubagentComplete?: (result: SubagentResult) => void;
 }
 
 /**
@@ -155,7 +182,7 @@ export function makeTaskTool(
   submitterOrOptions: MeshSubmitter | MakeTaskToolOptions,
 ): Tool {
   // Backward compat: F10.1.3 callers pass a
-  // MeshSubmitter directly. F10.4.1 callers pass
+  // MeshSubmitter directly. F10.4.1+ callers pass
   // an options object. Both shapes are accepted.
   const submitter: MeshSubmitter =
     "submit" in submitterOrOptions
@@ -165,6 +192,10 @@ export function makeTaskTool(
     "submit" in submitterOrOptions
       ? undefined
       : submitterOrOptions.fanOutRegistry;
+  const onSubagentComplete: ((result: SubagentResult) => void) | undefined =
+    "submit" in submitterOrOptions
+      ? undefined
+      : submitterOrOptions.onSubagentComplete;
 
   return {
     name: "task",
@@ -195,47 +226,57 @@ export function makeTaskTool(
       // registry first; if a spec matches, expand
       // to N parallel sub-agents.
       const spec = fanOutRegistry?.lookup(baseInput.capabilityTag);
+      let result: SubagentResult;
       if (spec) {
         if (spec.count < 1) {
           // Defensive: invalid spec. Refuse all.
-          return {
-            content: {
-              status: "failed",
-              content: [
-                {
-                  type: "text",
-                  text: `FanOutSpec for "${spec.capabilityTag}" has invalid count ${spec.count}; must be >= 1.`,
-                },
-              ],
-              workerPeerId: "",
-              workerRuntime: "envoy-harness",
-              costUsd: 0,
-              durationMs: 0,
-              verdict: {
-                kind: "fail",
-                reason: "invalid FanOutSpec count",
-                rollback: false,
+          result = {
+            status: "failed",
+            content: [
+              {
+                type: "text",
+                text: `FanOutSpec for "${spec.capabilityTag}" has invalid count ${spec.count}; must be >= 1.`,
               },
-              signature: "",
+            ],
+            workerPeerId: "",
+            workerRuntime: "envoy-harness",
+            costUsd: 0,
+            durationMs: 0,
+            verdict: {
+              kind: "fail",
+              reason: "invalid FanOutSpec count",
+              rollback: false,
             },
+            signature: "",
           };
+        } else {
+          const partition = spec.partition ?? ((input) => input);
+          const inputs: SubagentInput[] = [];
+          for (let i = 0; i < spec.count; i++) {
+            inputs.push(partition(baseInput, i, spec.count));
+          }
+          // Parallel run (F10.2 path). Abort propagates
+          // via the shared `ctx.abortSignal`; each
+          // sub-agent's submitter honors it.
+          const results = await Promise.all(
+            inputs.map((input) => submitter.submit(input, ctx.abortSignal)),
+          );
+          result = aggregateFanOutResults(results);
         }
-        const partition = spec.partition ?? ((input) => input);
-        const inputs: SubagentInput[] = [];
-        for (let i = 0; i < spec.count; i++) {
-          inputs.push(partition(baseInput, i, spec.count));
-        }
-        // Parallel run (F10.2 path). Abort propagates
-        // via the shared `ctx.abortSignal`; each
-        // sub-agent's submitter honors it.
-        const results = await Promise.all(
-          inputs.map((input) => submitter.submit(input, ctx.abortSignal)),
-        );
-        return { content: aggregateFanOutResults(results) };
+      } else {
+        // No fan-out: single sub-agent (F10.1 baseline).
+        result = await submitter.submit(baseInput, ctx.abortSignal);
       }
 
-      // No fan-out: single sub-agent (F10.1 baseline).
-      const result = await submitter.submit(baseInput, ctx.abortSignal);
+      // F10.5: cost aggregation callback. Fires
+      // AFTER the submitter (or fan-out aggregator)
+      // returns, with the final result. For
+      // fan-out, the parent sees the AGGREGATED
+      // result (with summed costUsd), not the N
+      // individual ones.
+      if (onSubagentComplete) {
+        onSubagentComplete(result);
+      }
       return { content: result };
     },
   };

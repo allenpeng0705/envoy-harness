@@ -182,6 +182,46 @@ export class CostTracker {
   }
 
   /**
+   * F10.5: add a sub-agent's cost to the parent's
+   * `CostTracker`. The sub-agent already tracked
+   * its own tokens (in its own `CostTracker`);
+   * this just adds the resulting USD cost to the
+   * parent's running total. No tokens are
+   * attributed here (they live in the sub-agent's
+   * tracker; the parent only sees the sum).
+   *
+   * **Why a separate method (not `addUsage` with
+   * zero tokens):** the sub-agent's tokens are
+   * NOT the parent's tokens. Adding them to the
+   * parent's `inputTokens` / `outputTokens`
+   * would double-count. The sub-agent's cost is
+   * a derived number (sum of its own token-costs
+   * for its own model); the parent just adds the
+   * derived number.
+   *
+   * **Where it's called:** the parent's `task`
+   * tool, after the `MeshSubmitter` returns. The
+   * tool's `onSubagentComplete` callback (set
+   * by the parent's `Agent` constructor) calls
+   * `costTracker.addSubagentCost(result.costUsd)`.
+   * For F10.4.1 fan-out, the callback receives the
+   * aggregated result (with summed `costUsd`), so
+   * the parent adds the sum of N sub-agents.
+   *
+   * **Why additive, not a new field on `RunCost`:**
+   * the parent's `RunCost.costUsd` already means
+   * "total USD cost the parent spent". Sub-agent
+   * cost is part of that — the parent spent USD
+   * to spawn the sub-agent (even if indirectly,
+   * via the sub-agent's model). The host's
+   * `AgentResult.metrics.costUsd` already exposes
+   * this; F10.5 just makes the number correct.
+   */
+  addSubagentCost(costUsd: number): void {
+    this.costUsd += costUsd;
+  }
+
+  /**
    * Switch the model used for pricing. Use when a run
    * legitimately uses more than one model (rare in v0).
    */
