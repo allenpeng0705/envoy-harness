@@ -2316,7 +2316,106 @@ envoy-harness-adapter = 1060 tests passing;
 typecheck clean. agent.ts shrinks from
 977 → 865 lines (-112).
 
-### T3.2 — `cli/run.ts` split — pending
+### T3.2 — `cli/run.ts` split + `resolveSession` moved to `session/` (this commit)
+
+Pure refactor. The 1032-line `cli/run.ts` is
+split into 8 files: a thin dispatcher + 4
+subcommand files + 1 helpers + 1 types + 1
+errors. The session resolver moves from
+`cli/run.ts` to `session/resolve.ts` (next to
+the session types it returns).
+
+**What shipped (10 files changed, +1210 / -977):**
+
+- `src/cli/run.ts` (NEW, 118 LoC) — the thin
+  dispatcher: `parseArgs(argv)` → handle
+  `--help` / `--version` → dispatch to one of
+  `runSelfEvolve` / `runTeam` / `runReplDispatch`
+  / `runAgent`. Re-exports the public API
+  (`run`, `CliError`, `RunOptions`, `RunResult`,
+  `SelfEvolveRunResult`, `TeamRunResult`,
+  `CliRunResult`, `ExitCode`, `EXIT_OK`,
+  `EXIT_ERROR`, `EXIT_USAGE`, `EXIT_DATAERR`,
+  `EXIT_NOINPUT`, `defaultAskHandler`,
+  `DEFAULT_MAX_COST_USD`) so the public surface
+  is unchanged.
+- `src/cli/run/one-shot.ts` (NEW, 222 LoC) —
+  `runAgent` (the default `run` subcommand).
+- `src/cli/run/repl.ts` (NEW, 132 LoC) —
+  `runReplDispatch` (the `--repl` dispatch,
+  F14.2 persistence wiring).
+- `src/cli/run/self-evolve.ts` (NEW, 186 LoC) —
+  `runSelfEvolve` (the self-evolve subcommand).
+- `src/cli/run/team.ts` (NEW, 125 LoC) —
+  `runTeam` + `resolveModelForTeam` (the team
+  subcommand).
+- `src/cli/run/helpers.ts` (NEW, 169 LoC) —
+  shared helpers: `resolveModel`,
+  `defaultSessionDir`, `resolvePrompt`,
+  `isFile`, `makeEmptyRunResult`,
+  `formatHelpText`, `defaultAskHandler`,
+  `DEFAULT_MAX_COST_USD`. Each is used by 2+
+  subcommand files.
+- `src/cli/run/types.ts` (NEW, 133 LoC) — the
+  result types (`RunResult`,
+  `SelfEvolveRunResult`, `TeamRunResult`,
+  `CliRunResult`, `ExitCode`) and the exit
+  code constants (`EXIT_OK`, `EXIT_ERROR`,
+  `EXIT_USAGE`, `EXIT_DATAERR`, `EXIT_NOINPUT`).
+  Plus the `RunOptions` interface.
+- `src/cli/run/errors.ts` (NEW, 20 LoC) — the
+  `CliError` class, extracted so each subcommand
+  can throw without importing the full
+  `cli/run.ts` (which would re-import them —
+  a cycle).
+- `src/session/resolve.ts` (NEW, 152 LoC) — the
+  session resolver (`--resume` / `--fork` /
+  `--persist` / default in-memory). Moved next
+  to `PersistedSession` + `SessionStore` in
+  `session/` so the session sub-module is the
+  single home for everything session-shaped.
+- `src/session/index.ts` (modified, +8 LoC) —
+  re-exports `resolveSession`.
+
+**Why move `resolveSession` to `session/`:** the
+function is session-resolver logic, not CLI
+plumbing. The CLI calls it once per `run` /
+`repl` invocation; the REPL has its own
+persistence wiring (the dispatcher thread
+through `runReplDispatch`). Moving it next to
+`Session` / `SessionStore` makes the session
+sub-module the single home for everything
+session-shaped; a future non-CLI caller (e.g. a
+Tauri menu) can call `resolveSession` without
+depending on the CLI module.
+
+**Why extract `CliError` to its own file:**
+the four subcommand files (`one-shot.ts`,
+`repl.ts`, `self-evolve.ts`, `team.ts`) all
+throw `CliError`. If `CliError` lived in
+`cli/run.ts`, the subcommand files would import
+`run.ts`, which re-imports them — a cycle. A
+20-line `errors.ts` breaks the cycle and
+documents the rule: errors are the only thing
+the subcommand files may import from `cli/run/`
+other than the helpers / types.
+
+**Pure refactor.** Behavior is identical;
+public API is unchanged (every export from
+`src/cli/index.ts` still works). 1060 tests
+pass; typecheck clean. `cli/run.ts` shrinks
+from 1032 → 118 lines.
+
+**Next:** T3.3 (MCP — bidirectional: client +
+server, replaces `/mcp` placeholder).
+
+### T3.3 — MCP (design invariant #8) — pending
+
+### T3.4 — OS sandbox backends — pending
+
+### T3.5 — `write` / `edit` / `git` tools — pending
+
+### T3.6 — `RUN_LIVE_TESTS=1` live-test lane — pending
 
 ### T3.3 — MCP (bidirectional) — pending
 
