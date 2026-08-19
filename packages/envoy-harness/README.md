@@ -58,6 +58,98 @@ envoy --sandbox=workspace-write "refactor the auth module"
 envoy task "translate this doc to zh"   # mesh-native sub-agent (Package 1: local; Package 3: routed)
 ```
 
+## Commands
+
+`envoy` is a single binary with subcommands. Run `envoy --help` for the authoritative list; the table below is the v0 surface.
+
+| Subcommand | What it does |
+|---|---|
+| `envoy` (default = `run`) | One-shot agent run. Reads a prompt (positional or stdin), runs the agent loop, prints the result. |
+| `envoy team` | Run a multi-agent team from a TOML file (F9.3). |
+| `envoy self-evolve` | Run one 5-step self-evolution cycle (Phase 3, shadow mode by default). |
+
+### `run` flags
+
+| Flag | Effect |
+|---|---|
+| `--provider <name>` | LLM provider: `openai` \| `anthropic` \| `deepseek` \| `ollama` (default: `deepseek`). |
+| `--model <id>` | Model identifier. Defaults per provider: `gpt-4o`, `claude-sonnet-4-6`, `deepseek-chat`, `llama3.1`. |
+| `--sandbox <mode>` | Permission mode: `read-only` (default) \| `workspace-write` \| `danger-full-access`. |
+| `--approval <mode>` | Approval policy: `never` \| `on-request` \| `on-failure` \| `untrusted`. |
+| `--cwd <path>` | Override working directory (default: `process.cwd()`). |
+| `--max-turns <n>` | Cap agent-loop iterations. |
+| `--max-cost-usd <n>` | Cost ceiling for the run; agent aborts when reached. |
+| `--resume <session-id>` | Resume a saved session. |
+| `--fork <session-id>` | Fork a saved session into a new branch. |
+| `--plan` | Plan-only mode: no tool execution, just the plan. |
+| `--json` | Machine-readable JSON Lines output (F9.4) — pipe to `jq` or a trace viewer. |
+| `--verbose` | Print hook fires and validator verdicts. |
+| `--quiet` | Suppress human output; only stream-json. |
+| `--no-color` | Disable ANSI colors. |
+
+### `team` flags
+
+| Flag | Effect |
+|---|---|
+| `<team.toml>` | Positional: path to the TOML team config. |
+| `--input <s>` | The team-level input; substituted into each agent's objective as `${input}`. |
+| `--model <id>`, `--provider <name>` | Override the model. |
+| `--cwd <path>`, `--json`, `--quiet` | Same as `run`. |
+
+### `self-evolve` flags
+
+| Flag | Effect |
+|---|---|
+| `--scoreboard <path>` | Path to the scoreboard YAML (default: `~/.local/state/envoy-harness/scoreboard.yaml`). |
+| `--snapshot-dir <path>` | Where the optimizer writes candidate snapshots. |
+| `--benchmark <path>` | Frozen benchmark YAML for evaluating candidates. |
+| `--ruleset <path>` | Live ruleset file (committed on `kept`). |
+| `--commit` | Actually write the candidate on `kept` (default: shadow mode — no commit). |
+| `--pull` | Opt in to federated pull (off by default). |
+| `--adoptions <path>` | Federated adoptions YAML. |
+
+## Configuration
+
+### API keys (env vars)
+
+| Provider | Env var | Notes |
+|---|---|---|
+| `openai` | `OPENAI_API_KEY` | Required. |
+| `anthropic` | `ANTHROPIC_API_KEY` | Required. |
+| `deepseek` | `DEEPSEEK_API_KEY` | Required. |
+| `ollama` | — | Keyless. Uses `http://localhost:11434/v1`; override via `OLLAMA_BASE_URL`. |
+
+Optional `OPENAI_BASE_URL` / `ANTHROPIC_BASE_URL` / `DEEPSEEK_BASE_URL` override the upstream endpoint (useful for proxies).
+
+### Profiles (TOML config)
+
+`~/.config/envoy-harness/config.toml` (or `$ENVOY_HARNESS_CONFIG`) — named profiles so you can swap defaults without long CLI invocations.
+
+```toml
+# Default profile (used when no --profile is given)
+[default]
+provider = "anthropic"
+model = "claude-sonnet-4-6"
+sandbox = "read-only"
+approval = "on-request"
+
+# Override per project
+[profiles.fast]
+provider = "deepseek"
+model = "deepseek-chat"
+sandbox = "workspace-write"
+
+[profiles.local]
+provider = "ollama"
+model = "llama3.1"
+sandbox = "read-only"
+```
+
+```sh
+envoy --profile fast "refactor the auth module"
+envoy --profile local "summarize this file"
+```
+
 ## Documentation
 
 - [`docs/design.en.md`](./docs/design.en.md) — the full design (English, source of truth)

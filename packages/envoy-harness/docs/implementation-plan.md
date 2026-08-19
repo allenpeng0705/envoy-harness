@@ -2755,76 +2755,166 @@ cross-node execution.
 ### 6.7 Phase 6 — what comes next?
 
 **Phase 5 is feature-complete** (F10.1-F10.6). The
-mesh-native sub-agent path is shipped. The next phase
-is a question, not a plan.
+mesh-native sub-agent path is shipped.
 
-**Candidate directions (deferred; the user picks):**
+**Chosen Phase 6 first chunk: F17 — interactive REPL.**
+v0 is single-shot (`envoy "do X"` → output → exit).
+Codex, Claude Code, and pi all ship a REPL with slash
+commands; users want to iterate with the model
+interactively without re-spawning. F17 adds a
+readline-based REPL activated by `envoy --repl`
+(no positional prompt) or by entering REPL mode from
+the end of a one-shot run. Single Agent reused
+across turns; slash commands operate on local state
+(model swap, sandbox change, cost display, etc.).
 
-1. **F10.7: `RemoteMeshSubmitter` impl in EnvoyMesh.** The
-   seam is in place (Package 3's `RemoteSubmitterTransport`);
-   the actual libp2p + Ed25519 + mesh protocol lives in
-   EnvoyMesh, not envoy-harness. This is a mesh-side
-   implementation, not an envoy-harness feature. Per the
-   boundary doc, this is EnvoyMesh's job, not ours.
+Other Phase 6 candidates remain deferred until F17
+ships and a real use case surfaces for them
+(per the "testability wins on tie" principle):
 
-2. **F11: progressive disclosure for `AGENTS.md`.** The
-   `AGENTS.md` discovery algorithm (Phase 1) reads the
-   full file. For very large AGENTS.md, the model
-   wastes context on content it never uses. Progressive
-   disclosure: the agent queries specific sections on
-   demand (via a tool). Likely a Phase 2 follow-up;
-   no concrete need yet.
+1. **F10.7**: `RemoteMeshSubmitter` impl in EnvoyMesh (mesh-side, not envoy-harness).
+2. **F11**: progressive disclosure for `AGENTS.md`.
+3. **F12**: per-host tool installation (current workaround: custom factory).
+4. **F13**: streaming tool output (current behavior: model waits for full result).
+5. **F14**: persistent session log (resume already wired but the log itself is in-memory).
+6. **F15**: multi-tier fan-out + dynamic count.
+7. **F16**: capability-driven cross-node routing (default `RemoteSubmitterTransport` impl).
 
-3. **F12: per-host tool installation.** The tool registry
-   is a flat list. A host might want to install tools
-   per session, per AGENTS.md directive, or per
-   sub-agent. Current workaround: a custom
-   `defaultBuildSubagentFactory` per sub-agent.
-   F12 would make this a first-class seam. Low
-   priority; the workaround works.
+#### F17 plan — interactive REPL
 
-4. **F13: streaming tool output.** Tools return their
-   full output in one `tool_result` block. For
-   long-running tools (e.g. `bash` running a 5-minute
-   build), the model waits 5 minutes with no progress.
-   Streaming tool output would emit `tool_chunk` events
-   as the tool runs. The `Tracer` interface already
-   supports this (additive `tool_chunk` event). Low
-   priority for v0; the model handles long tools OK
-   via `end_turn` + timeouts.
+**Scope:** readline-based REPL. No TUI (ink/blessed) — plain
+readline + ANSI colors. Single Agent reused across turns; slash
+commands mutate local state and don't reach the model.
 
-5. **F14: persistent session log.** v0 sessions live
-   in memory. Persisting the session log to disk
-   (append-only JSONL, like a transcript) would enable
-   replay, audit, and resume. The architecture
-   supports this (sessions are append-only already).
-   Medium priority; depends on whether EnvoyMesh's
-   `chain-arbitration.ts` will need this.
+**Why now (and not earlier):** v0 was scoped to single-shot CLI
+because that's the easy default. Codex, Claude Code, and pi all
+ship a REPL, and users expect one. Tauri app is the primary
+host for the interactive surface, but a solo developer who
+installs `npm install -g @envoymesh/envoy-harness` on their
+laptop has no Tauri app — they need a CLI REPL.
 
-6. **F15: Multi-tier fan-out + dynamic count.** F10.4.1
-   v0 is one level + static count. F15 would let
-   `FanOutSpec.count` be a function of the input,
-   and let a fan-out trigger another fan-out
-   (recursion). Useful for "search 3 sources, then
-   summarize each, then vote" patterns. Low priority
-   until a real use case surfaces.
+**Sub-chunk breakdown (planned; requires your approval before F17.1):**
 
-7. **F16: capability-driven cross-node routing.** F10.3.3
-   ships the `routingHint` seam; the actual mesh
-   routing (capability matching, peer scoring, load
-   balancing) lives in EnvoyMesh. F16 would ship
-   a default `RemoteSubmitterTransport` impl in
-   envoy-harness-adapter that does routing based on
-   the hint. Medium priority; depends on EnvoyMesh's
-   roadmap.
+1. **F17.1 — REPL loop scaffold.** `--repl` flag activates REPL
+   mode (no positional prompt required). Readline-based prompt
+   (`envoy> `). Single `Agent` constructed once and reused
+   across turns (preserves session, hooks, AGENTS.md, permission).
+   Non-slash input → sent to `agent.run(input)` as a new turn.
+   Exit on `/quit`, Ctrl-D (EOF), or `/exit`. ~150 LoC +
+   tests. Tests: REPL loop drives an Agent via stdin; exit on
+   each exit path; per-turn output captured.
 
-**My recommendation: don't start any of these until
-a real use case surfaces.** The "testability wins on
-tie" principle (per the design invariant): don't add
-features for hypothetical use cases. The current
-state (F10.6 done) is a complete mesh-native
-sub-agent runtime. Push it; wait for the user (Tauri
-app, CLI) to ask for more.
+2. **F17.2 — Slash command registry.** Built-in slash commands
+   that operate on local state (no model call):
+   - `/help` — list all commands
+   - `/model <id>` — swap model (rebuild adapter on next turn)
+   - `/provider <name>` — swap provider
+   - `/sandbox <mode>` — change permission mode for next turn
+   - `/approval <mode>` — change approval policy
+   - `/clear` — reset session transcript (keep AGENTS.md)
+   - `/cost` — print accumulated cost + token usage
+   - `/status` — print current model/provider/sandbox/turn count
+   - `/quit` (alias: `/exit`) — exit REPL
+
+   Dispatcher: input starting with `/` → `parseCommandLine` →
+   look up handler → invoke. Unknown command → help text.
+   `ReplCommand { name, description, handler: (args, ctx) => Promise<void>, hidden? }`
+   registry is open (host can register custom commands via
+   `AgentOptions.replCommands?` — additive, not in F17.1).
+   ~200 LoC + tests. Tests: each built-in works; unknown
+   command → help; order-independent; help is correct.
+
+3. **F17.3 — History persistence.** `~/.local/state/envoy-harness/history`
+   (or `$ENVOY_HARNESS_HISTORY`). Readline-managed (use
+   `readline.createInterface({ historySize: 1000 })` with
+   manual load/save). Each line is the literal input (slashes
+   preserved). On REPL start, load file (if exists); on REPL
+   exit, write file (truncate + append). Override via env var
+   or `--history <path>`. ~50 LoC + tests. Tests: history
+   loads on start, persists across restarts, ignores lines
+   longer than the cap.
+
+4. **F17.4 — Tests + e2e.** Wire tests across F17.1–F17.3:
+   end-to-end REPL session (launch with mock model, type a
+   prompt, verify output, `/model foo`, type another prompt,
+   verify output uses new model, `/quit`, verify history file
+   exists). Snapshot test for the help text. Error path tests
+   (invalid model id, agent throws, agent loop times out).
+   ~100 LoC of tests. Total new tests: ~30 across the 4
+   sub-chunks.
+
+**Type sketch** (the load-bearing shapes — see `src/cli/repl/`):
+
+```ts
+// src/cli/repl/types.ts
+export interface ReplOptions {
+  /** Same shape as RunOptions minus the prompt. */
+  model: ModelAdapter;
+  hooks?: HookRegistry;
+  cwd?: string;
+  /** Path to the history file. Default: ~/.local/state/envoy-harness/history. */
+  historyPath?: string;
+  /** Host-registered slash commands. Built-ins always win on name collision. */
+  customCommands?: ReadonlyArray<ReplCommand>;
+}
+
+export interface ReplCommand {
+  name: string;
+  description: string;
+  hidden?: boolean;
+  /** Run the command. Throw to surface the error to the user. */
+  handler: (args: string[], ctx: ReplContext) => Promise<void>;
+}
+
+export interface ReplContext {
+  /** The current Agent. Slash commands can mutate it (e.g. swap model). */
+  agent: Agent;
+  /** Current run args (model, provider, sandbox, approval, cwd, etc.). */
+  args: RunParsedArgs;
+  /** Streams. */
+  stdout: NodeJS.WritableStream;
+  stderr: NodeJS.WritableStream;
+}
+```
+
+**Out of scope for F17 (defer to a later chunk if needed):**
+
+- **TUI rendering** (ink / blessed). Plain readline + ANSI
+  colors is enough for v0; a TUI is a separate, much bigger
+  feature (3000+ LoC).
+- **Multiline input editing.** Readline gives single-line
+  editing with up-arrow history. Multiline is a separate
+  feature (use `node:readline`'s `terminal: true` + heredoc,
+  or switch to a third-party library).
+- **Tab completion for slash commands.** Readline's built-in
+  completion is for file paths; slash completion is a F17.5
+  candidate (~30 LoC if F17.5 is needed).
+- **Streaming tool output to the REPL.** F13 covers JSON
+  streaming. For the REPL, the user sees the final
+  `tool_result` block (current behavior). A live-progress
+  REPL display is a future chunk.
+- **Sub-agent spawning from inside the REPL.** The `task` tool
+  already works through the agent loop; the REPL just sees
+  the tool result. No special-casing needed.
+- **Tauri app integration.** The Tauri app has its own UI;
+  the REPL is for solo CLI use, not for the Tauri host.
+
+**Self-review checklist (per sub-chunk):**
+- [ ] `--repl` activates the REPL; no positional prompt required.
+- [ ] Single `Agent` reused across turns; session id stable.
+- [ ] Non-slash input → `agent.run(input)` → output to stdout.
+- [ ] Slash commands don't reach the model; only built-ins.
+- [ ] `/quit` / Ctrl-D exit cleanly (return code 0; no
+      unhandled rejections).
+- [ ] History persists across restarts.
+- [ ] Tests cover every built-in command + each exit path.
+- [ ] e2e: launch REPL, type prompt, see response, `/model`,
+      type prompt, see new response, `/quit`.
+
+**Sub-chunk template (per F17.x):** same as F10.1.x:
+plan (this section) → data layer (types) → algorithm
+(loop + dispatch + persistence) → audit trail (tests)
+→ update the doc (§3 done + §6.7 status + §10).
 
 ---
 
