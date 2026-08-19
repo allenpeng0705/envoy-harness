@@ -8,9 +8,9 @@
 > and *why*. This file says *what shipped*, *where it lives*,
 > and *what's still open*.
 >
-> **Status as of last commit:** (next commit, F10.3.1 done) on `phase-1/types`.
-> Total: 753 tests across 47 files (envoy-harness 671 / 38 files + envoy-harness-adapter 82 / 9 files).
-> Phase 3 fully complete (F6 done). Phase 2 fully complete (F7 + F8 done, F8 polish done). **Phase 4 complete (F9.1 + F9.2 + F9.3 + F9.4 + F9.5 done).** **Phase 5 in progress: F10.1 + F10.2 + F10.3.1 done** (mesh-native sub-agents + parallel fan-out + maxSubagents cap + `SubagentResultSigner` seam). F10.3.2 (cross-node `RemoteMeshSubmitter`) + F10.3.3 (`routingHint` field) + F10.4+ pending.
+> **Status as of last commit:** (next commit, F10.3.2 done) on `phase-1/types`.
+> Total: 763 tests across 48 files (envoy-harness 671 / 38 files + envoy-harness-adapter 92 / 10 files).
+> Phase 3 fully complete (F6 done). Phase 2 fully complete (F7 + F8 done, F8 polish done). **Phase 4 complete (F9.1 + F9.2 + F9.3 + F9.4 + F9.5 done).** **Phase 5 in progress: F10.1 + F10.2 + F10.3.1 + F10.3.2 done** (mesh-native sub-agents + parallel fan-out + maxSubagents cap + `SubagentResultSigner` seam + cross-node `RemoteMeshSubmitter`). F10.3.3 (`routingHint` field) + F10.4+ pending.
 
 ---
 
@@ -339,9 +339,9 @@ Per design §1.3, the four design targets are non-negotiable:
 | **Phase 2** | Mesh-native (4 weeks) | ✅ done (F7 + F8) | 540 |
 | **Phase 3** | Self-evolution (3 weeks) | ✅ done (5a-5e + F6) | 110 |
 | **Phase 4** | Production-grade (5 sub-chunks: F9.1 + F9.2 + F9.3 + F9.4 + F9.5) | ✅ done | +130 (vs Phase 3) |
-| **Phase 5** | Mesh-native sub-agents (in progress) | ⏳ F10.1 ✅, F10.2 ✅, F10.3.1 ✅, F10.3.2-3 + F10.4+ pending | +56 (vs Phase 4) |
+| **Phase 5** | Mesh-native sub-agents (in progress) | ⏳ F10.1 ✅, F10.2 ✅, F10.3.1 ✅, F10.3.2 ✅, F10.3.3 + F10.4+ pending | +66 (vs Phase 4) |
 
-**Cumulative:** 753 tests across 47 files (envoy-harness 671 + envoy-harness-adapter 82), all passing.
+**Cumulative:** 763 tests across 48 files (envoy-harness 671 + envoy-harness-adapter 92), all passing.
 Typecheck clean (`pnpm -r typecheck`).
 
 **Per-module test inventory:**
@@ -2880,7 +2880,7 @@ swaps in for cross-node execution without code changes.
 |----|-------|-------|--------|
 | **F10.1** | `MeshSubmitter` interface + `NoopMeshSubmitter`; `LocalMeshSubmitter` + `defaultBuildSubagentFactory`; `task` tool + `AgentOptions.meshSubmitter`; end-to-end via real `Agent.run()`. 4 sub-chunks. | `src/subagent/{types,noop-submitter,local-mesh-submitter,tools,index}.ts`, `src/agent.ts`, 4 test files | ✅ done (4 sub-chunks: F10.1.1 + F10.1.2 + F10.1.3 + F10.1.4) |
 | **F10.2** | Parallel sub-agent fan-out (auto-detect "all N task calls" → `Promise.all`) + `maxSubagents` cap (default 8, host-configurable; refuses ALL when exceeded). 1 sub-chunk. | `src/agent.ts`, `test/subagent-parallel.test.ts` | ✅ done (F10.2.1) |
-| **F10.3** | Cross-node `RemoteMeshSubmitter` (Package 3) + `SubagentResultSigner` seam (Package 1) + `RemoteSubmitterTransport` interface + `routingHint` field. 3 sub-chunks. | `src/subagent/signer.ts` (new), `src/subagent/local-mesh-submitter.ts` (additive), `packages/envoy-harness-adapter/src/remote-mesh-submitter.ts` (new) | 🔄 F10.3.1 ✅, F10.3.2 + F10.3.3 pending |
+| **F10.3** | Cross-node `RemoteMeshSubmitter` (Package 3) + `SubagentResultSigner` seam (Package 1) + `RemoteSubmitterTransport` interface + `routingHint` field. 3 sub-chunks. | `src/subagent/signer.ts` (new), `src/subagent/local-mesh-submitter.ts` (additive), `packages/envoy-harness-adapter/src/remote-mesh-submitter.ts` (new) | 🔄 F10.3.1 ✅, F10.3.2 ✅, F10.3.3 pending |
 | **F10.4+** | Cost aggregation (sub-agent `CostTracker` → parent); capability-driven fan-out (`FanOutSpec`); progress streaming. | `src/agent.ts`, `src/cost.ts` | pending |
 
 **Why the sub-agent path is the mesh-native contract, not in-process:**
@@ -3359,6 +3359,51 @@ scoreboard opt-in (off by default)." — 3 of 4 done
   Next: F10.3.2 (cross-node `RemoteMeshSubmitter` in
   Package 3, uses the same signer type for request
   signing + result verification).
+- **2026-08-19 (F10.3.2)**: Cross-node `MeshSubmitter`
+  shipped. `RemoteMeshSubmitter` lives in Package 3
+  (`envoy-harness-adapter`) per the boundary doc —
+  it's the ONLY place that knows about both
+  envoy-harness and the mesh. **Design: thin
+  wrapper** over an injected
+  `RemoteSubmitterTransport`. The host injects the
+  transport; the submitter is a 1-line wrapper that
+  forwards `submit()` → `transport.send()`. The
+  transport does ALL the work (libp2p, wire format,
+  parent request signing, worker result
+  verification). envoy-harness-adapter doesn't ship
+  a default transport — same DI pattern as F8's
+  `defaultSignResult`. **Why opaque (returns
+  `SubagentResult`, not `SignedSubagentResult`):**
+  the worker signs the result before returning; the
+  signature lives in `result.signature` (existing
+  field). The transport verifies; the submitter
+  just returns. No re-verification at the submitter
+  layer. The F10.3.1 plan's `workerPublicKey` +
+  `parentPrivateKey` fields on the submitter were
+  deferred to the transport's contract (cleaner seam;
+  the adapter doesn't need to know about keys).
+  Type changes (Package 3): `RemoteSubmitterTransport`
+  interface, `RemoteMeshSubmitterOptions`,
+  `RemoteMeshSubmitter` class implementing
+  `MeshSubmitter`. `src/index.ts` re-exports. 10
+  new tests in
+  `test/remote-mesh-submitter.test.ts` covering:
+  happy path, input forwarding, targetPeerId
+  forwarding, abort signal forwarding, error
+  propagation, type-level `MeshSubmitter`
+  assignment, multi-peer routing, sequential +
+  parallel submits (5 in <80ms vs 100ms sequential;
+  F10.2 fan-out path works for cross-node too),
+  signature preservation. **No self-review issues**
+  this time (smaller surface, cleaner design —
+  pushing complexity into the transport). **F10.3.2
+  ✅ done.** Total: 671 tests across 38 files
+  (envoy-harness) + 92 in envoy-harness-adapter =
+  763 across 48 files (monorepo). Updated §1, §2,
+  §3, §6.6, §7, §10. Next: F10.3.3 (federated
+  routing seam: `routingHint` field on
+  `SubagentInput` + design doc note) or push 1
+  unpushed commit, user's pick.
 
 ---
 
@@ -4213,4 +4258,96 @@ row), §3 (this entry), §6.6 (F10.3 row, F10.3.1 ✅),
 F10.3.2 (cross-node `RemoteMeshSubmitter` +
 `RemoteSubmitterTransport` interface in Package 3)
 or push 1 unpushed commit, user's pick.**
+
+---
+
+### F10.3.2 — done
+
+**F10.3.2 (this commit) — `RemoteMeshSubmitter` in
+Package 3.** The cross-node `MeshSubmitter` lives in
+`envoy-harness-adapter` per the boundary doc — it's
+the ONLY place that knows about both envoy-harness
+and the mesh.
+
+**Design: thin wrapper over an injected transport.**
+The host injects a `RemoteSubmitterTransport`; the
+submitter is a 1-line wrapper:
+
+```ts
+async submit(input, signal) {
+  return this.transport.send(input, this.targetPeerId, signal);
+}
+```
+
+**Why so thin:** the real complexity is in the
+transport (libp2p, wire format, parent request
+signing, worker result verification). envoy-harness-adapter
+doesn't ship a default — the host (Tauri, CLI)
+provides one. Same DI pattern as F8's
+`defaultSignResult` (the closure hides the
+implementation; the adapter doesn't know about
+Ed25519).
+
+**Why the transport is opaque (returns
+`SubagentResult`, not `SignedSubagentResult`):** the
+worker signs the result before returning; the
+signature lives in `result.signature` (the existing
+field on `SubagentResult`). The transport verifies;
+the submitter just returns. **No re-verification at
+the submitter layer.** The F10.3.1 plan's
+`workerPublicKey` + `parentPrivateKey` fields on
+the submitter were deferred to the transport's
+contract (the transport closes over them). Cleaner
+seam; the adapter doesn't need to know about keys.
+
+**Type changes (Package 3):**
+- `RemoteSubmitterTransport` interface:
+  `send(input, targetPeerId, signal) => Promise<SubagentResult>`
+- `RemoteMeshSubmitterOptions`:
+  `{ transport, targetPeerId }`
+- `RemoteMeshSubmitter` class implementing
+  `MeshSubmitter`
+- `src/index.ts`: re-export
+
+**10 new tests in
+`test/remote-mesh-submitter.test.ts`:**
+1. submit returns what the transport returns
+2. transport receives the input unchanged
+3. transport receives the configured `targetPeerId`
+4. parent's abort signal is forwarded to the
+   transport (same signal instance, not aborted)
+5. transport errors propagate to the caller
+6. implements `MeshSubmitter` (type-level check
+   via `as MeshSubmitter` assignment)
+7. two submitters with different `targetPeerId`s
+   route to different peers
+8. multiple sequential submits all complete
+9. multiple parallel submits overlap (F10.2 fan-out
+   path: 5 submits in <80ms vs 100ms sequential;
+   confirms the `Promise.all` path works for the
+   cross-node submitter too)
+10. the worker's signature on the result is
+    preserved (the transport's contract — the
+    submitter returns it as-is)
+
+**No self-review issues this time.** Smaller surface,
+cleaner design (the complexity is in the transport,
+not the submitter). The first build succeeded; the
+first test run passed 10/10.
+
+**Total: 671 tests across 38 files** (envoy-harness,
+unchanged) + **92 tests across 10 files**
+(envoy-harness-adapter, +10 from F10.3.2) = **763
+across 48 files** (monorepo). F10.3.2 is done. The
+`RemoteMeshSubmitter` is the standard
+`MeshSubmitter` over any cross-node transport the
+host injects. F10.3.3 (the federated routing seam:
+`routingHint` field on `SubagentInput` + design doc
+note) is the last sub-chunk.
+
+Updated §1 (status line), §2 (status table Phase 5
+row), §3 (this entry), §6.6 (F10.3 row, F10.3.2 ✅),
+§7 (template preserved), §10 (this entry). **Next:
+F10.3.3 (routingHint field on SubagentInput) or
+push 1 unpushed commit, user's pick.**
 
