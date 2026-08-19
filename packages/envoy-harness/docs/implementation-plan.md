@@ -8,9 +8,9 @@
 > and *why*. This file says *what shipped*, *where it lives*,
 > and *what's still open*.
 >
-> **Status as of last commit:** (next commit, F10.3.3 done) on `phase-1/types`.
-> Total: 767 tests across 49 files (envoy-harness 675 / 39 files + envoy-harness-adapter 92 / 10 files).
-> Phase 3 fully complete (F6 done). Phase 2 fully complete (F7 + F8 done, F8 polish done). **Phase 4 complete (F9.1 + F9.2 + F9.3 + F9.4 + F9.5 done).** **Phase 5 in progress: F10.1 + F10.2 + F10.3.1 + F10.3.2 + F10.3.3 done** (mesh-native sub-agents + parallel fan-out + maxSubagents cap + `SubagentResultSigner` seam + cross-node `RemoteMeshSubmitter` + federated routing seam). F10.4+ pending (`FanOutSpec`, cost aggregation, progress streaming).
+> **Status as of last commit:** (next commit, F10.4.1 done) on `phase-1/types`.
+> Total: 778 tests across 50 files (envoy-harness 686 / 40 files + envoy-harness-adapter 92 / 10 files).
+> Phase 3 fully complete (F6 done). Phase 2 fully complete (F7 + F8 done, F8 polish done). **Phase 4 complete (F9.1 + F9.2 + F9.3 + F9.4 + F9.5 done).** **Phase 5 in progress: F10.1 + F10.2 + F10.3.1 + F10.3.2 + F10.3.3 + F10.4.1 done** (mesh-native sub-agents + parallel fan-out + maxSubagents cap + `SubagentResultSigner` seam + cross-node `RemoteMeshSubmitter` + federated routing seam + `FanOutSpec` capability-driven fan-out). F10.5+ pending (cost aggregation, progress streaming).
 
 ---
 
@@ -339,9 +339,9 @@ Per design §1.3, the four design targets are non-negotiable:
 | **Phase 2** | Mesh-native (4 weeks) | ✅ done (F7 + F8) | 540 |
 | **Phase 3** | Self-evolution (3 weeks) | ✅ done (5a-5e + F6) | 110 |
 | **Phase 4** | Production-grade (5 sub-chunks: F9.1 + F9.2 + F9.3 + F9.4 + F9.5) | ✅ done | +130 (vs Phase 3) |
-| **Phase 5** | Mesh-native sub-agents (in progress) | ⏳ F10.1 ✅, F10.2 ✅, F10.3.1 ✅, F10.3.2 ✅, F10.3.3 ✅, F10.4+ pending | +70 (vs Phase 4) |
+| **Phase 5** | Mesh-native sub-agents (in progress) | ⏳ F10.1 ✅, F10.2 ✅, F10.3.1 ✅, F10.3.2 ✅, F10.3.3 ✅, F10.4.1 ✅, F10.5+ pending | +81 (vs Phase 4) |
 
-**Cumulative:** 767 tests across 49 files (envoy-harness 675 + envoy-harness-adapter 92), all passing.
+**Cumulative:** 778 tests across 50 files (envoy-harness 686 + envoy-harness-adapter 92), all passing.
 Typecheck clean (`pnpm -r typecheck`).
 
 **Per-module test inventory:**
@@ -2881,7 +2881,7 @@ swaps in for cross-node execution without code changes.
 | **F10.1** | `MeshSubmitter` interface + `NoopMeshSubmitter`; `LocalMeshSubmitter` + `defaultBuildSubagentFactory`; `task` tool + `AgentOptions.meshSubmitter`; end-to-end via real `Agent.run()`. 4 sub-chunks. | `src/subagent/{types,noop-submitter,local-mesh-submitter,tools,index}.ts`, `src/agent.ts`, 4 test files | ✅ done (4 sub-chunks: F10.1.1 + F10.1.2 + F10.1.3 + F10.1.4) |
 | **F10.2** | Parallel sub-agent fan-out (auto-detect "all N task calls" → `Promise.all`) + `maxSubagents` cap (default 8, host-configurable; refuses ALL when exceeded). 1 sub-chunk. | `src/agent.ts`, `test/subagent-parallel.test.ts` | ✅ done (F10.2.1) |
 | **F10.3** | Cross-node `RemoteMeshSubmitter` (Package 3) + `SubagentResultSigner` seam (Package 1) + `RemoteSubmitterTransport` interface + `routingHint` field. 3 sub-chunks. | `src/subagent/signer.ts` (new), `src/subagent/local-mesh-submitter.ts` (additive), `packages/envoy-harness-adapter/src/remote-mesh-submitter.ts` (new) | ✅ done (3 sub-chunks: F10.3.1 + F10.3.2 + F10.3.3) |
-| **F10.4** | `FanOutSpec` + `FanOutRegistry` (capability-driven fan-out, the user's F10.2 ask). 1 sub-chunk in v0; cost aggregation + progress streaming deferred to F10.5+. | `src/subagent/fan-out.ts` (new), `src/subagent/tools.ts` (additive), `src/agent.ts` (additive `fanOutRegistry?` option), 1 test file | 🔄 F10.4.1 in progress |
+| **F10.4** | `FanOutSpec` + `FanOutRegistry` (capability-driven fan-out, the user's F10.2 ask). 1 sub-chunk in v0; cost aggregation + progress streaming deferred to F10.5+. | `src/subagent/fan-out.ts` (new), `src/subagent/tools.ts` (additive), `src/agent.ts` (additive `fanOutRegistry?` option), 1 test file | ✅ F10.4.1 done |
 
 **Why the sub-agent path is the mesh-native contract, not in-process:**
 Codex and Claude Code create in-process sub-agents — same process, shared
@@ -4589,4 +4589,136 @@ export class FanOutRegistry {
   (~200 lines). Single chunk; tightly coupled.
 
 **Total estimated: 1 commit, ~8 tests, ~200 lines.**
+
+---
+
+### F10.4.1 — done
+
+**F10.4.1 (this commit) — `FanOutSpec` + capability-driven
+fan-out.** The host-driven fan-out pattern (the user's
+explicit F10.2 ask #4).
+
+**The design:** host registers a `FanOutSpec` for a
+`capabilityTag` ("for tag X, always fan out to 3 workers
+with input partition `P(i, N)`"). When the model emits
+ONE `task` call with that tag, the tool expands it to
+N sub-agents in parallel (F10.2 `Promise.all` path) and
+aggregates the N results into ONE for the model. The
+model doesn't need to know.
+
+**Type changes (Package 1):**
+- New `src/subagent/fan-out.ts`:
+  - `FanOutSpec { capabilityTag, count, partition? }`
+  - `FanOutRegistry` class (register, lookup, clear, size)
+  - `aggregateFanOutResults` helper (worst-case status,
+    concatenated content with `[sub-agent i/N]` headers,
+    summed costUsd, max durationMs, worst-case verdict,
+    empty signature for the aggregated result)
+- `makeTaskTool` now accepts `{ submitter, fanOutRegistry? }`
+  or just `MeshSubmitter` (backward compat with F10.1.3)
+- `AgentOptions.fanOutRegistry?` (additive; v0: no
+  registry = no fan-out, F10.1 + F10.2 baseline)
+- `src/index.ts` + `src/subagent/index.ts` re-export
+
+**Result aggregation rules (worst-case semantics):**
+- `status`: completed < partial < failed; "failed" wins
+- `verdict`: pass < partial < fail; "fail" wins
+- `content`: `[header, text, header, text, ...]` with
+  `[sub-agent i/N]` prefix per sub-agent
+- `costUsd`: sum of all N
+- `durationMs`: max of all N (wall-clock parent waits)
+- `signature`: empty (aggregated result is not a single
+  signed result; host can verify each individually
+  if it cares)
+
+**11 new tests in
+`test/subagent-fan-out.test.ts`:**
+- Registry: register/lookup/size/clear; one spec per
+  tag (last write wins)
+- `aggregateFanOutResults`: worst-case status, content
+  with `[i/N]` headers, cost/duration, worst-case
+  verdict, empty input throws
+- task tool with registry: ONE call → N parallel,
+  partition injects `i`, identity partition default
+- task tool without registry: F10.1 + F10.2 baseline
+  unchanged (backward compat with direct submitter
+  arg)
+
+**Self-review caught 4 issues:**
+1. `noUncheckedIndexedAccess` on
+   `statusRankInverse[worstStatusRank]` returned
+   `T | undefined`; fixed by using array + bound
+   check (`statusLabels[worstStatusRank]` with
+   explicit out-of-range throw).
+2. Top-level `src/index.ts` re-export was
+   `type FanOutRegistry` (wrong — it's a class,
+   needs value export); fixed.
+3. Stale dist lesson (F10.2.1 / F10.3.1 / F10.3.2 /
+   F10.3.3 all hit this) — required rebuild
+   before tests would resolve the new exports.
+4. Test bugs (NOT code bugs): (a) off-by-one in
+   content index expectation (test was checking
+   `[2]` but `[2]` is the second header, not the
+   first text); (b) destructured `callCount` got
+   the snapshot at destructuring time (0) not the
+   getter — fixed by reading via the holder object.
+
+**Total: 686 tests across 40 files** (envoy-harness,
++11 from F10.4.1) + 92 in envoy-harness-adapter =
+**778 across 50 files** (monorepo). F10.4.1 is done.
+
+**Phase 5 status:** F10.1, F10.2, F10.3.1, F10.3.2,
+F10.3.3, F10.4.1 — all done. The mesh-native
+sub-agent path now has BOTH model-driven fan-out
+(F10.2) and host-driven fan-out (F10.4.1). F10.5+
+is the next phase: cost aggregation (sub-agent
+`CostTracker` → parent's `CostTracker`) +
+progress streaming (sub-agent trace → parent's
+tracer).
+
+Updated §1 (status line), §2 (status table Phase 5
+row), §3 (this entry), §6.6 (F10.4 row, F10.4.1 ✅),
+§7 (template preserved), §10 (this entry).
+**Next: F10.5+ (cost aggregation + progress
+streaming) or push 1 unpushed commit, user's pick.**
+- **2026-08-19 (F10.4.1)**: `FanOutSpec` + capability-
+  driven fan-out. The host-driven fan-out pattern
+  (the user's explicit F10.2 ask #4): host registers
+  a `FanOutSpec` for a `capabilityTag` ("for tag X,
+  always fan out to 3 workers with input partition
+  `P(i, N)`"). When the model emits ONE `task` call
+  with that tag, the tool expands it to N sub-agents
+  in parallel (F10.2 `Promise.all` path) and aggregates
+  the N results into ONE for the model. The model
+  doesn't need to know. Type changes (Package 1):
+  new `src/subagent/fan-out.ts` with `FanOutSpec`,
+  `FanOutRegistry` class, `aggregateFanOutResults`
+  helper. `makeTaskTool` now accepts `{ submitter,
+  fanOutRegistry? }` or just `MeshSubmitter` (backward
+  compat with F10.1.3). `AgentOptions.fanOutRegistry?`
+  (additive; v0: no registry = no fan-out, F10.1 +
+  F10.2 baseline). Aggregation: worst-case status
+  (completed < partial < failed; "failed" wins),
+  worst-case verdict (pass < partial < fail; "fail"
+  wins), content `[header, text, header, text, ...]`
+  with `[sub-agent i/N]` prefix, costUsd sum,
+  durationMs max, signature empty (aggregated
+  result is not a single signed result). 11 new
+  tests in `test/subagent-fan-out.test.ts`:
+  registry basics, aggregator, task tool with
+  registry, task tool without registry (backward
+  compat). **Self-review caught 4 issues:**
+  (1) `noUncheckedIndexedAccess` on
+  `statusRankInverse[i]`, (2) top-level
+  `src/index.ts` re-export was `type FanOutRegistry`
+  (wrong, it's a class), (3) stale dist lesson
+  (rebuild required), (4) test bugs (off-by-one in
+  content index, destructured `callCount` snapshot).
+  **F10.4.1 ✅ done.** Phase 5 now has BOTH model-
+  driven (F10.2) and host-driven (F10.4.1) fan-out.
+  F10.5+ is next: cost aggregation + progress
+  streaming. Total: 686 tests across 40 files
+  (envoy-harness) + 92 in envoy-harness-adapter =
+  778 across 50 files (monorepo). Updated §1, §2,
+  §3, §6.6, §7, §10.
 
