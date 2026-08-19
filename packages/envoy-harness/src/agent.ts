@@ -40,7 +40,6 @@
 import {
   defaultRegistry,
   HookRegistry,
-  type HookDecision,
 } from "./hooks/index.js";
 import { InMemorySession, newSessionId } from "./session.js";
 import type { ModelAdapter, ModelResponse } from "./model.js";
@@ -49,7 +48,6 @@ import type { ContentBlock, ToolRegistry } from "./tools/index.js";
 import type {
   AskForApproval,
   AskHandler,
-  AskRequest,
   PermissionMode,
   SandboxPolicy,
 } from "./types.js";
@@ -62,6 +60,7 @@ import type { Tracer } from "./trace/index.js";
 import type { MeshSubmitter, SubagentResult } from "./subagent/index.js";
 import { makeTaskTool } from "./subagent/tools.js";
 import type { FanOutRegistry } from "./subagent/fan-out.js";
+import { ToolExecutor, type ToolExecutorContext } from "./agent/tool-executor.js";
 
 /** Default max iterations before the agent throws. */
 export const DEFAULT_MAX_ITERATIONS = 50;
@@ -331,7 +330,16 @@ export class Agent {
   private subagentOf: string | undefined;
   /** F-fix: approval policy. Defaults to `on-request`. */
   private approval: AskForApproval;
-
+  /**
+   * T2.3: the per-tool-call execution seam, extracted
+   * from this file. `run()` calls `executor.executeMany(calls, iter)`
+   * for each batch of tool calls in the model's response.
+   * The executor holds no state of its own — it reads
+   * everything from a `ToolExecutorContext` that's
+   * rebuilt each time `executor` is reassigned (today:
+   * never; the context captures the live references).
+   */
+  private executor: ToolExecutor;
   constructor(options: AgentOptions) {
     this.model = options.model;
     this.tools = options.tools;
@@ -422,6 +430,48 @@ export class Agent {
     // F7.2+ adapters set the model name in their ModelResponse, so
     // cost is attributed per-response rather than per-construction.
     this.costTracker = new CostTracker({ model: "local" });
+    // T2.3: build the ToolExecutor. The context captures
+    // live references to the agent's state; methods on the
+    // executor (executeMany, execute) read them at call
+    // time, not construction time. `noteToolCall` is a
+    // closure that bumps the per-run counter.
+    this.executor = new ToolExecutor(this.buildExecutorContext());
+  }
+
+  /**
+   * T2.3: build the ToolExecutor context. Called once
+   * in the constructor; the returned object holds
+   * references (not snapshots) so the executor always
+   * reads the agent's live state. `sandboxPolicy`,
+   * `askHandler`, and `approval` are getter callbacks
+   * because they can change at runtime (REPL slash
+   * commands `/sandbox`, future `/askHandler`, and
+   * `/approval`).
+   */
+  private buildExecutorContext(): ToolExecutorContext {
+    return {
+      hooks: this.hooks,
+      tools: this.tools,
+      session: this.session,
+      cwd: this.cwd,
+      getSandboxPolicy: () => this.sandboxPolicy,
+      getAskHandler: () => this.askHandler,
+      getApproval: () => this.approval,
+      abortSignal: this.abortController.signal,
+      maxSubagents: this.maxSubagents,
+      meshSubmitter: this.meshSubmitter,
+      // The agent's `emit` wraps the tracer with the
+      // `subagentOf` tag. We pass the bound method
+      // so the executor doesn't have to know about
+      // sub-agent state.
+      emit: (event) => this.emit(event),
+      // Counter increment as a closure so the
+      // executor never has to touch `this.toolCallCount`
+      // directly.
+      noteToolCall: () => {
+        this.toolCallCount++;
+      },
+    };
   }
 
   /** The AbortSignal tools see in their context. */
@@ -831,7 +881,7 @@ export class Agent {
       // `bash`) stay serial (bash is
       // order-dependent). The model's pattern
       // is the driver; the host doesn't opt in.
-      await this.executeToolCalls(toolCalls, iterations);
+      await this.executor.executeMany(toolCalls, iterations);
 
       // If model said "max_tokens" and we have tool calls, treat
       // as end-of-turn; the agent shouldn't loop on a truncated
@@ -845,345 +895,6 @@ export class Agent {
     throw new Error(
       `agent loop exceeded max iterations (${this.maxIterations})`,
     );
-  }
-
-  /**
-   * Run a single tool call through the full pipeline: hook
-   * check, arg validation, execution, post-hook, transcript.
-   * Errors are caught and turned into `isError: true` results.
-   */
-  /**
-   * F10.2: execute a batch of tool calls. When
-   * EVERY call is the `task` tool (sub-agent
-   * fan-out) AND a `meshSubmitter` is configured,
-   * run them in parallel via `Promise.all`.
-   * Otherwise, run them serially in the order
-   * they appear in the model's response.
-   *
-   * **Why auto-detect, not opt-in:** the model
-   * is the driver. When the model emits N
-   * `task` calls in one iteration, the right
-   * behavior is to run them in parallel (each
-   * sub-agent has its own session; nothing to
-   * order by). When the model emits a mix
-   * (e.g. `task` + `bash`), serial is the safe
-   * default (bash is order-dependent).
-   *
-   * **Cap:** when the call count exceeds
-   * `maxSubagents`, ALL calls are refused
-   * (one `isError: true` tool_result per
-   * call) with a clear message. Refusing all
-   * teaches the model to budget sub-agents;
-   * partial runs would hide the constraint.
-   *
-   * **Abort:** every in-flight sub-agent sees
-   * the parent's abort signal on the next
-   * iteration boundary (wired in F10.1.2's
-   * `LocalMeshSubmitter`). `Promise.all` honors
-   * the same signal; no extra wiring.
-   *
-   * **Result order:** the `tool_result` block
-   * lands in completion order, not call order.
-   * The model matches results to calls via
-   * `toolCallId` (the standard tool-use
-   * convention).
-   */
-  private async executeToolCalls(
-    calls: ReadonlyArray<Extract<ContentBlock, { type: "tool_call" }>>,
-    iteration: number,
-  ): Promise<void> {
-    if (calls.length === 0) return;
-
-    // Sub-agent fan-out: parallel when ALL calls
-    // are `task`. Other tools (bash, lsp_*, etc.)
-    // may have order dependencies; they stay
-    // serial.
-    const allTask = this.meshSubmitter !== undefined &&
-      calls.every((c) => c.name === "task");
-    if (allTask) {
-      // Cap check: refuse ALL when exceeded.
-      if (calls.length > this.maxSubagents) {
-        for (const call of calls) {
-          this.appendToolResult(
-            call.id,
-            `maxSubagents reached: ${calls.length} task calls in one turn (cap is ${this.maxSubagents}). Refused.`,
-            true,
-          );
-        }
-        return;
-      }
-      // Parallel run. Each sub-agent runs in its
-      // own session; abort propagation is wired
-      // via the submitter (F10.1.2).
-      await Promise.all(
-        calls.map((call) => this.executeToolCall(call, iteration)),
-      );
-      return;
-    }
-
-    // Serial run (existing path). Used when:
-    // - No meshSubmitter (no `task` tool at all)
-    // - Mixed iteration (some `task` + some
-    //   other tool that may have order
-    //   dependencies)
-    for (const call of calls) {
-      if (this.abortController.signal.aborted) break;
-      await this.executeToolCall(call, iteration);
-    }
-  }
-
-  private async executeToolCall(
-    call: Extract<ContentBlock, { type: "tool_call" }>,
-    iteration: number,
-  ): Promise<void> {
-    this.toolCallCount++;
-    const tool = this.tools.get(call.name);
-
-    // PreToolUse hook (audit log, rate limit, block, ask).
-    const preDecision = await this.firePreToolUse(call);
-    if (preDecision.kind === "block") {
-      this.emit({
-        kind: "tool_call",
-        ts: new Date().toISOString(),
-        iteration,
-        call,
-      });
-      this.appendToolResult(call.id, `blocked by PreToolUse: ${preDecision.reason}`, true);
-      this.emit({
-        kind: "tool_result",
-        ts: new Date().toISOString(),
-        iteration,
-        callId: call.id,
-        result: {
-          content: `blocked by PreToolUse: ${preDecision.reason}`,
-          isError: true,
-        },
-        durationMs: 0,
-      });
-      return;
-    }
-
-    // F9.1: per-call approval. The hook wants the host
-    // to approve. We call the host's handler (if any)
-    // and act on the decision. No handler → safe deny.
-    if (preDecision.kind === "ask") {
-      // Approval mode `never` fails closed regardless of any
-      // host-installed askHandler.
-      if (this.approval === "never") {
-        this.emit({
-          kind: "tool_call",
-          ts: new Date().toISOString(),
-          iteration,
-          call,
-        });
-        const denial = `denied: approval mode is 'never' (${preDecision.question})`;
-        this.appendToolResult(
-          call.id,
-          denial,
-          true,
-        );
-        this.emit({
-          kind: "tool_result",
-          ts: new Date().toISOString(),
-          iteration,
-          callId: call.id,
-          result: { content: denial, isError: true },
-          durationMs: 0,
-        });
-        return;
-      }
-      const askReq: AskRequest = {
-        tool: call.name,
-        args: call.args,
-        question: preDecision.question,
-        ...(preDecision.options ? { options: preDecision.options } : {}),
-        signal: this.abortController.signal,
-      };
-      const decision = this.askHandler
-        ? await this.askHandler(askReq)
-        : { kind: "deny" as const, reason: "no ask handler configured" };
-      if (decision.kind === "deny") {
-        this.emit({
-          kind: "tool_call",
-          ts: new Date().toISOString(),
-          iteration,
-          call,
-        });
-        const denial = `denied by user: ${decision.reason}`;
-        this.appendToolResult(
-          call.id,
-          denial,
-          true,
-        );
-        this.emit({
-          kind: "tool_result",
-          ts: new Date().toISOString(),
-          iteration,
-          callId: call.id,
-          result: { content: denial, isError: true },
-          durationMs: 0,
-        });
-        return;
-      }
-      if (decision.kind === "modify") {
-        // Replace the args. We'll re-validate below
-        // against the tool's zod schema.
-        call = { ...call, args: decision.args };
-      }
-      // decision.kind === "allow" → fall through to
-      // the tool runner.
-    }
-
-    // PreToolUse modify: the hook changed the tool call's args.
-    // We re-validate against the tool's zod schema below.
-    if (preDecision.kind === "modify") {
-      call = { ...call, args: preDecision.modified };
-    }
-
-    if (!tool) {
-      // F9.4: emit tool_call + tool_result even for
-      // unknown tools (the trace records the attempt
-      // + the error). Without this, an unknown tool
-      // is invisible in the trace.
-      this.emit({
-        kind: "tool_call",
-        ts: new Date().toISOString(),
-        iteration,
-        call,
-      });
-      this.appendToolResult(call.id, `unknown tool: ${call.name}`, true);
-      this.emit({
-        kind: "tool_result",
-        ts: new Date().toISOString(),
-        iteration,
-        callId: call.id,
-        result: { content: `unknown tool: ${call.name}`, isError: true },
-        durationMs: 0,
-      });
-      return;
-    }
-
-    // F9.4: emit tool_call (after the PreToolUse hook
-    // passes but BEFORE arg validation). The model can
-    // see the call in the next iteration; the trace
-    // gets it now. Even if arg validation fails, the
-    // trace records the attempt.
-    this.emit({
-      kind: "tool_call",
-      ts: new Date().toISOString(),
-      iteration,
-      call,
-    });
-
-    // Arg validation. Re-runs for the `modify` case
-    // (the host may have given us a different shape).
-    const parsed = tool.parameters.safeParse(call.args);
-    if (!parsed.success) {
-      this.appendToolResult(
-        call.id,
-        `invalid arguments: ${parsed.error.message}`,
-        true,
-      );
-      this.emit({
-        kind: "tool_result",
-        ts: new Date().toISOString(),
-        iteration,
-        callId: call.id,
-        result: {
-          content: `invalid arguments: ${parsed.error.message}`,
-          isError: true,
-        },
-        durationMs: 0,
-      });
-      return;
-    }
-
-    // Execute. Errors are caught — the model needs to see them.
-    let resultContent: unknown;
-    let isError = false;
-    // F9.4: track tool execution duration for the
-    // tool_result event. The timer starts AFTER arg
-    // validation (we don't want to count time spent
-    // in the hook / validation; the trace is for
-    // tool execution time).
-    const toolStart = Date.now();
-
-    try {
-      const result = await tool.execute(parsed.data, {
-        cwd: this.cwd,
-        session: this.session,
-        abortSignal: this.abortController.signal,
-        // Pass the live policy so the bash tool enforces the
-        // current mode, not the session-start mode.
-        sandboxPolicy: this.sandboxPolicy,
-      });
-      resultContent = result.content;
-      isError = result.isError ?? false;
-    } catch (err) {
-      resultContent = `tool execution error: ${(err as Error).message}`;
-      isError = true;
-    }
-
-    // F9.4: emit tool_result (after execution, before
-    // post-hook / transcript append). The duration
-    // is the time spent in the tool's `execute`.
-    const toolDurationMs = Date.now() - toolStart;
-    this.emit({
-      kind: "tool_result",
-      ts: new Date().toISOString(),
-      iteration,
-      callId: call.id,
-      result: { content: resultContent, ...(isError ? { isError } : {}) },
-      durationMs: toolDurationMs,
-    });
-
-    // PostToolUse hook (modify the result, add context).
-    const postDecision = await this.firePostToolUse(call, {
-      content: resultContent,
-      isError,
-    });
-    if (postDecision.kind === "modify") {
-      // The hook returned a new result. We treat it as opaque
-      // (the hook is the source of truth for the new shape).
-      const m = postDecision.modified as { content?: unknown; isError?: boolean } | undefined;
-      if (m && typeof m === "object") {
-        resultContent = m.content ?? resultContent;
-        isError = m.isError ?? isError;
-      } else {
-        resultContent = postDecision.modified;
-      }
-    }
-    this.appendToolResult(call.id, resultContent, isError);
-  }
-
-  private appendToolResult(
-    toolCallId: string,
-    content: unknown,
-    isError: boolean,
-  ): void {
-    this.session.appendMessage("tool", [
-      { type: "tool_result", toolCallId, content, isError },
-    ]);
-  }
-
-  private async firePreToolUse(
-    call: Extract<ContentBlock, { type: "tool_call" }>,
-  ): Promise<HookDecision> {
-    return this.hooks.fire("PreToolUse", {
-      tool: call.name,
-      args: call.args,
-    });
-  }
-
-  private async firePostToolUse(
-    call: Extract<ContentBlock, { type: "tool_call" }>,
-    result: { content: unknown; isError: boolean },
-  ): Promise<HookDecision> {
-    return this.hooks.fire("PostToolUse", {
-      tool: call.name,
-      args: call.args,
-      result,
-    });
   }
 
   /**
