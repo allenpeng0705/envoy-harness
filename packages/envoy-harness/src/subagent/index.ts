@@ -22,7 +22,7 @@
  * are additive.
  */
 
-export type { SubagentInput, SubagentResult, MeshSubmitter } from "./types.js";
+export type { SubagentInput, SubagentResult, MeshSubmitter, RoutingHint } from "./types.js";
 
 export type { SubagentResultSigner } from "./signer.js";
 

@@ -100,11 +100,47 @@ through the public API.
 | Cross-verify | `defaultCrossVerify(otherAdapter)` | The 6 verifier rules | `defaultCrossVerify(otherAdapter)` |
 | Submit a sub-agent locally | `LocalMeshSubmitter` | `MeshSubmitter` interface, `LocalMeshSubmitter` | n/a (Package 1 owns this) |
 | Submit a sub-agent remotely | `RemoteMeshSubmitter` (F10.3) | `MeshSubmitter` interface | `RemoteMeshSubmitter` (uses injected `RemoteSubmitterTransport`) |
-| Federated routing (which peer) | Mesh-side: `agent-adapter-broadcast.ts`, peer discovery | `SubagentInput.preferredPeerId?: string` (a hint, not a routing decision) | n/a (routing lives in EnvoyMesh) |
+| Federated routing (which peer) | Mesh-side: `agent-adapter-broadcast.ts`, peer discovery, capability matching, load balancing | `SubagentInput.preferredPeerId?: string` + `SubagentInput.routingHint?: RoutingHint` (F10.3.3) — both are HINTS, not routing decisions | n/a (routing lives in EnvoyMesh) |
 
 The **interface** is in envoy-harness. The **default local implementation**
 is in envoy-harness. The **mesh-side implementation** is in envoy-harness-adapter.
 The **mesh fabric** is in EnvoyMesh.
+
+---
+
+## Federated routing: the seam
+
+**Routing is a mesh concern; envoy-harness exposes the hint, EnvoyMesh decides the target.**
+
+The routing decision — "which peer should this sub-agent run on?" —
+is a mesh concern. Peer scoring, capability matching, load balancing,
+fallback selection, region biasing — all of it lives in EnvoyMesh
+(`agent-adapter-broadcast.ts`, the orchestrator above the transport,
+the worker's manifest advertised over libp2p).
+
+envoy-harness's contribution is the **seam**: two hint fields on
+`SubagentInput` that the host (or a future `FanOutSpec`, F10.4+) can
+set. The mesh-side transport interprets them.
+
+| Field | What it's for | Who sets it |
+|-------|---------------|-------------|
+| `SubagentInput.preferredPeerId?: string` | A specific peer the model/host wants. v0: hint only; the mesh may override. | The model (via `task` tool's `preferred_peer_id` arg) or the host. |
+| `SubagentInput.routingHint?: RoutingHint` (F10.3.3) | Structured advisory: `workerCapabilityTag`, `maxHops?`, `preferredRegions?`. The mesh uses this to bias peer selection. | The host (or a `FanOutSpec`). **NOT the model** — the `task` tool's zod schema does not expose this field. |
+
+**What envoy-harness does NOT do:** peer scoring, load balancing,
+capability matching, fallback selection. All of that is a mesh
+concern; the mesh-side transport (or the orchestrator above the
+transport) makes the call. The F10.3.3 plan called this out
+explicitly: "Routing is a mesh concern; envoy-harness exposes the
+hint, EnvoyMesh decides the target."
+
+**The transport's contract:** `RemoteSubmitterTransport.send(input,
+targetPeerId, signal)` takes the `targetPeerId` as an EXPLICIT
+parameter. The submitter (F10.3.2) does NOT decide the target; the
+caller (the host, the orchestrator) does. envoy-harness-adapter's
+`RemoteMeshSubmitter` accepts a constructor-level `targetPeerId`
+for the v0 single-peer case; future `FanOutSpec` can override
+per-call.
 
 ---
 

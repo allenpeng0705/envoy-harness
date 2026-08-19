@@ -269,6 +269,7 @@ export {
   type DefaultBuildSubagentFactoryOptions,
   type LocalMeshSubmitterOptions,
   type MeshSubmitter,
+  type RoutingHint,
   type SubagentInput,
   type SubagentResult,
   type SubagentResultSigner,

@@ -51,6 +51,73 @@ import type { ContentBlock } from "../tools/types.js";
 import type { Verdict } from "../types.js";
 
 /**
+ * F10.3.3: federated routing hint. The mesh uses
+ * this to pick the right peer for the sub-agent.
+ *
+ * **The seam:** envoy-harness exposes the hint as
+ * structured data. The actual routing decision
+ * (which peer to send to, capability matching, load
+ * balancing) lives in EnvoyMesh — NOT in
+ * envoy-harness. Per the boundary doc
+ * (`docs/boundary.{en,zh}.md`): "Routing is a mesh
+ * concern; envoy-harness exposes the hint, EnvoyMesh
+ * decides the target."
+ *
+ * **Why structured, not opaque `Record<string, unknown>`:**
+ * TypeScript users get IDE autocomplete + type
+ * checking. The host can still pass extra fields
+ * via the `SubagentInput.routingHint as
+ * Partial<RoutingHint>` escape hatch if the mesh
+ * adds new fields before envoy-harness picks them
+ * up. The mesh can also pass through unknown
+ * fields unchanged.
+ *
+ * **v0 (this commit):** the type is defined; the
+ * fields are advisory. `LocalMeshSubmitter` ignores
+ * them (no peer selection). `RemoteMeshSubmitter`
+ * passes them through to the transport; the
+ * transport (host-injected, mesh-side) interprets
+ * them. Future: a `FanOutSpec` (F10.4+) can
+ * pre-populate `routingHint` from the parent's
+ * perspective.
+ *
+ * **What envoy-harness does NOT do:** peer scoring,
+ * load balancing, capability matching, fallback
+ * selection. All of that is a mesh concern; the
+ * mesh-side transport (or the orchestrator above
+ * the transport) makes the call.
+ */
+export interface RoutingHint {
+  /**
+   * The worker's capability tag (what the worker
+   * advertises it can do). The mesh matches this
+   * against the worker's manifest to pick a
+   * suitable peer. Distinct from
+   * `SubagentInput.capabilityTag` (which is the
+   * sub-agent's *task* tag; this is the worker's
+   * *advertised* tag).
+   */
+  workerCapabilityTag: string;
+  /**
+   * Max hops the sub-agent can be routed through.
+   * v0: 1 (parent → worker; no transit). Multi-hop
+   * (parent → relay → worker) is a future mesh
+   * feature. The mesh can also use this as a
+   * routing preference (prefer shorter paths).
+   */
+  maxHops?: number;
+  /**
+   * Preferred geographic regions. The mesh
+   * biases peer selection toward these regions
+   * (latency optimization, data-residency
+   * requirements). Empty/undefined = any region.
+   * Region names are mesh-defined (typically
+   * `us-west`, `eu-central`, `ap-southeast`).
+   */
+  preferredRegions?: ReadonlyArray<string>;
+}
+
+/**
  * The parent's view of "what to ask the sub-agent
  * to do". The `MeshSubmitter` decides how to run it
  * (locally, on a peer, etc.).
@@ -76,6 +143,18 @@ export interface SubagentInput {
   /** Optional: prefer a specific runtime. v0's
    *  `LocalMeshSubmitter` ignores this. */
   preferredRuntime?: AgentRuntime;
+  /**
+   * F10.3.3: federated routing hint. Mesh uses
+   * this to pick the right peer. envoy-harness
+   * doesn't interpret it (per the boundary doc);
+   * it just passes it through to the
+   * `MeshSubmitter` (and onward to the mesh-side
+   * transport, if any). The model does NOT see
+   * this field (it's not in the `task` tool's
+   * zod schema); only the host (or a future
+   * `FanOutSpec`) can set it.
+   */
+  routingHint?: RoutingHint;
 }
 
 /**
