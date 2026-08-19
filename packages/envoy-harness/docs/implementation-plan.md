@@ -2241,6 +2241,93 @@ on-disk formats.
 
 ---
 
+## 3.9 Tier 3 — feature chunks (2026-08-19)
+
+Tier 2 was structural cleanup with no new
+features. Tier 3 is features: the F14
+"`ToolExecutor` seam + `RemoteMeshSubmitter`"
+plumbing is in place; the rest of the agent's
+CLI/runtime surface + the §2.5 deferred features.
+
+### T3.1 — `Agent.run` extracted to `runAgentLoop` (this commit)
+
+The `Agent.run(prompt)` method body (~180 lines)
+moves to a top-level function `runAgentLoop(agent,
+prompt)` in `src/agent/run-loop.ts`. Agent becomes
+a thin facade: its public API (the `getX` / `setX`
+methods + `run`) is unchanged; `run()` is now a
+1-line delegation.
+
+**What shipped:**
+- `src/agent/run-loop.ts` (NEW, +248 LoC) — the
+  full turn loop body: system-prompt append →
+  `agent_start` emit → model call → cost
+  attribution (F7.1) → cost-cap check (F7.5) →
+  `model_response` emit → assistant message
+  append → tool-call extraction → `executor.
+  executeMany` → `max_tokens` short-circuit →
+  `agent_end` (via `agent.makeResult`). Plus
+  the `normalizeStopReason` helper (a no-op
+  today; the indirection is here so a future
+  normalization has a single chokepoint).
+- `src/agent.ts` (modified) — `run()` is now:
+  `async run(prompt) { return runAgentLoop(this, prompt); }`.
+  The 17 state fields and the 2 helpers (`emit`,
+  `makeResult`) are now `public` with `@internal`
+  JSDoc so `runAgentLoop` (a different file)
+  can read them. The `ModelResponse` import is
+  removed (only the loop body used it; now
+  imported in `run-loop.ts`).
+- `import { runAgentLoop } from "./agent/run-loop.js"`
+  added.
+
+**Why not a `RunState` class:** the per-`run`
+state is just `iterations` + the in-flight
+response + the in-flight content. A class
+with those 3 fields and a single `run()`
+method would be 200 lines of boilerplate for
+no testability win — the loop reads them
+from the loop-local `let`s and passes them
+to `agent.makeResult` at the exit. A free
+function is the right shape ("testability
+wins on tie").
+
+**Why `@internal` public fields (not the
+private + getter alternative):** the loop
+reads 10+ fields (model, tools, session, hooks,
+cwd, maxIterations, abortController,
+systemPrompt, costTracker, maxCostUsd, executor)
+and 2 methods (`emit`, `makeResult`). 12
+getters + 2 wrappers would be 50+ lines of
+boilerplate for a 1-line function. The
+`@internal` JSDoc + public field is the
+minimum-impact way to share the state; API
+extractors and humans see the @internal tag
+and know not to rely on it.
+
+**No new tests.** Pure refactor. The 2 self-
+review catches (T2.3's stale
+sandboxPolicy/approval + T3.1's same pattern
+for the loop) were already caught by
+repl-e2e.test.ts's existing /sandbox and
+/approval coverage. After the refactor the
+suite is green: 967 envoy-harness + 93
+envoy-harness-adapter = 1060 tests passing;
+typecheck clean. agent.ts shrinks from
+977 → 865 lines (-112).
+
+### T3.2 — `cli/run.ts` split — pending
+
+### T3.3 — MCP (bidirectional) — pending
+
+### T3.4 — OS sandbox backends — pending
+
+### T3.5 — `write` / `edit` / `git` tools — pending
+
+### T3.6 — `RUN_LIVE_TESTS=1` live-test lane — pending
+
+---
+
 ## 3.8 Tier 2 — structural cleanup (2026-08-19)
 
 Tier 1 (T1.1-T1.4) closed the doc-vs-code gaps

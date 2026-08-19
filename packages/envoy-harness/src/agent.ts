@@ -42,7 +42,7 @@ import {
   HookRegistry,
 } from "./hooks/index.js";
 import { InMemorySession, newSessionId } from "./session.js";
-import type { ModelAdapter, ModelResponse } from "./model.js";
+import type { ModelAdapter } from "./model.js";
 import type { Session } from "./session.js";
 import type { ContentBlock, ToolRegistry } from "./tools/index.js";
 import type {
@@ -61,6 +61,7 @@ import type { MeshSubmitter, SubagentResult } from "./subagent/index.js";
 import { makeTaskTool } from "./subagent/tools.js";
 import type { FanOutRegistry } from "./subagent/fan-out.js";
 import { ToolExecutor, type ToolExecutorContext } from "./agent/tool-executor.js";
+import { runAgentLoop } from "./agent/run-loop.js";
 
 /** Default max iterations before the agent throws. */
 export const DEFAULT_MAX_ITERATIONS = 50;
@@ -293,43 +294,60 @@ export interface AgentResult {
 }
 
 export class Agent {
-  private model: ModelAdapter;
-  private tools: ToolRegistry;
-  private session: Session;
-  private hooks: HookRegistry;
-  private cwd: string;
-  private maxIterations: number;
-  private abortController: AbortController;
-  private systemPrompt: string | undefined;
-  private toolCallCount = 0;
-  /** Effective sandbox policy, derived from the session. The verifier reads this. */
-  private sandboxPolicy: SandboxPolicy;
-  /** Cost tracker; populated across the run. F7.1. */
-  private costTracker: CostTracker;
-  /** F7.5: cost ceiling; when exceeded, the agent aborts. */
-  private maxCostUsd: number | undefined;
-  /** F9.1: per-call approval handler. */
-  private askHandler: AskHandler | undefined;
-  /** F9.2: LSP manager (when provided, the 4 LSP tools are registered). */
-  private lspManager: LspManager | undefined;
-  /** F9.4: tracer. Always non-null (defaults to NullTracer). */
-  private tracer: Tracer;
-  /** F10.1: mesh submitter. When set, the `task` tool
+  // T3.1: the state fields are now public (with @internal
+  // JSDoc) so the extracted `runAgentLoop` function in
+  // `run-loop.ts` can read them. The Agent's PUBLIC API
+  // is the set of `getX` / `setX` / `run` methods; consumers
+  // should never reach into these fields directly. The
+  // @internal tag tells API extractors (and humans) that
+  // these are package-internal and may change without a
+  // semver bump.
+  /** @internal */
+  model: ModelAdapter;
+  /** @internal */
+  tools: ToolRegistry;
+  /** @internal */
+  session: Session;
+  /** @internal */
+  hooks: HookRegistry;
+  /** @internal */
+  cwd: string;
+  /** @internal */
+  maxIterations: number;
+  /** @internal */
+  abortController: AbortController;
+  /** @internal */
+  systemPrompt: string | undefined;
+  /** @internal */
+  toolCallCount = 0;
+  /** @internal Effective sandbox policy, derived from the session. The verifier reads this. */
+  sandboxPolicy: SandboxPolicy;
+  /** @internal Cost tracker; populated across the run. F7.1. */
+  costTracker: CostTracker;
+  /** @internal F7.5: cost ceiling; when exceeded, the agent aborts. */
+  maxCostUsd: number | undefined;
+  /** @internal F9.1: per-call approval handler. */
+  askHandler: AskHandler | undefined;
+  /** @internal F9.2: LSP manager (when provided, the 4 LSP tools are registered). */
+  lspManager: LspManager | undefined;
+  /** @internal F9.4: tracer. Always non-null (defaults to NullTracer). */
+  tracer: Tracer;
+  /** @internal F10.1: mesh submitter. When set, the `task` tool
    *  is auto-registered in the constructor. */
-  private meshSubmitter: MeshSubmitter | undefined;
-  /** F10.4.1: fan-out registry. When set, the `task`
+  meshSubmitter: MeshSubmitter | undefined;
+  /** @internal F10.4.1: fan-out registry. When set, the `task`
    *  tool consults it on every call. */
-  private fanOutRegistry: FanOutRegistry | undefined;
-  /** F10.2: max sub-agents per turn. */
-  private maxSubagents: number;
-  /** F10.6: parent session id (when this is a
+  fanOutRegistry: FanOutRegistry | undefined;
+  /** @internal F10.2: max sub-agents per turn. */
+  maxSubagents: number;
+  /** @internal F10.6: parent session id (when this is a
    *  sub-agent). Every `TraceEvent.emit` includes
    *  this as `subagentOf` so the parent tracer can
    *  attribute events without consumer-side
    *  inference. Undefined for the root agent. */
-  private subagentOf: string | undefined;
-  /** F-fix: approval policy. Defaults to `on-request`. */
-  private approval: AskForApproval;
+  subagentOf: string | undefined;
+  /** @internal F-fix: approval policy. Defaults to `on-request`. */
+  approval: AskForApproval;
   /**
    * T2.3: the per-tool-call execution seam, extracted
    * from this file. `run()` calls `executor.executeMany(calls, iter)`
@@ -338,8 +356,14 @@ export class Agent {
    * everything from a `ToolExecutorContext` that's
    * rebuilt each time `executor` is reassigned (today:
    * never; the context captures the live references).
+   *
+   * @internal T3.1: now public (no modifier) so the
+   * `runAgentLoop` function in `./agent/run-loop.ts`
+   * can call `agent.executor.executeMany`. The
+   * public API doesn't expose `executor` — consumers
+   * use `Agent.run`, never `agent.executor` directly.
    */
-  private executor: ToolExecutor;
+  executor: ToolExecutor;
   constructor(options: AgentOptions) {
     this.model = options.model;
     this.tools = options.tools;
@@ -741,160 +765,16 @@ export class Agent {
    * **Throws:** only on `maxIterations` exhaustion. All other
    * failures (tool errors, unknown tools, invalid args) become
    * `isError: true` tool results in the transcript.
+   *
+   * **T3.1:** the loop body was extracted to
+   * `runAgentLoop` in `./agent/run-loop.ts` so
+   * `agent.ts` can become a thin facade. The
+   * behavior is identical; `runAgentLoop` reads
+   * the agent's `@internal` state fields and
+   * calls back into `this.emit` / `this.makeResult`.
    */
   async run(prompt: string): Promise<AgentResult> {
-    // System prompt goes first (idempotent: skip if a system
-    // message is already present).
-    if (this.systemPrompt && !this.session.messages.some((m) => m.role === "system")) {
-      this.session.appendMessage("system", [
-        { type: "text", text: this.systemPrompt },
-      ]);
-    }
-    this.session.appendMessage("user", [{ type: "text", text: prompt }]);
-
-    // F9.4: emit agent_start. The model name is the best
-    // guess we have (the agent doesn't know which model
-    // the adapter will use until the first call returns
-    // `usage.model`; for v0 we read it from the cost
-    // tracker after each response — the start event uses
-    // a placeholder "unknown" if unset).
-    this.emit({
-      kind: "agent_start",
-      ts: new Date().toISOString(),
-      sessionId: this.session.id,
-      model: this.costTracker.currentModel,
-      cwd: this.cwd,
-      tools: this.tools.list().map((t) => t.name),
-    });
-
-    let iterations = 0;
-    while (iterations < this.maxIterations) {
-      if (this.abortController.signal.aborted) {
-        return this.makeResult([], "aborted", iterations);
-      }
-      iterations++;
-
-      // 1. Call the model.
-      let response: ModelResponse;
-      try {
-        response = await this.model.complete({
-          messages: this.session.messages,
-          tools: this.tools.list(),
-          signal: this.abortController.signal,
-        });
-      } catch (err) {
-        // Model errors are surfaced as a synthetic assistant
-        // message so the user sees the error in the transcript
-        // and the loop exits cleanly (no retry policy in v0).
-        const message = (err as Error).message ?? String(err);
-        this.emit({
-          kind: "error",
-          ts: new Date().toISOString(),
-          iteration: iterations,
-          message: `model error: ${message}`,
-        });
-        this.session.appendMessage("assistant", [
-          { type: "text", text: `[model error] ${message}` },
-        ]);
-        return this.makeResult(
-          [{ type: "text", text: `[model error] ${message}` }],
-          "aborted",
-          iterations,
-        );
-      }
-
-      // 1b. F7.1: cost attribution. The model reports usage; the
-      // Agent attributes it to the right model (each model has
-      // its own price). Unknown model + missing usage = 0 cost
-      // (graceful default for FakeModel / local).
-      if (response.usage) {
-        this.costTracker.addUsage(
-          {
-            inputTokens: response.usage.inputTokens,
-            outputTokens: response.usage.outputTokens,
-          },
-          response.model,
-        );
-      }
-
-      // 1c. F7.5: cost cap. After every usage attribution, check
-      // against the cap. The cap is checked DURING the run, not
-      // at the end — that's the whole point of a cap. Abort
-      // cleanly; the result still has the cost up to this point.
-      if (this.maxCostUsd !== undefined) {
-        const total = this.costTracker.total();
-        if (total.costUsd > this.maxCostUsd) {
-          const reason = `max-cost-usd exceeded: $${total.costUsd.toFixed(4)} > $${this.maxCostUsd}`;
-          this.abortController.abort(reason);
-          // Surface the abort reason in the transcript AND the
-          // result content so the model/user sees why the run
-          // stopped (v0 omitted this — the user saw a silent
-          // "aborted" stop reason with the last response text).
-          const note: ContentBlock = {
-            type: "text",
-            text: `\n\n[aborted] ${reason}`,
-          };
-          this.session.appendMessage("assistant", [note]);
-          return this.makeResult(
-            [...response.content, note],
-            "aborted",
-            iterations,
-          );
-        }
-      }
-
-      // F9.4: emit model_response (after cost attribution
-      // so the event matches what the agent saw).
-      this.emit({
-        kind: "model_response",
-        ts: new Date().toISOString(),
-        iteration: iterations,
-        stopReason: response.stopReason,
-        content: response.content,
-        ...(response.usage ? { usage: response.usage } : {}),
-      });
-
-      // 2. Append the assistant message.
-      this.session.appendMessage("assistant", response.content);
-
-      // 3. Extract tool calls.
-      const toolCalls = response.content.filter(
-        (b): b is Extract<ContentBlock, { type: "tool_call" }> =>
-          b.type === "tool_call",
-      );
-
-      // 4. No tool calls → done.
-      if (toolCalls.length === 0) {
-        return this.makeResult(
-          response.content,
-          normalizeStopReason(response.stopReason),
-          iterations,
-        );
-      }
-
-      // 5. Execute the tool calls. F10.2: when
-      // ALL the calls are `task` (sub-agents),
-      // run them in parallel — each sub-agent
-      // gets its own session with no shared
-      // state, so there's nothing to order by.
-      // Mixed iterations (some `task` + some
-      // `bash`) stay serial (bash is
-      // order-dependent). The model's pattern
-      // is the driver; the host doesn't opt in.
-      await this.executor.executeMany(toolCalls, iterations);
-
-      // If model said "max_tokens" and we have tool calls, treat
-      // as end-of-turn; the agent shouldn't loop on a truncated
-      // response. The transcript still has the tool results, so
-      // a follow-up `run()` would see them.
-      if (response.stopReason === "max_tokens") {
-        return this.makeResult(response.content, "max_tokens", iterations);
-      }
-    }
-
-    throw new Error(
-      `agent loop exceeded max iterations (${this.maxIterations})`,
-    );
+    return runAgentLoop(this, prompt);
   }
 
   /**
@@ -917,8 +797,13 @@ export class Agent {
    * ordering. Existing consumers (F9.4
    * `JsonLinesTracer`, the CLI's `--json` flag)
    * ignore the field.
+   *
+   * @internal Used by `runAgentLoop` (T3.1) which lives
+   * in a different file and can't access `private`
+   * members. Public-with-internal is the minimum-
+   * impact way to share the helper.
    */
-  private emit(event: import("./trace/index.js").TraceEvent): void {
+  emit(event: import("./trace/index.js").TraceEvent): void {
     if (this.subagentOf !== undefined) {
       this.tracer.emit({ ...event, subagentOf: this.subagentOf });
     } else {
@@ -926,8 +811,17 @@ export class Agent {
     }
   }
 
-  /** Build an `AgentResult` populated with the loop's metadata. */
-  private makeResult(
+  /**
+   * Build an `AgentResult` populated with the loop's
+   * metadata. Also emits the final `agent_end` trace
+   * event (the last one a consumer sees before
+   * stream flush).
+   *
+   * @internal Used by `runAgentLoop` (T3.1) which lives
+   * in a different file and can't access `private`
+   * members.
+   */
+  makeResult(
     content: ContentBlock[],
     stopReason: AgentResult["stopReason"],
     iterations: number,
@@ -965,13 +859,7 @@ export class Agent {
 }
 
 /**
- * Normalize the model's `stopReason` into our `AgentResult` union.
- * `tool_use` from the model means "I want to call a tool"; we
- * keep that semantic so callers can distinguish "I just want to
- * call one tool" from "I'm done talking".
+ * T3.1: `normalizeStopReason` was moved to
+ * `./agent/run-loop.ts` (only the loop body
+ * uses it; the Agent facade doesn't).
  */
-function normalizeStopReason(
-  modelReason: ModelResponse["stopReason"],
-): AgentResult["stopReason"] {
-  return modelReason;
-}
