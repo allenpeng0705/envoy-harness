@@ -2542,6 +2542,13 @@ export class BashBlocked extends tagged('BashBlocked')<{
 
 ## 18. File and module layout
 
+> **v0 status:** the layout below is the target shape; the
+> v0 code matches it modulo the deferred items called out
+> in [`implementation-plan.md §2.5`](./implementation-plan.md#25-shipped-vs-designed).
+> The matrix is the source of truth for "what shipped vs
+> what's still planned"; this section shows the design
+> intent for the full surface.
+
 The layout below shows **Package 1: `@envoymesh/envoy-harness`**. Package 2 (`@envoymesh/protocol`) and Package 3 (`@envoymesh/envoy-harness-adapter`) are listed separately at the end of this section. See §1.3 for the repository strategy.
 
 ```
@@ -2767,6 +2774,16 @@ Slash commands (interactive mode):
 ---
 
 ## 20. Config schema and layer composition
+
+> **v0 status:** the schema below is the target shape;
+> the v0 code ships the 6 fields the loader actually
+> consumes today (`permission_mode`, `ask_for_approval`,
+> `sandbox_backend`, `network_access`,
+> `slash_tmp_writable`, `writable_roots`). The
+> full layer composition (dist.toml → config.toml →
+> `.envoy/config.toml` → CLI) + the other ~24
+> fields are deferred per
+> [`implementation-plan.md §2.5`](./implementation-plan.md#25-shipped-vs-designed).
 
 `$ENVOY_HOME/agent-state/<peer>/config.toml`:
 

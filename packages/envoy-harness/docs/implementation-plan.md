@@ -2427,6 +2427,69 @@ server, replaces `/mcp` placeholder).
 
 ### T3.5 — `write` / `edit` / `git` tools — pending
 
+### T3.10 — design doc pointers to `implementation-plan §2.5` (this commit)
+
+The §2.5 "Shipped vs designed" matrix in this file
+is the source of truth for "what shipped vs what's
+still planned." But design-doc readers (the
+`docs/design.en.md` audience — e.g. someone reading
+§18 file layout or §20 config schema to understand
+the design intent) don't necessarily know to look
+in `implementation-plan.md` for the current state.
+Two sections in `design.en.md` read as if the full
+surface ships, when in fact parts of it are
+deferred per the matrix.
+
+T3.10 adds a one-line pointer at the top of each
+of those two sections, with a relative link to the
+matrix:
+
+- `docs/design.en.md §18 (File and module layout)` —
+  points to the matrix so readers know which files
+  are in v0 vs. aspirational.
+- `docs/design.en.md §20 (Config schema and layer
+  composition)` — points to the matrix AND names the
+  6 fields the v0 loader actually consumes today
+  (so a reader who jumps to the schema doesn't
+  expect the full ~30-field surface to be wired).
+
+**What shipped (~+12 LoC, 0 tests, 0 code change):**
+
+- `docs/design.en.md` (modified) — 2 callout
+  blocks added at the top of §18 and §20, each
+  linking to `implementation-plan.md#25-shipped-vs-designed`.
+  Wording kept short to match the "design doc is
+  intent, plan is reality" division: the design
+  shows the target shape, the matrix shows the
+  current state.
+
+**Why a one-line pointer and not a fuller "what
+shipped" callout:** the design doc is intent
+("here's what the surface should look like"); the
+plan is reality ("here's what the code does
+today"). Keeping the design doc lean (the pointer
+is one paragraph) and the plan rich (the matrix
+is the detail) matches the doc hierarchy the user
+established in `docs/AGENTS.md` ("one home per
+fact"). Duplicating the matrix into the design
+doc would create two homes for the same fact.
+
+**Why §18 + §20 specifically and not every
+section:** the audit pass (this session) flagged
+these two as the most "aspirational" — they list
+concrete files (the layout) and concrete fields
+(the schema) that look exhaustive but are not
+deferred. Other design sections (e.g. §3 runtime
+core, §4 invariants, §6 permission) are either
+"the full surface ships" (no pointer needed) or
+"the seam ships, impl deferred" (already noted
+in the section itself).
+
+Cumulative: 1005 hermetic envoy-harness + 93
+envoy-harness-adapter = 1098 tests passing;
+typecheck clean across both packages. No code
+change; doc-only.
+
 ### T3.9 — `write` / `edit` empty-`writableRoots` fallback (this commit)
 
 A bug caught in the post-Tier-1+2+3 audit pass.
@@ -5221,6 +5284,24 @@ useful.
 ---
 
 ## 10. Change log
+
+- **2026-08-19 (T3.10 done — design doc pointers
+  to `implementation-plan §2.5`)**: The §2.5
+  "Shipped vs designed" matrix in this file is the
+  source of truth, but design-doc readers
+  (`docs/design.en.md` §18 / §20) don't
+  necessarily know to look here. T3.10 adds a
+  one-line pointer at the top of each of those
+  two sections. §18 (file layout) points to the
+  matrix generally. §20 (config schema) names
+  the 6 fields the v0 loader actually consumes
+  today (so a reader who jumps to the schema
+  doesn't expect the full ~30-field surface to
+  be wired). No code change; no test change.
+  Cumulative: 1005 hermetic envoy-harness + 93
+  envoy-harness-adapter = 1098 tests passing;
+  typecheck clean. Updated §3.7 (T3.10 entry),
+  §10 (this entry).
 
 - **2026-08-19 (T3.9 done — `write` / `edit`
   empty-`writableRoots` fallback + self-evolve
