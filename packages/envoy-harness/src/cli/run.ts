@@ -60,6 +60,7 @@ import {
   type VerifierRule,
 } from "../index.js";
 import { formatHelp, parseArgs, type ParsedArgs } from "./argv.js";
+import { runRepl } from "./repl/index.js";
 
 /** Options the runner accepts. The bin script and tests both
  *  pass a `model` so the runner is provider-agnostic. */
@@ -206,6 +207,18 @@ export async function run(
   if (parsed.subcommand === "team") {
     return runTeam(parsed, options, stdout, stderr);
   }
+  // 3a. F17.1: --repl activates the interactive REPL. The
+  //     REPL takes no positional prompt; a positional + --repl
+  //     is a usage error.
+  if (parsed.repl) {
+    if (parsed.positional.length > 0) {
+      throw new CliError(
+        "--repl takes no positional prompt; type into the REPL instead",
+        EXIT_USAGE,
+      );
+    }
+    return runReplDispatch(parsed, options, stdout, stderr);
+  }
   return runAgent(parsed, options, stdout, stderr);
 }
 
@@ -303,6 +316,46 @@ async function runAgent(
     sessionId: session.id,
     iterations: result.iterations,
     toolCalls: result.toolCalls,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// F17.1: --repl dispatch
+// ---------------------------------------------------------------------------
+
+/**
+ * Run the REPL and convert the result to a `RunResult` for
+ * symmetry with the one-shot path. The `content` field is empty
+ * (the REPL already streamed output to stdout); the `iterations`
+ * is the REPL's turn count; the `sessionId` is the shared session.
+ */
+async function runReplDispatch(
+  parsed: Extract<ParsedArgs, { subcommand: "run" }>,
+  options: RunOptions,
+  stdout: NodeJS.WritableStream,
+  stderr: NodeJS.WritableStream,
+): Promise<RunResult> {
+  // Resolve the model the same way `runAgent` does: use the
+  // injected model if provided, else dispatch via --provider +
+  // env vars.
+  const model = resolveModel(parsed, options);
+
+  const replResult = await runRepl({
+    model,
+    args: parsed,
+    ...(options.hooks ? { hooks: options.hooks } : {}),
+    ...(options.cwd ? { cwd: options.cwd } : {}),
+    stdout,
+    stderr,
+  });
+
+  return {
+    subcommand: "run",
+    content: "",
+    stopReason: "end_turn",
+    sessionId: replResult.sessionId,
+    iterations: replResult.turns,
+    toolCalls: 0,
   };
 }
 

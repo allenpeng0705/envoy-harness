@@ -40,6 +40,7 @@ const RUN_FLAGS = new Set([
   "--resume",
   "--fork",
   "--plan",
+  "--repl",
   "--no-color",
   "--verbose",
   "--quiet",
@@ -129,6 +130,8 @@ export interface RunParsedArgs {
   fork: string | undefined;
   /** `--plan`: plan-only mode. */
   plan: boolean;
+  /** `--repl`: enter the interactive REPL (F17.1). */
+  repl: boolean;
   /** `--no-color`: disable ANSI colors. */
   noColor: boolean;
   /** `--verbose`: print hook fires and validator verdicts. */
@@ -253,6 +256,7 @@ function parseRunArgs(argv: ReadonlyArray<string>): RunParsedArgs {
     resume: undefined,
     fork: undefined,
     plan: false,
+    repl: false,
     noColor: false,
     verbose: false,
     quiet: false,
@@ -273,6 +277,10 @@ function parseRunArgs(argv: ReadonlyArray<string>): RunParsedArgs {
       }
       if (arg === "--plan") {
         out.plan = true;
+        continue;
+      }
+      if (arg === "--repl") {
+        out.repl = true;
         continue;
       }
       // Valued flags: consume the next arg.
@@ -504,6 +512,7 @@ export function formatHelp(version: string): string {
     "  --resume <session-id>  resume a previous session",
     "  --fork <session-id>    fork a previous session",
     "  --plan                 read + plan only, no writes",
+    "  --repl                 interactive REPL (no positional prompt)",
     "  --json                 JSON Lines output (machine-readable)",
     "  --quiet                suppress human output",
     "  --no-color             disable ANSI colors",

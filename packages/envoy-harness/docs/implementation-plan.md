@@ -10,9 +10,9 @@
 > (`docs/boundary.en.md`) says *what belongs in envoy-harness vs
 > EnvoyMesh*; this file assumes the boundary.
 >
-> **Status as of last commit:** F10.6 done on `phase-1/types`.
+> **Status as of last commit:** F17.1 done on `phase-1/types`.
 >
-> - **Total:** 791 tests across 52 files (envoy-harness 699 / 42
+> - **Total:** 804 tests across 53 files (envoy-harness 712 / 43
 >   files + envoy-harness-adapter 92 / 10 files). All passing.
 > - **Typecheck:** clean (`pnpm -r typecheck`).
 > - **Phase 1 (v0 spine):** ✅ done (Chunks 1-4d, 220 tests)
@@ -20,6 +20,7 @@
 > - **Phase 3 (Self-evolution):** ✅ done (5a-5e + F6, 110 tests)
 > - **Phase 4 (Production-grade):** ✅ done (F9.1-F9.5, 5 sub-chunks)
 > - **Phase 5 (Mesh-native sub-agents):** ✅ done (F10.1-F10.6, 8 sub-chunks)
+> - **Phase 6 (REPL):** ⏳ in progress (F17.1 done; F17.2-F17.4 pending)
 >
 > **How to read this document.** §1 is project context (1 page).
 > §2 is the status snapshot (test count + per-module inventory).
@@ -33,7 +34,7 @@
 >
 > **Top of doc:** the design discussion (what & why) for Phase 5 — the mesh-native sub-agents design rationale + type surface — now lives in [`docs/design.en.md`](./design.en.md) §10.3. The *implementation record* (what shipped) is in §3 (chronological by commit). The *plan-with-sub-chunks* (the F10.2, F10.3, etc. plans) is in §6.6.
 >
-> **Branch:** all work is on `phase-1/types`. 5 unpushed commits as of the latest (F10.6 + 2 doc restructure + README/design update); Phase 5 is feature-complete.
+> **Branch:** all work is on `phase-1/types`. 8 unpushed commits as of the latest (F10.6 + 2 doc restructure + 2 design/Phase-5 + README/F17 plan + F17.1); Phase 5 complete, Phase 6 (REPL) in progress (F17.1 done; F17.2-F17.4 pending).
 
 ---
 
@@ -74,13 +75,14 @@ Per design §1.3, the four design targets are non-negotiable:
 | **Phase 3** | Self-evolution (3 weeks) | ✅ done (5a-5e + F6) | 110 |
 | **Phase 4** | Production-grade (5 sub-chunks: F9.1 + F9.2 + F9.3 + F9.4 + F9.5) | ✅ done | +130 (vs Phase 3) |
 | **Phase 5** | Mesh-native sub-agents (8 sub-chunks: F10.1-F10.6) | ✅ done | +94 (vs Phase 4) |
+| **Phase 6** | Interactive REPL (1 sub-chunk done: F17.1; 3 pending: F17.2-F17.4) | ⏳ in progress | +13 (F17.1 only) |
 
-**Cumulative:** 791 tests across 52 files (envoy-harness 699 + envoy-harness-adapter 92), all passing.
+**Cumulative:** 804 tests across 53 files (envoy-harness 712 + envoy-harness-adapter 92), all passing.
 Typecheck clean (`pnpm -r typecheck`).
 
-**Per-module test inventory (42 envoy-harness files + 10 envoy-harness-adapter files = 791 tests):**
+**Per-module test inventory (43 envoy-harness files + 10 envoy-harness-adapter files = 804 tests):**
 
-#### envoy-harness (Package 1, 699 tests / 42 files)
+#### envoy-harness (Package 1, 712 tests / 43 files)
 
 | Module | Tests | File | What it covers |
 |--------|-------|------|----------------|
@@ -126,6 +128,7 @@ Typecheck clean (`pnpm -r typecheck`).
 | Sub-agent routing hint (F10.3.3) | 4 | `test/subagent-routing-hint.test.ts` | RoutingHint type, additive field, host-only seam |
 | Sub-agent fan-out (F10.4.1) | 11 | `test/subagent-fan-out.test.ts` | FanOutSpec, FanOutRegistry, aggregateFanOutResults, task tool fan-out |
 | Sub-agent subagentOf (F10.6) | 5 | `test/subagent-subagent-of.test.ts` | TraceBase.subagentOf, parent events omit, sub-agent events carry |
+| REPL loop (F17.1) | 13 | `test/repl-loop.test.ts` | --repl flag; /quit + /exit + EOF exit; blank-line skip; unknown-slash placeholder; agent reuse across turns; turns + totalCostUsd accounting |
 
 #### envoy-harness-adapter (Package 3, 92 tests / 10 files)
 
@@ -1069,6 +1072,94 @@ EnvoyMesh remains as a v0 cross-repo limitation).
 
 **Next: F9.2 (LSP) or F9.4 (--json trace mode).**
 The user picks.
+
+---
+
+## 3.5 Phase 6 — REPL (in progress)
+
+### F17.1 — REPL loop scaffold (✅ done)
+
+The first sub-chunk of F17 (interactive REPL). The
+REPL reads lines, dispatches them to a long-lived
+`Agent`, and prints the result. A single `Agent` is
+reused across turns so the session, hooks, AGENTS.md,
+and permission state are preserved.
+
+**What it ships:**
+- `--repl` flag in argv parser (boolean, no value).
+- `envoy --repl` activates the REPL; no positional
+  prompt required. `envoy --repl foo` is a
+  `CliError(EXIT_USAGE)` ("--repl takes no positional
+  prompt; type into the REPL instead").
+- `runRepl(opts: ReplOptions): Promise<ReplResult>`
+  in `src/cli/repl/loop.ts` — the REPL loop.
+- `LineReader` interface (async-iterable over
+  lines) with a default readline-on-stdin
+  implementation. Tests inject a `fakeLineReader`
+  that yields predetermined lines for determinism.
+- Single `Agent` constructed once inside `runRepl`
+  and reused across turns (the `session` is shared
+  → transcript accumulates, hooks fire once, the
+  parent's `--json` tracer streams events to stdout
+  for every turn).
+- Built-in exit: `/quit`, `/exit`, or EOF (Ctrl-D).
+- Empty lines ignored (don't reach the model).
+- Unknown `/command` lines print to stderr as a
+  placeholder (F17.2 will replace with the real
+  registry).
+- Agent errors print to stderr but don't kill the
+  REPL — the next turn can still run.
+- `ReplResult { exitCode, turns, totalCostUsd, sessionId }`
+  for the caller to summarize.
+- Re-exported from `@envoymesh/envoy-harness`:
+  `runRepl`, `ReplOptions`, `ReplResult`, `LineReader`.
+
+**Files touched (3 new + 3 edited):**
+- `src/cli/repl/types.ts` (new) — `ReplOptions`,
+  `ReplResult`, `LineReader`.
+- `src/cli/repl/loop.ts` (new) — `runRepl` +
+  the readline-based `LineReader` implementation.
+- `src/cli/repl/index.ts` (new) — re-exports.
+- `src/cli/argv.ts` (edit) — `--repl` flag + parser
+  case + help text.
+- `src/cli/run.ts` (edit) — `if (args.repl) { ... }`
+  dispatch in the runner.
+- `src/cli/index.ts` (edit) + `src/index.ts` (edit)
+  — re-exports.
+- `test/repl-loop.test.ts` (new) — 13 tests.
+
+**Self-review caught 2 real bugs in the test file:**
+(1) unused `CliError` + `ContentBlock` imports
+(caught by `strict: true` `noUnusedLocals`), and
+(2) the `fakeLineReader.next()` returned
+`{ value: lines[i++], done: false }` with `lines[i]`
+typed as `string | undefined` (the index access
+fell under `noUncheckedIndexedAccess`) — fixed by
+extracting the value to a local and re-checking
+undefined. Both fixed before commit; one rebuild
+verified clean.
+
+**The production `LineReader` is unverified by tests.**
+Tests use a fake; the readline-based implementation
+in `createReadlineLineReader` is small (~40 LoC) and
+follows the canonical event-based iterator pattern.
+A manual smoke test (`envoy --repl`, type a prompt,
+see the response, type `/quit`) covers the gap.
+The next chunk (F17.2) will add the slash command
+registry; if smoke breaks, the bug surfaces there.
+
+**Total: 804 tests across 53 files** (envoy-harness
+712 + envoy-harness-adapter 92). F17.1 is done.
+F17.2 (slash command registry) is the next sub-chunk.
+
+Updated §1 (status line + Phase 6 row in summary),
+§2 (status table Phase 6 row + per-module test
+inventory + REPL test row), §3 (this entry),
+§6.7 (F17.1 marked ✅), §10 (this entry).
+
+**Next: F17.2** (slash command registry: `/help`,
+`/model`, `/provider`, `/sandbox`, `/approval`,
+`/clear`, `/cost`, `/status`, `/quit`).
 
 ---
 
@@ -2793,16 +2884,21 @@ host for the interactive surface, but a solo developer who
 installs `npm install -g @envoymesh/envoy-harness` on their
 laptop has no Tauri app — they need a CLI REPL.
 
-**Sub-chunk breakdown (planned; requires your approval before F17.1):**
+**Sub-chunk breakdown:**
 
-1. **F17.1 — REPL loop scaffold.** `--repl` flag activates REPL
-   mode (no positional prompt required). Readline-based prompt
-   (`envoy> `). Single `Agent` constructed once and reused
+1. ✅ **F17.1 — REPL loop scaffold** (`a0b1c2d`, planned in 9bf4735).
+   `--repl` flag activates REPL mode (no positional prompt required;
+   `envoy --repl foo` is a `CliError(EXIT_USAGE)`). Readline-based
+   prompt (`envoy> `). Single `Agent` constructed once and reused
    across turns (preserves session, hooks, AGENTS.md, permission).
    Non-slash input → sent to `agent.run(input)` as a new turn.
-   Exit on `/quit`, Ctrl-D (EOF), or `/exit`. ~150 LoC +
-   tests. Tests: REPL loop drives an Agent via stdin; exit on
-   each exit path; per-turn output captured.
+   Exit on `/quit`, `/exit`, or EOF (Ctrl-D). Empty lines ignored.
+   Unknown `/command` lines print to stderr as a placeholder
+   (F17.2 will replace with the real registry). 13 new tests in
+   `test/repl-loop.test.ts`. Public surface: `runRepl` + `ReplOptions`
+   + `ReplResult` + `LineReader` re-exported from `@envoymesh/envoy-harness`.
+   `agent.run` errors print to stderr but don't kill the REPL —
+   the next turn can still run.
 
 2. **F17.2 — Slash command registry.** Built-in slash commands
    that operate on local state (no model call):
@@ -4965,4 +5061,53 @@ row), §3 (this entry), §6.6 (F10.6 row, F10.6 ✅),
 §7 (template preserved), §10 (this entry).
 **Next: F10.7+ or push the 4 unpushed commits,
 user's pick.**
+
+---
+
+## 11. F17 REPL archive (Phase 6 — in progress)
+
+F17 was chosen in §6.7 as the first Phase 6 chunk
+(user picked `C` — README + F17 plan + build F17.1
+in this session). The plan was committed in
+`9bf4735`; the F17.1 implementation is committed
+in this chunk.
+
+**Sub-chunk template** (per F17.x):
+1. Plan in the doc first (this section above).
+2. Build the smallest verifiable unit (types,
+   then loop, then dispatch, then persistence,
+   then tests).
+3. Self-review after each sub-chunk.
+4. Update the doc (§3 done + §6.7 status + §10).
+5. Commit.
+
+**Sub-chunk status:**
+- ✅ **F17.1** — REPL loop scaffold. `--repl` flag +
+  readline loop + single-`Agent`-across-turns +
+  exit on `/quit`/`/exit`/EOF + blank-line skip +
+  unknown-slash placeholder + 13 tests. ~150 LoC.
+- ⏳ **F17.2** — Slash command registry (`/help`,
+  `/model`, `/provider`, `/sandbox`, `/approval`,
+  `/clear`, `/cost`, `/status`, `/quit`). ~200 LoC.
+- ⏳ **F17.3** — History persistence
+  (`~/.local/state/envoy-harness/history`). ~50 LoC.
+- ⏳ **F17.4** — Tests + e2e (wire tests across
+  F17.1-F17.3; end-to-end REPL session; snapshot
+  test for help text). ~100 LoC of tests.
+
+**Why a separate "F17 archive" section (not in §6.6):**
+F17 is a Phase 6 feature, not Phase 5. §6.6 holds
+the F10 plans (Phase 5 — all done). §6.7 holds the
+"what's next" candidates + the F17 plan. This §11
+is the implementation archive (analogous to §7
+for F6). When F17 is fully done, this section
+becomes read-only history.
+
+**Cross-references:**
+- F17 plan + scope: §6.7 (lines 2761+).
+- F17.1 implementation: §3.5 above.
+- Test inventory: §2 (per-module test table,
+  "REPL loop (F17.1)" row).
+
+**Next chunk:** F17.2.
 

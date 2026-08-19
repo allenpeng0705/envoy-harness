@@ -37,3 +37,5 @@ export {
   type RunResult,
   type SelfEvolveRunResult,
 } from "./run.js";
+
+export { runRepl, type LineReader, type ReplOptions, type ReplResult } from "./repl/index.js";
