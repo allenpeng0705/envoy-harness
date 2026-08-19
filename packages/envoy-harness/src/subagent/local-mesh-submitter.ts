@@ -311,6 +311,34 @@ export interface DefaultBuildSubagentFactoryOptions {
    * opt-in via this field; the host decides.
    */
   parentTracer?: Tracer;
+  /**
+   * F10.6: the parent session id. When set, the
+   * sub-agent's `AgentOptions.subagentOf` is set
+   * to this value, so every trace event the
+   * sub-agent emits carries `subagentOf:
+   * <parentSessionId>`. The parent tracer (or any
+   * downstream consumer) can then group/filter
+   * events by `subagentOf` without inferring from
+   * event ordering.
+   *
+   * **Who sets it:** the host, when constructing
+   * the `LocalMeshSubmitter` (and the factory).
+   * The host knows its own `session.id`; it
+   * passes it to the factory via this field. The
+   * factory closes over the value and passes it
+   * to every new `Agent` it creates.
+   *
+   * **When to set:** when the host has a
+   * `parentTracer` (F10.5) AND wants the
+   * sub-agent's events to be self-describing.
+   * They're independent: you can have a
+   * `parentTracer` without `parentSessionId`
+   * (events flow to the parent but don't carry
+   * the field); you can have `parentSessionId`
+   * without `parentTracer` (events carry the
+   * field but go to a `NullTracer`).
+   */
+  parentSessionId?: string;
 }
 
 /**
@@ -360,6 +388,7 @@ export function defaultBuildSubagentFactory(
       maxCostUsd: input.costCeilingUsd,
       systemPrompt,
       ...(options.parentTracer ? { tracer: options.parentTracer } : {}),
+      ...(options.parentSessionId ? { subagentOf: options.parentSessionId } : {}),
     });
   };
 }

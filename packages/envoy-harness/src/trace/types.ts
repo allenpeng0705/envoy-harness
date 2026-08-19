@@ -40,6 +40,44 @@ import type { ToolCall, ToolResult } from "../tools/index.js";
 interface TraceBase {
   /** ISO 8601 timestamp. */
   ts: string;
+  /**
+   * F10.6: the parent session id, when this event
+   * was emitted by a SUB-agent. The PARENT's own
+   * events have no `subagentOf` (the parent is the
+   * root; its `sessionId` IS the root).
+   *
+   * **Why a field, not consumer-side inference:**
+   * when multiple sub-agents run in parallel
+   * (F10.2 fan-out), their events interleave with
+   * the parent's events. A consumer that wants to
+   * group events by session has to infer the
+   * attribution from event ordering — fragile,
+   * breaks when the parent has multiple "bursts"
+   * of sub-agent activity. With `subagentOf`, the
+   * attribution is in the data: a consumer filters
+   * or groups by `subagentOf` without inferring.
+   *
+   * **What it points to:** the parent's `sessionId`
+   * (the `AgentStartEvent.sessionId` of the parent's
+   * `agent_start` event). The sub-agent's own
+   * `sessionId` is the CHILD's id (the value at
+   * `AgentStartEvent.sessionId` when the sub-agent
+   * starts); `subagentOf` points UP to the parent.
+   *
+   * **Self-describing events:** with `subagentOf`,
+   * every event carries its full provenance. A
+   * Tauri UI showing a session tree, a log analyzer
+   * filtering by session, or a replay tool
+   * attributing events — all work without consumer-
+   * side inference.
+   *
+   * **Optional:** the parent's own events omit
+   * `subagentOf`. Consumers should treat missing as
+   * "this is a root event (parent)" and present as
+   * such. Existing consumers (F9.4 `JsonLinesTracer`,
+   * the CLI's `--json` flag) ignore the field.
+   */
+  subagentOf?: string;
 }
 
 /** Emitted once at the start of `Agent.run()`. */

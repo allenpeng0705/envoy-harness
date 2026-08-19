@@ -195,6 +195,30 @@ export interface AgentOptions {
    * expands it. The model sees ONE result.
    */
   fanOutRegistry?: FanOutRegistry;
+  /**
+   * F10.6: the parent session id, when this
+   * `Agent` is a SUB-agent. When set, every
+   * `TraceEvent` emitted by this agent carries
+   * `subagentOf: <parentSessionId>`. The PARENT's
+   * own agents do NOT set this (the parent is the
+   * root; its events have no `subagentOf`).
+   *
+   * **Who sets it:** the `LocalMeshSubmitter`'s
+   * `defaultBuildSubagentFactory` (when `parentTracer`
+   * is set) and the F10.3.2 `RemoteMeshSubmitter`
+   * factory. The host doesn't set this directly;
+   * the submitter does.
+   *
+   * **Why a separate field, not just `sessionId`:**
+   * the sub-agent has its own `sessionId` (the
+   * sub-agent's own `AgentStartEvent.sessionId`).
+   * `subagentOf` points UP to the parent, separate
+   * from the sub-agent's own id. A Tauri UI showing
+   * a tree (parent → 3 sub-agents) uses
+   * `subagentOf` for the parent edge and
+   * `sessionId` for the child node.
+   */
+  subagentOf?: string;
 }
 
 /** What `Agent.run()` returns. */
@@ -274,6 +298,12 @@ export class Agent {
   private fanOutRegistry: FanOutRegistry | undefined;
   /** F10.2: max sub-agents per turn. */
   private maxSubagents: number;
+  /** F10.6: parent session id (when this is a
+   *  sub-agent). Every `TraceEvent.emit` includes
+   *  this as `subagentOf` so the parent tracer can
+   *  attribute events without consumer-side
+   *  inference. Undefined for the root agent. */
+  private subagentOf: string | undefined;
 
   constructor(options: AgentOptions) {
     this.model = options.model;
@@ -289,6 +319,7 @@ export class Agent {
     this.meshSubmitter = options.meshSubmitter;
     this.fanOutRegistry = options.fanOutRegistry;
     this.maxSubagents = options.maxSubagents ?? DEFAULT_MAX_SUBAGENTS;
+    this.subagentOf = options.subagentOf;
     // F9.2: register the 4 LSP tools when the host provides
     // a manager. We do this AFTER the constructor sets
     // `this.tools` so the registry is available.
@@ -393,7 +424,7 @@ export class Agent {
     // `usage.model`; for v0 we read it from the cost
     // tracker after each response — the start event uses
     // a placeholder "unknown" if unset).
-    this.tracer.emit({
+    this.emit({
       kind: "agent_start",
       ts: new Date().toISOString(),
       sessionId: this.session.id,
@@ -421,7 +452,7 @@ export class Agent {
         // message so the user sees the error in the transcript
         // and the loop exits cleanly (no retry policy in v0).
         const message = (err as Error).message ?? String(err);
-        this.tracer.emit({
+        this.emit({
           kind: "error",
           ts: new Date().toISOString(),
           iteration: iterations,
@@ -467,7 +498,7 @@ export class Agent {
 
       // F9.4: emit model_response (after cost attribution
       // so the event matches what the agent saw).
-      this.tracer.emit({
+      this.emit({
         kind: "model_response",
         ts: new Date().toISOString(),
         iteration: iterations,
@@ -652,14 +683,14 @@ export class Agent {
       // unknown tools (the trace records the attempt
       // + the error). Without this, an unknown tool
       // is invisible in the trace.
-      this.tracer.emit({
+      this.emit({
         kind: "tool_call",
         ts: new Date().toISOString(),
         iteration: this.toolCallCount,
         call,
       });
       this.appendToolResult(call.id, `unknown tool: ${call.name}`, true);
-      this.tracer.emit({
+      this.emit({
         kind: "tool_result",
         ts: new Date().toISOString(),
         iteration: this.toolCallCount,
@@ -676,7 +707,7 @@ export class Agent {
     // gets it now. Even if arg validation fails, the
     // trace records the attempt.
     const toolCallEventIteration = this.toolCallCount;
-    this.tracer.emit({
+    this.emit({
       kind: "tool_call",
       ts: new Date().toISOString(),
       iteration: toolCallEventIteration,
@@ -692,7 +723,7 @@ export class Agent {
         `invalid arguments: ${parsed.error.message}`,
         true,
       );
-      this.tracer.emit({
+      this.emit({
         kind: "tool_result",
         ts: new Date().toISOString(),
         iteration: toolCallEventIteration,
@@ -733,7 +764,7 @@ export class Agent {
     // post-hook / transcript append). The duration
     // is the time spent in the tool's `execute`.
     const toolDurationMs = Date.now() - toolStart;
-    this.tracer.emit({
+    this.emit({
       kind: "tool_result",
       ts: new Date().toISOString(),
       iteration: toolCallEventIteration,
@@ -791,6 +822,35 @@ export class Agent {
     });
   }
 
+  /**
+   * F10.6: emit a trace event, automatically tagging
+   * it with `subagentOf` (when this agent is a
+   * sub-agent). Centralizes the `subagentOf`
+   * propagation so every emit call site can't
+   * forget it.
+   *
+   * **Why a helper, not `...event, subagentOf` at
+   * each call site:** 9 emit calls in this file.
+   * A helper keeps the field consistent (one place
+   * to change) and avoids the "I forgot to add
+   * `subagentOf`" bug.
+   *
+   * **What the consumer sees:** every event from a
+   * sub-agent carries `subagentOf: <parentSessionId>`.
+   * The parent tracer can group/filter by
+   * `subagentOf` without inferring from event
+   * ordering. Existing consumers (F9.4
+   * `JsonLinesTracer`, the CLI's `--json` flag)
+   * ignore the field.
+   */
+  private emit(event: import("./trace/index.js").TraceEvent): void {
+    if (this.subagentOf !== undefined) {
+      this.tracer.emit({ ...event, subagentOf: this.subagentOf });
+    } else {
+      this.tracer.emit(event);
+    }
+  }
+
   /** Build an `AgentResult` populated with the loop's metadata. */
   private makeResult(
     content: ContentBlock[],
@@ -801,7 +861,7 @@ export class Agent {
     // F9.4: emit agent_end. This is the last event
     // the tracer sees; consumers (e.g. the CLI's
     // --json flag) can use it to flush.
-    this.tracer.emit({
+    this.emit({
       kind: "agent_end",
       ts: new Date().toISOString(),
       stopReason,
