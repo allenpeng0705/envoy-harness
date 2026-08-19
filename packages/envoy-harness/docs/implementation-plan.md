@@ -8,9 +8,9 @@
 > and *why*. This file says *what shipped*, *where it lives*,
 > and *what's still open*.
 >
-> **Status as of last commit:** (next commit, F10.3.2 done) on `phase-1/types`.
-> Total: 763 tests across 48 files (envoy-harness 671 / 38 files + envoy-harness-adapter 92 / 10 files).
-> Phase 3 fully complete (F6 done). Phase 2 fully complete (F7 + F8 done, F8 polish done). **Phase 4 complete (F9.1 + F9.2 + F9.3 + F9.4 + F9.5 done).** **Phase 5 in progress: F10.1 + F10.2 + F10.3.1 + F10.3.2 done** (mesh-native sub-agents + parallel fan-out + maxSubagents cap + `SubagentResultSigner` seam + cross-node `RemoteMeshSubmitter`). F10.3.3 (`routingHint` field) + F10.4+ pending.
+> **Status as of last commit:** (next commit, F10.3.3 done) on `phase-1/types`.
+> Total: 767 tests across 49 files (envoy-harness 675 / 39 files + envoy-harness-adapter 92 / 10 files).
+> Phase 3 fully complete (F6 done). Phase 2 fully complete (F7 + F8 done, F8 polish done). **Phase 4 complete (F9.1 + F9.2 + F9.3 + F9.4 + F9.5 done).** **Phase 5 in progress: F10.1 + F10.2 + F10.3.1 + F10.3.2 + F10.3.3 done** (mesh-native sub-agents + parallel fan-out + maxSubagents cap + `SubagentResultSigner` seam + cross-node `RemoteMeshSubmitter` + federated routing seam). F10.4+ pending (`FanOutSpec`, cost aggregation, progress streaming).
 
 ---
 
@@ -339,9 +339,9 @@ Per design §1.3, the four design targets are non-negotiable:
 | **Phase 2** | Mesh-native (4 weeks) | ✅ done (F7 + F8) | 540 |
 | **Phase 3** | Self-evolution (3 weeks) | ✅ done (5a-5e + F6) | 110 |
 | **Phase 4** | Production-grade (5 sub-chunks: F9.1 + F9.2 + F9.3 + F9.4 + F9.5) | ✅ done | +130 (vs Phase 3) |
-| **Phase 5** | Mesh-native sub-agents (in progress) | ⏳ F10.1 ✅, F10.2 ✅, F10.3.1 ✅, F10.3.2 ✅, F10.3.3 + F10.4+ pending | +66 (vs Phase 4) |
+| **Phase 5** | Mesh-native sub-agents (in progress) | ⏳ F10.1 ✅, F10.2 ✅, F10.3.1 ✅, F10.3.2 ✅, F10.3.3 ✅, F10.4+ pending | +70 (vs Phase 4) |
 
-**Cumulative:** 763 tests across 48 files (envoy-harness 671 + envoy-harness-adapter 92), all passing.
+**Cumulative:** 767 tests across 49 files (envoy-harness 675 + envoy-harness-adapter 92), all passing.
 Typecheck clean (`pnpm -r typecheck`).
 
 **Per-module test inventory:**
@@ -2880,7 +2880,7 @@ swaps in for cross-node execution without code changes.
 |----|-------|-------|--------|
 | **F10.1** | `MeshSubmitter` interface + `NoopMeshSubmitter`; `LocalMeshSubmitter` + `defaultBuildSubagentFactory`; `task` tool + `AgentOptions.meshSubmitter`; end-to-end via real `Agent.run()`. 4 sub-chunks. | `src/subagent/{types,noop-submitter,local-mesh-submitter,tools,index}.ts`, `src/agent.ts`, 4 test files | ✅ done (4 sub-chunks: F10.1.1 + F10.1.2 + F10.1.3 + F10.1.4) |
 | **F10.2** | Parallel sub-agent fan-out (auto-detect "all N task calls" → `Promise.all`) + `maxSubagents` cap (default 8, host-configurable; refuses ALL when exceeded). 1 sub-chunk. | `src/agent.ts`, `test/subagent-parallel.test.ts` | ✅ done (F10.2.1) |
-| **F10.3** | Cross-node `RemoteMeshSubmitter` (Package 3) + `SubagentResultSigner` seam (Package 1) + `RemoteSubmitterTransport` interface + `routingHint` field. 3 sub-chunks. | `src/subagent/signer.ts` (new), `src/subagent/local-mesh-submitter.ts` (additive), `packages/envoy-harness-adapter/src/remote-mesh-submitter.ts` (new) | 🔄 F10.3.1 ✅, F10.3.2 ✅, F10.3.3 pending |
+| **F10.3** | Cross-node `RemoteMeshSubmitter` (Package 3) + `SubagentResultSigner` seam (Package 1) + `RemoteSubmitterTransport` interface + `routingHint` field. 3 sub-chunks. | `src/subagent/signer.ts` (new), `src/subagent/local-mesh-submitter.ts` (additive), `packages/envoy-harness-adapter/src/remote-mesh-submitter.ts` (new) | ✅ done (3 sub-chunks: F10.3.1 + F10.3.2 + F10.3.3) |
 | **F10.4+** | Cost aggregation (sub-agent `CostTracker` → parent); capability-driven fan-out (`FanOutSpec`); progress streaming. | `src/agent.ts`, `src/cost.ts` | pending |
 
 **Why the sub-agent path is the mesh-native contract, not in-process:**
@@ -3404,6 +3404,44 @@ scoreboard opt-in (off by default)." — 3 of 4 done
   routing seam: `routingHint` field on
   `SubagentInput` + design doc note) or push 1
   unpushed commit, user's pick.
+- **2026-08-19 (F10.3.3)**: Federated routing seam
+  + design doc note. The actual routing decision
+  (which peer, capability matching, load balancing)
+  lives in EnvoyMesh — NOT in envoy-harness. Per the
+  boundary doc, envoy-harness's contribution is the
+  SEAM: structured advisory fields the host (or a
+  future `FanOutSpec`, F10.4+) can set. Type changes
+  (Package 1): new `RoutingHint` interface
+  (`workerCapabilityTag`, `maxHops?`, `preferredRegions?`);
+  `SubagentInput.routingHint?: RoutingHint` (additive
+  — existing callers unchanged); `task` tool's zod
+  schema does NOT expose `routingHint` to the model
+  (host-only). Design doc: `boundary.en.md` gains a
+  new "Federated routing: the seam" section with
+  the explicit note **"Routing is a mesh concern;
+  envoy-harness exposes the hint, EnvoyMesh decides
+  the target."** The routing table row updated. 4
+  new tests in `test/subagent-routing-hint.test.ts`:
+  routingHint accepted (additive), forwarded through
+  MeshSubmitter, NOT in model's zod schema, doc test
+  asserts the seam note is in `boundary.en.md`.
+  **Self-review caught 1 issue:** first test design
+  tried to import `TaskInputSchema` via
+  `'@envoymesh/envoy-harness/dist/subagent/tools.js'`
+  (self-package can't import its own dist via the
+  package alias); fixed by importing from the
+  package root. **F10.3.3 ✅ done. Phase 5 status:**
+  F10.1, F10.2, F10.3.1, F10.3.2, F10.3.3 — all done.
+  Mesh-native sub-agent path is complete (parent →
+  task tool → MeshSubmitter → local/remote → signed
+  result → federated routing hint). F10.4+ is next:
+  `FanOutSpec` (capability-driven fan-out), cost
+  aggregation, progress streaming. Total: 675 tests
+  across 39 files (envoy-harness) + 92 in
+  envoy-harness-adapter = 767 across 49 files
+  (monorepo). Updated §1, §2, §3, §6.6 (F10.3 row
+  all 3 sub-chunks ✅), §7, §10. Next: F10.4 or
+  push 1 unpushed commit, user's pick.
 
 ---
 
@@ -4350,4 +4388,84 @@ row), §3 (this entry), §6.6 (F10.3 row, F10.3.2 ✅),
 §7 (template preserved), §10 (this entry). **Next:
 F10.3.3 (routingHint field on SubagentInput) or
 push 1 unpushed commit, user's pick.**
+
+---
+
+### F10.3.3 — done
+
+**F10.3.3 (this commit) — federated routing seam +
+design doc note.** The last sub-chunk of F10.3.
+
+**The seam:** the actual routing decision (which peer
+to send to, capability matching, load balancing, fallback
+selection) lives in EnvoyMesh — NOT in envoy-harness.
+Per the boundary doc, envoy-harness's contribution is
+the SEAM: structured advisory fields the host (or a
+future `FanOutSpec`, F10.4+) can set. The mesh
+interprets them.
+
+**Type changes (Package 1):**
+- New `RoutingHint` interface:
+  `{ workerCapabilityTag, maxHops?, preferredRegions? }`
+- `SubagentInput.routingHint?: RoutingHint` (additive
+  — existing F10.1.2 callers unchanged)
+- `src/index.ts` + `src/subagent/index.ts` re-export
+  `RoutingHint`
+- The `task` tool's zod schema does NOT expose
+  `routingHint` to the model — only the host can set
+  it. Test asserts this is the case (so the seam
+  doesn't leak to the model).
+
+**Design doc updates:**
+- `boundary.en.md`: new "Federated routing: the seam"
+  section with the explicit note **"Routing is a mesh
+  concern; envoy-harness exposes the hint, EnvoyMesh
+  decides the target."** The routing table row updated
+  to reflect the F10.3.3 hint field. The doc test
+  asserts this note is present (so future readers
+  know where the routing decision lives).
+
+**4 new tests in
+`test/subagent-routing-hint.test.ts`:**
+1. `routingHint` accepted on `SubagentInput` (additive
+   — existing inputs without the field still
+   type-check).
+2. `routingHint` is forwarded through `MeshSubmitter`
+   (passes through to the transport, where the mesh
+   interprets it).
+3. The `task` tool's zod schema does NOT expose
+   `routingHint` to the model (the seam is host-only).
+4. Doc test: "Routing is a mesh concern" note is
+   present in `docs/boundary.en.md`.
+
+**Self-review caught 1 issue:** the first test
+design tried to import `TaskInputSchema` via
+`'@envoymesh/envoy-harness/dist/subagent/tools.js'`
+which doesn't resolve as a self-import path
+(self-package can't import its own dist via the
+package alias). Fixed by importing from the
+package root — `TaskInputSchema` is re-exported
+from `src/index.ts` already.
+
+**Total: 675 tests across 39 files** (envoy-harness,
++4 from F10.3.3) + 92 in envoy-harness-adapter =
+**767 across 49 files** (monorepo). F10.3.3 is done.
+
+**Phase 5 status:** F10.1, F10.2, F10.3.1, F10.3.2,
+F10.3.3 — all done. The mesh-native sub-agent path
+is complete: parent → task tool → `MeshSubmitter` →
+local (`LocalMeshSubmitter`) or remote
+(`RemoteMeshSubmitter` + host-injected transport) →
+signed `SubagentResult` (via `SubagentResultSigner`) →
+federated routing hint (via `SubagentInput.routingHint`).
+F10.4+ is the next phase: `FanOutSpec` (capability-driven
+fan-out, the user's earlier F10.2 ask), cost aggregation,
+progress streaming.
+
+Updated §1 (status line), §2 (status table Phase 5
+row), §3 (this entry), §6.6 (F10.3 row, F10.3.3 ✅
++ all 3 sub-chunks done), §7 (template preserved),
+§10 (this entry). **Next: F10.4 (`FanOutSpec` +
+capability-driven fan-out) or push 1 unpushed commit,
+user's pick.**
 
