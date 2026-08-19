@@ -136,6 +136,17 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
   if (opts.args.maxCostUsd !== undefined) {
     agentOptions.maxCostUsd = opts.args.maxCostUsd;
   }
+  // F-fix: `--approval` was validated by argv but never wired in
+  // REPL mode (the one-shot path got this wiring earlier). The
+  // agent's `approval === "never"` fail-closed check now works
+  // from the CLI flag, not just from the `/approval` command.
+  if (opts.args.approval !== undefined) {
+    agentOptions.approval = opts.args.approval as
+      | "unless-trusted"
+      | "on-request"
+      | "granular"
+      | "never";
+  }
   if (opts.lspManager) {
     agentOptions.lspManager = opts.lspManager;
   }
@@ -308,6 +319,8 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
     }
   } finally {
     lineReader.close();
+    // F-fix: flush persisted-session writes before exit.
+    await session.flush().catch(() => undefined);
     // F17.3: save history on exit. Errors here are silent
     // (the user is closing the REPL; we don't want a
     // history-write error to surface as a confusing

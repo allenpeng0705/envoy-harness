@@ -19,7 +19,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { Writable } from "node:stream";
@@ -185,6 +185,115 @@ describe("CLI: --resume", () => {
       expect((e as Error).message).toMatch(/failed to load session/);
     }
   });
+
+  it("--resume honors the persisted session's cwd (not the current --cwd)", async () => {
+    const out = new StringWritable();
+    const err = new StringWritable();
+    const sessionDir = path.join(tmpDir, "sessions");
+    const savedCwd = path.join(tmpDir, "saved-dir");
+    const otherCwd = path.join(tmpDir, "other-dir");
+    await mkdir(savedCwd, { recursive: true });
+    await mkdir(otherCwd, { recursive: true });
+
+    // 1. Persist a session created in savedCwd.
+    const first = await run({
+      argv: [
+        "--provider",
+        "openai",
+        "--persist",
+        "--session-dir",
+        sessionDir,
+        "--cwd",
+        savedCwd,
+        "first",
+      ],
+      model: scriptedModel("first reply"),
+      stdout: out,
+      stderr: err,
+      cwd: tmpDir,
+    });
+    if (first.subcommand !== "run") throw new Error("expected run");
+
+    // 2. Resume with a DIFFERENT --cwd; the model runs bash `pwd`.
+    let calls = 0;
+    const resumeModel: ModelAdapter = {
+      async complete() {
+        calls++;
+        if (calls === 1) {
+          return {
+            content: [
+              {
+                type: "tool_call",
+                id: "t1",
+                name: "bash",
+                args: { command: "pwd" },
+              },
+            ],
+            stopReason: "tool_use",
+          };
+        }
+        return {
+          content: [{ type: "text", text: "done" }],
+          stopReason: "end_turn",
+        };
+      },
+    };
+    const out2 = new StringWritable();
+    const err2 = new StringWritable();
+    const resumed = await run({
+      argv: [
+        "--provider",
+        "openai",
+        "--resume",
+        first.sessionId,
+        "--session-dir",
+        sessionDir,
+        "--cwd",
+        otherCwd,
+        "--json",
+        "continue",
+      ],
+      model: resumeModel,
+      stdout: out2,
+      stderr: err2,
+      cwd: tmpDir,
+    });
+    if (resumed.subcommand !== "run") throw new Error("expected run");
+    // The tool ran in the SAVED cwd (the loaded session wins),
+    // visible in the --json tool_result trace.
+    expect(out2.data).toContain(savedCwd);
+    expect(out2.data).not.toContain(otherCwd);
+  });
+});
+
+describe("CLI: --resume + --persist mutual exclusion", () => {
+  it("rejects the pair with EXIT_USAGE", async () => {
+    const out = new StringWritable();
+    const err = new StringWritable();
+    try {
+      await run({
+        argv: [
+          "--provider",
+          "openai",
+          "--resume",
+          "some-id",
+          "--persist",
+          "--session-dir",
+          path.join(tmpDir, "sessions"),
+          "hi",
+        ],
+        model: scriptedModel("ok"),
+        stdout: out,
+        stderr: err,
+        cwd: tmpDir,
+      });
+      throw new Error("expected CliError");
+    } catch (e) {
+      expect(e).toBeInstanceOf(CliError);
+      expect((e as CliError).exitCode).toBe(64);
+      expect((e as CliError).message).toMatch(/mutually exclusive/);
+    }
+  });
 });
 
 describe("CLI: --fork", () => {
@@ -244,16 +353,19 @@ describe("CLI: --fork", () => {
     );
     expect(sourceFile).toContain(`"id":"${sourceId}"`);
     expect(forkedFile).toContain(`"id":"${second.sessionId}"`);
-    // The forked file at fork-time has the same line
-    // count as the source (the fork is a copy of the
-    // source's messages; the new agent turn is fire-
-    // and-forget and not yet flushed). The semantic
-    // we want to verify is: the fork EXISTS and
-    // contains the source's messages (verified via
-    // the file's metadata below).
+    // The forked file is flushed before the CLI returns
+    // (F-fix: PersistedSession.flush()): it contains the
+    // source's copied messages PLUS the new agent turn
+    // (1 user prompt + 1 assistant reply = 2 extra lines).
     const sourceLineCount = sourceFile.split("\n").filter((l) => l.length > 0).length;
     const forkedLineCount = forkedFile.split("\n").filter((l) => l.length > 0).length;
-    expect(forkedLineCount).toBe(sourceLineCount);
+    expect(forkedLineCount).toBe(sourceLineCount + 2);
+    // The copied messages are present (the fork is a copy).
+    const sourceLines = sourceFile.split("\n").filter((l) => l.length > 0);
+    // The first non-header source message is preserved.
+    const sourceFirstMessage = sourceLines[1];
+    expect(sourceFirstMessage).toBeDefined();
+    expect(forkedFile).toContain(sourceFirstMessage!);
   });
 
   it("inherits the source session's title when present", async () => {

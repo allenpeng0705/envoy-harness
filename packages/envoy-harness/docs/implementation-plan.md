@@ -92,10 +92,10 @@ Per design §1.3, the four design targets are non-negotiable:
 | **Phase 6** | Interactive REPL (7 sub-chunks done: F17.1 + F17.2 + F17.2.5 + F17.3 + F17.4 + F17.5 + F17.6) | ✅ **done** | +103 (F17.1 + F17.2 + F17.2.5 + F17.3 + F17.4 + F17.5 + F17.6) |
 | **Phase 7** | Persistence + bundled F18 REPL commands (F14.1 + F14.2 + F14.3 done) | ✅ **done** | +130 (F14.1 + F14.2 + F14.3) |
 
-**Cumulative:** 1025 tests across 62 files (envoy-harness 932 + envoy-harness-adapter 93), all passing.
+**Cumulative:** 1025 tests across 67 files (envoy-harness 932 / 57 files + envoy-harness-adapter 93 / 10 files), all passing.
 Typecheck clean (`pnpm -r typecheck`).
 
-**Per-module test inventory (47 envoy-harness files + 10 envoy-harness-adapter files = 865 tests):**
+**Per-module test inventory (57 envoy-harness files + 10 envoy-harness-adapter files = 67 files):**
 
 #### envoy-harness (Package 1, 773 tests / 47 files)
 
@@ -1101,7 +1101,7 @@ The user picks.
 
 ---
 
-## 3.5 Phase 6 — REPL (in progress)
+## 3.5 Phase 6 — REPL (done)
 
 ### F17.1 — REPL loop scaffold (✅ done)
 
@@ -6534,3 +6534,21 @@ monorepo suite (both packages) is green.
 - `/approval` semantics fixed (fail-closed; vocabulary
   matches the CLI).
 - `/init` refuses to write in read-only sessions.
+
+### Phase 7 review fixes (F14 follow-up)
+- **Typecheck restored**: `test/repl-tier2-batch4.test.ts` no
+  longer violates `exactOptionalPropertyTypes`.
+- **`/export`** uses the new public `Agent.getSession()` (the
+  private-field cast is gone), refuses to write in read-only
+  sessions, and rejects export paths outside the session cwd.
+- **`/review`** surfaces `spawnSync` spawn errors (missing git
+  was reported as "no changes to review").
+- **One-shot `--resume`** now honors the persisted session's
+  cwd (matching `--repl --resume`), and `--resume + --persist`
+  is rejected with `EXIT_USAGE` (was silently ignored).
+- **`--repl --approval never`** now wires the CLI flag into the
+  agent (the fail-closed check was REPL-loop-only before).
+- **Durability**: `Session.flush()` awaits `PersistedSession`'s
+  write chain; the one-shot CLI and the REPL flush before
+  returning, so an immediate process exit can't lose the tail
+  of the transcript.

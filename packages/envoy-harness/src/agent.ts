@@ -628,6 +628,18 @@ export class Agent {
   }
 
   /**
+   * F14.3: read-only access to the underlying `Session`
+   * (in-memory or persisted). Commands like `/export`
+   * need the full transcript (id + metadata + messages),
+   * which `getSessionId()`/`getMessageCount()` don't
+   * provide. v0 reached into the private field via a
+   * cast; this is the public seam.
+   */
+  getSession(): Session {
+    return this.session;
+  }
+
+  /**
    * F14.1: set the session's display title. Persisted
    * implementations (`PersistedSession`) write through to
    * disk so the title survives a `--resume`.

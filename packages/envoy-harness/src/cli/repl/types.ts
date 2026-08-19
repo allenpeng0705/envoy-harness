@@ -231,7 +231,7 @@ export interface ReplOptions {
   reviewDiff?: (opts: {
     cwd: string;
     staged: boolean;
-  }) => { stdout: string; stderr: string; exitCode: number };
+  }) => { stdout: string; stderr: string; exitCode: number; error?: string };
 }
 
 /**

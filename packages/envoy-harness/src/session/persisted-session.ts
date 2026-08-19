@@ -338,4 +338,18 @@ export class PersistedSession implements Session {
         }),
     );
   }
+
+  /**
+   * F-fix: await the write chain so the transcript is durable
+   * before the CLI returns. Without this, fire-and-forget
+   * appends can be lost if the process exits immediately after
+   * `run()` (e.g. a host calling `process.exit()`).
+   *
+   * Errors are already swallowed by each chain link (the
+   * in-memory state is the source of truth); `flush()` resolves
+   * when the queued writes have been attempted.
+   */
+  async flush(): Promise<void> {
+    await this.writeChain;
+  }
 }

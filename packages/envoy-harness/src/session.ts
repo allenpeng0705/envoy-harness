@@ -65,6 +65,14 @@ export interface Session {
   /** Remove all messages. Test-only utility. */
   clear(): void;
   /**
+   * F-fix: flush any pending persistence writes. The in-memory
+   * implementation is a no-op; `PersistedSession` awaits its
+   * write chain so the transcript is durable before the CLI
+   * returns (fire-and-forget appends would otherwise be lost on
+   * an immediate process exit).
+   */
+  flush(): Promise<void>;
+  /**
    * F14.1: update the session's display title. The
    * `metadata.title` field is the user-facing label
    * (e.g. shown by the REPL's `/session` command and
@@ -134,6 +142,11 @@ export class InMemorySession implements Session {
    */
   setTitle(title: string): void {
     this.metadata.title = title;
+  }
+
+  /** No-op: nothing to flush for an in-memory session. */
+  async flush(): Promise<void> {
+    // nothing to persist
   }
 }
 

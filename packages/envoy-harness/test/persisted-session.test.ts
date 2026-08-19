@@ -205,6 +205,24 @@ describe("PersistedSession.appendMessage", () => {
     const msg2 = JSON.parse(lines[2]!);
     expect(msg2.role).toBe("assistant");
   });
+
+  it("flush() makes the transcript durable without a sleep", async () => {
+    const id = "test-flush";
+    const session = await PersistedSession.create({
+      id,
+      metadata: makeMeta(),
+      filePath: fileFor(id),
+    });
+    session.appendMessage("user", [{ type: "text", text: "hi" }]);
+    session.appendMessage("assistant", [{ type: "text", text: "hello" }]);
+    // F-fix: explicit flush — the CLI awaits this before returning,
+    // so an immediate process exit can't lose the tail.
+    await session.flush();
+    const file = await readFile(fileFor(id), "utf-8");
+    const lines = file.split("\n").filter((l) => l.length > 0);
+    expect(lines).toHaveLength(3); // header + 2 messages
+    expect(JSON.parse(lines[2]!).role).toBe("assistant");
+  });
 });
 
 describe("PersistedSession.setTitle", () => {

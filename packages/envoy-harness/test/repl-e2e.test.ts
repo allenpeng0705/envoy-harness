@@ -361,6 +361,39 @@ describe("e2e: /approval never fails closed", () => {
     });
     expect(out.data).toContain("approval mode is 'never'");
   });
+
+  it("--approval never from the CLI flag also fails closed", async () => {
+    const model = scriptedModel([
+      {
+        content: [
+          {
+            type: "tool_call",
+            id: "t1",
+            name: "bash",
+            args: { command: "echo hi" },
+          },
+        ],
+        stopReason: "tool_use",
+      },
+      { content: [textBlock("done")] },
+    ]);
+    const hooks = new HookRegistry();
+    hooks.on("PreToolUse", async () => ({ kind: "ask", question: "go?" }));
+    const out = new StringWritable();
+    const err = new StringWritable();
+    // No /approval slash command — the CLI flag must wire the
+    // agent's fail-closed approval mode directly.
+    await runRepl({
+      model,
+      args: makeArgs({ approval: "never", json: true }),
+      hooks,
+      lineReader: fakeLineReader(["run it", "/quit"]),
+      stdout: out,
+      stderr: err,
+      historyPath: "",
+    });
+    expect(out.data).toContain("approval mode is 'never'");
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -116,7 +116,7 @@ const REVIEW_MAX_DIFF_CHARS = 200_000;
 function defaultReviewDiff(opts: {
   cwd: string;
   staged: boolean;
-}): { stdout: string; stderr: string; exitCode: number } {
+}): { stdout: string; stderr: string; exitCode: number; error?: string } {
   const args = opts.staged ? ["diff", "--cached"] : ["diff"];
   const result = spawnSync("git", args, {
     cwd: opts.cwd,
@@ -126,6 +126,11 @@ function defaultReviewDiff(opts: {
     stdout: result.stdout ?? "",
     stderr: result.stderr ?? "",
     exitCode: result.status ?? -1,
+    // spawnSync sets `error` when the binary can't be spawned
+    // (e.g. git not installed) — status is null and stderr is
+    // empty, so without this the failure would masquerade as
+    // "no changes to review".
+    ...(result.error ? { error: result.error.message } : {}),
   };
 }
 
@@ -156,6 +161,11 @@ const reviewCommand: ReplCommand = {
       ? (ctx as unknown as { reviewDiff: typeof defaultReviewDiff })
           .reviewDiff({ cwd, staged })
       : defaultReviewDiff({ cwd, staged });
+    if (diff.error) {
+      // git not installed / couldn't spawn: real error.
+      ctx.stderr.write(`error: ${diff.error}\n`);
+      return;
+    }
     if (diff.stderr && diff.exitCode !== 0) {
       // git error (not a repo, git not installed,
       // bad flags, etc.)
@@ -345,12 +355,28 @@ const exportCommand: ReplCommand = {
       ? (path.isAbsolute(pathArg) ? pathArg : path.join(cwd, pathArg))
       : path.join(cwd, `${ctx.agent.getSessionId()}.${ext}`);
 
-    // Read the live session from the agent. The
-    // `agent.session` is the underlying `Session`
-    // implementation (InMemorySession or
-    // PersistedSession); both implement the same
-    // interface (id, metadata, messages).
-    const session = (ctx.agent as unknown as { session: Session }).session;
+    // F-fix: /export writes a file. Respect the session's
+    // permission mode (like /init) and keep the target inside
+    // the cwd — an absolute path arg could otherwise write
+    // anywhere on the machine.
+    if (ctx.agent.getPermissionMode() === "read-only") {
+      ctx.stderr.write(
+        "error: /export writes a file, but the session is read-only " +
+          "(use /sandbox workspace-write first)\n",
+      );
+      return;
+    }
+    if (!isWithin(cwd, targetPath)) {
+      ctx.stderr.write(
+        `error: export path is outside the session cwd: ${targetPath}\n`,
+      );
+      return;
+    }
+
+    // Read the live session from the agent via the public
+    // getter (InMemorySession or PersistedSession both
+    // implement the same interface).
+    const session = ctx.agent.getSession();
     try {
       if (format === "md") {
         await renderMd(session, targetPath);
@@ -366,6 +392,13 @@ const exportCommand: ReplCommand = {
     ctx.stdout.write(`exported: ${targetPath} (${session.messages.length} messages)\n`);
   },
 };
+
+/** Boundary-aware containment: is `p` inside `root`? */
+function isWithin(root: string, p: string): boolean {
+  const r = path.resolve(root);
+  const target = path.resolve(p);
+  return target === r || target.startsWith(r.endsWith(path.sep) ? r : r + path.sep);
+}
 
 // ---------------------------------------------------------------------------
 // Public surface

@@ -61,7 +61,11 @@ class StringWritable extends Writable {
  */
 function recordingModel(
   responseText: string,
-  recorder: { system?: string; user?: string; toolCount?: number },
+  recorder: {
+    system?: string | undefined;
+    user?: string | undefined;
+    toolCount?: number;
+  },
 ): ModelAdapter {
   return {
     async complete(input) {
@@ -206,6 +210,28 @@ describe("/review: non-git dir", () => {
     // The model was NOT called.
     expect(out.data).not.toContain("ok");
   });
+
+  it("surfaces a spawn error (e.g. git not installed) instead of 'no changes'", async () => {
+    const model = recordingModel("ok", {});
+    const out = new StringWritable();
+    const err = new StringWritable();
+    await runRepl({
+      model,
+      args: makeArgs(),
+      lineReader: lineReader(["/review", "/quit"]),
+      reviewDiff: () => ({
+        stdout: "",
+        stderr: "",
+        exitCode: -1,
+        error: "spawn git ENOENT",
+      }),
+      stdout: out,
+      stderr: err,
+      historyPath: "",
+    });
+    expect(err.data).toContain("spawn git ENOENT");
+    expect(out.data).not.toContain("no changes to review");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -215,7 +241,11 @@ describe("/review: non-git dir", () => {
 describe("/review: happy path", () => {
   it("sends the diff to the model and prints the review", async () => {
     const diff = "diff --git a/foo.ts b/foo.ts\n+ new line\n-old line\n";
-    const recorder: { system?: string; user?: string; toolCount?: number } =
+    const recorder: {
+      system?: string | undefined;
+      user?: string | undefined;
+      toolCount?: number;
+    } =
       {};
     const model = recordingModel("LGTM. No issues.", recorder);
     const out = new StringWritable();
@@ -243,7 +273,11 @@ describe("/review: happy path", () => {
 
   it("uses `git diff --cached` when the staged arg is set", async () => {
     const diff = "diff --git a/foo.ts b/foo.ts\n+ staged line\n";
-    const recorder: { system?: string; user?: string; toolCount?: number } =
+    const recorder: {
+      system?: string | undefined;
+      user?: string | undefined;
+      toolCount?: number;
+    } =
       {};
     const model = recordingModel("ok", recorder);
     const out = new StringWritable();
@@ -276,7 +310,7 @@ describe("/export: jsonl (default)", () => {
     const id = "test-export-id";
     const session = new InMemorySession(id, {
       cwd: tmpDir,
-      permissionMode: "read-only",
+      permissionMode: "workspace-write",
       startedAt: "2026-01-01T00:00:00.000Z",
       title: "export test",
     });
@@ -333,7 +367,7 @@ describe("/export: md", () => {
     const id = "test-md-id";
     const session = new InMemorySession(id, {
       cwd: tmpDir,
-      permissionMode: "read-only",
+      permissionMode: "workspace-write",
       startedAt: "2026-01-01T00:00:00.000Z",
       title: "md test",
     });
@@ -398,7 +432,7 @@ describe("/export: errors", () => {
     const id = "test-custom-path-id";
     const session = new InMemorySession(id, {
       cwd: tmpDir,
-      permissionMode: "read-only",
+      permissionMode: "workspace-write",
       startedAt: "2026-01-01T00:00:00.000Z",
       title: "custom path",
     });
@@ -408,7 +442,7 @@ describe("/export: errors", () => {
     const out = new StringWritable();
     await runRepl({
       model,
-      args: makeArgs(),
+      args: makeArgs({ cwd: tmpDir }),
       lineReader: lineReader([`/export jsonl ${customPath}`, "/quit"]),
       createSession: async () => session,
       stdout: out,
@@ -430,7 +464,7 @@ describe("/export: empty session", () => {
     const id = "test-empty-id";
     const session = new InMemorySession(id, {
       cwd: tmpDir,
-      permissionMode: "read-only",
+      permissionMode: "workspace-write",
       startedAt: "2026-01-01T00:00:00.000Z",
       title: "empty",
     });
@@ -453,6 +487,62 @@ describe("/export: empty session", () => {
     const header = JSON.parse(lines[0]!);
     expect(header._kind).toBe("header");
     expect(out.data).toContain("0 messages");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 9. /export — permission + path gates (F-fix)
+// ---------------------------------------------------------------------------
+
+describe("/export: permission + path gates", () => {
+  it("refuses to write in a read-only session", async () => {
+    const id = "test-readonly-export-id";
+    const session = new InMemorySession(id, {
+      cwd: tmpDir,
+      permissionMode: "read-only",
+      startedAt: "2026-01-01T00:00:00.000Z",
+    });
+    session.appendMessage("user", [{ type: "text", text: "x" }]);
+    const model = recordingModel("ok", {});
+    const out = new StringWritable();
+    const err = new StringWritable();
+    await runRepl({
+      model,
+      args: makeArgs({ cwd: tmpDir }),
+      lineReader: lineReader(["/export", "/quit"]),
+      createSession: async () => session,
+      stdout: out,
+      stderr: err,
+      historyPath: "",
+    });
+    expect(err.data).toContain("session is read-only");
+    const targetPath = path.join(tmpDir, `${id}.jsonl`);
+    expect(await readFile(targetPath, "utf-8").catch(() => null)).toBeNull();
+  });
+
+  it("refuses an export path outside the session cwd", async () => {
+    const id = "test-outside-export-id";
+    const session = new InMemorySession(id, {
+      cwd: tmpDir,
+      permissionMode: "workspace-write",
+      startedAt: "2026-01-01T00:00:00.000Z",
+    });
+    session.appendMessage("user", [{ type: "text", text: "x" }]);
+    const model = recordingModel("ok", {});
+    const outside = path.join(tmpDir, "..", "outside-export.jsonl");
+    const out = new StringWritable();
+    const err = new StringWritable();
+    await runRepl({
+      model,
+      args: makeArgs({ cwd: tmpDir }),
+      lineReader: lineReader([`/export jsonl ${outside}`, "/quit"]),
+      createSession: async () => session,
+      stdout: out,
+      stderr: err,
+      historyPath: "",
+    });
+    expect(err.data).toContain("outside the session cwd");
+    expect(await readFile(path.resolve(outside), "utf-8").catch(() => null)).toBeNull();
   });
 });
 

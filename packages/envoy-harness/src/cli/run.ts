@@ -263,7 +263,7 @@ async function runAgent(
   const model = resolveModel(parsed, options);
 
   // 3. Build the agent.
-  const cwd = parsed.cwd ?? options.cwd ?? process.cwd();
+  let cwd = parsed.cwd ?? options.cwd ?? process.cwd();
   // F-fix: `--plan` forces a read-only session (plan mode is
   // read + think, no writes) regardless of `--sandbox`.
   const effectiveMode: SessionMetadata["permissionMode"] = parsed.plan
@@ -289,6 +289,11 @@ async function runAgent(
   //   3. `--persist`      → create a new persisted session.
   //   4. (none of the above) → in-memory session (current behavior).
   const session: Session = await resolveSession(parsed, meta, stderr);
+  // F-fix: the session's recorded cwd wins (matches the REPL's
+  // `--repl --resume` behavior). For fresh in-memory / --persist
+  // sessions this is the same cwd we just built; for --resume it
+  // restores the directory the session was created in.
+  cwd = session.metadata.cwd;
 
   const tools = new ToolRegistry();
   for (const t of BUILTIN_TOOLS) tools.register(t);
@@ -352,6 +357,10 @@ async function runAgent(
 
   // 4. Run the loop.
   const result = await agent.run(prompt);
+
+  // F-fix: make sure the transcript is durable before the CLI
+  // returns (PersistedSession's appends are fire-and-forget).
+  await session.flush();
 
   // 5. Print the result.
   const text = result.content
@@ -807,6 +816,15 @@ async function resolveSession(
   if (parsed.resume && parsed.fork) {
     throw new CliError(
       "--resume and --fork are mutually exclusive (pick one)",
+      EXIT_USAGE,
+    );
+  }
+  // --resume and --persist are mutually exclusive too (the REPL
+  // path enforces the same rule; the one-shot path silently
+  // ignored --persist before).
+  if (parsed.resume && parsed.persist) {
+    throw new CliError(
+      "--resume and --persist are mutually exclusive (pick one)",
       EXIT_USAGE,
     );
   }
