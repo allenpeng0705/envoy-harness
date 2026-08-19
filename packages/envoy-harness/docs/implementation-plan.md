@@ -2882,6 +2882,7 @@ swaps in for cross-node execution without code changes.
 | **F10.2** | Parallel sub-agent fan-out (auto-detect "all N task calls" → `Promise.all`) + `maxSubagents` cap (default 8, host-configurable; refuses ALL when exceeded). 1 sub-chunk. | `src/agent.ts`, `test/subagent-parallel.test.ts` | ✅ done (F10.2.1) |
 | **F10.3** | Cross-node `RemoteMeshSubmitter` (Package 3) + `SubagentResultSigner` seam (Package 1) + `RemoteSubmitterTransport` interface + `routingHint` field. 3 sub-chunks. | `src/subagent/signer.ts` (new), `src/subagent/local-mesh-submitter.ts` (additive), `packages/envoy-harness-adapter/src/remote-mesh-submitter.ts` (new) | ✅ done (3 sub-chunks: F10.3.1 + F10.3.2 + F10.3.3) |
 | **F10.4** | `FanOutSpec` + `FanOutRegistry` (capability-driven fan-out, the user's F10.2 ask). 1 sub-chunk in v0; cost aggregation + progress streaming deferred to F10.5+. | `src/subagent/fan-out.ts` (new), `src/subagent/tools.ts` (additive), `src/agent.ts` (additive `fanOutRegistry?` option), 1 test file | ✅ F10.4.1 done |
+| **F10.5** | Cost aggregation (sub-agent `CostTracker` → parent) + progress streaming (sub-agent `TraceEvent`s → parent tracer). 1 sub-chunk. | `src/cost.ts` (additive `addSubagentCost`), `src/subagent/local-mesh-submitter.ts` (additive `parentTracer?`), `src/subagent/tools.ts` (additive `onSubagentComplete?`), `src/agent.ts` (wires both), 1 test file | 🔄 F10.5.1 in progress |
 
 **Why the sub-agent path is the mesh-native contract, not in-process:**
 Codex and Claude Code create in-process sub-agents — same process, shared
