@@ -1697,51 +1697,132 @@ export const gitTool: ToolDefinition<GitInput, GitOutput> = {
 
 ### 10.3 The task tool (mesh-native sub-agent)
 
-> **Status: shipped in Phase 5.** The sketch below pre-dates the implementation; it captures the design intent (the model-facing shape of the `task` tool) but the **actual seam** is `MeshSubmitter` in `src/subagent/types.ts` (Package 1) and `RemoteMeshSubmitter` in `packages/envoy-harness-adapter/src/remote-mesh-submitter.ts` (Package 3). v0 ships `LocalMeshSubmitter`; `RemoteMeshSubmitter` is a 1-line wrapper over an opaque `RemoteSubmitterTransport` (crypto, wire format, parent request signing, and worker result verification live in the transport, not in the adapter). Routing (`RoutingHint`) and result signing (`SubagentResultSigner`) are host-injected. See [`docs/boundary.en.md`](./boundary.en.md) for the full layering and [`docs/implementation-plan.md`](./implementation-plan.md) §3 / §6.6 for the implementation record.
+> **Status: shipped in Phase 5 (F10.1–F10.6).** The `MeshSubmitter` seam + `LocalMeshSubmitter` (Package 1) and `RemoteMeshSubmitter` (Package 3) replace the pre-Phase-5 sketch that this section originally contained. v0 ships `LocalMeshSubmitter`; `RemoteMeshSubmitter` is a 1-line wrapper over an opaque `RemoteSubmitterTransport` (crypto, wire format, parent request signing, and worker result verification live in the transport, not in the adapter). Routing (`RoutingHint`) and result signing (`SubagentResultSigner`) are host-injected. See [`docs/boundary.en.md`](./boundary.en.md) for the layering and [`docs/implementation-plan.md`](./implementation-plan.md) §3 / §6.6 for the implementation record.
+>
+> **Where the code lives:**
+> - Types + default factory: `packages/envoy-harness/src/subagent/{types,local-mesh-submitter,signer,fan-out,tools,index}.ts`
+> - Remote submitter: `packages/envoy-harness-adapter/src/remote-mesh-submitter.ts`
+
+**The "real workable" sub-agent, by design.**
+
+The `task` tool is the parent's escape hatch: when the model decides "this needs a different perspective" or "I need a specialist", it calls the tool; the tool submits to a `MeshSubmitter`; the submitter runs (or routes) the sub-agent and returns the result. Per design invariant #9 ("Sub-agents map to mesh chain steps, not in-process tasks").
+
+| Aspect | envoy-harness design | Codex/Claude Code |
+|---|---|---|
+| Lifetime | New session (own id, AGENTS.md, hooks, permission) | In-process fork |
+| Permission | **Worker's own policy**, not requester's | Inherits parent's |
+| Discoverability | `capabilityTag` (the orchestrator routes) | Hard-coded patterns |
+| Audit | Sub-agent's `SignedAgentResult` referenced in parent's transcript | One transcript |
+| Cost | Parent pays (per `chain-budget-ledger`); sub-agent reports its cost | Parent pays; no clean attribution |
+| Trust | Cryptographic — worker's owner key signs the result | Trust the fork |
+
+**Why local-only for v0:** the `MeshSubmitter` interface is the seam. v0 ships `LocalMeshSubmitter` which runs the sub-agent in a NEW local session. The interface supports a remote submitter (a future `RemoteMeshSubmitter` that calls the EnvoyMesh orchestrator); v0 just doesn't ship it. The host can swap implementations without changing the `task` tool.
+
+**Why a new session, not an in-place fork:** even for local execution, the sub-agent gets its own:
+
+- session id (audit trail distinguishes parent from sub-agent transcripts)
+- AGENTS.md (the sub-agent's view of the workspace may differ — e.g. a different `cwd`)
+- hook context (PreToolUse / PostToolUse fire independently; the parent's hooks don't apply to the sub-agent's tool calls)
+- permission mode (the sub-agent's `read-only` vs `workspace-write` is the WORKER's policy, not the requester's)
+
+This is the "sub-agents map to mesh chain steps" invariant in its purest form: a sub-agent is a fresh session, period.
+
+**Type surface** (the load-bearing shapes — see `packages/envoy-harness/src/subagent/types.ts`):
 
 ```ts
-// src/tools/task.ts (sketch)
-export const taskTool: ToolDefinition<TaskInput, TaskResult> = {
-  name: 'task',
-  description: 'Spawn a sub-agent. The sub-agent may run on this node or any peer in the mesh.',
-  inputSchema: TaskInputSchema,
-  outputSchema: TaskResultSchema,
-  requires: 'read-only',  // the sub-agent's own permission applies
-  costUsd: 0.005,
-  async execute(input, ctx) {
-    // 1. Build a chain step.
-    const subtask: ChainSubtask = {
-      chainId: ctx.parentChainId ?? `oneoff-${ctx.sessionId}-${randomUUID()}`,
-      subtaskId: randomUUID(),
-      requiredSkill: input.capabilityTag,
-      objective: input.objective,
-      costCeilingUsd: input.costCeilingUsd,
-      deadlineMinutes: Math.ceil(input.deadlineMs / 60_000),
-    }
-    // 2. Sign with owner key.
-    const signed = signCanonicalPayload(subtask, ctx.ownerPrivateKey)
-    // 3. Submit to the mesh orchestrator.
-    const response = await ctx.mesh.submitSubtask(signed, {
-      preferredPeerId: input.preferredPeerId,
-      preferredRuntime: input.preferredRuntime,
-      timeoutMs: input.deadlineMs,
-    })
-    // 4. The orchestrator returns a SignedAgentResult. Wrap in TaskResult.
-    return {
-      taskId: subtask.subtaskId,
-      status: response.verdict.kind === 'pass' ? 'completed' : response.verdict.kind === 'fail' ? 'failed' : 'partial',
-      content: response.content,
-      verdict: response.verdict,
-      costUsd: response.metrics.costUsd,
-      durationMs: response.metrics.durationMs,
-      workerPeerId: response.peerId,
-      workerRuntime: response.runtime,
-    }
-  },
+/** The input to a sub-agent: an objective, a routing
+ *  hint, a cost ceiling, a deadline. */
+export interface SubagentInput {
+  objective: string;
+  /** Free-form tag the orchestrator (or local router)
+   *  uses to pick the right runtime + tools. */
+  capabilityTag: string;
+  costCeilingUsd: number;
+  deadlineMs: number;
+  /** Optional: prefer a specific peer (mesh routing
+   *  hint). v0's LocalMeshSubmitter ignores this. */
+  preferredPeerId?: string;
+  /** Optional: prefer a specific runtime. v0's
+   *  LocalMeshSubmitter ignores this. */
+  preferredRuntime?: AgentRuntime;
+}
+
+/** The result of a sub-agent run: a content stream, a
+ *  verdict, a cost, a duration, and (for cross-node
+ *  execution) a cryptographic signature. */
+export interface SubagentResult {
+  status: 'completed' | 'failed' | 'partial';
+  content: ReadonlyArray<ContentBlock>;
+  workerPeerId: string;
+  workerRuntime: AgentRuntime;
+  costUsd: number;
+  durationMs: number;
+  /** v0: always one of the default 6 verdicts.
+   *  Future: the mesh orchestrator's verdict. */
+  verdict: Verdict;
+  /** v0: empty string (local; no cryptographic
+   *  trust needed). Future: Ed25519 over the result. */
+  signature: string;
+}
+
+/** The seam between the `task` tool and the
+ *  actual sub-agent execution. */
+export interface MeshSubmitter {
+  submit(input: SubagentInput, signal: AbortSignal):
+    Promise<SubagentResult>;
+}
+
+/** A MeshSubmitter that throws on submit. The default
+ *  when AgentOptions.meshSubmitter is undefined.
+ *  Better to fail loud than to silently no-op. */
+export class NoopMeshSubmitter implements MeshSubmitter {
+  async submit(): Promise<SubagentResult> {
+    throw new Error(
+      'task tool called but no MeshSubmitter is configured. ' +
+      'Set AgentOptions.meshSubmitter to a LocalMeshSubmitter ' +
+      '(or a future RemoteMeshSubmitter).'
+    );
+  }
 }
 ```
 
-The sub-agent's permission is **its own node's** policy, not the requester's. A requester in `read-only` can spawn a sub-agent in `workspace-write`; the cost is paid by the requester (per chain-budget-ledger), but the actions are taken on the worker's node with the worker's policy.
+**Local submitter** (the v0 "real workable" path; see `src/subagent/local-mesh-submitter.ts`):
+
+```ts
+export class LocalMeshSubmitter implements MeshSubmitter {
+  constructor(private readonly opts: {
+    /** Factory: build a fresh Agent for the sub-agent.
+     *  Each call returns a NEW Agent with a NEW session. */
+    buildSubagent: (input: SubagentInput) => Agent;
+    /** This node's peerId. Stamped into the result. */
+    workerPeerId: string;
+    /** Optional: host-provided result signer.
+     *  When set, the result is signed before returning. */
+    signer?: (result: SubagentResult) => string;
+  }) {}
+
+  async submit(input, signal): Promise<SubagentResult> {
+    const agent = this.opts.buildSubagent(input);
+    const startedAt = Date.now();
+    const result = await agent.run(input.objective, { signal });
+    const subResult: SubagentResult = {
+      status: result.stopReason === 'aborted' ? 'failed' : 'completed',
+      content: result.content,
+      workerPeerId: this.opts.workerPeerId,
+      workerRuntime: 'envoy-harness',
+      costUsd: result.metrics.costUsd,
+      durationMs: Date.now() - startedAt,
+      verdict: synthesizeVerdict(result),
+      signature: '',  // local; no trust needed
+    };
+    return this.opts.signer
+      ? { ...subResult, signature: this.opts.signer(subResult) }
+      : subResult;
+  }
+}
+```
+
+The sub-agent's permission is **its own node's** policy, not the requester's. A requester in `read-only` can spawn a sub-agent in `workspace-write`; the cost is paid by the requester (per `chain-budget-ledger`), but the actions are taken on the worker's node with the worker's policy.
 
 ---
 

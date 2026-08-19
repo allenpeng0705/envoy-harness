@@ -1690,53 +1690,130 @@ export const gitTool: ToolDefinition<GitInput, GitOutput> = {
 
 ### 10.3 Task tool(mesh-native sub-agent)
 
-> **Status:shipped in Phase 5。** 下面的 sketch 早于实现;它捕捉设计意图(`task` tool 的 model-facing 形态),但 **真正的 seam** 是 `src/subagent/types.ts` 里的 `MeshSubmitter`(Package 1)和 `packages/envoy-harness-adapter/src/remote-mesh-submitter.ts` 里的 `RemoteMeshSubmitter`(Package 3)。v0 ship 了 `LocalMeshSubmitter`;`RemoteMeshSubmitter` 是一个 1 行的 wrapper,盖在 opaque `RemoteSubmitterTransport` 上(crypto、wire format、parent request 签名、worker result 验证都住在 transport 里,不在 adapter 里)。Routing(`RoutingHint`)和 result 签名(`SubagentResultSigner`)由 host 注入。完整分层见 [`docs/boundary.en.md`](./boundary.en.md),实现记录见 [`docs/implementation-plan.md`](./implementation-plan.md) §3 / §6.6。
+> **Status:shipped in Phase 5(F10.1–F10.6)。** `MeshSubmitter` seam + `LocalMeshSubmitter`(Package 1) + `RemoteMeshSubmitter`(Package 3) 替换了本节原本包含的 pre-Phase-5 sketch。v0 ship 了 `LocalMeshSubmitter`;`RemoteMeshSubmitter` 是一个 1 行的 wrapper,盖在 opaque `RemoteSubmitterTransport` 上(crypto、wire format、parent request 签名、worker result 验证都住在 transport 里,不在 adapter 里)。Routing(`RoutingHint`)和 result 签名(`SubagentResultSigner`)由 host 注入。完整分层见 [`docs/boundary.en.md`](./boundary.en.md),实现记录见 [`docs/implementation-plan.md`](./implementation-plan.md) §3 / §6.6。
 >
-> **位置:`@envoymesh/envoy-harness-adapter/src/chain-submit.ts`(Package 3),不是 envoy-harness。** Task tool 需要 mesh 连接。
+> **代码位置:**
+> - Types + default factory:`packages/envoy-harness/src/subagent/{types,local-mesh-submitter,signer,fan-out,tools,index}.ts`
+> - Remote submitter:`packages/envoy-harness-adapter/src/remote-mesh-submitter.ts`
+
+**"真能跑"的 sub-agent,by design。**
+
+`task` tool 是父 agent 的 escape hatch:当 model 决定 "this needs a different perspective" 或 "I need a specialist",它调 tool;tool 把请求提交给 `MeshSubmitter`;submitter 执行(或路由)sub-agent,返回结果。按设计不变式 #9("Sub-agents 映射到 mesh chain step,不是 in-process task")。
+
+| Aspect | envoy-harness 设计 | Codex/Claude Code |
+|---|---|---|
+| Lifetime | 新 session(自己的 id、AGENTS.md、hooks、permission) | 进程内 fork |
+| Permission | **Worker 自己的 policy**,不是 requester 的 | 继承 parent |
+| Discoverability | `capabilityTag`(orchestrator 路由) | 硬编码 pattern |
+| Audit | Sub-agent 的 `SignedAgentResult` 引用在 parent 的 transcript 里 | 一个 transcript |
+| Cost | Parent 付(per `chain-budget-ledger`);sub-agent 上报自己的 cost | Parent 付;没有干净的归属 |
+| Trust | 密码学 —— worker 的 owner key 给 result 签名 | 信 fork |
+
+**为什么 v0 只 local:** `MeshSubmitter` interface 就是 seam。v0 ship `LocalMeshSubmitter`,它在 NEW local session 里跑 sub-agent。Interface 本身支持 remote submitter(未来的 `RemoteMeshSubmitter`,会调 EnvoyMesh orchestrator);v0 不 ship。Host 可以换实现而不改 `task` tool。
+
+**为什么是 new session 而不是 in-place fork:** 即使是 local 执行,sub-agent 也拿到自己的:
+
+- session id(audit trail 区分 parent 和 sub-agent 的 transcript)
+- AGENTS.md(sub-agent 看到的 workspace 视角可能不同 —— 比如不同的 `cwd`)
+- hook context(PreToolUse / PostToolUse 各自触发;parent 的 hook 不作用于 sub-agent 的 tool call)
+- permission mode(sub-agent 的 `read-only` vs `workspace-write` 是 WORKER 的 policy,不是 requester 的)
+
+这就是 "sub-agents 映射到 mesh chain step" 不变式最纯粹的形式:sub-agent 是一个全新的 session,就这样。
+
+**Type surface**(load-bearing 形态 —— 见 `packages/envoy-harness/src/subagent/types.ts`):
 
 ```ts
-// packages/envoy-harness-adapter/src/chain-submit.ts(草图)
-export const taskTool: ToolDefinition<TaskInput, TaskResult> = {
-  name: 'task',
-  description: 'Spawn a sub-agent. The sub-agent may run on this node or any peer in the mesh.',
-  inputSchema: TaskInputSchema,
-  outputSchema: TaskResultSchema,
-  requires: 'read-only',  // sub-agent 自己的 permission 适用
-  costUsd: 0.005,
-  async execute(input, ctx) {
-    // 1. 构造 chain step。
-    const subtask: ChainSubtask = {
-      chainId: ctx.parentChainId ?? `oneoff-${ctx.sessionId}-${randomUUID()}`,
-      subtaskId: randomUUID(),
-      requiredSkill: input.capabilityTag,
-      objective: input.objective,
-      costCeilingUsd: input.costCeilingUsd,
-      deadlineMinutes: Math.ceil(input.deadlineMs / 60_000),
-    }
-    // 2. 用 owner key 签。
-    const signed = signCanonicalPayload(subtask, ctx.ownerPrivateKey)
-    // 3. 提交给 mesh orchestrator。
-    const response = await ctx.mesh.submitSubtask(signed, {
-      preferredPeerId: input.preferredPeerId,
-      preferredRuntime: input.preferredRuntime,
-      timeoutMs: input.deadlineMs,
-    })
-    // 4. orchestrator 返回 SignedAgentResult。包成 TaskResult。
-    return {
-      taskId: subtask.subtaskId,
-      status: response.verdict.kind === 'pass' ? 'completed' : response.verdict.kind === 'fail' ? 'failed' : 'partial',
-      content: response.content,
-      verdict: response.verdict,
-      costUsd: response.metrics.costUsd,
-      durationMs: response.metrics.durationMs,
-      workerPeerId: response.peerId,
-      workerRuntime: response.runtime,
-    }
-  },
+/** sub-agent 的输入:一个 objective、一个 routing hint、
+ *  一个 cost ceiling、一个 deadline。*/
+export interface SubagentInput {
+  objective: string;
+  /** orchestrator(或 local router)用来选
+   *  runtime + tools 的 free-form tag。*/
+  capabilityTag: string;
+  costCeilingUsd: number;
+  deadlineMs: number;
+  /** 可选:优先某个 peer(mesh routing hint)。
+   *  v0 的 LocalMeshSubmitter 忽略它。*/
+  preferredPeerId?: string;
+  /** 可选:优先某个 runtime。v0 的
+   *  LocalMeshSubmitter 忽略它。*/
+  preferredRuntime?: AgentRuntime;
+}
+
+/** sub-agent 跑完的 result:content 流、verdict、
+ *  cost、duration,以及(跨节点时)密码学签名。*/
+export interface SubagentResult {
+  status: 'completed' | 'failed' | 'partial';
+  content: ReadonlyArray<ContentBlock>;
+  workerPeerId: string;
+  workerRuntime: AgentRuntime;
+  costUsd: number;
+  durationMs: number;
+  /** v0:总是 6 个 default verdict 之一。
+   *  未来:mesh orchestrator 的 verdict。*/
+  verdict: Verdict;
+  /** v0:空字符串(local;不需要密码学信任)。
+   *  未来:result 上的 Ed25519。*/
+  signature: string;
+}
+
+/** `task` tool 和实际 sub-agent 执行之间的 seam。*/
+export interface MeshSubmitter {
+  submit(input: SubagentInput, signal: AbortSignal):
+    Promise<SubagentResult>;
+}
+
+/** submit 时直接抛的 MeshSubmitter。
+ *  AgentOptions.meshSubmitter 为 undefined 时的默认值。
+ *  失败大声比静默 no-op 强。*/
+export class NoopMeshSubmitter implements MeshSubmitter {
+  async submit(): Promise<SubagentResult> {
+    throw new Error(
+      'task tool called but no MeshSubmitter is configured. ' +
+      'Set AgentOptions.meshSubmitter to a LocalMeshSubmitter ' +
+      '(or a future RemoteMeshSubmitter).'
+    );
+  }
 }
 ```
 
-Sub-agent 的 permission 是 **它自己节点**的 policy,不是请求者的。请求者在 `read-only` 可以 spawn 一个 `workspace-write` 的 sub-agent;cost 是请求者付(per chain-budget-ledger),但动作是在 worker 节点上、用 worker 的 policy 执行的。
+**Local submitter**(v0 "真能跑"的路径;见 `src/subagent/local-mesh-submitter.ts`):
+
+```ts
+export class LocalMeshSubmitter implements MeshSubmitter {
+  constructor(private readonly opts: {
+    /** 工厂:为 sub-agent 构造一个全新的 Agent。
+     *  每次调用返回 NEW Agent + NEW session。*/
+    buildSubagent: (input: SubagentInput) => Agent;
+    /** 本节点的 peerId。盖在 result 上。*/
+    workerPeerId: string;
+    /** 可选:host 提供的 result signer。
+     *  设置后,result 在返回前会被签名。*/
+    signer?: (result: SubagentResult) => string;
+  }) {}
+
+  async submit(input, signal): Promise<SubagentResult> {
+    const agent = this.opts.buildSubagent(input);
+    const startedAt = Date.now();
+    const result = await agent.run(input.objective, { signal });
+    const subResult: SubagentResult = {
+      status: result.stopReason === 'aborted' ? 'failed' : 'completed',
+      content: result.content,
+      workerPeerId: this.opts.workerPeerId,
+      workerRuntime: 'envoy-harness',
+      costUsd: result.metrics.costUsd,
+      durationMs: Date.now() - startedAt,
+      verdict: synthesizeVerdict(result),
+      signature: '',  // local;不需要信任
+    };
+    return this.opts.signer
+      ? { ...subResult, signature: this.opts.signer(subResult) }
+      : subResult;
+  }
+}
+```
+
+Sub-agent 的 permission 是 **它自己节点**的 policy,不是请求者的。请求者在 `read-only` 可以 spawn 一个 `workspace-write` 的 sub-agent;cost 是请求者付(per `chain-budget-ledger`),但动作是在 worker 节点上、用 worker 的 policy 执行的。
 
 ---
 
