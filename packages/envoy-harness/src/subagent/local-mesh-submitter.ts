@@ -55,7 +55,12 @@ import type { PermissionMode } from "../types.js";
 import type { Verdict } from "../verifier/types.js";
 import type { Tracer } from "../trace/index.js";
 
-import type { MeshSubmitter, SubagentInput, SubagentResult } from "./types.js";
+import type {
+  MeshSubmitter,
+  SubagentInput,
+  SubagentRecord,
+  SubagentResult,
+} from "./types.js";
 import type { SubagentResultSigner } from "./signer.js";
 
 /** Options for `LocalMeshSubmitter`. */
@@ -164,6 +169,30 @@ export class LocalMeshSubmitter implements MeshSubmitter {
    * signer) → empty signature (F10.1.2 behavior).
    */
   private readonly signer: SubagentResultSigner | undefined;
+  /**
+   * F17.6: spawned sub-agent records. Each
+   * `submit()` call pushes a record; the record is
+   * updated on completion (status, cost, duration).
+   * The `listSubagents()` method returns this array
+   * (read-only view). The array is process-lifetime
+   * (the submitter doesn't reset on REPL turn or
+   * sub-agent completion).
+   *
+   * **Why not on each sub-agent's session:** the
+   * session lives inside the factory; the submitter
+   * doesn't own it. The submitter does own the
+   * `submit()` lifecycle, so it's the natural place
+   * for the record.
+   *
+   * **Memory:** the array grows with each spawn. v0
+   * is single-process / single-REPL; the upper bound
+   * is bounded by the parent's `maxSubagents` cap
+   * (default 8 per turn) × the number of turns. For
+   * a long REPL session (~1000 turns), that's ~8000
+   * records × ~200 bytes each = ~1.6 MB. Acceptable.
+   * Future: cap or evict (LRU).
+   */
+  private readonly subagents: SubagentRecord[] = [];
 
   constructor(options: LocalMeshSubmitterOptions) {
     this.buildSubagent = options.buildSubagent;
@@ -176,6 +205,21 @@ export class LocalMeshSubmitter implements MeshSubmitter {
     signal: AbortSignal,
   ): Promise<SubagentResult> {
     const agent = this.buildSubagent(input);
+    // F17.6: capture the sub-agent's session id (we
+    // need it BEFORE the agent runs — the record
+    // exists from the moment `submit()` is called,
+    // not from when the sub-agent finishes). The
+    // session id is stable for the sub-agent's
+    // lifetime (it's an `InMemorySession`).
+    const sessionId = agent.getSessionId();
+    const record: SubagentRecord = {
+      sessionId,
+      capabilityTag: input.capabilityTag,
+      objective: input.objective,
+      startedAt: new Date().toISOString(),
+      status: "running",
+    };
+    this.subagents.push(record);
 
     // Wire the parent's signal to the sub-agent's
     // abort. If the parent already aborted, fire
@@ -194,10 +238,38 @@ export class LocalMeshSubmitter implements MeshSubmitter {
     const startedAt = Date.now();
     try {
       const result = await agent.run(input.objective);
-      return this.synthesizeSubagentResult(result, startedAt);
+      const subagentResult = this.synthesizeSubagentResult(result, startedAt);
+      // F17.6: update the record with the final
+      // status + cost + duration. The record was
+      // pushed above with `status: "running"`; we
+      // mutate it in place (the array is private,
+      // safe to mutate).
+      record.status = subagentResult.status;
+      record.costUsd = subagentResult.costUsd;
+      record.durationMs = subagentResult.durationMs;
+      record.completedAt = new Date().toISOString();
+      return subagentResult;
     } finally {
       signal.removeEventListener("abort", onAbort);
     }
+  }
+
+  /**
+   * F17.6: snapshot of the spawned sub-agents.
+   * Returns the live array as a read-only view
+   * (the contract says "snapshot at the time of
+   * the call", so a caller reading immediately
+   * gets a consistent view; subsequent `submit()`
+   * calls may add records to the same array).
+   *
+   * **No defensive copy:** the array is private
+   * and only the submitter mutates it. Returning
+   * the same reference is cheaper than copying
+   * (the array can grow to thousands of entries
+   * over a long session).
+   */
+  listSubagents(): ReadonlyArray<SubagentRecord> {
+    return this.subagents;
   }
 
   /**

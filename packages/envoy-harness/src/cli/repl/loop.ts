@@ -41,6 +41,7 @@ import {
 } from "../../index.js";
 import { BUILTIN_COMMANDS } from "./commands.js";
 import { BUILTIN_INFO_COMMANDS } from "./commands-info.js";
+import { BUILTIN_TIER2_BATCH2_COMMANDS } from "./commands-tier2-batch2.js";
 import { BUILTIN_TIER2_COMMANDS } from "./commands-tier2.js";
 import { EXIT_NAMES, ReplCommandRegistry, dispatchCommand, parseCommandLine } from "./registry.js";
 import type { LineReader, ReplOptions, ReplResult } from "./types.js";
@@ -98,14 +99,34 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
 
   const agent = new Agent(agentOptions);
 
-  // 3. F17.2 + F17.2.5 + F17.5: build the command registry.
+  // F17.6: extract the sub-agent registry from the
+  // agent's mesh submitter (when one is configured).
+  // The host can override via `opts.subagentRegistry`
+  // (used by tests). The default is the agent's own
+  // submitter's `listSubagents()` (if it implements
+  // the optional method). When neither is set, the
+  // `/agents` command prints "no sub-agents".
+  let subagentRegistry: import("./types.js").SubagentRegistry | undefined =
+    opts.subagentRegistry;
+  if (!subagentRegistry) {
+    const submitter = agent.getMeshSubmitter();
+    if (submitter && typeof submitter.listSubagents === "function") {
+      const list = submitter.listSubagents.bind(submitter);
+      subagentRegistry = { list };
+    }
+  }
+
+  // 3. F17.2 + F17.2.5 + F17.5 + F17.6: build the command registry.
   //    Custom commands register FIRST; built-ins register
   //    LAST so they override on name collision. The plan
   //    says "Built-ins always win on name collision"; this
   //    order makes that contract true. BUILTIN_COMMANDS is
   //    the F17.2 set (9 commands); BUILTIN_INFO_COMMANDS is
   //    the F17.2.5 set (8 info commands); BUILTIN_TIER2_COMMANDS
-  //    is the F17.5 set (3 commands: /new, /compact, /init).
+  //    is the F17.5 set (3 commands: /new, /compact, /init);
+  //    BUILTIN_TIER2_BATCH2_COMMANDS is the F17.6 set
+  //    (2 commands: /agents, /diff). `/undo` is deferred
+  //    to F17.7.
   const registry = new ReplCommandRegistry();
   if (opts.customCommands) {
     registry.registerAll(opts.customCommands);
@@ -113,6 +134,7 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
   registry.registerAll(BUILTIN_COMMANDS);
   registry.registerAll(BUILTIN_INFO_COMMANDS);
   registry.registerAll(BUILTIN_TIER2_COMMANDS);
+  registry.registerAll(BUILTIN_TIER2_BATCH2_COMMANDS);
 
   // 4. The loop.
   let turns = 0;
@@ -169,6 +191,7 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
           ...(opts.scoreboard ? { scoreboard: opts.scoreboard } : {}),
           ...(opts.verifierRules ? { verifierRules: opts.verifierRules } : {}),
           ...(opts.profileLoader ? { profileLoader: opts.profileLoader } : {}),
+          ...(subagentRegistry ? { subagentRegistry } : {}),
         };
         const result = await dispatchCommand(registry, parsed.name, parsed.args, ctx);
         switch (result.kind) {

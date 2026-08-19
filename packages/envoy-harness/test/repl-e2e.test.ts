@@ -12,11 +12,15 @@
  * 6. e2e: an unknown slash command prints to stderr and
  *    the next turn still runs.
  * 7. snapshot: `/help` output has a stable, expected shape.
- * 8. snapshot: the dispatch table covers all 20 built-in
+ * 8. snapshot: the dispatch table covers all 22 built-in
  *    commands (no name collisions; no missing from /help).
  *
  * F17.5 update: the 17 → 20 count now includes the 3
  * Tier 2 batch 1 commands (`/new`, `/compact`, `/init`).
+ *
+ * F17.6 update: the 20 → 22 count now includes the 2
+ * Tier 2 batch 2 commands (`/agents`, `/diff`). The
+ * `/undo` command is deferred to F17.7.
  */
 
 import { Writable } from "node:stream";
@@ -26,6 +30,7 @@ import { describe, expect, it } from "vitest";
 import {
   BUILTIN_COMMANDS,
   BUILTIN_INFO_COMMANDS,
+  BUILTIN_TIER2_BATCH2_COMMANDS,
   BUILTIN_TIER2_COMMANDS,
   runRepl,
   type LineReader,
@@ -358,25 +363,28 @@ describe("snapshot: /help and dispatch table", () => {
       stderr: new StringWritable(),
       historyPath: "",
     });
-    // Every F17.2 + F17.2.5 + F17.5 command shows up in /help.
+    // Every F17.2 + F17.2.5 + F17.5 + F17.6 command shows up in /help.
     const allNames = [
       ...BUILTIN_COMMANDS,
       ...BUILTIN_INFO_COMMANDS,
       ...BUILTIN_TIER2_COMMANDS,
+      ...BUILTIN_TIER2_BATCH2_COMMANDS,
     ].map((c) => c.name).sort();
     for (const name of allNames) {
       expect(out.data).toContain(name);
     }
   });
 
-  it("the dispatch table covers all 20 built-in commands (no missing, no collisions)", () => {
-    // 9 from F17.2 + 8 from F17.2.5 + 3 from F17.5 = 20.
+  it("the dispatch table covers all 22 built-in commands (no missing, no collisions)", () => {
+    // 9 from F17.2 + 8 from F17.2.5 + 3 from F17.5 + 2 from F17.6 = 22.
+    // /undo is deferred to F17.7.
     const allNames = [
       ...BUILTIN_COMMANDS,
       ...BUILTIN_INFO_COMMANDS,
       ...BUILTIN_TIER2_COMMANDS,
+      ...BUILTIN_TIER2_BATCH2_COMMANDS,
     ].map((c) => c.name);
     expect(new Set(allNames).size).toBe(allNames.length);
-    expect(allNames.length).toBe(20);
+    expect(allNames.length).toBe(22);
   });
 });

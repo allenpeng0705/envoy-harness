@@ -20,6 +20,7 @@
 import type { HookRegistry } from "../../hooks/registry.js";
 import type { ModelAdapter } from "../../model.js";
 import type { Agent } from "../../agent.js";
+import type { SubagentRecord } from "../../subagent/types.js";
 import type { VerifierRule } from "../../verifier/types.js";
 import type { RunParsedArgs } from "../argv.js";
 import type { ReplCommandRegistry } from "./registry.js";
@@ -127,6 +128,23 @@ export interface ReplOptions {
    * dropped (FIFO). Default: 1000.
    */
   historySize?: number;
+  /**
+   * F17.6: sub-agent registry. The `/agents` command
+   * reads from this. When the agent's `meshSubmitter`
+   * implements `listSubagents()`, the loop auto-wires
+   * this option (no need for the host to set it
+   * explicitly). For tests, the host can inject a
+   * custom registry (e.g. a stub that returns a
+   * predetermined list of records).
+   *
+   * **Why a separate option, not a method on Agent:**
+   * the REPL's loop is the chokepoint; it builds the
+   * agent internally and needs to extract the
+   * submitter. A separate `subagentRegistry` option
+   * lets tests inject a registry without constructing
+   * a real `LocalMeshSubmitter`.
+   */
+  subagentRegistry?: SubagentRegistry;
 }
 
 /**
@@ -152,6 +170,27 @@ export interface ReplResult {
  * `sandbox`, `approval` (per the README).
  */
 export type ReplProfile = Readonly<Record<string, unknown>>;
+
+/**
+ * F17.6: sub-agent registry. The `/agents` command
+ * reads from this. The default impl is wired by the
+ * loop from `agent.getMeshSubmitter()?.listSubagents?.()`;
+ * hosts can override via `ReplOptions.subagentRegistry`.
+ *
+ * **Why a small interface, not the full
+ * `MeshSubmitter`:** the REPL only needs the
+ * listing capability. A smaller surface is easier
+ * to mock in tests (no need to construct a real
+ * `LocalMeshSubmitter`).
+ */
+export interface SubagentRegistry {
+  /**
+   * Return a snapshot of the spawned sub-agents.
+   * The returned array is a read-only view (the
+   * caller MUST NOT mutate it).
+   */
+  list(): ReadonlyArray<SubagentRecord>;
+}
 
 /**
  * F17.2.5: the profile loader. The host injects one via
@@ -203,6 +242,11 @@ export interface ReplContext {
   /** F17.2.5: optional profile loader. The `/profile` command
    *  reads this; when undefined, prints "no profile loader". */
   profileLoader?: ReplProfileLoader;
+  /** F17.6: optional sub-agent registry. The `/agents`
+   *  command reads this; when undefined, prints
+   *  "no sub-agents (the agent has no meshSubmitter
+   *  or the submitter doesn't implement listSubagents)". */
+  subagentRegistry?: SubagentRegistry;
 }
 
 /**

@@ -435,6 +435,31 @@ export class Agent {
   }
 
   /**
+   * F17.6: read-only access to the mesh submitter (when
+   * one is configured). The REPL's `/agents` command uses
+   * this to read the sub-agent registry.
+   *
+   * **Why public:** the REPL's loop builds the agent
+   * internally; it doesn't have the submitter reference
+   * to pass to commands. Exposing `getMeshSubmitter()`
+   * lets the loop extract the submitter (when present)
+   * and wire it into `ReplContext.subagentRegistry`.
+   *
+   * **Why read-only:** the submitter is a per-Agent
+   * configuration; commands must NOT swap it mid-run.
+   * If a host needs to swap submitters, they construct
+   * a new `Agent`.
+   *
+   * **Returns `undefined` when no submitter is
+   * configured** (the agent has no `task` tool; the
+   * `/agents` command should print "no sub-agents
+   * configured" in that case).
+   */
+  getMeshSubmitter(): MeshSubmitter | undefined {
+    return this.meshSubmitter;
+  }
+
+  /**
    * F17.2: replace the per-call approval handler. Takes effect
    * on the next tool call. Pass `undefined` to remove the
    * handler (the agent falls back to the default deny behavior).

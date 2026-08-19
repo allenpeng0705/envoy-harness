@@ -41,6 +41,7 @@ export {
 export {
   BUILTIN_COMMANDS,
   BUILTIN_INFO_COMMANDS,
+  BUILTIN_TIER2_BATCH2_COMMANDS,
   BUILTIN_TIER2_COMMANDS,
   ReplCommandRegistry,
   dispatchCommand,
@@ -54,4 +55,5 @@ export {
   type ReplProfile,
   type ReplProfileLoader,
   type ReplResult,
+  type SubagentRegistry,
 } from "./repl/index.js";

@@ -12,7 +12,7 @@
 >
 > **Status as of last commit:** F17.4 done on `phase-1/types`.
 >
-> - **Total:** 877 tests across 58 files (envoy-harness 785 / 48
+> - **Total:** 894 tests across 60 files (envoy-harness 802 / 50
 >   files + envoy-harness-adapter 92 / 10 files). All passing.
 > - **Typecheck:** clean (`pnpm -r typecheck`).
 > - **Phase 1 (v0 spine):** ✅ done (Chunks 1-4d, 220 tests)
@@ -21,7 +21,8 @@
 > - **Phase 4 (Production-grade):** ✅ done (F9.1-F9.5, 5 sub-chunks)
 > - **Phase 5 (Mesh-native sub-agents):** ✅ done (F10.1-F10.6, 8 sub-chunks)
 > - **Phase 6 (REPL):** ⏳ in progress (F17.1 + F17.2 + F17.2.5 +
->   F17.3 + F17.4 + F17.5 done; F17.6 pending — see §6.7 + §11)
+>   F17.3 + F17.4 + F17.5 + F17.6 done; Phase 6 fully
+>   complete — see §6.7 + §11)
 >
 > **How to read this document.** §1 is project context (1 page).
 > §2 is the status snapshot (test count + per-module inventory).
@@ -35,7 +36,7 @@
 >
 > **Top of doc:** the design discussion (what & why) for Phase 5 — the mesh-native sub-agents design rationale + type surface — now lives in [`docs/design.en.md`](./design.en.md) §10.3. The *implementation record* (what shipped) is in §3 (chronological by commit). The *plan-with-sub-chunks* (the F10.2, F10.3, etc. plans) is in §6.6.
 >
-> **Branch:** all work is on `phase-1/types`. 13 unpushed commits as of the latest (F10.6 + 2 doc restructure + 2 design/Phase-5 + README/F17 plan + F17.1 + F17.2 + commands sweep plan + F17.2.5 + F17.3 + F17.4 + F17.5); Phase 5 complete, Phase 6 (REPL) in progress (F17.1 + F17.2 + F17.2.5 + F17.3 + F17.4 + F17.5 done; F17.6 pending).
+> **Branch:** all work is on `phase-1/types`. 14 unpushed commits as of the latest (F10.6 + 2 doc restructure + 2 design/Phase-5 + README/F17 plan + F17.1 + F17.2 + commands sweep plan + F17.2.5 + F17.3 + F17.4 + F17.5 + F17.6); Phase 5 complete, Phase 6 (REPL) fully complete (F17.1 + F17.2 + F17.2.5 + F17.3 + F17.4 + F17.5 + F17.6 done). `/undo` deferred to a future chunk (action journal scope too big; "testability wins on tie").
 
 ---
 
@@ -76,9 +77,9 @@ Per design §1.3, the four design targets are non-negotiable:
 | **Phase 3** | Self-evolution (3 weeks) | ✅ done (5a-5e + F6) | 110 |
 | **Phase 4** | Production-grade (5 sub-chunks: F9.1 + F9.2 + F9.3 + F9.4 + F9.5) | ✅ done | +130 (vs Phase 3) |
 | **Phase 5** | Mesh-native sub-agents (8 sub-chunks: F10.1-F10.6) | ✅ done | +94 (vs Phase 4) |
-| **Phase 6** | Interactive REPL (6 sub-chunks done: F17.1 + F17.2 + F17.2.5 + F17.3 + F17.4 + F17.5; 1 planned: F17.6) | ⏳ in progress | +86 (F17.1 + F17.2 + F17.2.5 + F17.3 + F17.4 + F17.5) |
+| **Phase 6** | Interactive REPL (7 sub-chunks done: F17.1 + F17.2 + F17.2.5 + F17.3 + F17.4 + F17.5 + F17.6) | ✅ **done** | +103 (F17.1 + F17.2 + F17.2.5 + F17.3 + F17.4 + F17.5 + F17.6) |
 
-**Cumulative:** 877 tests across 58 files (envoy-harness 785 + envoy-harness-adapter 92), all passing.
+**Cumulative:** 894 tests across 60 files (envoy-harness 802 + envoy-harness-adapter 92), all passing.
 Typecheck clean (`pnpm -r typecheck`).
 
 **Per-module test inventory (47 envoy-harness files + 10 envoy-harness-adapter files = 865 tests):**
@@ -135,6 +136,8 @@ Typecheck clean (`pnpm -r typecheck`).
 | REPL history (F17.3) | 9 | `test/repl-history.test.ts` | load on start, write on exit, persists across restarts, missing file OK, dedupe consecutive, cap (FIFO), historyPath:'' disables, ENVOY_HARNESS_HISTORY override |
 | REPL e2e (F17.4) | 8 | `test/repl-e2e.test.ts` | full multi-command session; session continuity; model swap via /provider; error resilience (model throw, unknown cmd, handler throw); /help snapshot; dispatch table covers 17 commands |
 | REPL tier 2 batch 1 (F17.5) | 12 | `test/repl-tier2.test.ts` | 3 real-feature commands: /new (fresh session, new id, empty transcript), /compact (drop oldest, keep last N; preserves system message), /init (writes AGENTS.md via one-shot model call, doesn't pollute main transcript); BUILTIN_TIER2_COMMANDS shape (3 names, no collisions); dispatch table covers all 20 |
+| REPL tier 2 batch 2 (F17.6) | 10 | `test/repl-tier2-batch2.test.ts` | 2 real-feature commands: /agents (lists spawned sub-agents from the SubagentRegistry; one line per record with status, cost, duration, truncated session id + objective), /diff (git diff vs HEAD; "no changes" on empty, stderr on non-git dir); BUILTIN_TIER2_BATCH2_COMMANDS shape (2 names); dispatch table covers all 22 |
+| Subagent registry (F17.6) | 7 | `test/subagent-registry.test.ts` | LocalMeshSubmitter.listSubagents(): empty before any submit, 1 record per submit, fields populated correctly (sessionId, capabilityTag, objective, startedAt, completedAt, durationMs, status, costUsd), failed sub-agents still get records, returns same array reference (read-only view), optional method on MeshSubmitter interface |
 
 #### envoy-harness-adapter (Package 3, 92 tests / 10 files)
 
@@ -1663,6 +1666,190 @@ spawned sub-agents, `/diff` = git diff vs HEAD,
 `/undo` = undo last tool action; ~200 LoC + 6-8
 tests. `/undo` may be deferred to F17.7 if the
 action journal scope is too big).
+
+### F17.6 — Tier 2 batch 2: /agents /diff (✅ done; /undo deferred to F17.7)
+
+2 real-feature commands that complete the F17
+REPL surface: list spawned sub-agents + show
+git diff. **`/undo` is deferred to F17.7**
+(action journal scope is too big; "testability
+wins on tie" — a generic journaled log is hard
+to test cleanly without a real workload).
+
+**What it covers:**
+
+- `/agents` — list sub-agents spawned by this
+  session's `task` tool calls. Reads from
+  `ctx.subagentRegistry.list()`. Prints one
+  line per record (status icon + capability tag
+  + truncated session id + cost + duration +
+  truncated objective). Header line shows
+  total + running count.
+- `/diff` — `git diff` vs HEAD. Thin wrapper
+  around the `git` CLI. Empty output → "no
+  changes". Non-zero exit + stderr → error to
+  stderr. Adds a trailing newline if missing
+  (for clean output).
+
+**New types (additive):**
+- `SubagentRecord` — `{ sessionId, capabilityTag,
+  objective, startedAt, completedAt?, durationMs?,
+  status, costUsd? }`. The local lifecycle view
+  (vs `SubagentResult` which is the final parent
+  view).
+- `SubagentRegistry` (in `src/cli/repl/types.ts`)
+  — `{ list(): ReadonlyArray<SubagentRecord> }`.
+  The REPL's small interface; hosts inject a
+  custom impl for tests.
+- `MeshSubmitter.listSubagents?()` — optional
+  method on the `MeshSubmitter` interface.
+  `LocalMeshSubmitter` implements it; the
+  `NoopMeshSubmitter` and cross-node submitters
+  may not.
+
+**New Agent API (additive):**
+- `Agent.getMeshSubmitter(): MeshSubmitter | undefined`
+  — read-only access. The REPL's loop uses this
+  to extract the submitter and build a
+  `SubagentRegistry` adapter for `ReplContext`.
+
+**New REPL option (additive):**
+- `ReplOptions.subagentRegistry?` + the
+  matching `ReplContext.subagentRegistry?`. The
+  loop auto-wires from the agent's submitter
+  (when present); hosts can override for tests.
+
+**Files touched (10):**
+- `src/subagent/types.ts` (edit) — `SubagentRecord`
+  + `MeshSubmitter.listSubagents?()` (additive).
+- `src/subagent/local-mesh-submitter.ts` (edit)
+  — implement `listSubagents()`; track records
+  on each `submit()` call (push on entry, update
+  on completion).
+- `src/subagent/index.ts` (edit) — re-export
+  `SubagentRecord`.
+- `src/index.ts` (edit) — re-export `SubagentRecord`.
+- `src/agent.ts` (edit) — add `getMeshSubmitter()`
+  public getter.
+- `src/cli/repl/types.ts` (edit) — add
+  `SubagentRegistry` interface + `ReplOptions.subagentRegistry?`
+  + `ReplContext.subagentRegistry?`.
+- `src/cli/repl/loop.ts` (edit) — wire
+  `subagentRegistry` from `agent.getMeshSubmitter()?.listSubagents?.()`
+  (or use the host-injected one). Register
+  `BUILTIN_TIER2_BATCH2_COMMANDS` in the registry.
+- `src/cli/repl/commands-tier2-batch2.ts` (new)
+  — the 2 commands + `BUILTIN_TIER2_BATCH2_COMMANDS`
+  array (defined last to avoid forward-reference
+  issues; same pattern as the other tiers).
+- `src/cli/repl/index.ts` (edit) — re-export
+  `BUILTIN_TIER2_BATCH2_COMMANDS` + `SubagentRegistry`.
+- `src/cli/index.ts` (edit) — re-export
+  `BUILTIN_TIER2_BATCH2_COMMANDS` + `SubagentRegistry`.
+- `test/repl-e2e.test.ts` (edit) — update the
+  dispatch table test from 20 → 22; include
+  `BUILTIN_TIER2_BATCH2_COMMANDS` in the union.
+- `test/repl-tier2-batch2.test.ts` (new) — 10
+  tests.
+- `test/subagent-registry.test.ts` (new) — 7
+  tests.
+
+**Self-review caught 3 real issues:**
+
+1. **JSDoc `**/` premature close.** The
+   F17.6 header comment included `**/undo
+   is DEFERRED...` which the JSDoc parser
+   saw as a comment close (`**` + `/`).
+   TypeScript errored with "Unexpected keyword
+   or identifier" in 24+ places. **Fixed:**
+   wrapped `/undo` in backticks
+   (`` `**`/undo`** ``). The Markdown emphasis
+   still renders, and the JSDoc parser is happy.
+
+2. **Test assumption: git diff shows `-Hello`
+   when adding a new line.** The first test
+   for `/diff` modified the file by adding a
+   new line to the end (`Hello\nNew line\n`).
+   The test expected both `-Hello` and
+   `+New line` in the diff output. But
+   `Hello` was unchanged; the diff only shows
+   `+New line`. **Fixed:** changed the
+   modification to a one-line replace
+   (`Hello` → `Hi`); the diff now shows
+   both `-Hello` and `+Hi`.
+
+3. **Test assumption: sub-agent `submit()`
+   throws on model error.** The first test
+   for the error path expected `submit()` to
+   throw when the model throws. But
+   `agent.run` catches model errors internally
+   and returns a `stopReason: "aborted"`
+   result (not a throw). So `submit()` returns
+   normally with `status: "failed"`, and the
+   record is updated with the failed status.
+   **Fixed:** rewrote the test to assert the
+   returned `result.status` is `"failed"` and
+   the record has the same status (instead of
+   expecting a throw).
+
+**Why defer `/undo`:** the plan called this
+out as a candidate for F17.7. A real `/undo`
+needs:
+- A journaled action log (every tool call's
+  effect recorded)
+- Tool-specific undo logic (most tools don't
+  have clean inverses — what does "undo a
+  `read_file`" even mean? what about an HTTP
+  request?)
+- A way to rollback filesystem + state changes
+
+This is ~300+ LoC of careful work that needs
+real workloads to test cleanly. "Testability
+wins on tie" says don't ship it for
+hypothetical use cases. Re-evaluate when a
+real undo need surfaces.
+
+**Test count:** 17 new tests:
+- `test/repl-tier2-batch2.test.ts` (10):
+  - `BUILTIN_TIER2_BATCH2_COMMANDS has the 2 expected commands` (1)
+  - `all 4 BUILTIN_* arrays have no name collisions` (1)
+  - `/agents > prints 'no sub-agents' when no registry is configured` (1)
+  - `/agents > prints 'no sub-agents spawned' when registry returns empty list` (1)
+  - `/agents > prints the spawned sub-agents from the injected registry` (1)
+  - `/diff > prints 'no changes' when in a git repo with no unstaged changes` (1)
+  - `/diff > prints the actual diff when a file is modified` (1)
+  - `/diff > prints an error to stderr when the cwd is not a git repository` (1)
+  - `F17.6 dispatch table > the dispatch table covers all 22 built-in commands` (1)
+  - `F17.6 dispatch table > /help output mentions /agents and /diff` (1)
+- `test/subagent-registry.test.ts` (7):
+  - `LocalMeshSubmitter.listSubagents — initial state > returns an empty array before any submit() call` (1)
+  - `after submit() > after one submit() the array has one completed record` (1)
+  - `after submit() > after multiple submit() calls the array has N records` (1)
+  - `error path > a sub-agent whose model throws still gets a record` (1)
+  - `ownership > returns the live array (same reference on repeat calls)` (1)
+  - `MeshSubmitter interface — listSubagents? optional > LocalMeshSubmitter implements the optional listSubagents() method` (1)
+  - `MeshSubmitter interface — listSubagents? optional > a custom submitter that doesn't implement listSubagents? is still valid` (1)
+
+**Total: 894 tests across 60 files**
+(envoy-harness 802 + envoy-harness-adapter 92).
+F17.6 is done. **Phase 6 (REPL) is fully
+complete** (F17.1 + F17.2 + F17.2.5 + F17.3 +
+F17.4 + F17.5 + F17.6 — 7 sub-chunks). `/undo`
+remains a future chunk candidate (action
+journal scope; F17.7 or later).
+
+Updated §1 (status line: Phase 6 done;
+cumulative 894 tests), §2 (status table Phase 6
+row marked ✅ + per-module test inventory + REPL
+tier 2 batch 2 row + subagent registry row),
+§3 (this entry), §6.7 (F17.6 marked ✅ + /undo
+moved to F17.7 candidate), §11 (F17 archive
+updated), §10 (change log entry).
+
+**Next:** Phase 7 candidates (see §6.7 + §11).
+Recommend: don't start any of these until a
+real use case surfaces. "Testability wins on
+tie" is the tie-breaker.
 
 ---
 
@@ -3473,20 +3660,79 @@ laptop has no Tauri app — they need a CLI REPL.
    - `/new` — fresh session (clear transcript + new
      session id).
 
-7. **F17.6 — Tier 2 batch 2: real features** (~200 LoC).
-   The next set of real features.
-   - `/agents` — list spawned sub-agents. The
-     `LocalMeshSubmitter` doesn't currently keep a
-     registry of spawned sub-agents; we add one
-     (additive). The command lists each (sessionId,
-     capabilityTag, status, cost).
-   - `/diff` — `git diff` vs HEAD. Thin wrapper around
-     `git` tool (or `git` CLI). Shows the current
-     pending changes.
-   - `/undo` — undo the last tool action. Needs a
-     journaled action log (we don't have one yet).
-     This is the hardest of the three; may be deferred
-     to F17.7 if scope is too big.
+7. **~~F17.6 — Tier 2 batch 2: real features~~** ✅ **DONE**
+   (~200 LoC + 17 tests, see §3.5). **2 of 3 commands
+   shipped; `/undo` deferred to F17.7** (action journal
+   scope is too big; "testability wins on tie" — a
+   generic journaled log is hard to test cleanly
+   without a real workload). The original F17.6 plan
+   is preserved below for context.
+
+   **Sub-chunk plan (1 commit):**
+   - **SubagentRecord type** (F17.6.1, ~30 LoC +
+     ~3 tests) — additive. New `SubagentRecord`
+     type in `src/subagent/types.ts`:
+     `{ sessionId, capabilityTag, objective,
+     startedAt, completedAt?, durationMs?, status,
+     costUsd? }`. The `MeshSubmitter` interface gets
+     an optional `listSubagents?()` method (additive,
+     default impl returns `[]`).
+
+   - **LocalMeshSubmitter registry** (F17.6.2, ~30
+     LoC + ~2 tests) — additive. The
+     `LocalMeshSubmitter` keeps a
+     `SubagentRecord[]` array. Each `submit()` call
+     pushes a record (with `status: "running"`),
+     then updates the record on completion (status,
+     cost, duration, completedAt). The
+     `listSubagents()` method returns the array
+     (read-only view).
+
+   - **Agent.getMeshSubmitter() getter** (F17.6.3,
+     ~10 LoC + 0 new tests) — additive. The REPL
+     loop uses this to extract the submitter and
+     build a `SubagentRegistry` adapter for
+     `ReplContext`. Read-only access; the loop
+     doesn't mutate the submitter.
+
+   - **`/agents` command** (F17.6.4, ~50 LoC + ~3
+     tests) — reads from `ctx.subagentRegistry?.list()`.
+     Prints one line per spawned sub-agent (sessionId,
+     capabilityTag, status, cost, duration). Empty
+     registry → "no sub-agents spawned in this
+     session".
+
+   - **`/diff` command** (F17.6.5, ~70 LoC + ~2
+     tests) — thin wrapper around `git diff`.
+     Spawns `git diff` in the cwd; prints stdout
+     on success, "no changes" on empty stdout,
+     error to stderr on git failure. Edge cases:
+     not a git repo → "fatal: not a git
+     repository" → print to stderr.
+
+   - **Defer `/undo` to F17.7** — needs a journaled
+     action log. v0 has no journal. Adding one
+     just for `/undo` is a big lift (~300 LoC +
+     tool-specific undo logic, which most tools
+     don't have clean inverses for). The
+     "testability wins on tie" principle says
+     don't ship features for hypothetical use
+     cases. Re-evaluate when a real use case
+     surfaces.
+
+   - **Wire-up + exports** — `BUILTIN_TIER2_BATCH2_COMMANDS`
+     in the registry (after `BUILTIN_TIER2_COMMANDS`).
+     Re-exported from `repl/index.ts` +
+     `cli/index.ts` + `src/index.ts`.
+     `repl-e2e.test.ts` dispatch count: 20 → 22.
+
+8. **F17.7 candidate: `/undo`** (deferred from
+   F17.6) — needs a journaled action log + tool-
+   specific undo logic. v0 has no journal. Adding
+   one for `/undo` is a big lift (~300+ LoC; most
+   tools don't have clean inverses). Re-evaluate
+   when a real undo need surfaces. "Testability
+   wins on tie" is the tie-breaker.
 
 **Type sketch** (the load-bearing shapes — see `src/cli/repl/`):
 
@@ -3697,6 +3943,33 @@ useful.
 
 ## 10. Change log
 
+- **2026-08-19 (F17.6 done — Phase 6 complete)**:
+  Tier 2 batch 2 — 2 real REPL commands (`/agents`,
+  `/diff`) shipped; `/undo` deferred to F17.7 (action
+  journal scope too big; "testability wins on
+  tie"). 17 new tests in `test/repl-tier2-batch2.test.ts`
+  (10) + `test/subagent-registry.test.ts` (7). New
+  additive types: `SubagentRecord` +
+  `MeshSubmitter.listSubagents?()` +
+  `ReplOptions.subagentRegistry?` + new
+  `SubagentRegistry` interface. New additive
+  `Agent.getMeshSubmitter()` getter. 3 self-
+  review catches: a JSDoc premature close
+  (`**/undo`), a test that expected `-Hello` in
+  a diff (should be `+Hi` for a replace), and a
+  test that expected `submit()` to throw on
+  model error (it doesn't — `agent.run` catches
+  and returns a `aborted` result). 894 tests
+  across 60 files, all passing; typecheck clean.
+  **Phase 6 (REPL) is now fully complete**
+  (F17.1 + F17.2 + F17.2.5 + F17.3 + F17.4 +
+  F17.5 + F17.6 — 7 sub-chunks). Updated §1,
+  §2 (Phase 6 row marked ✅), §3 (F17.6
+  section), §6.7 (F17.6 marked ✅ + /undo
+  moved to F17.7 candidate), §11 (F17 archive
+  updated), §10 (this entry). Next: Phase 7
+  candidates (per §6.7 + §11); recommend don't
+  start until a real use case surfaces.
 - **2026-08-19 (F17.5 done)**: Tier 2 batch 1 — 3 real
   REPL commands (`/new`, `/compact`, `/init`) shipped.
   12 new tests in `test/repl-tier2.test.ts`. 3 new
@@ -5698,12 +5971,30 @@ in this chunk.
   directly so the AGENTS.md generator prompt
   doesn't pollute the main session transcript.
   See §3.5 for the full record.
-- ⏳ **F17.6** — Tier 2 batch 2 (3 real features:
-  `/agents` = list spawned sub-agents, `/diff` =
-  `git diff` vs HEAD, `/undo` = undo last tool action).
-  ~200 LoC + 6-8 tests. **Next chunk to build.**
-  **/undo may be deferred to F17.7** if the
-  action journal scope is too big.
+- ✅ **F17.6** — Tier 2 batch 2 (2 of 3 real
+  features shipped; `/undo` deferred to F17.7).
+  ~200 LoC + 17 tests. **Done.**
+  - `/agents` — list spawned sub-agents from
+    `LocalMeshSubmitter`'s new registry. New
+    `SubagentRecord` type + `MeshSubmitter.listSubagents?()`
+    optional method. The REPL's loop auto-wires
+    the registry from `agent.getMeshSubmitter()`.
+  - `/diff` — `git diff` vs HEAD. Thin wrapper
+    around the `git` CLI.
+  - `/undo` — **DEFERRED to F17.7** (action
+    journal + tool-specific undo logic).
+  - 3 self-review catches: a JSDoc premature
+    close (`**/undo`); a test that expected
+    `-Hello` in a diff (should be `+Hi`); a test
+    that expected `submit()` to throw on model
+    error (it doesn't — `agent.run` catches).
+  - See §3.5 for the full record.
+- ⏳ **F17.7 candidate: `/undo`** — needs a
+  journaled action log + tool-specific undo
+  logic. v0 has no journal. ~300+ LoC; re-
+  evaluate when a real undo need surfaces.
+  "Testability wins on tie" is the tie-
+  breaker.
 
 **Why a separate "F17 archive" section (not in §6.6):**
 F17 is a Phase 6 feature, not Phase 5. §6.6 holds
@@ -5719,5 +6010,6 @@ becomes read-only history.
 - Test inventory: §2 (per-module test table,
   "REPL loop (F17.1)" row).
 
-**Next chunk:** F17.6.
+**Next chunk:** F17.7 candidate (`/undo`)
+— but only when a real undo need surfaces.
 

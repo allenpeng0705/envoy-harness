@@ -194,6 +194,54 @@ export interface SubagentResult {
 }
 
 /**
+ * F17.6: a record of one sub-agent spawn. The local
+ * `LocalMeshSubmitter` keeps these so the REPL's
+ * `/agents` command can list spawned sub-agents.
+ *
+ * **Why a separate type, not just `SubagentResult`:**
+ * the result is the parent's view (final content +
+ * verdict). The record is the local lifecycle view
+ * (started, in-flight, completed). A record exists
+ * from the moment `submit()` is called until the
+ * sub-agent finishes; a `SubagentResult` only exists
+ * after the sub-agent returns.
+ *
+ * **Why a snapshot, not a stream:** the REPL is
+ * synchronous from the user's perspective. The user
+ * types `/agents` and sees a list. They don't want
+ * a live feed. The snapshot is the answer.
+ *
+ * **Stability:** additive. New fields are backward-
+ * compatible. Removing a field is a major version.
+ */
+export interface SubagentRecord {
+  /** The sub-agent's session id. Stable across the
+   *  sub-agent's lifetime. */
+  sessionId: string;
+  /** The sub-agent's capability tag (from
+   *  `SubagentInput.capabilityTag`). */
+  capabilityTag: string;
+  /** The sub-agent's objective (from
+   *  `SubagentInput.objective`). Truncated in the
+   *  REPL's display; the full text is here. */
+  objective: string;
+  /** When `submit()` was called (ISO timestamp). */
+  startedAt: string;
+  /** When the sub-agent finished (ISO timestamp).
+   *  Undefined while the sub-agent is still running. */
+  completedAt?: string;
+  /** Wall-clock duration in ms. Undefined while
+   *  running. */
+  durationMs?: number;
+  /** Lifecycle status. `running` → not yet finished.
+   *  The other values mirror `SubagentResult.status`. */
+  status: "running" | "completed" | "failed" | "partial";
+  /** Cost in USD. Undefined while running; populated
+   *  from `SubagentResult.costUsd` on completion. */
+  costUsd?: number;
+}
+
+/**
  * The seam between the `task` tool and the actual
  * sub-agent execution. The default implementation
  * (`LocalMeshSubmitter`) runs the sub-agent in a
@@ -221,4 +269,28 @@ export interface SubagentResult {
  */
 export interface MeshSubmitter {
   submit(input: SubagentInput, signal: AbortSignal): Promise<SubagentResult>;
+  /**
+   * F17.6: optional. Returns a snapshot of the
+   * sub-agents this submitter has spawned (or is
+   * currently spawning). v0: optional — the
+   * `LocalMeshSubmitter` implements it; the
+   * `NoopMeshSubmitter` doesn't; cross-node
+   * submitters (F10.3.2 `RemoteMeshSubmitter` in
+   * Package 3) may or may not.
+   *
+   * **Why optional:** the registry is a UX concern
+   * (the REPL's `/agents` command). It doesn't
+   * change the submitter's core contract. Hosts
+   * that don't care about listing can omit it.
+   *
+   * **Read-only view:** the returned array is a
+   * snapshot; the caller MUST NOT mutate it. The
+   * submitter may reuse the same array on each
+   * call (return the same reference with mutated
+   * contents) — but the contract is "snapshot at
+   * the time of the call". The REPL's `/agents`
+   * command treats the result as a frozen point-
+   * in-time view.
+   */
+  listSubagents?(): ReadonlyArray<SubagentRecord>;
 }
