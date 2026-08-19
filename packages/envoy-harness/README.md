@@ -68,7 +68,7 @@ EnvoyMesh's home-team agent harness. Production-grade CLI agent with four design
 
 **REPL total: 26 built-in commands** (9 + 8 + 3 + 2 + 2 + 2 = 26 across 5 command files). `/undo` deferred to a future chunk (action journal scope; "testability wins on tie").
 
-**Test count: 1025 tests across 62 files** (envoy-harness 932 / 52 files + envoy-harness-adapter 93 / 10 files). All passing on `pnpm -r test`.
+**Test count: 1032 tests across 67 files** (envoy-harness 939 / 57 files + envoy-harness-adapter 93 / 10 files). All passing on `pnpm -r test`.
 
 ## Installation
 
@@ -127,7 +127,7 @@ envoy --fork <source-id> "try a different approach"
 | `--provider <name>` | LLM provider: `openai` \| `anthropic` \| `deepseek` \| `ollama` (default: `deepseek`). |
 | `--model <id>` | Model identifier. Defaults per provider: `gpt-4o`, `claude-sonnet-4-6`, `deepseek-chat`, `llama3.1`. |
 | `--sandbox <mode>` | Permission mode: `read-only` (default) \| `workspace-write` \| `danger-full-access`. |
-| `--approval <mode>` | Approval policy: `never` \| `on-request` \| `on-failure` \| `untrusted`. |
+| `--approval <mode>` | Approval policy: `unless-trusted` \| `on-request` \| `granular` \| `never`. |
 | `--cwd <path>` | Override working directory (default: `process.cwd()`). |
 | `--max-turns <n>` | Cap agent-loop iterations. |
 | `--max-cost-usd <n>` | Cost ceiling for the run; agent aborts when reached. |
@@ -233,7 +233,12 @@ Optional `OPENAI_BASE_URL` / `ANTHROPIC_BASE_URL` / `DEEPSEEK_BASE_URL` override
 
 ### Profiles (TOML config)
 
-`~/.config/envoy-harness/config.toml` (or `$ENVOY_HARNESS_CONFIG`) — named profiles so you can swap defaults without long CLI invocations.
+> **v0 status:** the profile *seam* is shipped (the REPL's `/profile`
+> command reads a host-injected `profileLoader`); the built-in TOML
+> loader (`~/.config/envoy-harness/config.toml` /
+> `$ENVOY_HARNESS_CONFIG`) is a planned chunk, not yet in the CLI.
+
+Named profiles let hosts swap defaults without long CLI invocations:
 
 ```toml
 # Default profile (used when no --profile is given)
@@ -286,7 +291,7 @@ console.log(result.content);
 ```
 
 Key additive surface (Package 1 public API):
-- `Agent` (constructor + `run` + 14 public setters/getters: `setModel`, `setAskHandler`, `setPermissionMode`, `clearSession`, `getCost`, `getSessionId`, `getMessageCount`, `getLspServers`, `getHooks`, `newSession`, `compact`, `getModel`, `getMeshSubmitter`, `setTitle`)
+- `Agent` (constructor + `run` + 16 public setters/getters: `setModel`, `setAskHandler`, `setPermissionMode`, `getPermissionMode`, `clearSession`, `getCost`, `getSessionId`, `getSession`, `getMessageCount`, `getLspServers`, `getHooks`, `newSession`, `compact`, `getModel`, `getMeshSubmitter`, `setTitle`)
 - `Session` + `InMemorySession` + `PersistedSession` + `SessionStore` (Phase 7)
 - `ModelAdapter` + provider adapters (`OpenAIAdapter`, `AnthropicAdapter`, `DeepSeekAdapter`, `createProviderAdapter`)
 - `ToolRegistry` + `BUILTIN_TOOLS` (bash, read_file, plus your custom tools)
