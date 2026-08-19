@@ -370,7 +370,7 @@ Per design §1.3, the four design targets are non-negotiable:
 | **Phase 2** | Mesh-native (4 weeks) | ✅ done (F7 + F8) | 540 |
 | **Phase 3** | Self-evolution (3 weeks) | ✅ done (5a-5e + F6) | 110 |
 | **Phase 4** | Production-grade (5 sub-chunks: F9.1 + F9.2 + F9.3 + F9.4 + F9.5) | ✅ done | +130 (vs Phase 3) |
-| **Phase 5** | Mesh-native sub-agents (in progress) | ⏳ F10.1 ✅, F10.2 ✅, F10.3.1 ✅, F10.3.2 ✅, F10.3.3 ✅, F10.4.1 ✅, F10.5 ✅, F10.6 ✅ | +94 (vs Phase 4) |
+| **Phase 5** | Mesh-native sub-agents (8 sub-chunks: F10.1-F10.6) | ✅ done | +94 (vs Phase 4) |
 
 **Cumulative:** 791 tests across 52 files (envoy-harness 699 + envoy-harness-adapter 92), all passing.
 Typecheck clean (`pnpm -r typecheck`).
