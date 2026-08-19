@@ -2881,7 +2881,7 @@ swaps in for cross-node execution without code changes.
 | **F10.1** | `MeshSubmitter` interface + `NoopMeshSubmitter`; `LocalMeshSubmitter` + `defaultBuildSubagentFactory`; `task` tool + `AgentOptions.meshSubmitter`; end-to-end via real `Agent.run()`. 4 sub-chunks. | `src/subagent/{types,noop-submitter,local-mesh-submitter,tools,index}.ts`, `src/agent.ts`, 4 test files | ✅ done (4 sub-chunks: F10.1.1 + F10.1.2 + F10.1.3 + F10.1.4) |
 | **F10.2** | Parallel sub-agent fan-out (auto-detect "all N task calls" → `Promise.all`) + `maxSubagents` cap (default 8, host-configurable; refuses ALL when exceeded). 1 sub-chunk. | `src/agent.ts`, `test/subagent-parallel.test.ts` | ✅ done (F10.2.1) |
 | **F10.3** | Cross-node `RemoteMeshSubmitter` (Package 3) + `SubagentResultSigner` seam (Package 1) + `RemoteSubmitterTransport` interface + `routingHint` field. 3 sub-chunks. | `src/subagent/signer.ts` (new), `src/subagent/local-mesh-submitter.ts` (additive), `packages/envoy-harness-adapter/src/remote-mesh-submitter.ts` (new) | ✅ done (3 sub-chunks: F10.3.1 + F10.3.2 + F10.3.3) |
-| **F10.4+** | Cost aggregation (sub-agent `CostTracker` → parent); capability-driven fan-out (`FanOutSpec`); progress streaming. | `src/agent.ts`, `src/cost.ts` | pending |
+| **F10.4** | `FanOutSpec` + `FanOutRegistry` (capability-driven fan-out, the user's F10.2 ask). 1 sub-chunk in v0; cost aggregation + progress streaming deferred to F10.5+. | `src/subagent/fan-out.ts` (new), `src/subagent/tools.ts` (additive), `src/agent.ts` (additive `fanOutRegistry?` option), 1 test file | 🔄 F10.4.1 in progress |
 
 **Why the sub-agent path is the mesh-native contract, not in-process:**
 Codex and Claude Code create in-process sub-agents — same process, shared
@@ -4468,4 +4468,125 @@ row), §3 (this entry), §6.6 (F10.3 row, F10.3.3 ✅
 §10 (this entry). **Next: F10.4 (`FanOutSpec` +
 capability-driven fan-out) or push 1 unpushed commit,
 user's pick.**
+
+---
+
+### F10.4 — `FanOutSpec` + capability-driven fan-out (1 sub-chunk)
+
+**Phase 5 next sub-chunk.** F10.2 lets the **model**
+fan out: it emits N `task` calls in one iteration,
+the agent runs them in parallel. F10.4 lets the
+**host** fan out: it registers a `FanOutSpec` for
+a capability tag ("for tag X, always fan out to 3
+workers with input partition `P(i, N)`"); the model
+emits ONE `task` call with that tag; the `task`
+tool expands it to N sub-agents with the partition
+function applied.
+
+**The use case (from the user's F10.2 ask):** "Let
+the host register a `FanOutSpec` for a
+`capabilityTag` ('for tag X, always fan out to 3
+workers with input partition `P(i, N)`')." The
+host wants parallel work to happen for a specific
+tag, even if the model doesn't emit multiple calls.
+F10.4 is the cleanest way to do this without
+teaching the model about it.
+
+**v0 (this chunk) scope:**
+
+1. **`FanOutSpec` type:**
+   ```ts
+   interface FanOutSpec {
+     /** The capability tag this spec matches. */
+     capabilityTag: string;
+     /** Number of sub-agents to spawn. v0: must
+      *  be > 0. The `maxSubagents` cap still
+      *  applies (refuse ALL if exceeded). */
+     count: number;
+     /** Partition the input into N inputs. Called
+      *  once per sub-agent with `(input, i, count)`.
+      *  Default: identity (each sub-agent gets the
+      *  same input). */
+     partition?: (input: SubagentInput, i: number, count: number) => SubagentInput;
+   }
+   ```
+
+2. **`FanOutRegistry` class:** host registers
+   specs by `capabilityTag`. Lookup is O(1)
+   (Map). v0: one spec per tag (last write wins).
+
+3. **`task` tool integration:** on each call, the
+   tool checks the registry. If a spec matches
+   the input's `capabilityTag`, the tool:
+   - Builds N `SubagentInput`s via `partition`
+     (or identity).
+   - Calls `MeshSubmitter.submit` N times in
+     parallel (F10.2 fan-out path: `Promise.all`).
+   - Aggregates the N results into ONE
+     `SubagentResult` for the model.
+   - Honors the parent's `maxSubagents` cap
+     (F10.2's refuse-all-when-exceeded).
+   - Honors the abort signal (any sub-agent
+     abort propagates to all in-flight).
+
+4. **Result aggregation:**
+   - `status`: worst-case ("completed" → "partial"
+     → "failed"; "failed" wins).
+   - `content`: concatenated text blocks from all
+     N results, in completion order. A header
+     block per sub-agent (`"[sub-agent 1/3]"`).
+   - `costUsd`: sum of all N.
+   - `durationMs`: max of all N (the wall-clock
+     time the parent waited).
+   - `verdict`: worst-case (pass → partial → fail).
+   - `signature`: empty (the aggregated result is
+     not a single signed result; the host can
+     verify each individual signature separately
+     if it cares). v0 simplification.
+
+5. **`AgentOptions.fanOutRegistry?: FanOutRegistry`**
+   (additive). When set, the `task` tool is
+   auto-augmented to consult the registry on every
+   call. No registry → behavior unchanged (F10.1
+   + F10.2 baseline).
+
+**v0 (F10.4) — out of scope:**
+- **Cost aggregation** into the parent's
+  `CostTracker` (F10.5+). v0: each sub-agent
+  has its own cost; the host budgets via
+  per-call `cost_ceiling_usd`. The aggregated
+  result's `costUsd` is the sum; the parent's
+  own `CostTracker` doesn't see it.
+- **Progress streaming** for the sub-agents
+  (F10.5+). v0: fire-and-await; no streaming
+  events.
+- **Multi-tier fan-out** (a `FanOutSpec` that
+  fans out to a `FanOutSpec`). v0: one level.
+- **Dynamic fan-out count** (count depends on
+  the input). v0: static count per tag.
+
+**Type sketch:**
+
+```ts
+// src/subagent/fan-out.ts
+export interface FanOutSpec {
+  capabilityTag: string;
+  count: number;
+  partition?: (input: SubagentInput, i: number, count: number) => SubagentInput;
+}
+
+export class FanOutRegistry {
+  register(spec: FanOutSpec): void;
+  lookup(capabilityTag: string): FanOutSpec | undefined;
+  clear(): void;
+}
+```
+
+**Sub-chunk breakdown (planned):**
+- **F10.4.1:** `FanOutSpec` + `FanOutRegistry` +
+  `task` tool fan-out expansion + result aggregation
+  + `AgentOptions.fanOutRegistry` + ~8 tests
+  (~200 lines). Single chunk; tightly coupled.
+
+**Total estimated: 1 commit, ~8 tests, ~200 lines.**
 
