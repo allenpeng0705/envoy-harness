@@ -2428,6 +2428,92 @@ server, replaces `/mcp` placeholder).
 
 ### T3.5 — `write` / `edit` / `git` tools — pending
 
+### T3.12 — F3 + F4 use-the-existing-seam (this commit)
+
+Audit pass #2 surfaced two "use the existing seam
+correctly" findings. Both are small code fixes
+with a clear correctness story; no new architecture
+or scope creep.
+
+**F3 — `MCP_TOOL_PREFIX` constant import.**
+`src/agent/tool-executor.ts:309` checked
+`call.name.startsWith("mcp__")` with the literal
+prefix string. The constant
+`MCP_TOOL_PREFIX = "mcp__"` lives in
+`src/mcp/types.ts` and is imported by
+`src/agent/run-loop.ts:49` to construct the
+namespaced tool name at line 115
+(`${MCP_TOOL_PREFIX}${t.serverName}__${t.name}`).
+If the prefix ever changed, `run-loop.ts` would
+construct the new name but `tool-executor.ts` would
+fail to route it — a silent break (the tool would
+be reported as "not found" rather than thrown as
+a configuration error). T3.12 imports the constant
+in `tool-executor.ts` and uses it in the routing
+check, so the two sites stay in sync.
+
+**What shipped for F3 (~+6 LoC, 0 new tests, no
+schema change):**
+
+- `src/agent/tool-executor.ts` (modified) — added
+  `import { MCP_TOOL_PREFIX } from "../mcp/types.js";`
+  to the import block; replaced the literal
+  `"mcp__"` with the constant at the routing
+  check. Comment block expanded to explain why
+  the constant matters (single source of truth
+  for the prefix).
+
+**Why no new test for F3:** the constant
+substitution is structural — `tsc --noEmit` already
+verifies the import resolves. The existing
+`test/mcp.test.ts` covers the routing behavior
+(the prefix is used to build names + the registry
+parses them back); a unit test that "the literal
+isn't there" would be testing the source code
+text rather than behavior. The user audit's
+concern is "if the prefix ever changes, the
+executor breaks silently" — that's now a single
+edit in one place, which the constant makes
+self-documenting.
+
+**F4 — `git` tool forwards `abortSignal`.**
+`src/tools/builtin/git.ts:109` spawned the `git`
+child with `{ cwd: ctx.cwd }` only — no `signal`
+option. The `bash` tool does pass
+`signal: ctx.abortSignal`. T3.12 aligns the two
+tools so an aborted agent run can interrupt a
+hung `git` child. Minor in practice (git is
+fast and the read-only subset is well-behaved),
+but the seam exists and the asymmetry was
+discovered during the audit.
+
+**What shipped for F4 (~+12 LoC, +1 regression
+test):**
+
+- `src/tools/builtin/git.ts` (modified) — the
+  `spawn("git", args, {...})` call now passes
+  `signal: ctx.abortSignal` in the options
+  object. Comment block points at the bash
+  tool's wiring so the next reader sees the
+  parallel pattern.
+- `test/tools-write-edit.test.ts` (modified,
+  +1 test) — the new "forwards abortSignal to
+  the child" test pre-aborts the
+  `AbortController.signal` before calling
+  `gitTool.execute({ op: "status" }, ...)`. With
+  a pre-aborted signal, the child is created
+  but immediately aborted by Node.js — the
+  tool resolves with `{ isError: true, content:
+  "git error: ..." }` (the message includes the
+  abort code path). Asserts the abort is
+  observed by the tool rather than the call
+  hanging or returning a normal success.
+
+**Cumulative:** 1006 hermetic envoy-harness + 93
+envoy-harness-adapter = 1099 tests passing (+1
+for F4); typecheck clean across both packages.
+No schema change; no public API change.
+
 ### T3.11 — F1 + F2 honest doc realignment (this commit)
 
 A second audit pass (post-T3.10) surfaced two doc
@@ -5381,6 +5467,29 @@ useful.
 ---
 
 ## 10. Change log
+
+- **2026-08-20 (T3.12 done — F3 + F4 use-the-
+  existing-seam)**: Two audit-pass #2 findings.
+  (F3) `src/agent/tool-executor.ts:309` checked
+  `call.name.startsWith("mcp__")` with the literal
+  prefix; `run-loop.ts:49` imported the
+  `MCP_TOOL_PREFIX` constant. T3.12 imports the
+  constant in the executor too — the two sites
+  now share a single source of truth. (F4)
+  `src/tools/builtin/git.ts:109` spawned `git`
+  with `{ cwd: ctx.cwd }` only; bash wires
+  `signal: ctx.abortSignal`. T3.12 aligns git
+  with the bash pattern. +1 regression test
+  (pre-aborted signal → `git` tool returns
+  `isError: true` rather than hanging or
+  succeeding). F3 has no dedicated test — the
+  constant substitution is structural, typecheck
+  validates the import, and the existing
+  `mcp.test.ts` covers the routing behavior.
+  Cumulative: 1006 hermetic envoy-harness + 93
+  envoy-harness-adapter = 1099 tests passing;
+  typecheck clean. Updated §3.7 (T3.12 entry),
+  §10 (this entry).
 
 - **2026-08-20 (T3.11 done — F1 + F2 honest doc
   realignment)**: Audit pass #2 surfaced two doc

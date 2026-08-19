@@ -45,6 +45,12 @@ import type {
 } from "../types.js";
 import type { TraceEvent } from "../trace/index.js";
 import type { MeshSubmitter } from "../subagent/index.js";
+// T3.12: import the constant rather than hardcoding
+// the `"mcp__"` prefix literal in the routing check
+// (the audit-pass #2 finding). If MCP_TOOL_PREFIX
+// ever changes, the routing check stays in sync
+// with the name-construction in run-loop.ts:115.
+import { MCP_TOOL_PREFIX } from "../mcp/types.js";
 
 /**
  * The dependencies ToolExecutor reads from the
@@ -302,11 +308,15 @@ export class ToolExecutor {
       call = { ...call, args: preDecision.modified };
     }
 
-    // T3.3: MCP routing. When the call name starts with
-    // `mcp__`, route to the matching client. Skips the
-    // built-in tool lookup (the registry IS the
-    // authority for MCP tools).
-    if (call.name.startsWith("mcp__")) {
+    // T3.3 + T3.12: MCP routing. When the call name
+    // starts with MCP_TOOL_PREFIX, route to the
+    // matching client. Skips the built-in tool
+    // lookup (the registry IS the authority for MCP
+    // tools). Uses the constant (not the literal
+    // "mcp__") so name-construction in
+    // `run-loop.ts:115` + routing here stay in sync
+    // if the prefix ever changes.
+    if (call.name.startsWith(MCP_TOOL_PREFIX)) {
       await this.executeMcpCall(call, iteration);
       return;
     }

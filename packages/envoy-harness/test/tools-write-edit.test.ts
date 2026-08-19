@@ -363,4 +363,30 @@ describe("git: read-only operations", () => {
     expect(result.isError).toBeFalsy();
     expect(result.content).toMatch(/main/);
   });
+
+  it("forwards abortSignal to the child (T3.12 regression)", async () => {
+    // T3.12: git must wire ctx.abortSignal into the
+    // spawn options, like bash does. Without the
+    // signal, an aborted run can't interrupt a hung
+    // `git` process. Test by pre-aborting the
+    // signal: the child should be killed before it
+    // can produce output, and the tool should
+    // return an isError result referencing the abort
+    // (rather than hanging or returning a normal
+    // success).
+    const controller = new AbortController();
+    controller.abort(); // already aborted before the call
+    const result = await gitTool.execute(
+      { op: "status" },
+      makeContext({ abortSignal: controller.signal }),
+    );
+    // The child either fires 'error' (with AbortError)
+    // or 'close' with code null + signal SIGTERM —
+    // either path lands in the tool's resolve({...,
+    // isError: true}) branch. The pre-abort path
+    // hits the 'error' branch in practice; allow
+    // either wording.
+    expect(result.isError).toBe(true);
+    expect(result.content).toMatch(/git|abort|ABORT_ERR/i);
+  });
 });

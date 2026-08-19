@@ -106,7 +106,17 @@ export const gitTool: Tool<
       }
     })();
     return new Promise((resolve) => {
-      const child = spawn("git", args, { cwd: ctx.cwd });
+      // T3.12: forward ctx.abortSignal to the child
+      // so an aborted run can interrupt a hung `git`
+      // process. (The bash tool does the same — see
+      // `src/tools/builtin/bash.ts`.) Without this,
+      // a stuck `git log` on a large repo would
+      // block the run's abort path until the child
+      // returned on its own.
+      const child = spawn("git", args, {
+        cwd: ctx.cwd,
+        signal: ctx.abortSignal,
+      });
       const out: Buffer[] = [];
       const err: Buffer[] = [];
       child.stdout.on("data", (c: Buffer) => out.push(c));
