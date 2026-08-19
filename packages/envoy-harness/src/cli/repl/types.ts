@@ -213,6 +213,25 @@ export interface ReplOptions {
    * first line).
    */
   createSession?: () => Promise<import("../../session.js").Session>;
+  /**
+   * F14.3: custom diff fetcher for the `/review`
+   * command. The default implementation spawns
+   * `git diff` (or `git diff --cached` with the
+   * `staged` arg) in the cwd. Tests inject a
+   * custom fetcher to assert the /review flow
+   * without needing a real git repo.
+   *
+   * **Return shape:** `{ stdout, stderr, exitCode }`,
+   * same as `child_process.spawnSync`. The /review
+   * command treats non-zero exit + non-empty stderr
+   * as an error (prints to stderr); non-zero exit
+   * with empty stderr is "no changes" (git's
+   * normal exit-1-on-changes case).
+   */
+  reviewDiff?: (opts: {
+    cwd: string;
+    staged: boolean;
+  }) => { stdout: string; stderr: string; exitCode: number };
 }
 
 /**
@@ -331,6 +350,19 @@ export interface ReplContext {
    * assertions.
    */
   lastResponse?: string;
+  /**
+   * F14.3: custom diff fetcher for `/review`. The
+   * loop sets this from `ReplOptions.reviewDiff`
+   * (default: `undefined`, in which case `/review`
+   * uses its own `defaultReviewDiff` which spawns
+   * `git diff` / `git diff --cached`). Tests inject
+   * a custom fetcher to assert the `/review` flow
+   * without needing a real git repo.
+   */
+  reviewDiff?: (opts: {
+    cwd: string;
+    staged: boolean;
+  }) => { stdout: string; stderr: string; exitCode: number };
 }
 
 /**

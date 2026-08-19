@@ -10,10 +10,10 @@
 > (`docs/boundary.en.md`) says *what belongs in envoy-harness vs
 > EnvoyMesh*; this file assumes the boundary.
 >
-> **Status as of last commit:** F14.2 done on `phase-1/types`.
+> **Status as of last commit:** F14.3 done on `phase-1/types` (Phase 7 complete).
 >
-> - **Total:** 1000 tests across 61 files (envoy-harness 908 / 51
->   files + envoy-harness-adapter 92 / 10 files). All passing.
+> - **Total:** 1025 tests across 62 files (envoy-harness 932 / 52
+>   files + envoy-harness-adapter 93 / 10 files). All passing.
 > - **Typecheck:** clean (`pnpm -r typecheck`).
 > - **Phase 1 (v0 spine):** ✅ done (Chunks 1-4d, 220 tests)
 > - **Phase 2 (Mesh-native):** ✅ done (F7 + F8, 540 tests)
@@ -23,8 +23,11 @@
 > - **Phase 6 (REPL):** ✅ done (F17.1 + F17.2 + F17.2.5 +
 >   F17.3 + F17.4 + F17.5 + F17.6; 7 sub-chunks; `/undo`
 >   deferred to a future chunk — see §6.7 + §11)
-> - **Phase 7 (Persistence):** ⏳ in progress (F14.1
->   + F14.2 done; F14.3 next — see §6.7 + §11)
+> - **Phase 7 (Persistence + bundled F18 commands):**
+>   ✅ done (F14.1 + F14.2 + F14.3 — see §6.7 + §11).
+>   The F18 gap-analysis commands (`/rename`, `/copy`,
+>   `/review`, `/export`) are all shipped; `/new`
+>   was already in F17.5.
 >
 > **How to read this document.** §1 is project context (1 page).
 > §2 is the status snapshot (test count + per-module inventory).
@@ -38,7 +41,7 @@
 >
 > **Top of doc:** the design discussion (what & why) for Phase 5 — the mesh-native sub-agents design rationale + type surface — now lives in [`docs/design.en.md`](./design.en.md) §10.3. The *implementation record* (what shipped) is in §3 (chronological by commit). The *plan-with-sub-chunks* (the F10.2, F10.3, etc. plans) is in §6.6.
 >
-> **Branch:** all work is on `phase-1/types`. 19 unpushed commits as of the latest (F10.6 + 2 doc restructure + 2 design/Phase-5 + README/F17 plan + F17.1 + F17.2 + commands sweep plan + F17.2.5 + F17.3 + F17.4 + F17.5 + F17.6 + F14.1 + F14.2 + 1 misc); Phase 5 complete, Phase 6 (REPL) fully complete, Phase 7 (F14 persistence + bundled F18 commands) ⏳ in progress (F14.1 + F14.2 done; F14.3 next). `/undo` deferred to a future chunk (action journal scope too big; "testability wins on tie").
+> **Branch:** all work is on `phase-1/types`. 20 unpushed commits as of the latest (F10.6 + 2 doc restructure + 2 design/Phase-5 + README/F17 plan + F17.1 + F17.2 + commands sweep plan + F17.2.5 + F17.3 + F17.4 + F17.5 + F17.6 + fix-bugs + F14.1 + F14.2 + F14.3); Phase 5 complete, Phase 6 (REPL) fully complete, **Phase 7 (F14 persistence + bundled F18 commands) ✅ done** (F14.1 + F14.2 + F14.3 all shipped; the F18 commands `/rename` `/copy` `/review` `/export` are all live; `/new` was already in F17.5). `/undo` deferred to a future chunk (action journal scope too big; "testability wins on tie").
 
 ---
 
@@ -80,9 +83,9 @@ Per design §1.3, the four design targets are non-negotiable:
 | **Phase 4** | Production-grade (5 sub-chunks: F9.1 + F9.2 + F9.3 + F9.4 + F9.5) | ✅ done | +130 (vs Phase 3) |
 | **Phase 5** | Mesh-native sub-agents (8 sub-chunks: F10.1-F10.6) | ✅ done | +94 (vs Phase 4) |
 | **Phase 6** | Interactive REPL (7 sub-chunks done: F17.1 + F17.2 + F17.2.5 + F17.3 + F17.4 + F17.5 + F17.6) | ✅ **done** | +103 (F17.1 + F17.2 + F17.2.5 + F17.3 + F17.4 + F17.5 + F17.6) |
-| **Phase 7** | Persistence + bundled F18 REPL commands (F14.1 + F14.2 done; F14.3 next) | ⏳ in progress | +106 (F14.1 + F14.2) |
+| **Phase 7** | Persistence + bundled F18 REPL commands (F14.1 + F14.2 + F14.3 done) | ✅ **done** | +130 (F14.1 + F14.2 + F14.3) |
 
-**Cumulative:** 1000 tests across 61 files (envoy-harness 908 + envoy-harness-adapter 92), all passing.
+**Cumulative:** 1025 tests across 62 files (envoy-harness 932 + envoy-harness-adapter 93), all passing.
 Typecheck clean (`pnpm -r typecheck`).
 
 **Per-module test inventory (47 envoy-harness files + 10 envoy-harness-adapter files = 865 tests):**
@@ -142,6 +145,7 @@ Typecheck clean (`pnpm -r typecheck`).
 | REPL tier 2 batch 2 (F17.6) | 10 | `test/repl-tier2-batch2.test.ts` | 2 real-feature commands: /agents (lists spawned sub-agents from the SubagentRegistry; one line per record with status, cost, duration, truncated session id + objective), /diff (git diff vs HEAD; "no changes" on empty, stderr on non-git dir); BUILTIN_TIER2_BATCH2_COMMANDS shape (2 names); dispatch table covers all 22 |
 | Subagent registry (F17.6) | 7 | `test/subagent-registry.test.ts` | LocalMeshSubmitter.listSubagents(): empty before any submit, 1 record per submit, fields populated correctly (sessionId, capabilityTag, objective, startedAt, completedAt, durationMs, status, costUsd), failed sub-agents still get records, returns same array reference (read-only view), optional method on MeshSubmitter interface |
 | REPL persistence (F14.2) | 12 | `test/repl-persistence.test.ts` | runRepl with `sessionStore + resumeFromId` loads the persisted session + uses its id + writes new turns back; honors loaded session's cwd; `sessionStore` without `resumeFromId` throws; missing id throws; `createSession` factory called once + session is on disk; CLI: persist via one-shot → resume in REPL (transcript restored); CLI: --repl --resume <missing> throws CliError(EXIT_USAGE); CLI: --repl --resume + --persist mutually exclusive; CLI: --repl --persist creates + prints id; CLI: --repl (no flags) default in-memory |
+| REPL tier 2 batch 4 (F14.3) | 11 | `test/repl-tier2-batch4.test.ts` | /review (model-as-reviewer of `git diff` or `git diff --cached` via injected fetcher; empty diff → 'no changes to review'; non-git dir → error to stderr; diff + system prompt reach the model; `staged` arg switches to `git diff --cached`); /export (default JSONL `<cwd>/<sessionId>.jsonl`; MD format with YAML-ish front matter; unknown format → error to stderr; custom path arg; empty session writes header-only file); BUILTIN_TIER2_BATCH4_COMMANDS shape (2 names, no collisions); dispatch table covers all 26 |
 
 #### envoy-harness-adapter (Package 3, 92 tests / 10 files)
 
@@ -178,7 +182,7 @@ Typecheck clean (`pnpm -r typecheck`).
 | **Phase 4** | Production-grade | F9.1-F9.5 (5 sub-chunks) | +130 | ✅ |
 | **Phase 5** | Mesh-native sub-agents | F10.1-F10.6 (8 sub-chunks) | +94 | ✅ |
 | **Phase 6** | Interactive REPL | F17.1-F17.6 (7 sub-chunks) | +103 | ✅ |
-| **Phase 7** | Persistence + bundled F18 commands | F14.1 + F14.2 (2 sub-chunks so far) | +106 | ⏳ |
+| **Phase 7** | Persistence + bundled F18 commands | F14.1 + F14.2 + F14.3 (3 sub-chunks) | +130 | ✅ |
 
 **Phase-by-phase narrative:**
 
@@ -1919,6 +1923,108 @@ in-memory).
 Cumulative 921 + 93 = 1014 tests passing.
 Phase 7 (F14) ⏳ in progress: F14.1 ✅ + F14.2 ✅
 + F14.3 (next: /review + /export).
+
+### F14.3 — `/review` + `/export` (Phase 7 ✅ done)
+
+The final F14 sub-chunk. F14.1 + F14.2 wired the
+persistence plumbing; F14.3 ships the two
+remaining F18 commands (`codex /review` +
+`codex /export`) that were identified by the
+gap analysis.
+
+**What shipped (~600 LoC + 11 tests):**
+- **`/review [staged]`** — model-as-reviewer of
+  `git diff` (or `git diff --cached` with the
+  `staged` arg). Empty diff → "no changes to
+  review". Non-git dir → "error: <git stderr>"
+  to stderr. The model call is a one-shot side
+  effect (NOT added to the main transcript —
+  same pattern as `/init` in F17.5).
+  - System prompt: tells the model it's a
+    code reviewer; instructs it to find bugs,
+    missing tests, and style issues; output
+    a structured review.
+  - Diff source injection: `ReplOptions.reviewDiff?`
+    lets tests inject a custom fetcher (the
+    default is `spawnSync("git", ["diff"])` /
+    `["diff", "--cached"]`). Production hosts
+    leave it undefined.
+  - v0: truncates very large diffs at
+    200,000 chars (a future chunk can add
+    chunked reviews).
+- **`/export [format] [path]`** — write the
+  current session to disk. Formats: `jsonl`
+  (default) and `md` (Markdown). Path:
+  defaults to `<cwd>/<sessionId>.<ext>`.
+  - `jsonl`: writes the same JSONL format the
+    persisted session uses (header line + one
+    message per line).
+  - `md`: renders the session as Markdown
+    with YAML-ish front matter (id, title,
+    cwd, startedAt, message count) + one
+    section per message. Tool calls and tool
+    results are rendered as code blocks.
+  - Errors: unknown format → "error: <reason>"
+    to stderr.
+  - v0: does NOT redact secrets (the user owns
+    what they export).
+- **New additive option:** `ReplOptions.reviewDiff?`
+  (the diff fetcher — see above).
+- **New `ReplContext.reviewDiff?` field:** the
+  loop threads `opts.reviewDiff` into the
+  per-iteration context so `/review` can read
+  it. Type-only addition; no runtime change
+  for hosts that don't set it.
+
+**Why this completes F18:** the original
+gap analysis was missing `/review`, `/copy`,
+`/export`, `/rename`, `/new` (alias of
+`/clear`). All 5 are now shipped: `/new`
+(F17.5), `/rename` + `/copy` (F14.1), `/review`
++ `/export` (F14.3). F18 = F14.1 + F14.3, with
+F17.5's `/new` filling the originally-planned
+`/new` slot. The `codex / claudecode / pi` /
+`codex` parity is complete (modulo the deferred
+`/plan` `/tree` `/rewind` `/undo` items, which
+are explicitly post-F14).
+
+**11 tests in test/repl-tier2-batch4.test.ts:**
+- 1 shape test: BUILTIN_TIER2_BATCH4_COMMANDS
+  has 2 names, no collisions.
+- 3 /review tests: empty diff → "no changes
+  to review"; non-git dir → error to stderr;
+  happy path (diff + system prompt reach the
+  model, no tools).
+- 1 /review staged test: the `staged` arg
+  switches the fetcher to `git diff --cached`.
+- 3 /export tests: JSONL default writes
+  `<cwd>/<sessionId>.jsonl`; MD format with
+  YAML-ish front matter; empty session writes
+  a header-only file.
+- 2 /export error tests: unknown format →
+  error to stderr; custom path arg is
+  respected (relative paths join with cwd,
+  absolute paths are used as-is).
+- 1 E2E coverage: dispatch table covers all
+  26 commands (no missing, no collisions).
+
+Cumulative 932 + 93 = 1025 tests passing.
+**Phase 7 (F14) is fully done** (F14.1 + F14.2
++ F14.3 — 3 sub-chunks, +130 tests vs Phase 6).
+
+**Deferred (post-F14):**
+- `/plan` (model concern; needs plan mode)
+- `/tree` (session tree; needs tree structure)
+- `/rewind` (subsumed by `/resume` after F14)
+- `/undo` (F17.7 candidate, action journal)
+- `/review --format=json` (machine-readable
+  review; v0 is human text only)
+- `/review` of a specific commit / branch range
+  (v0 is unstaged + staged only)
+- `/export` to PDF / HTML / etc. (v0 is JSONL
+  or MD only)
+- `/export --redact` (v0 is raw, no secret
+  redaction)
 
 ---
 
@@ -3800,14 +3906,15 @@ laptop has no Tauri app — they need a CLI REPL.
      `repl-e2e.test.ts` dispatch count: 20 → 22.
 
 8. **F14 — Persistent session log + Tier 2 batch 3 commands**
-   (3 sub-chunks, ~720 LoC + ~106 tests). **Bundles F14
+   (3 sub-chunks, ~720 LoC + ~117 tests). **Bundles F14
    + F18** — the persistence work + the 4 missing REPL
    commands identified by the codex/claudecode/pi
    gap analysis. **F14.1 ✅ done** (persistence
    library + CLI + /rename + /copy + supporting
    refactor + F9.1-fix mix-in). **F14.2 ✅ done**
    (REPL persistence + cross-tool E2E). **F14.3
-   ⏳ next** (/review + /export).
+   ✅ done** (/review + /export). **Phase 7
+   ✅ fully done.**
 
    **Why bundle:** the user asked to "go through our
    own commands, don't miss important ones" against
@@ -3911,18 +4018,65 @@ laptop has no Tauri app — they need a CLI REPL.
          writes on `appendMessage` — same
          fire-and-forget chain as one-shot).
 
-   - **F14.3 — `/review` + `/export`** (~120 LoC + ~6 tests):
+   - **F14.3 — `/review` + `/export`** (~180 LoC + ~10 tests):
      - `/review [staged]` — runs the model as a code
        reviewer. Reads `git diff` (default) or
        `git diff --cached` (with `staged` arg) and
        sends to the model with a system prompt. Prints
        the review. No diff (clean tree) → "no changes
        to review". Non-git dir → error to stderr.
+       The model call is a one-shot side effect (NOT
+       added to the main transcript — same pattern
+       as `/init` in F17.5).
+       - **Diff source injection:** `ReplOptions.reviewDiff?`
+         lets tests inject a custom diff fetcher
+         (the default is `spawnSync("git", ["diff"])` /
+         `["diff", "--cached"]`). Production hosts
+         leave it undefined.
+       - **System prompt:** the model is told it's
+         a code reviewer; instructed to find bugs,
+         missing tests, and style issues, and to
+         output a structured review.
+       - **Empty / error paths:** clean tree →
+         "no changes to review" to stdout; non-git
+         dir / git not installed → "error: <git
+         stderr>" to stderr.
      - `/export [format] [path]` — exports the current
        session. Formats: `jsonl` (default) and `md`
        (Markdown). Path: defaults to
        `<cwd>/<sessionId>.<ext>`. Writes a file the
        user can share / archive.
+       - **`jsonl`:** writes the same JSONL format
+         the persisted session uses (header line +
+         one message per line). For `PersistedSession`,
+         the command is a thin wrapper over the
+         existing on-disk file (effectively a copy
+         to the export path); for `InMemorySession`,
+         the command builds the format on the fly.
+       - **`md`:** renders the session as Markdown
+         — header block (id, title, cwd, startedAt)
+         + one section per message with role
+         headings. Tool messages are rendered with
+         a code block (the `tool_result` content).
+       - **Errors:** missing format arg, unknown
+         format → "error: <reason>" to stderr.
+       - **Out of scope:** the export file is the
+         raw session, NOT a sanitized one (no
+         secret redaction; the user owns what they
+         export). v0 doesn't add a `--redact` flag.
+     - `BUILTIN_TIER2_BATCH4_COMMANDS` registered
+       in the loop (after `BUILTIN_TIER2_BATCH3_COMMANDS`).
+     - **E2E dispatch count: 24 → 26.**
+     - **Out of scope for F14.3:**
+       - `/review` with a specific commit / branch
+         range (the v0 `git diff` is unstaged + staged
+         only; the user can `git add` first).
+       - `/review --format=json` (machine-readable
+         review) — v0 is human text only.
+       - `/export` to a custom git ref (e.g. last
+         5 turns) — v0 is the full session.
+       - Reading the review aloud via TTS (out of
+         scope; the loop just prints to stdout).
 
    **Deferred (post-F14):** `/plan` (model concern;
    needs plan mode), `/tree` (session tree; needs
@@ -4139,6 +4293,43 @@ useful.
 
 ## 10. Change log
 
+- **2026-08-19 (F14.3 done — Phase 7 complete)**: F14.3
+  is the final F14 sub-chunk. Ships the two remaining
+  F18 commands from the codex/claudecode/pi gap
+  analysis: `/review` (model-as-reviewer of `git diff`
+  or `git diff --cached`; the model call is a one-shot
+  side effect, not added to the main transcript; same
+  pattern as `/init` in F17.5) and `/export` (writes
+  the current session as JSONL or Markdown; path
+  defaults to `<cwd>/<sessionId>.<ext>`). New
+  additive `ReplOptions.reviewDiff?` for test injection
+  of the git diff source (the default is
+  `spawnSync("git", ["diff"])` / `["diff", "--cached"]`).
+  `ReplContext.reviewDiff?` is the per-iteration
+  counterpart (set from `opts.reviewDiff` by the loop).
+  11 new tests in `test/repl-tier2-batch4.test.ts`:
+  BUILTIN shape (2 names, no collisions); /review
+  empty diff → "no changes to review"; /review non-git
+  dir → error to stderr; /review happy path (diff +
+  system prompt reach the model, no tools); /review
+  staged arg switches to `git diff --cached`; /export
+  default JSONL writes `<cwd>/<sessionId>.jsonl`;
+  /export MD with YAML-ish front matter; /export
+  empty session writes header-only file; /export
+  unknown format → error to stderr; /export custom
+  path arg is respected. Cumulative 932 + 93 = 1025
+  tests passing. Typecheck clean. **Phase 7 (F14)
+  is fully done** (F14.1 + F14.2 + F14.3 — 3
+  sub-chunks, +130 tests vs Phase 6). The F18 commands
+  `/rename` `/copy` `/review` `/export` are all
+  shipped; `/new` was already in F17.5. Updated §1
+  (Phase 7 done, cumulative 1025), §2 (Phase 7 row
+  marked ✅ + REPL tier 2 batch 4 test row + sub-
+  chunk summary Phase 7 row), §3 (F14.3 section),
+  §6.7 (F14.3 marked ✅), §10 (this entry). **Next:**
+  none planned; the F18 commands are all live.
+  Recommend: don't start any new F-number until a
+  real use case surfaces. "Testability wins on tie."
 - **2026-08-19 (F14.2 done — REPL persistence)**: F14.2
   is the REPL side of F14's persistence work (F14.1
   shipped the library + one-shot CLI; F14.2 wires

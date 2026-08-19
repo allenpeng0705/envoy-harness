@@ -43,6 +43,7 @@ import { BUILTIN_COMMANDS } from "./commands.js";
 import { BUILTIN_INFO_COMMANDS } from "./commands-info.js";
 import { BUILTIN_TIER2_BATCH2_COMMANDS } from "./commands-tier2-batch2.js";
 import { BUILTIN_TIER2_BATCH3_COMMANDS } from "./commands-tier2-batch3.js";
+import { BUILTIN_TIER2_BATCH4_COMMANDS } from "./commands-tier2-batch4.js";
 import { BUILTIN_TIER2_COMMANDS } from "./commands-tier2.js";
 import { EXIT_NAMES, ReplCommandRegistry, dispatchCommand, parseCommandLine } from "./registry.js";
 import type { LineReader, ReplOptions, ReplResult } from "./types.js";
@@ -166,7 +167,7 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
     }
   }
 
-  // 3. F17.2 + F17.2.5 + F17.5 + F17.6 + F14.1: build the command registry.
+  // 3. F17.2 + F17.2.5 + F17.5 + F17.6 + F14.1 + F14.3: build the command registry.
   //    Custom commands register FIRST; built-ins register
   //    LAST so they override on name collision. The plan
   //    says "Built-ins always win on name collision"; this
@@ -176,7 +177,9 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
   //    is the F17.5 set (3 commands: /new, /compact, /init);
   //    BUILTIN_TIER2_BATCH2_COMMANDS is the F17.6 set
   //    (2 commands: /agents, /diff); BUILTIN_TIER2_BATCH3_COMMANDS
-  //    is the F14.1 set (2 commands: /rename, /copy).
+  //    is the F14.1 set (2 commands: /rename, /copy);
+  //    BUILTIN_TIER2_BATCH4_COMMANDS is the F14.3 set
+  //    (2 commands: /review, /export).
   //    `/undo` is deferred to F17.7.
   const registry = new ReplCommandRegistry();
   if (opts.customCommands) {
@@ -187,6 +190,7 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
   registry.registerAll(BUILTIN_TIER2_COMMANDS);
   registry.registerAll(BUILTIN_TIER2_BATCH2_COMMANDS);
   registry.registerAll(BUILTIN_TIER2_BATCH3_COMMANDS);
+  registry.registerAll(BUILTIN_TIER2_BATCH4_COMMANDS);
 
   // 4. The loop.
   let turns = 0;
@@ -250,6 +254,7 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
           ...(opts.profileLoader ? { profileLoader: opts.profileLoader } : {}),
           ...(subagentRegistry ? { subagentRegistry } : {}),
           ...(lastResponse !== undefined ? { lastResponse } : {}),
+          ...(opts.reviewDiff ? { reviewDiff: opts.reviewDiff } : {}),
         };
         const result = await dispatchCommand(registry, parsed.name, parsed.args, ctx);
         switch (result.kind) {
