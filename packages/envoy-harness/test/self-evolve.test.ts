@@ -482,6 +482,97 @@ describe("loadRulesetFromFile", () => {
     expect(await loadRulesetFromFile(file, DEFAULT_RULES)).toBeNull();
   });
 
+  // T1.3: the file format is now versioned. v1 is
+  // an object with formatVersion + rules; v0 is the
+  // bare array (legacy). Other formatVersion values
+  // are rejected with a clear error.
+
+  it("accepts a v1 file (object with formatVersion + rules)", async () => {
+    const file = path.join(tmpDir, "ruleset-v1.json");
+    await fs.writeFile(
+      file,
+      JSON.stringify({
+        formatVersion: 1,
+        rules: [{ name: "non-empty-content" }, { name: "mesh-task-shape" }],
+      }),
+      "utf8",
+    );
+    const loaded = await loadRulesetFromFile(file, DEFAULT_RULES);
+    expect(loaded?.map((r) => r.name)).toEqual([
+      "non-empty-content",
+      "mesh-task-shape",
+    ]);
+  });
+
+  it("accepts a v0 file (bare array) for backward compat", async () => {
+    const file = path.join(tmpDir, "ruleset-v0.json");
+    await fs.writeFile(
+      file,
+      JSON.stringify([{ name: "non-empty-content" }]),
+      "utf8",
+    );
+    const loaded = await loadRulesetFromFile(file, DEFAULT_RULES);
+    expect(loaded?.map((r) => r.name)).toEqual(["non-empty-content"]);
+  });
+
+  it("rejects an unknown future formatVersion with a clear error", async () => {
+    const file = path.join(tmpDir, "ruleset-future.json");
+    await fs.writeFile(
+      file,
+      JSON.stringify({ formatVersion: 999, rules: [] }),
+      "utf8",
+    );
+    await expect(loadRulesetFromFile(file, DEFAULT_RULES)).rejects.toThrow(
+      /unsupported formatVersion 999/,
+    );
+  });
+
+  it("returns null for a v1 file with a non-array rules field", async () => {
+    const file = path.join(tmpDir, "ruleset-bad-v1.json");
+    await fs.writeFile(
+      file,
+      JSON.stringify({ formatVersion: 1, rules: "not-an-array" }),
+      "utf8",
+    );
+    expect(await loadRulesetFromFile(file, DEFAULT_RULES)).toBeNull();
+  });
+
+  it("returns null for a malformed shape (neither array nor object)", async () => {
+    const file = path.join(tmpDir, "ruleset-bad-shape.json");
+    await fs.writeFile(file, JSON.stringify("a-string"), "utf8");
+    expect(await loadRulesetFromFile(file, DEFAULT_RULES)).toBeNull();
+  });
+
+  it("end-to-end: a committed v1 file is loadable + the ruleset's `check` impls are the real ones", async () => {
+    // The end-to-end "the cycle uses the loaded ruleset"
+    // is wired in src/cli/run.ts:561 (committed → currentRules).
+    // Here we just verify the loader's contract: a v1
+    // file with one rule resolves to a 1-rule array
+    // where the rule's `check` is the real impl
+    // (not a placeholder). The cycle would just
+    // call those checks via runVerifierRules.
+    const rulesetFile = path.join(tmpDir, "ruleset.json");
+    await fs.writeFile(
+      rulesetFile,
+      JSON.stringify({
+        formatVersion: 1,
+        rules: [{ name: "non-empty-content" }, { name: "mesh-task-shape" }],
+      }),
+      "utf8",
+    );
+    const loaded = await loadRulesetFromFile(rulesetFile, DEFAULT_RULES);
+    expect(loaded).not.toBeNull();
+    expect(loaded).toHaveLength(2);
+    // The check impls are the real ones (not stubs).
+    // We can call them directly to prove they're real.
+    expect(loaded![0]!.name).toBe("non-empty-content");
+    const verdict = await loaded![0]!.check(
+      { content: [{ type: "text", text: "x" }] } as never,
+      "test",
+    );
+    expect(verdict.kind).toBe("pass");
+  });
+
   it("runOneCycle throws when the frozen benchmark is missing", async () => {
     const paths = makePaths();
     const evolve = new SelfEvolve({

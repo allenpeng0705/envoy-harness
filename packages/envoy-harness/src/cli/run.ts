@@ -513,7 +513,7 @@ async function runSelfEvolve(
   parsed: Extract<ParsedArgs, { subcommand: "self-evolve" }>,
   options: RunOptions,
   stdout: NodeJS.WritableStream,
-  _stderr: NodeJS.WritableStream,
+  stderr: NodeJS.WritableStream,
 ): Promise<SelfEvolveRunResult> {
   // 1. Resolve the model. F7.5: dispatch via --provider + env
   //    when no model is injected via RunOptions. Same helper
@@ -558,8 +558,25 @@ async function runSelfEvolve(
   // (the protocol is now real: candidates select rule names,
   // and the committed file is re-loadable). Fresh installs
   // fall back to DEFAULT_RULES.
+  //
+  // T1.3: visibility log — the user running
+  // `envoy self-evolve` should see whether the
+  // committed ruleset is in effect (vs the default).
+  // Without this log, the cycle silently uses
+  // DEFAULT_RULES on a fresh install and the
+  // user wonders why their committed file isn't
+  // being read.
   const committed = await loadRulesetFromFile(paths.ruleset, DEFAULT_RULES);
   const currentRules: ReadonlyArray<VerifierRule> = committed ?? DEFAULT_RULES;
+  if (committed !== null) {
+    stderr.write(
+      `self-evolve: using committed ruleset (${committed.length} rules from ${paths.ruleset})\n`,
+    );
+  } else {
+    stderr.write(
+      `self-evolve: using DEFAULT_RULES (${DEFAULT_RULES.length} rules; no committed ruleset at ${paths.ruleset})\n`,
+    );
+  }
 
   // 4. Run the cycle.
   const evolve = new SelfEvolve({

@@ -628,11 +628,20 @@ export class SelfEvolve {
     // v0: ruleset is a code artifact; "committing" means writing
     // the candidate to the ruleset path. Phase 2 may swap this
     // for a git commit or a different storage backend.
+    //
+    // T1.3: the file format is now versioned. v1 is the
+    // current format (an object with `formatVersion` + `rules`).
+    // The loader treats a missing `formatVersion` as v0
+    // (a bare array) for backward compat with files written
+    // before this commit.
     await fs.mkdir(path.dirname(this.paths.ruleset), { recursive: true });
     await fs.writeFile(
       this.paths.ruleset,
       JSON.stringify(
-        rules.map((r) => ({ name: r.name, description: r.description })),
+        {
+          formatVersion: RULESET_FORMAT_VERSION,
+          rules: rules.map((r) => ({ name: r.name, description: r.description })),
+        },
         null,
         2,
       ),
@@ -689,12 +698,38 @@ export class SelfEvolve {
 }
 
 /**
+ * The on-disk format version for committed rulesets.
+ *
+ * **v1 (T1.3):** `{ formatVersion: 1, rules: [{ name, description }, ...] }`.
+ *
+ * **v0 (legacy):** bare array `[{ name, description }, ...]`.
+ *   The loader treats a missing `formatVersion` field as v0
+ *   (the file is a bare array). This is a forward-compat
+ *   concession for files written before this commit (none
+ *   exist in production — the ruleset file just shipped
+ *   in F14.1 / T1.3).
+ *
+ * **Why version the ruleset file:** the same forward-compat
+ * argument as T1.2 (the persisted-session JSONL). v2+ may
+ * add per-rule overrides (severity, weight, scope). v2+
+ * may also embed the `check` body (instead of selecting
+ * from `knownRules` by name). Pre-release is the right
+ * time to add the field.
+ */
+export const RULESET_FORMAT_VERSION = 1 as const;
+
+/**
  * Load a committed ruleset file (list of `{ name, description }`
  * written by `commitCandidate`) and resolve the names back to real
  * rule objects from `knownRules`. Returns `null` when the file
  * doesn't exist or no names resolve (fresh install / incompatible
  * ruleset). This makes `envoy self-evolve` build on the committed
  * rule set instead of always starting from `DEFAULT_RULES`.
+ *
+ * **Format handling (T1.3):**
+ * - v1 (current): `{ formatVersion: 1, rules: [...] }`
+ * - v0 (legacy, pre-T1.3): bare array `[{ name, ... }, ...]`
+ * - Any other `formatVersion` value: throw a clear error.
  */
 export async function loadRulesetFromFile(
   filePath: string,
@@ -708,10 +743,44 @@ export async function loadRulesetFromFile(
   }
   try {
     const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return null;
+
+    // T1.3: detect the file format. A bare array is v0
+    // (legacy); an object with formatVersion is v1+.
+    // Any other shape is malformed.
+    let entries: unknown[];
+    if (Array.isArray(parsed)) {
+      // v0: bare array.
+      entries = parsed;
+    } else if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      "rules" in parsed
+    ) {
+      // v1: object with formatVersion + rules.
+      const obj = parsed as { formatVersion?: unknown; rules?: unknown };
+      if (
+        obj.formatVersion !== undefined &&
+        obj.formatVersion !== RULESET_FORMAT_VERSION
+      ) {
+        const msg =
+          obj.formatVersion === undefined
+            ? "missing formatVersion"
+            : `unsupported formatVersion ${String(obj.formatVersion)} (this build supports version ${RULESET_FORMAT_VERSION})`;
+        throw new Error(
+          `loadRulesetFromFile: ${msg} in ${filePath}`,
+        );
+      }
+      if (!Array.isArray(obj.rules)) {
+        return null; // malformed v1 (no rules array)
+      }
+      entries = obj.rules;
+    } else {
+      return null; // unknown shape
+    }
+
     const byName = new Map(knownRules.map((r) => [r.name, r]));
     const resolved: VerifierRule[] = [];
-    for (const entry of parsed) {
+    for (const entry of entries) {
       if (typeof entry !== "object" || entry === null) return null;
       const name = (entry as { name?: unknown }).name;
       if (typeof name !== "string") return null;
@@ -720,7 +789,15 @@ export async function loadRulesetFromFile(
       resolved.push(rule);
     }
     return resolved.length > 0 ? resolved : null;
-  } catch {
+  } catch (err) {
+    // T1.3: forward the formatVersion mismatch error
+    // (re-throw); swallow all other errors (return null).
+    if (
+      err instanceof Error &&
+      err.message.startsWith("loadRulesetFromFile:")
+    ) {
+      throw err;
+    }
     return null;
   }
 }
