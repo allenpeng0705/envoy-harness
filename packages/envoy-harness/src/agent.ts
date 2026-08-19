@@ -244,6 +244,20 @@ export interface AgentOptions {
    * like `on-request` until such metadata exists.
    */
   approval?: import("./types.js").AskForApproval;
+  /**
+   * T3.3: MCP client registry. When provided, the
+   * agent collects the registered clients' tools
+   * (prefixed `mcp__<server>__<tool>`) and exposes
+   * them to the model. The registry owns the
+   * clients' lifecycles; `agent.close()` (when
+   * added in a future chunk) will call
+   * `registry.closeAll()`. v0: the host injects a
+   * pre-populated registry; the stdio transport
+   * (that would populate it from `[mcp_servers]`
+   * in the TOML config) lands in a follow-up
+   * sub-chunk.
+   */
+  mcpClients?: import("./mcp/index.js").McpClientRegistry;
 }
 
 /** What `Agent.run()` returns. */
@@ -338,6 +352,16 @@ export class Agent {
   /** @internal F10.4.1: fan-out registry. When set, the `task`
    *  tool consults it on every call. */
   fanOutRegistry: FanOutRegistry | undefined;
+  /**
+   * T3.3: MCP client registry. When set, the
+   * `mcp__<server>__<tool>` calls in the model's
+   * response are routed to the matching client.
+   * The host injects the registry via
+   * `AgentOptions.mcpClients`; the stdio transport
+   * (which would populate it from the TOML config)
+   * lands in a follow-up sub-chunk.
+   */
+  mcpClients: import("./mcp/index.js").McpClientRegistry | undefined;
   /** @internal F10.2: max sub-agents per turn. */
   maxSubagents: number;
   /** @internal F10.6: parent session id (when this is a
@@ -380,6 +404,7 @@ export class Agent {
     this.tracer = options.tracer ?? new NullTracer();
     this.meshSubmitter = options.meshSubmitter;
     this.fanOutRegistry = options.fanOutRegistry;
+    this.mcpClients = options.mcpClients;
     this.maxSubagents = options.maxSubagents ?? DEFAULT_MAX_SUBAGENTS;
     this.subagentOf = options.subagentOf;
     this.approval = options.approval ?? "on-request";
@@ -484,6 +509,7 @@ export class Agent {
       abortSignal: this.abortController.signal,
       maxSubagents: this.maxSubagents,
       meshSubmitter: this.meshSubmitter,
+      mcpClients: this.mcpClients,
       // The agent's `emit` wraps the tracer with the
       // `subagentOf` tag. We pass the bound method
       // so the executor doesn't have to know about

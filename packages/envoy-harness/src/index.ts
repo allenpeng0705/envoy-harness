@@ -371,3 +371,17 @@ export {
   resolveConfigPath,
   type ConfigLayer,
 } from "./config/index.js";
+
+// T3.3: re-export the MCP (Model Context Protocol)
+// type seam. Closes §2.5 row #2 (the type side;
+// the stdio transport is a follow-up sub-chunk).
+export {
+  MCP_TOOL_PREFIX,
+  DefaultMcpClientRegistry,
+  mcpToolName,
+  parseMcpToolName,
+  type McpClient,
+  type McpClientRegistry,
+  type McpCallToolResult,
+  type McpTool,
+} from "./mcp/index.js";

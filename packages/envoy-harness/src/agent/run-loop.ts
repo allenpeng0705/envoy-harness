@@ -46,6 +46,7 @@
 import type { ContentBlock } from "../tools/index.js";
 import type { ModelResponse } from "../model.js";
 import type { Agent, AgentResult } from "../agent.js";
+import { MCP_TOOL_PREFIX } from "../mcp/types.js";
 
 /**
  * Run the agent's turn loop. Reads from the
@@ -98,6 +99,29 @@ export async function runAgentLoop(
     tools: agent.tools.list().map((t) => t.name),
   });
 
+  // T3.3: collect MCP tools (if any) for the model.
+  // Each MCP tool appears in the model's tool list
+  // as `mcp__<server>__<tool>`. The ToolExecutor
+  // routes calls to these names back to the right
+  // client. The `execute` here is a stub that
+  // should never be called (the executor's
+  // `executeMcpCall` branch fires first for any
+  // name starting with `mcp__`); it exists only
+  // to satisfy the `Tool` interface contract.
+  const mcpTools = agent.mcpClients
+    ? await agent.mcpClients.collectTools()
+    : [];
+  const mcpToolDefinitions = mcpTools.map((t) => ({
+    name: `${MCP_TOOL_PREFIX}${t.serverName}__${t.name}`,
+    description: t.description,
+    parameters: t.inputSchema,
+    execute: async () => {
+      throw new Error(
+        `MCP tool ${t.serverName}/${t.name}: execute() was called directly; the ToolExecutor should have routed this call.`,
+      );
+    },
+  }));
+
   let iterations = 0;
   while (iterations < agent.maxIterations) {
     if (agent.abortController.signal.aborted) {
@@ -110,7 +134,7 @@ export async function runAgentLoop(
     try {
       response = await agent.model.complete({
         messages: agent.session.messages,
-        tools: agent.tools.list(),
+        tools: [...agent.tools.list(), ...mcpToolDefinitions],
         signal: agent.abortController.signal,
       });
     } catch (err) {

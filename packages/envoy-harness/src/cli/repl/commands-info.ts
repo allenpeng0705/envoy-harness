@@ -149,20 +149,37 @@ const hooksCommand: ReplCommand = {
 };
 
 // ---------------------------------------------------------------------------
-// 7. /mcp — list MCP servers (v0: not implemented)
+// 7. /mcp — list MCP servers (T3.3: type seam shipped; transport pending)
 // ---------------------------------------------------------------------------
 
 const mcpCommand: ReplCommand = {
   name: "/mcp",
-  description: "list MCP servers (v0: not implemented)",
+  description: "list MCP servers (the client registry + tool routing are wired; the stdio JSON-RPC transport lands in a follow-up chunk)",
   handler(_args, ctx) {
-    // envoy-harness has bidirectional MCP per design §11
-    // (MCP client + MCP server). v0 ships the LSP
-    // integration (F9.2) and the `task` tool (F10.1); the
-    // MCP server registry lands in a future chunk. For
-    // now, the command prints the placeholder.
-    void ctx; // reserved for future use
-    ctx.stdout.write("no MCP servers (the MCP integration lands in a future chunk)\n");
+    // T3.3: the type seam is in place
+    // (`McpClientRegistry`, `mcp__<server>__<tool>`
+    // routing in the ToolExecutor). The host injects a
+    // pre-populated registry via
+    // `AgentOptions.mcpClients`; the stdio transport
+    // (which would populate it from the TOML
+    // `[mcp_servers]` config block) lands in a
+    // follow-up sub-chunk.
+    const registry = ctx.agent.mcpClients;
+    if (registry === undefined) {
+      ctx.stdout.write(
+        "no MCP servers (pass one via AgentOptions.mcpClients; the stdio transport lands in a follow-up chunk)\n",
+      );
+      return;
+    }
+    const servers = registry.list();
+    if (servers.length === 0) {
+      ctx.stdout.write("MCP registry is empty (0 servers)\n");
+      return;
+    }
+    ctx.stdout.write(`MCP servers (${servers.length}):\n`);
+    for (const name of servers) {
+      ctx.stdout.write(`  - ${name}\n`);
+    }
   },
 };
 

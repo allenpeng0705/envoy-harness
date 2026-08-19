@@ -109,6 +109,15 @@ export interface ToolExecutorContext {
   /** F10.1: the mesh submitter. Drives the parallel-fan-out detection. */
   readonly meshSubmitter: MeshSubmitter | undefined;
   /**
+   * T3.3: the MCP client registry. When a tool call's
+   * name starts with `mcp__`, the executor routes it
+   * to the matching client (parsed via
+   * `parseMcpToolName`). When undefined, `mcp__*`
+   * calls fail with "unknown tool" (the same as a
+   * missing built-in tool).
+   */
+  readonly mcpClients: import("../mcp/index.js").McpClientRegistry | undefined;
+  /**
    * Emit a trace event. The Agent's `emit` wraps the
    * tracer with the `subagentOf` tag; the executor
    * just calls back into the owner.
@@ -293,6 +302,15 @@ export class ToolExecutor {
       call = { ...call, args: preDecision.modified };
     }
 
+    // T3.3: MCP routing. When the call name starts with
+    // `mcp__`, route to the matching client. Skips the
+    // built-in tool lookup (the registry IS the
+    // authority for MCP tools).
+    if (call.name.startsWith("mcp__")) {
+      await this.executeMcpCall(call, iteration);
+      return;
+    }
+
     if (!tool) {
       // F9.4: emit tool_call + tool_result even for
       // unknown tools (the trace records the attempt
@@ -437,5 +455,101 @@ export class ToolExecutor {
       args: call.args,
       result,
     });
+  }
+
+  /**
+   * T3.3: route a single `mcp__*` tool call to the
+   * matching client. Mirrors the regular `execute`
+   * flow (PreToolUse already fired; PostToolUse +
+   * tool_result append happen here; trace events
+   * emitted). The MCP client owns the actual JSON-
+   * RPC call.
+   *
+   * **Why in ToolExecutor, not in the ToolRegistry:**
+   * MCP tools don't fit the `Tool` interface (no
+   * `parameters` zod schema, no `costUsd`, the
+   * execute call is async JSON-RPC over a child
+   * process). A dedicated branch in the executor
+   * is simpler than a fake `Tool` shim.
+   */
+  private async executeMcpCall(
+    call: Extract<ContentBlock, { type: "tool_call" }>,
+    iteration: number,
+  ): Promise<void> {
+    const { parseMcpToolName } = await import("../mcp/types.js");
+    const parsed = parseMcpToolName(call.name);
+    if (parsed === null) {
+      this.appendToolResult(
+        call.id,
+        `invalid MCP tool name: ${call.name}`,
+        true,
+      );
+      return;
+    }
+    const registry = this.ctx.mcpClients;
+    if (registry === undefined) {
+      this.appendToolResult(
+        call.id,
+        `MCP server not registered: ${parsed.serverName} (no McpClientRegistry configured)`,
+        true,
+      );
+      return;
+    }
+    const client = registry.get(parsed.serverName);
+    if (client === undefined) {
+      this.appendToolResult(
+        call.id,
+        `MCP server not registered: ${parsed.serverName}`,
+        true,
+      );
+      return;
+    }
+
+    // F9.4: emit tool_call (the model sees the call
+    // in its next turn; the trace records it).
+    this.ctx.emit({
+      kind: "tool_call",
+      ts: new Date().toISOString(),
+      iteration,
+      call,
+    });
+
+    const toolStart = Date.now();
+    let resultContent: unknown;
+    let isError = false;
+    try {
+      const mcpResult = await client.callTool(parsed.toolName, call.args);
+      resultContent = mcpResult.content;
+      isError = mcpResult.isError ?? false;
+    } catch (err) {
+      resultContent = `MCP tool error: ${(err as Error).message}`;
+      isError = true;
+    }
+
+    const toolDurationMs = Date.now() - toolStart;
+    this.ctx.emit({
+      kind: "tool_result",
+      ts: new Date().toISOString(),
+      iteration,
+      callId: call.id,
+      result: { content: resultContent, ...(isError ? { isError } : {}) },
+      durationMs: toolDurationMs,
+    });
+
+    // PostToolUse hook (same as regular tools).
+    const postDecision = await this.firePostToolUse(call, {
+      content: resultContent,
+      isError,
+    });
+    if (postDecision.kind === "modify") {
+      const m = postDecision.modified as { content?: unknown; isError?: boolean } | undefined;
+      if (m && typeof m === "object") {
+        resultContent = m.content ?? resultContent;
+        isError = m.isError ?? isError;
+      } else {
+        resultContent = postDecision.modified;
+      }
+    }
+    this.appendToolResult(call.id, resultContent, isError);
   }
 }
