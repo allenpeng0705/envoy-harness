@@ -6,24 +6,55 @@
 >
 > **Companion to `docs/design.en.md`.** The design says *what*
 > and *why*. This file says *what shipped*, *where it lives*,
-> and *what's still open*.
+> and *what's still open*. The boundary doc
+> (`docs/boundary.en.md`) says *what belongs in envoy-harness vs
+> EnvoyMesh*; this file assumes the boundary.
 >
-> **Status as of last commit:** (next commit, F10.6 done) on `phase-1/types`.
-> Total: 791 tests across 52 files (envoy-harness 699 / 42 files + envoy-harness-adapter 92 / 10 files).
-> Phase 3 fully complete (F6 done). Phase 2 fully complete (F7 + F8 done, F8 polish done). **Phase 4 complete (F9.1 + F9.2 + F9.3 + F9.4 + F9.5 done).** **Phase 5 in progress: F10.1 + F10.2 + F10.3.1 + F10.3.2 + F10.3.3 + F10.4.1 + F10.5 + F10.6 done** (mesh-native sub-agents + parallel fan-out + maxSubagents cap + `SubagentResultSigner` seam + cross-node `RemoteMeshSubmitter` + federated routing seam + `FanOutSpec` capability-driven fan-out + cost aggregation + progress streaming + `subagentOf` trace annotation).
+> **Status as of last commit:** F10.6 done on `phase-1/types`.
+>
+> - **Total:** 791 tests across 52 files (envoy-harness 699 / 42
+>   files + envoy-harness-adapter 92 / 10 files). All passing.
+> - **Typecheck:** clean (`pnpm -r typecheck`).
+> - **Phase 1 (v0 spine):** ✅ done (Chunks 1-4d, 220 tests)
+> - **Phase 2 (Mesh-native):** ✅ done (F7 + F8, 540 tests)
+> - **Phase 3 (Self-evolution):** ✅ done (5a-5e + F6, 110 tests)
+> - **Phase 4 (Production-grade):** ✅ done (F9.1-F9.5, 5 sub-chunks)
+> - **Phase 5 (Mesh-native sub-agents):** ✅ done (F10.1-F10.6, 8 sub-chunks)
+>
+> **How to read this document.** §1 is project context (1 page).
+> §2 is the status snapshot (test count + per-module inventory).
+> §3 is the chronological "done work" record (per-commit, by phase).
+> §4 is the architectural invariants (the 7 things we hold). §5 is
+> the in-flight risks and known issues. §6 is the planned work
+> (Phase 6+). §7 is the sub-chunk archive (the F6 archive; F10
+> plans are kept in §6.6 for in-context reference). §8 is the
+> "how to extend" recipes. §9 is references. §10 is the change
+> log (chronological).
+>
+> **Top of doc (Phase 5 design overview):** the next section
+> (§F10.1 design overview) is the high-level design discussion
+> for Phase 5 — the "what & why" of mesh-native sub-agents. The
+> *implementation record* (what shipped) is in §3 (chronological
+> by commit). The *plan-with-sub-chunks* (the F10.2, F10.3, etc.
+> plans) is in §6.6.
+>
+> **Branch:** all work is on `phase-1/types`. The 2 unpushed
+> commits are F10.6 code + doc (Phase 5 is feature-complete; push
+> when ready).
 
 ---
 
-### F10.1 — Mesh-native sub-agents (4 sub-chunks)
-**Phase 5 first sub-chunk.** Per design invariant #9
-("Sub-agents map to mesh chain steps, not in-process
-tasks") and §10.3 ("The task tool"). The `task` tool
-is the parent's escape hatch: when the model decides
-"this needs a different perspective" or "I need a
-specialist to handle this sub-problem", it spawns a
-sub-agent.
+## Phase 5 design overview (mesh-native sub-agents)
 
-**The "real workable" sub-agent, by design:**
+**The "real workable" sub-agent, by design.**
+
+The `task` tool is the parent's escape hatch: when the model
+decides "this needs a different perspective" or "I need a
+specialist", it calls the tool; the tool submits to a
+`MeshSubmitter`; the submitter runs (or routes) the sub-agent
+and returns the result. Per design invariant #9 ("Sub-agents
+map to mesh chain steps, not in-process tasks") and §10.3
+("The task tool").
 
 | Aspect | envoy-harness design | Codex/Claude Code |
 |---|---|---|
@@ -344,33 +375,146 @@ Per design §1.3, the four design targets are non-negotiable:
 **Cumulative:** 791 tests across 52 files (envoy-harness 699 + envoy-harness-adapter 92), all passing.
 Typecheck clean (`pnpm -r typecheck`).
 
-**Per-module test inventory:**
+**Per-module test inventory (42 envoy-harness files + 10 envoy-harness-adapter files = 791 tests):**
 
-| Module | Tests | File | Coverage |
-|--------|-------|------|----------|
-| Smoke (version export) | 1 | `test/smoke.test.ts` | basic |
-| Type system (§5) | 43 | `test/types.test.ts` | every schema + cross-field |
+#### envoy-harness (Package 1, 699 tests / 42 files)
+
+| Module | Tests | File | What it covers |
+|--------|-------|------|----------------|
+| Smoke | 1 | `test/smoke.test.ts` | Version export |
+| Type system (§5) | 43 | `test/types.test.ts` | Every schema + cross-field |
 | Bash validators (§6) | 47 | `test/permissions-bash.test.ts` | 200-command parity fixture |
-| Hook registry (§8.2-3) | 42 | `test/hooks-registry.test.ts` | middleware, modify, decision composition, runners |
-| AGENTS.md discovery (§9) | 24 | `test/agents-md.test.ts` | 5-step algorithm, fixtures in `agents-md-fixtures/` |
-| Tool registry (§10) | 12 | `test/tools-registry.test.ts` | register, lookup, duplicate error |
-| bash tool | 12 | `test/tools-bash.test.ts` | permission modes, output capture, timeout, abort |
-| read_file tool | 5 | `test/tools-read-file.test.ts` | success, maxBytes, ENOENT, EISDIR |
-| Session | 10 | `test/session.test.ts` | append-only, content-block copy, newSessionId uniqueness |
-| Agent loop (§3.4) | 17 | `test/agent.test.ts` | single-turn, tool flow, hook integration, limits, model error |
-| CLI (§19) | 24 | `test/cli.test.ts` | argv parsing (run + self-evolve), runner, error paths |
+| Hook registry (§8.2-3) | 42 | `test/hooks-registry.test.ts` | Middleware, modify, decision composition, runners |
+| AGENTS.md discovery (§9) | 24 | `test/agents-md.test.ts` | 5-step algorithm, fixtures |
+| Tool registry (§10) | 12 | `test/tools-registry.test.ts` | Register, lookup, duplicate error |
+| bash tool | 12 | `test/tools-bash.test.ts` | Permission modes, output capture, timeout, abort |
+| read_file tool | 5 | `test/tools-read-file.test.ts` | Success, maxBytes, ENOENT, EISDIR |
+| Session | 10 | `test/session.test.ts` | Append-only, content-block copy, newSessionId uniqueness |
+| Agent loop (§3.4) | 17 | `test/agent.test.ts` | Single-turn, tool flow, hook integration, limits, model error |
+| CLI runner (§19) | 32 | `test/cli.test.ts` | argv parsing (run + self-evolve), runner, error paths |
+| CLI provider dispatch (F7.5) | 28 | `test/cli-provider-dispatch.test.ts` | --provider openai/anthropic/deepseek/ollama; --max-cost-usd |
 | E2E | 3 | `test/e2e.test.ts` | read → run → summarize (direct + via CLI) |
-| Verifier rule engine (§12) | 26 | `test/verifier.test.ts` | each of 6 rules, runVerifierRules, combineVerdicts |
-| Scoreboard data (§13) | 16 | `test/scoreboard.test.ts` | schemas, file I/O, hash, sign |
-| Self-evolve (§13.1) | 19 | `test/self-evolve.test.ts` | contamination guard, parseHypothesis, 5 steps |
-| Self-evolve e2e (§13) | 4 | `test/self-evolve-e2e.test.ts` | frozen benchmark, shadow cycle, end-to-end contamination |
+| Verifier rule engine (§12) | 26 | `test/verifier.test.ts` | Each of 6 rules, runVerifierRules, combineVerdicts |
+| Scoreboard data (§13) | 16 | `test/scoreboard.test.ts` | Schemas, file I/O, hash, sign |
+| Self-evolve (§13.1) | 19 | `test/self-evolve.test.ts` | Contamination guard, parseHypothesis, 5 steps |
+| Self-evolve e2e (§13) | 4 | `test/self-evolve-e2e.test.ts` | Frozen benchmark, shadow cycle, end-to-end contamination |
 | Federated pull (F6.1) | 11 | `test/federated.test.ts` | PeerSource, LocalPeerSource, filter+verify, opt-in default |
 | Federated local gate (F6.2) | 6 | `test/federated-local-gate.test.ts` | runOneCycleAgainst, adopt() splitting |
 | Federated adoptions (F6.3) | 7 | `test/federated-adoptions.test.ts` | appendAdoption, audit trail (kept + rejected) |
+| Cost tracking (F7.1) | 18 | `test/cost.test.ts` | TokenPrice, DEFAULT_PRICING, CostTracker, computeCost, model override |
+| LLM OpenAI (F7.2) | 58 | `test/llm-openai.test.ts` | OpenAIAdapter: split/format, request shape, response parsing, errors, stop-reason |
+| LLM Anthropic (F7.3) | 45 | `test/llm-anthropic.test.ts` | AnthropicAdapter: split/format, request shape, response parsing, errors, stop-reason |
+| LLM DeepSeek (F7.4) | 9 | `test/llm-deepseek.test.ts` | DeepSeekAdapter: defaults, overrides, end-to-end response parsing |
+| Per-call approval (F9.1) | 10 | `test/per-call-approval.test.ts` | `ask` HookDecision, AskHandler, allow/deny/modify, default deny |
+| LSP types + tools (F9.2.1) | 21 | `test/lsp.test.ts` | LspClient interface, LspManager, LspLocation/Hover/Diagnostic |
+| LSP stdio client (F9.2.2) | 30 | `test/lsp-stdio.test.ts` | StdioLspClient: JSON-RPC over stdio, Content-Length framing, FakeStdio |
+| LSP tools (F9.2.3) | 13 | `test/lsp-tools.test.ts` | makeLspTools: lsp_definition/references/hover/diagnostics |
+| Trace (F9.4) | 8 | `test/trace.test.ts` | TraceEvent, NullTracer, JsonLinesTracer (WritableStream) |
+| Trace in agent (F9.4) | 10 | `test/trace-agent.test.ts` | 5 emit points in Agent.run(), tool_call/tool_result for unknown tools |
+| Team TOML (F9.3) | 17 | `test/team-toml.test.ts` | parseTeamToml, TomlParseError, toTeamConfig, toAgentSpec |
+| Team runner (F9.3) | 8 | `test/team-runner.test.ts` | Team.runOnce, topological sort, per-agent failure detection |
+| Sub-agent types (F10.1.1) | 10 | `test/subagent-types.test.ts` | SubagentInput, SubagentResult, MeshSubmitter, NoopMeshSubmitter |
+| Sub-agent local (F10.1.2) | 13 | `test/subagent-local.test.ts` | LocalMeshSubmitter, defaultBuildSubagentFactory, NEW session per call |
+| Sub-agent tool (F10.1.3) | 15 | `test/subagent-tool.test.ts` | makeTaskTool, TaskInputSchema, MeshSubmitter arg vs options object |
+| Sub-agent e2e (F10.1.4) | 6 | `test/subagent-e2e.test.ts` | Parent's tool list includes task; full happy path; session independence |
+| Sub-agent parallel (F10.2.1) | 8 | `test/subagent-parallel.test.ts` | Auto-detect "all task" → Promise.all; maxSubagents cap (refuse all when exceeded) |
+| Sub-agent signer (F10.3.1) | 7 | `test/subagent-signer.test.ts` | SubagentResultSigner seam; LocalMeshSubmitter.signer option |
+| Sub-agent cost + trace (F10.5) | 8 | `test/subagent-cost-trace.test.ts` | addSubagentCost; parent tracer receives sub-agent events |
+| Sub-agent routing hint (F10.3.3) | 4 | `test/subagent-routing-hint.test.ts` | RoutingHint type, additive field, host-only seam |
+| Sub-agent fan-out (F10.4.1) | 11 | `test/subagent-fan-out.test.ts` | FanOutSpec, FanOutRegistry, aggregateFanOutResults, task tool fan-out |
+| Sub-agent subagentOf (F10.6) | 5 | `test/subagent-subagent-of.test.ts` | TraceBase.subagentOf, parent events omit, sub-agent events carry |
+
+#### envoy-harness-adapter (Package 3, 92 tests / 10 files)
+
+| Module | Tests | File | What it covers |
+|--------|-------|------|----------------|
+| Skills catalog (F8.1) | 19 | `test/skills.test.ts` | ENVOY_HARNESS_SKILLS, getToolsForSkill, isReadOnlySkill |
+| Local ↔ wire translation (F8.3) | 17 | `test/translation.test.ts` | TOOL_CALL_SCHEMA_REF, TOOL_RESULT_SCHEMA_REF, localToWireBlock/Content/Metrics/Result |
+| EnvoyHarnessAdapter (F8.2+4+5+6) | 13 | `test/adapter.test.ts` | defaultBuildAgentFactory, EnvoyHarnessAdapter, buildManifest |
+| Sign entry (F8.4+) | 7 | `test/signing.test.ts` | defaultSignResult, defaultSignResultFromKeyPair, real Ed25519 |
+| Local verifier (F8.6+) | 8 | `test/verify.test.ts` | runLocalVerifier, runLocalVerifierOnLocal, 6 default rules wired |
+| Cross-agent verification (F9.5.1) | 4 | `test/cross-verify.test.ts` | CrossVerifyFn, defaultCrossVerify |
+| Cross-verify adapter (F9.5.2) | 5 | `test/cross-verify-adapter.test.ts` | EnvoyHarnessAdapter.verify() concatenates local + cross |
+| Integration (F8) | 7 | `test/integration.test.ts` | end-to-end adapter behavior |
+| RemoteMeshSubmitter (F10.3.2) | 10 | `test/remote-mesh-submitter.test.ts` | RemoteSubmitterTransport seam; thin wrapper over injected transport |
+| Smoke | 2 | `test/smoke.test.ts` | Package version export |
 
 ---
 
 ## 3. Done work (chronological, by commit)
+
+> **This section is the implementation history.** Each
+> subsection is a single commit (or a small related group).
+> For the high-level "what shipped" per phase, see the
+> status table at the top of this doc and §2.
+
+### Phase summary
+
+| Phase | Scope | Sub-chunks | Tests | Done |
+|-------|-------|------------|-------|------|
+| **Phase 0** | Empty package skeleton | 1 commit | 1 | ✅ |
+| **Phase 1** | v0 spine (4 weeks) | Chunks 1-4d (5 commits) | 220 | ✅ |
+| **Phase 2** | Mesh-native (4 weeks) | F7 (5) + F8 (4) + F8 polish (1) | 540 | ✅ |
+| **Phase 3** | Self-evolution (3 weeks) | Chunks 5a-5e (5 commits) + F6 (4) | 110 | ✅ |
+| **Phase 4** | Production-grade | F9.1-F9.5 (5 sub-chunks) | +130 | ✅ |
+| **Phase 5** | Mesh-native sub-agents | F10.1-F10.6 (8 sub-chunks) | +94 | ✅ |
+
+**Phase-by-phase narrative:**
+
+- **Phase 0 (1 commit)** — empty package. The structural commitment
+  (package.json, tsconfig, vitest, AGENTS.md, CI). The AgentRuntime
+  enum is anchored to envoy-harness in the MAP protocol contract.
+- **Phase 1 (Chunks 1-4d, 5 commits, 220 tests)** — the v0 spine.
+  Type system, bash validators, AGENTS.md discovery, hook registry,
+  tool registry, Agent loop, CLI runner, verifier rule engine.
+  The "spine" of every later feature.
+- **Phase 2 (F7 + F8 + F8 polish, 10 sub-chunks, 540 tests)** —
+  mesh-native. F7 ships real LLM adapters (OpenAI, Anthropic,
+  DeepSeek) + cost tracking + CLI provider dispatch. F8 ships
+  `envoy-harness-adapter` (Package 3, the MAP bridge), tools
+  mapping, local ↔ wire translation, Ed25519 signing, local
+  verifier rules wired. The monorepo restructure happens here.
+- **Phase 3 (5a-5e + F6, 9 sub-chunks, 110 tests)** — self-evolution.
+  Scoreboard data layer, `SelfEvolve` class with the 5-step
+  protocol, frozen benchmark + shadow cycle e2e, `envoy
+  self-evolve` CLI. F6 adds federated scoreboard (PeerSource,
+  local 5-step gate, adoption records, `--pull` CLI flag).
+- **Phase 4 (F9.1-F9.5, 5 sub-chunks, +130 tests)** — production-grade.
+  Per-call approval (Penguin-style ask/allow/deny/modify);
+  LSP integration (client + manager + 4 tools); `--json` trace
+  mode (5 emit points in Agent.run + JsonLinesTracer);
+  team + cron (hand-rolled minimal TOML reader, topological
+  sort, per-agent failure detection); cross-agent verification
+  (`CrossVerifyFn` + `defaultCrossVerify`).
+- **Phase 5 (F10.1-F10.6, 8 sub-chunks, +94 tests)** — mesh-native
+  sub-agents. The full sub-agent lifecycle: spawn (F10.1:
+  `MeshSubmitter` + `LocalMeshSubmitter` + `task` tool) → route
+  (F10.2: parallel fan-out + `maxSubagents` cap) → trust
+  (F10.3.1: `SubagentResultSigner`; F10.3.2: cross-node
+  `RemoteMeshSubmitter`; F10.3.3: federated routing hint) →
+  fan-out (F10.4.1: `FanOutSpec` capability-driven fan-out) →
+  aggregate (F10.5: sub-agent cost + trace flow to parent) →
+  annotate (F10.6: `subagentOf` trace annotation). The
+  `LocalMeshSubmitter` v0 ships unsigned (no trust boundary for
+  in-process); the future `RemoteMeshSubmitter` will sign
+  with the worker's owner key.
+
+**Phase milestones (per design §22):**
+
+- **Phase 1 milestone:** "All file skeletons exist; the 6 bash
+  validators are real; the AGENTS.md discovery is real; the hook
+  registry is real; the verifier rule engine is real; the agent
+  loop runs; the CLI takes a prompt and returns a response." —
+  All 7 done.
+- **Phase 3 milestone:** "5-step protocol scaffold complete. First
+  cycle runs in shadow mode (no commit). Owner-key-signed
+  scoreboard entries. Federated scoreboard opt-in (off by
+  default)." — 4 of 4 done (5a-5e + F6).
+- **Phase 5 (effective) milestone:** mesh-native sub-agent runtime
+  is feature-complete: spawn, route, trust, fan-out, aggregate,
+  annotate. Cross-node `RemoteMeshSubmitter` is the seam (Package
+  3); the actual libp2p + Ed25519 + mesh protocol lives in
+  EnvoyMesh.
 
 ### Phase 0 — empty package (`4813d8c`)
 **Scope:** the structural commitment. 12 files:
@@ -2905,6 +3049,82 @@ cross-node execution.
 
 ---
 
+### 6.7 Phase 6 — what comes next?
+
+**Phase 5 is feature-complete** (F10.1-F10.6). The
+mesh-native sub-agent path is shipped. The next phase
+is a question, not a plan.
+
+**Candidate directions (deferred; the user picks):**
+
+1. **F10.7: `RemoteMeshSubmitter` impl in EnvoyMesh.** The
+   seam is in place (Package 3's `RemoteSubmitterTransport`);
+   the actual libp2p + Ed25519 + mesh protocol lives in
+   EnvoyMesh, not envoy-harness. This is a mesh-side
+   implementation, not an envoy-harness feature. Per the
+   boundary doc, this is EnvoyMesh's job, not ours.
+
+2. **F11: progressive disclosure for `AGENTS.md`.** The
+   `AGENTS.md` discovery algorithm (Phase 1) reads the
+   full file. For very large AGENTS.md, the model
+   wastes context on content it never uses. Progressive
+   disclosure: the agent queries specific sections on
+   demand (via a tool). Likely a Phase 2 follow-up;
+   no concrete need yet.
+
+3. **F12: per-host tool installation.** The tool registry
+   is a flat list. A host might want to install tools
+   per session, per AGENTS.md directive, or per
+   sub-agent. Current workaround: a custom
+   `defaultBuildSubagentFactory` per sub-agent.
+   F12 would make this a first-class seam. Low
+   priority; the workaround works.
+
+4. **F13: streaming tool output.** Tools return their
+   full output in one `tool_result` block. For
+   long-running tools (e.g. `bash` running a 5-minute
+   build), the model waits 5 minutes with no progress.
+   Streaming tool output would emit `tool_chunk` events
+   as the tool runs. The `Tracer` interface already
+   supports this (additive `tool_chunk` event). Low
+   priority for v0; the model handles long tools OK
+   via `end_turn` + timeouts.
+
+5. **F14: persistent session log.** v0 sessions live
+   in memory. Persisting the session log to disk
+   (append-only JSONL, like a transcript) would enable
+   replay, audit, and resume. The architecture
+   supports this (sessions are append-only already).
+   Medium priority; depends on whether EnvoyMesh's
+   `chain-arbitration.ts` will need this.
+
+6. **F15: Multi-tier fan-out + dynamic count.** F10.4.1
+   v0 is one level + static count. F15 would let
+   `FanOutSpec.count` be a function of the input,
+   and let a fan-out trigger another fan-out
+   (recursion). Useful for "search 3 sources, then
+   summarize each, then vote" patterns. Low priority
+   until a real use case surfaces.
+
+7. **F16: capability-driven cross-node routing.** F10.3.3
+   ships the `routingHint` seam; the actual mesh
+   routing (capability matching, peer scoring, load
+   balancing) lives in EnvoyMesh. F16 would ship
+   a default `RemoteSubmitterTransport` impl in
+   envoy-harness-adapter that does routing based on
+   the hint. Medium priority; depends on EnvoyMesh's
+   roadmap.
+
+**My recommendation: don't start any of these until
+a real use case surfaces.** The "testability wins on
+tie" principle (per the design invariant): don't add
+features for hypothetical use cases. The current
+state (F10.6 done) is a complete mesh-native
+sub-agent runtime. Push it; wait for the user (Tauri
+app, CLI) to ask for more.
+
+---
+
 ## 7. F6 sub-chunk archive (Phase 3 §13.3 — federated scoreboard)
 
 F6 was planned in §6.1 and split into 4 sub-chunks. The
@@ -2976,30 +3196,6 @@ its package.
 adapter sits on top. Building the adapter without a real
 LLM adapter is possible (FakeModel in tests) but not
 useful.
-
----
-
-## 7. Phase breakdown (per design §22)
-
-| Phase | Weeks | Scope | Status |
-|-------|-------|-------|--------|
-| 0 | 1 day | Empty package skeleton | ✅ done |
-| 1 | 4 weeks | v0 spine: types, validators, hooks, AGENTS.md, tools, agent loop, CLI, verifier | ✅ done |
-| 2 | 4 weeks | Mesh-native: adapter, manifest broadcast, task submission, reputation book, persistence, real LLM adapters, cost tracking | 🟡 F7 done (real LLM adapters + cost tracking); F8 (envoy-harness-adapter) next |
-| 3 | 3 weeks | Self-evolution: 5-step protocol, federated scoreboard, owner-key-signed entries | ✅ done (5a-5e + F6) |
-| 4 | ongoing | LSP, team, cron, trace UI, per-call approval, cross-agent verification | ⏳ not started |
-
-**Phase 1 milestone (per design §22):** "All file skeletons
-exist; the 6 bash validators are real; the AGENTS.md
-discovery is real; the hook registry is real; the verifier
-rule engine is real; the agent loop runs; the CLI takes
-a prompt and returns a response." — All 7 done.
-
-**Phase 3 milestone (per design §22):** "5-step protocol
-scaffold complete. First cycle runs in shadow mode (no
-commit). Owner-key-signed scoreboard entries. Federated
-scoreboard opt-in (off by default)." — 3 of 4 done
-(federated is F6).
 
 ---
 
