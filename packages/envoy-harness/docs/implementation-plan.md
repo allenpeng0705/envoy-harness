@@ -15,6 +15,13 @@
 > - **Total:** 1025 tests across 62 files (envoy-harness 932 / 52
 >   files + envoy-harness-adapter 93 / 10 files). All passing.
 > - **Typecheck:** clean (`pnpm -r typecheck`).
+> - **Docs:** README.md brought up to Phase 6+7
+>   (REPL section + persistence section + updated
+>   feature table + 26-command listing + project
+>   layout + test count 1025); new QUICKSTART.md
+>   focused on how-to (Part 1: use it; Part 2: embed
+>   it; Part 3: bridge to EnvoyMesh). README is
+>   the reference; QUICKSTART is the recipe.
 > - **Phase 1 (v0 spine):** ✅ done (Chunks 1-4d, 220 tests)
 > - **Phase 2 (Mesh-native):** ✅ done (F7 + F8, 540 tests)
 > - **Phase 3 (Self-evolution):** ✅ done (5a-5e + F6, 110 tests)
