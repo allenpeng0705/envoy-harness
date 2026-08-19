@@ -36,11 +36,13 @@ import * as path from "node:path";
 import {
   Agent,
   BUILTIN_TOOLS,
+  ConfigLoadError,
   DefaultBenchmarkRunner,
   FederatedScoreboard,
   HookRegistry,
   InMemorySession,
   JsonLinesTracer,
+  loadConfig,
   LocalPeerSource,
   loadRulesetFromFile,
   ModelHypothesisProvider,
@@ -262,13 +264,46 @@ async function runAgent(
   //    need to wire a default adapter in user code).
   const model = resolveModel(parsed, options);
 
+  // 2.5. T2.2: load the user config (TOML). CLI flags
+  //      win over the file; the file wins over the agent's
+  //      built-in defaults (design §20.1 layer composition).
+  //      Missing file → empty config (silent). Malformed file
+  //      → throws ConfigLoadError (caught below as a usage error).
+  let configLayer: import("../config/index.js").ConfigLayer = {};
+  const hasExplicitPath =
+    parsed.config !== undefined ||
+    process.env["ENVOY_HARNESS_CONFIG"] !== undefined;
+  if (hasExplicitPath) {
+    // User explicitly asked for a file (--config or env var) —
+    // surface errors. The loader resolves the env var path
+    // when filePath is undefined.
+    const { layer } = await loadConfig(
+      parsed.config !== undefined ? { filePath: parsed.config } : {},
+    );
+    configLayer = layer;
+  } else {
+    // Default path: try, but silence ENOENT (most users don't
+    // have a config file yet). Malformed files still throw.
+    try {
+      const { layer } = await loadConfig();
+      configLayer = layer;
+    } catch (err) {
+      if (!(err instanceof ConfigLoadError) || !/ENOENT/.test(String(err.cause))) {
+        throw err;
+      }
+    }
+  }
+
   // 3. Build the agent.
   let cwd = parsed.cwd ?? options.cwd ?? process.cwd();
   // F-fix: `--plan` forces a read-only session (plan mode is
   // read + think, no writes) regardless of `--sandbox`.
+  // T2.2: the config file's `permissionMode` is the next
+  // fallback (CLI > config > "read-only" default).
+  const configMode = configLayer.permissionMode;
   const effectiveMode: SessionMetadata["permissionMode"] = parsed.plan
     ? "read-only"
-    : parsed.sandbox ?? "read-only";
+    : parsed.sandbox ?? configMode ?? "read-only";
   const meta: SessionMetadata = {
     cwd,
     ...(effectiveMode !== undefined ? { permissionMode: effectiveMode } : {}),

@@ -2241,6 +2241,129 @@ on-disk formats.
 
 ---
 
+## 3.8 Tier 2 — structural cleanup (2026-08-19)
+
+Tier 1 (T1.1-T1.4) closed the doc-vs-code gaps
+and the format-versioning work. Tier 2 is
+**structural cleanup with no new features** —
+the test-helper duplication, the missing TOML
+config loader, and the `ToolExecutor` extraction
+that's the precondition for T3.1's full
+`agent.ts` split.
+
+### T2.1 — consolidate test helpers into `test/helpers.ts` (`1d36e97`)
+
+13 test files (every REPL/CLI/sub-agent test
+that exercises a `runRepl` or `run` flow) shipped
+near-identical copies of `StringWritable`,
+`scriptedModel`, `textBlock`, `fakeLineReader`,
+and `makeArgs`. T2.1 collapses the duplication
+into a single `test/helpers.ts` and rewrites the
+13 callers.
+
+**What shipped (~+382 / -978 LoC; net -596):**
+- `test/helpers.ts` (~230 LoC) — the canonical
+  5 helpers with docstrings
+- 13 test files: drop the local copies; import
+  from `./helpers.js`; adapt a few call sites
+  (e.g. `scriptedModel([{content: "x"}])` →
+  `scriptedModel([{content: [textBlock("x")]}])`)
+
+**Helpers NOT consolidated (kept local where used):**
+- `recordingModel` (repl-tier2-batch4 only) —
+  captures the input, which the canonical
+  `scriptedModel` doesn't; not a general helper
+- `makeSession` (e2e only) and `parseRun` (cli only)
+- `team-runner.test.ts`'s `{model, captured}`-
+  shape `scriptedModel` (team-runner-specific)
+- `textResponse` + `toolCall` (already extracted
+  to `fixtures/fake-model.js` in an earlier chunk)
+
+**No new tests.** T2.1 is pure refactor; the
+existing tests validate the helpers (every
+caller exercises the happy path and the
+exhaustion path of `scriptedModel`).
+
+### T2.2 — TOML config loader (`src/config/`) — this commit
+
+Closes §2.5 row #1. The v0 user-config layer
+(`~/.config/envoy-harness/config.toml` /
+`$ENVOY_HARNESS_CONFIG` / `--config <path>`)
+is the only file format the design §20 documents
+in detail. T2.2 ships the minimum viable loader:
+the 6 fields that have a consumer today
+(`permissionMode`, `askForApproval`,
+`sandboxBackend`, `networkAccess`,
+`slashTmpWritable`, `writableRoots`).
+
+**What shipped (~+250 LoC, +17 tests):**
+- `src/config/schema.ts` — `ConfigLayerSchema`
+  (zod `.strict()`; closed against unknown fields
+  so a typo in the TOML surfaces as
+  `ConfigLoadError`)
+- `src/config/loader.ts` — `loadConfigFile(path)`
+  (one file, kebab→camel mapping, zod validation)
+  + `loadConfig({filePath?})` (the one-call
+  entrypoint that resolves `$ENVOY_HARNESS_CONFIG`
+  / `$XDG_CONFIG_HOME` / default path) +
+  `resolveConfigPath()` + `ConfigLoadError`
+- `src/config/index.ts` — re-exports
+- `src/cli/argv.ts` — `--config <path>` flag
+  (RUN_FLAGS + RUN_VALUED_FLAGS + RunParsedArgs
+  + help text)
+- `src/cli/run.ts` — calls `loadConfig` once per
+  invocation; the `permissionMode` from the
+  config file is the fallback between
+  `parsed.sandbox` (CLI) and the "read-only"
+  default. CLI > config > default (design §20.1)
+- `src/index.ts` — re-exports the new public API
+- `smol-toml@^1.8.0` added to dependencies
+  (small, zero-runtime-deps TOML parser)
+- `test/config.test.ts` — 17 tests:
+  - 2 well-formed file (full + partial)
+  - 1 missing file (returns `{}`)
+  - 3 malformed input (syntax, shape, value)
+  - 4 `resolveConfigPath` priority (explicit >
+    env > XDG > default)
+  - 2 `loadConfig` end-to-end (with file + missing
+    default)
+  - 2 `ConfigLayerSchema` shape (empty +
+    `strict` rejects unknown)
+  - 3 CLI integration (argv captures `--config`;
+    `run()` reads the file; --config is a
+    non-fatal path)
+
+**Out of scope (deferred):**
+- Full layer composition (design §20.1: dist.toml
+  → config.toml → .envoy/config.toml → CLI). T2.2
+  reads the user-config file only; the
+  composition order is a future chunk when more
+  consumers need it
+- The other ~24 fields in the design §20 schema
+  (MCP, mesh, self-evolve, hooks, etc.). T2.2
+  ships the 6 fields the loader consumers
+  (Agent + run.ts) actually read today. The
+  schema is a closed object (`.strict()`) so
+  adding more fields is additive, not breaking
+- `writableRoots` plumbing into `SandboxPolicy`.
+  The loader reads it; the runner doesn't yet
+  pass it into the agent's `sandboxPolicy`. This
+  is a 1-line change in `run.ts` once an
+  `AgentOptions.writableRoots?` field lands (T2.3
+  or later)
+- `askForApproval` + `sandboxBackend` + the rest
+  of the config layer's effect on the agent.
+  Same as above — the loader reads them; the
+  runner wires `permissionMode` today and the
+  others when their `AgentOptions` fields exist
+- `$ENVOY_HARNESS_CONFIG` env var (T2.2 reads
+  it via `resolveConfigPath`; the run.ts code
+  branch that surfaces errors when it's set
+  covers it; the test for it is in
+  `resolveConfigPath`)
+
+---
+
 ## 4. Architectural invariants (what we hold)
 
 From design §4 and our own additions during implementation:
@@ -4550,6 +4673,88 @@ useful.
 
 ## 10. Change log
 
+- **2026-08-19 (T2.2 done — TOML config loader)**:
+  Closes §2.5 row #1. New `src/config/` package
+  with the v0 user-config layer: the 6 fields
+  that have a consumer today
+  (`permissionMode`, `askForApproval`,
+  `sandboxBackend`, `networkAccess`,
+  `slashTmpWritable`, `writableRoots`). The
+  schema is a closed zod object (`.strict()`)
+  so a TOML typo surfaces as
+  `ConfigLoadError` instead of being silently
+  ignored. Kebab-case in the file → camelCase
+  in the type (per design §20). `smol-toml`
+  added as a dependency (small, zero-runtime-
+  deps TOML parser; ~6 KB). New `--config <path>`
+  CLI flag (RUN_FLAGS + RUN_VALUED_FLAGS +
+  RunParsedArgs + help text) and
+  `$ENVOY_HARNESS_CONFIG` / `$XDG_CONFIG_HOME` /
+  `~/.config/envoy-harness/config.toml` path
+  resolution. `runAgent` calls `loadConfig`
+  once and threads the `permissionMode` into
+  `effectiveMode` as the CLI > config >
+  default fallback (design §20.1). 17 new tests
+  in `test/config.test.ts`: 2 well-formed
+  files (full + partial); 1 missing file
+  (returns `{}`); 3 malformed input (TOML
+  syntax, schema shape, enum value); 4
+  `resolveConfigPath` priority (explicit > env
+  > XDG > default); 2 `loadConfig` end-to-end;
+  2 `ConfigLayerSchema` shape (empty +
+  unknown-field rejection); 3 CLI integration
+  (argv captures `--config`; `run()` reads the
+  file; --config is a non-fatal path).
+  Cumulative 967 envoy-harness + 93
+  envoy-harness-adapter = 1060 tests passing;
+  typecheck clean. Updated §2.5 row #1 status
+  (Planned → Shipped), §3.8 (this section), §6.8
+  (T2.2 row marked ✅), §10 (this entry).
+  **Out of scope** (deferred): the other ~24
+  fields in design §20 (MCP / mesh / self-evolve
+  / hooks); the full layer composition (dist.toml
+  → config.toml → .envoy/config.toml → CLI);
+  `writableRoots` / `askForApproval` /
+  `sandboxBackend` plumbing into the agent
+  beyond `permissionMode` (the runner reads
+  them; wiring into `AgentOptions` is a 1-line
+  change per field once the seams exist). Commit
+  pending. **Next:** T2.3 (extract `ToolExecutor`
+  from `agent.ts` — the seam the mesh-side hook
+  surface plugs into; ~200 LoC moved; pure
+  refactor, no behavior change).
+- **2026-08-19 (T2.1 done — consolidate test
+  helpers into `test/helpers.ts`)**: pure
+  refactor. 13 test files had near-identical
+  copies of `StringWritable`, `scriptedModel`,
+  `textBlock`, `fakeLineReader`, `makeArgs`.
+  T2.1 collapses them into `test/helpers.ts`
+  (~230 LoC of canonical helpers + JSDoc) and
+  rewrites the 13 callers to import. Net -596
+  LoC across the test tree. No new tests (the
+  existing tests validate the helpers — every
+  caller exercises both the happy path and the
+  exhaustion path of `scriptedModel`). The
+  canonical `scriptedModel` THROWS on
+  exhaustion (the local "stay on last response"
+  behavior in `repl-persistence` and
+  `repl-tier2-batch3` was a test smell; throw-
+  on-exhaustion forces the test to declare its
+  expected call count). Convenience wrapper
+  `scriptedTextModel(text)` covers the
+  "model says this one thing" case
+  (`cli-persistence`'s `scriptedModel(text:
+  string)` becomes `scriptedTextModel(text)`).
+  Helpers NOT consolidated (kept local where
+  used): `recordingModel` (repl-tier2-batch4
+  only — captures the input, not a general
+  helper), `makeSession` (e2e only), `parseRun`
+  (cli only), team-runner's `{model, captured}`
+  scriptedModel (team-runner-specific input
+  capture). Commit `1d36e97`. **Next:** T2.2
+  (TOML config loader; this commit is the
+  enabler — T2.2's +5 tests use the canonical
+  helpers, not new copies).
 - **2026-08-19 (T1.4 done — Tier 1 review hardening
   pass)**: doc-only. Closes the third category of
   DeepSeek's 2026-08-19 review (the "shipped vs

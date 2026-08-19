@@ -41,6 +41,7 @@ const RUN_FLAGS = new Set([
   "--fork",
   "--persist",
   "--session-dir",
+  "--config",
   "--plan",
   "--repl",
   "--no-color",
@@ -81,6 +82,7 @@ const RUN_VALUED_FLAGS = new Set([
   "--resume",
   "--fork",
   "--session-dir",
+  "--config",
 ]);
 
 /** A flag that takes a value for the self-evolve subcommand. */
@@ -139,6 +141,16 @@ export interface RunParsedArgs {
    * the session id to stderr for `--resume` later.
    */
   persist: boolean;
+  /**
+   * T2.2: `--config <path>`: explicit path to a
+   * TOML config file. Default is
+   * `~/.config/envoy-harness/config.toml` (or
+   * `$ENVOY_HARNESS_CONFIG` if set). The file
+   * is optional; missing file → empty config.
+   * CLI flags still win over the file (design §20.1
+   * layer composition).
+   */
+  config?: string | undefined;
   /**
    * F14.1: `--session-dir <path>`: where to
    * store / load persisted sessions. Default
@@ -277,6 +289,7 @@ function parseRunArgs(argv: ReadonlyArray<string>): RunParsedArgs {
     fork: undefined,
     persist: false,
     sessionDir: undefined,
+    config: undefined,
     plan: false,
     repl: false,
     noColor: false,
@@ -370,6 +383,9 @@ function parseRunArgs(argv: ReadonlyArray<string>): RunParsedArgs {
             break;
           case "--session-dir":
             out.sessionDir = value;
+            break;
+          case "--config":
+            out.config = value;
             break;
         }
         continue;
@@ -552,6 +568,7 @@ export function formatHelp(version: string): string {
     "  --fork <session-id>    fork a previous session",
     "  --persist              persist this session to disk (for --resume later)",
     "  --session-dir <path>   session storage dir (default ~/.local/state/envoy-harness/sessions)",
+    "  --config <path>        TOML config file (default ~/.config/envoy-harness/config.toml)",
     "  --plan                 read + plan only, no writes",
     "  --repl                 interactive REPL (no positional prompt)",
     "  --json                 JSON Lines output (machine-readable)",

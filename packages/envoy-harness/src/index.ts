@@ -359,3 +359,15 @@ export {
   type SelfEvolvePaths,
   type VerifierRuleset,
 } from "./scoreboard/index.js";
+
+// T2.2: re-export the config loader (TOML). Closes
+// §2.5 row #1 in the implementation plan.
+export {
+  ConfigLayerSchema,
+  ConfigLoadError,
+  DEFAULT_CONFIG_PATH,
+  loadConfig,
+  loadConfigFile,
+  resolveConfigPath,
+  type ConfigLayer,
+} from "./config/index.js";
