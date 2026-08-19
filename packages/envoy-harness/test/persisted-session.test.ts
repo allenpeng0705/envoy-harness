@@ -276,3 +276,94 @@ describe("PersistedSession.setTitle", () => {
     expect(msg.role).toBe("user");
   });
 });
+
+// ---------------------------------------------------------------------------
+// F14.2 / T1.2: on-disk format version
+// ---------------------------------------------------------------------------
+
+describe("PersistedSession: formatVersion", () => {
+  it("create() writes the current format version on the header", async () => {
+    const id = "test-fmt-write";
+    await PersistedSession.create({
+      id,
+      metadata: makeMeta(),
+      filePath: fileFor(id),
+    });
+    const file = await readFile(fileFor(id), "utf-8");
+    const lines = file.split("\n").filter((l) => l.length > 0);
+    const header = JSON.parse(lines[0]!);
+    expect(header._kind).toBe("header");
+    expect(header.formatVersion).toBe(1);
+  });
+
+  it("open() accepts a v1 file (with formatVersion: 1)", async () => {
+    const id = "test-fmt-v1";
+    // Manually write a v1 file.
+    const header = {
+      _kind: "header",
+      id,
+      metadata: makeMeta(),
+      formatVersion: 1,
+    };
+    const msg = { role: "user", content: [{ type: "text", text: "hi" }] };
+    await writeFile(
+      fileFor(id),
+      JSON.stringify(header) + "\n" + JSON.stringify(msg) + "\n",
+      "utf-8",
+    );
+    const session = await PersistedSession.open(fileFor(id));
+    expect(session.id).toBe(id);
+    expect(session.messages).toHaveLength(1);
+  });
+
+  it("open() accepts a legacy file without formatVersion (treated as v1)", async () => {
+    const id = "test-fmt-legacy";
+    // Manually write a legacy file (no formatVersion field).
+    const header = { _kind: "header", id, metadata: makeMeta() };
+    await writeFile(
+      fileFor(id),
+      JSON.stringify(header) + "\n",
+      "utf-8",
+    );
+    // The legacy file loads cleanly (we treat
+    // missing field as v1 for backward compat).
+    const session = await PersistedSession.open(fileFor(id));
+    expect(session.id).toBe(id);
+  });
+
+  it("open() rejects an unknown future formatVersion", async () => {
+    const id = "test-fmt-future";
+    const header = {
+      _kind: "header",
+      id,
+      metadata: makeMeta(),
+      formatVersion: 999, // far future
+    };
+    await writeFile(
+      fileFor(id),
+      JSON.stringify(header) + "\n",
+      "utf-8",
+    );
+    await expect(PersistedSession.open(fileFor(id))).rejects.toThrow(
+      /unsupported formatVersion 999/,
+    );
+  });
+
+  it("open() rejects a non-numeric formatVersion", async () => {
+    const id = "test-fmt-bad";
+    const header = {
+      _kind: "header",
+      id,
+      metadata: makeMeta(),
+      formatVersion: "v1", // string instead of number
+    };
+    await writeFile(
+      fileFor(id),
+      JSON.stringify(header) + "\n",
+      "utf-8",
+    );
+    await expect(PersistedSession.open(fileFor(id))).rejects.toThrow(
+      /invalid formatVersion/,
+    );
+  });
+});

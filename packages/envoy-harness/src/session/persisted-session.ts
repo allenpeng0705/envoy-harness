@@ -62,13 +62,49 @@ import type { ContentBlock, Message, Role } from "../tools/types.js";
 import type { Session, SessionMetadata } from "../session.js";
 
 /**
+ * The current JSONL format version. Bump when the
+ * on-disk schema changes in a way that requires
+ * a migration (vs. an additive change that old
+ * readers can ignore).
+ *
+ * **v1 (F14.1):** initial format. Header line
+ * `{_kind: "header", id, metadata, formatVersion: 1}`
+ * + one `Message` per line.
+ *
+ * **Adding formatVersion** is the F14.2 / T1.2
+ * pre-release cleanup. The check is in
+ * `PersistedSession.open()`: a header with a
+ * different `formatVersion` throws a clear error
+ * (rather than silently loading a wrong-shape
+ * file). Old files without `formatVersion` are
+ * treated as v1 (we wrote them all this week; no
+ * production data exists yet).
+ */
+export const PERSISTED_SESSION_FORMAT_VERSION = 1 as const;
+
+/**
  * The JSONL header line. Distinct from a `Message`
  * (which has `role`, not `_kind`).
+ *
+ * **`formatVersion` is required on write** (the
+ * header is built with the current
+ * `PERSISTED_SESSION_FORMAT_VERSION`). On read,
+ * the field is required for v2+; for v1 (the
+ * initial format) it's optional for backward
+ * compatibility (an old file without the field
+ * loads as v1).
  */
 interface PersistedHeader {
   _kind: "header";
   id: string;
   metadata: SessionMetadata;
+  /**
+   * The on-disk format version. Required for v2+
+   * (a missing field on a v2+ file is an error).
+   * Optional for v1 (old files without the field
+   * are treated as v1).
+   */
+  formatVersion?: number;
 }
 
 /**
@@ -140,11 +176,14 @@ export class PersistedSession implements Session {
       // ENOENT: file doesn't exist, proceed.
     }
     const session = new PersistedSession(options.id, options.metadata, options.filePath);
-    // Write the header line.
+    // Write the header line. The formatVersion
+    // field is required on write so a future v2+
+    // reader can detect (and reject) old files.
     const header: PersistedHeader = {
       _kind: "header",
       id: options.id,
       metadata: options.metadata,
+      formatVersion: PERSISTED_SESSION_FORMAT_VERSION,
     };
     await fs.writeFile(options.filePath, JSON.stringify(header) + "\n", "utf-8");
     return session;
@@ -190,6 +229,35 @@ export class PersistedSession implements Session {
         `PersistedSession.open: invalid header in ${filePath}: ${(err as Error).message}`,
       );
     }
+    // T1.2: validate the on-disk format version. The
+    // field is OPTIONAL on read (for backward
+    // compatibility with v1 files written before
+    // this commit) — a missing field means v1.
+    // A field with a non-numeric / non-1 value
+    // means the file is from a different version
+    // of the harness, and we reject it with a
+    // clear error.
+    if (header.formatVersion !== undefined) {
+      if (typeof header.formatVersion !== "number") {
+        throw new Error(
+          `PersistedSession.open: invalid formatVersion in ${filePath}: ` +
+            `expected a number, got ${typeof header.formatVersion}`,
+        );
+      }
+      if (header.formatVersion !== PERSISTED_SESSION_FORMAT_VERSION) {
+        throw new Error(
+          `PersistedSession.open: unsupported formatVersion ` +
+            `${header.formatVersion} in ${filePath} ` +
+            `(this build supports version ${PERSISTED_SESSION_FORMAT_VERSION})`,
+        );
+      }
+    }
+    // (When the field is undefined, treat as v1:
+    // this build is v1, the missing field matches.)
+    // The fact that we silently treat undefined as
+    // v1 is a forward-compat concession: v2+ must
+    // require the field. We enforce that when we
+    // bump the version.
     const session = new PersistedSession(header.id, header.metadata, filePath);
     // Lines 2..N: messages.
     for (let i = 1; i < lines.length; i++) {
@@ -285,6 +353,7 @@ export class PersistedSession implements Session {
       _kind: "header",
       id: this.id,
       metadata: this.metadata,
+      formatVersion: PERSISTED_SESSION_FORMAT_VERSION,
     };
     this.writeChain = this.writeChain.then(() =>
       fs
@@ -324,6 +393,7 @@ export class PersistedSession implements Session {
       _kind: "header",
       id: this.id,
       metadata: this.metadata,
+      formatVersion: PERSISTED_SESSION_FORMAT_VERSION,
     };
     const lines: string[] = [JSON.stringify(header)];
     for (const m of this._messages) {
