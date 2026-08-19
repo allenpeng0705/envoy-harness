@@ -74,3 +74,13 @@ export {
   runLocalVerifierOnLocal,
   type CrossVerifyFn,
 } from "./verify.js";
+
+// F10.3.2 — cross-node `MeshSubmitter` for sub-agents on remote
+// worker nodes. The transport is host-injected; the adapter
+// doesn't ship a default (the real mesh protocol lives in
+// EnvoyMesh, not here).
+export {
+  RemoteMeshSubmitter,
+  type RemoteMeshSubmitterOptions,
+  type RemoteSubmitterTransport,
+} from "./remote-mesh-submitter.js";
