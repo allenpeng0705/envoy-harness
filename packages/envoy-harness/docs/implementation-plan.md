@@ -200,10 +200,10 @@ each needs a real use case before the next chunk lands.
 
 | # | Feature | Design ref | v0 status | Trigger / next chunk |
 |---|---------|------------|-----------|----------------------|
-| 1 | **TOML config loader** | design §20 (config schema), design §2.2 step 3, README "Profiles" | **Planned (T2.2)** — `ReplOptions.profileLoader` seam ships; the built-in TOML loader (`~/.config/envoy-harness/config.toml` / `$ENVOY_HARNESS_CONFIG`) does not. The README marks the loader explicitly as "not in v0". | T2.2 — first Tier 2 chunk; needs a `ReplProfile` consumer (the REPL `/profile` info command is the one today) |
-| 2 | **MCP (bidirectional: client + server)** | design invariant #4 §8, design §11 | **Deferred — no v0 code** — `/mcp` REPL command is a placeholder that prints "no MCP servers (the MCP integration lands in a future chunk)" (`src/cli/repl/commands-info.ts:155-167`). `McpClientRegistry` and the `[mcp_server]` config block are not implemented; no `mcp__*` tool registration path. | Tier 3 (T3.3); needs a consumer use case |
-| 3 | **OS sandbox backends (landlock / namespace)** | design §5.2 / §7 (sandbox), design §2.2 step 5 | **Deferred — heuristic only** — six bash validators + read-only redirect hardening + interpreter-blocking (`tee` etc.) are the only enforcement. The `SandboxBackend` type ships (`src/types.ts:109-114`) but no backend is implemented. The design doc and §12 explicitly note: "interpreter writes remain a documented heuristic limitation (needs the OS sandbox, design §7)". | Tier 3 (T3.4); needs a target platform + a sandbox requirement |
-| 4 | **`write` / `edit` / `git` tools** | design §10.1 (tools table), design §10.2 (git tool) | **Deferred — bash-only** — `BUILTIN_TOOLS` ships only `read_file` and `bash` (`src/tools/builtin/index.ts:17`). Code edits today go through `bash` with the 6 bash validators enforcing `git` mutating verbs + `tee` etc. The skill catalog is honest about tool exposure; the design table is aspirational. | Tier 3 (T3.5); needs a UX gap that bash doesn't cover (e.g. structured edits) |
+| 1 | **TOML config loader** | design §20 (config schema), design §2.2 step 3, README "Profiles" | **Shipped (T2.2)** — `src/config/{loader,schema,index}.ts` ships the v0 user-config layer (`~/.config/envoy-harness/config.toml` / `$ENVOY_HARNESS_CONFIG` / `--config <path>`). 6 fields: `permission_mode`, `ask_for_approval`, `sandbox_backend`, `network_access`, `slash_tmp_writable`, `writable_roots`. zod `.strict()` so typos surface as `ConfigLoadError`. | Future: full layer composition (design §20.1: dist.toml → config.toml → .envoy/config.toml → CLI) + the other ~24 fields |
+| 2 | **MCP (Model Context Protocol)** | design invariant #4 §8, design §11 | **Shipped (T3.3) — type seam only** — `src/mcp/{types,registry,index}.ts` ships `McpClientRegistry` + `McpTool` + the `mcp__<server>__<tool>` routing in `ToolExecutor.executeMcpCall`. The `/mcp` REPL command reads the real registry. The stdio JSON-RPC transport (the actual `McpClient` impl) is a follow-up sub-chunk — the seam is there for the host to wire real transports. | T3.3.1 — stdio JSON-RPC transport (when a real MCP server config is needed) |
+| 3 | **OS sandbox backends (landlock / namespace)** | design §5.2 / §7 (sandbox), design §2.2 step 5 | **Shipped (T3.4) — noop seam only** — `src/sandbox/{types,index}.ts` ships `SandboxExecutor` interface + `NoopSandboxExecutor` (default; 6 bash validators still apply). The 6 bash validators + read-only redirect hardening + interpreter-blocking remain the only enforcement today. The `NoopSandboxExecutor` is honest: it does NOT add a kernel-level enforcement layer. | T3.4.1 — `LinuxLandlockExecutor` (Linux) / T3.4.2 — `ProcessFsNamespaceExecutor` (POSIX) when the host has a target platform + a sandbox requirement |
+| 4 | **`write` / `edit` / `git` tools** | design §10.1 (tools table), design §10.2 (git tool) | **Shipped (T3.5)** — `src/tools/builtin/{write,edit,git}.ts` ships all three. `write` / `edit` respect the `sandboxPolicy` (read-only rejects; workspace-write checks `writableRoots`; danger-full-access allows). `git` is read-only (`status` / `diff` / `log` / `branchList`); mutating ops stay in `bash` under the 6 validators. `BUILTIN_TOOLS` is now 5 tools. | Future: the auto-branch git tool (design §10.2) when a use case surfaces; mutating git ops in the `git` tool when the 6-validator bash path proves a gap |
 
 **Adjacent v0 honesty notes** (in code, not aspirational):
 
@@ -214,12 +214,24 @@ each needs a real use case before the next chunk lands.
 
 **Seam philosophy:** when a feature is deferred but the *interface* is
 shipped, the host (REPL or EnvoyMesh) can inject the missing piece without
-a package upgrade. Today:
+a package upgrade. Today (after Tier 1+2+3):
 
 - `ReplOptions.profileLoader` — host supplies; v0 has no built-in
-- `McpClientRegistry` / `mcpServer` — no seam yet; lands with T3.3
-- `SandboxBackend` type exists; no `SandboxExecutor` seam; lands with T3.4
-- `write` / `edit` / `git` — no `ToolDefinition`; lands with T3.5
+  TOML loader that reads profiles into a `ReplProfile`. (The
+  user-config TOML loader from T2.2 is a separate seam and
+  loads `ConfigLayer` into `AgentOptions`, not into REPL state.)
+- `McpClientRegistry` / `mcpToolName` — **seam ships (T3.3)**;
+  the host can register real `McpClient` impls (stdio JSON-RPC,
+  HTTP/SSE, etc.) without a package upgrade. Today
+  `DefaultMcpClientRegistry` is empty by default.
+- `SandboxExecutor` — **seam ships (T3.4)**; the host can
+  swap `NoopSandboxExecutor` for a real `LinuxLandlockExecutor`
+  / `ProcessFsNamespaceExecutor` impl without a package upgrade.
+  Today `NoopSandboxExecutor` is the default.
+- `write` / `edit` / `git` — **tools ship (T3.5)** as
+  `BUILTIN_TOOLS`; the host can override individual tools
+  via `AgentOptions.tools.register(...)` or replace the whole
+  `ToolRegistry` if a custom surface is needed.
 
 ---
 
@@ -1980,8 +1992,8 @@ prints id; --repl (no flags) defaults to
 in-memory).
 
 Cumulative 921 + 93 = 1014 tests passing.
-Phase 7 (F14) ⏳ in progress: F14.1 ✅ + F14.2 ✅
-+ F14.3 (next: /review + /export).
+Phase 7 (F14) ✅ done: F14.1 ✅ + F14.2 ✅
++ F14.3 ✅ (`/review` + `/export` shipped).
 
 ### F14.3 — `/review` + `/export` (Phase 7 ✅ done)
 
@@ -2414,6 +2426,57 @@ server, replaces `/mcp` placeholder).
 ### T3.4 — OS sandbox backends — pending
 
 ### T3.5 — `write` / `edit` / `git` tools — pending
+
+### T3.7 — sync stale doc references (this commit)
+
+Three stale-doc catches in the post-Tier-1+2+3 review (this
+session). All doc-only; no code, no test-count change, no
+schema change. Catches:
+
+1. **Line 1983 — "Phase 7 (F14) ⏳ in progress"** was
+   written when F14.1 + F14.2 were done but F14.3 was
+   pending. F14.3 shipped in `5db3bd5` (Phase 7 complete).
+   Updated to "Phase 7 (F14) ✅ done: F14.1 ✅ + F14.2 ✅
+   + F14.3 ✅".
+
+2. **Lines 203-206 — §2.5 "Shipped vs designed" matrix
+   rows 1-4** were all "Planned (T2.x)" / "Deferred" but
+   T2.2 (TOML config), T3.3 (MCP type seam), T3.4 (OS
+   sandbox seam), and T3.5 (write / edit / git tools)
+   are all done. Updated each row's "v0 status" +
+   "Trigger / next chunk" column to reflect current
+   reality, with the same caveat style as the shipped
+   status: e.g. "**Shipped (T3.3) — type seam only**" +
+   "T3.3.1 — stdio JSON-RPC transport (when a real MCP
+   server config is needed)". The "matrix is honest"
+   invariant is preserved — defer-with-seam rows are
+   still marked differently from fully-shipped rows.
+
+3. **Lines 219-222 — "Seam philosophy" list** said "no
+   seam yet" for MCP / sandbox / write-edit-git. All
+   three seams shipped. Rewrote the list to reflect the
+   current state: every entry is now "**seam ships (T3.x)**"
+   with a one-line note on what the host can swap
+   without a package upgrade.
+
+**Why this matters:** the doc is the single source of
+truth for "what shipped vs what's aspirational". A row
+that says "Planned (T2.2)" after T2.2 is done is a
+narrative bug that misleads the next reviewer / contributor.
+The §2.5 matrix is also a "DeepSeek review defense" —
+keeping it accurate means a future review can compare the
+matrix to the actual code in one pass.
+
+**Out of scope:** the package README test-count line
+(`packages/envoy-harness/README.md:71`, "1025 tests
+across 62 files") is also stale but is part of the
+user's README-polish stash and will be refreshed in
+that pass. The root README's test count is the same
+story.
+
+Cumulative: 1001 hermetic envoy-harness + 93
+envoy-harness-adapter = 1094 tests passing; typecheck
+clean across both packages.
 
 ### T3.6 — `RUN_LIVE_TESTS=1` live-test lane (this commit)
 
@@ -4979,6 +5042,27 @@ useful.
 ---
 
 ## 10. Change log
+
+- **2026-08-19 (T3.7 done — sync stale doc
+  references)**: Three doc-only catches from the
+  post-Tier-1+2+3 review pass. (1) Line 1983 said
+  "Phase 7 (F14) ⏳ in progress" — F14 is done, fixed
+  to "Phase 7 (F14) ✅ done". (2) §2.5 matrix rows
+  1-4 (lines 203-206) all said "Planned/Deferred" but
+  T2.2 + T3.3 + T3.4 + T3.5 are all done; updated each
+  row's status + "Trigger / next chunk" with the
+  shipped-with-caveat pattern. (3) "Seam philosophy"
+  list (lines 219-222) said "no seam yet" for MCP /
+  sandbox / write-edit-git; all three seams shipped,
+  rewrote the list to reflect current state. The
+  package README's test-count line is also stale but
+  is part of the user's README-polish stash (will
+  refresh in that pass). No code, no test count
+  change, no schema change. Cumulative: 1001
+  hermetic envoy-harness + 93 envoy-harness-adapter
+  = 1094 tests passing; typecheck clean across both
+  packages. Updated §2.5 (matrix), §3.7 (this
+  section), §3.9 (T3.7 entry), §10 (this entry).
 
 - **2026-08-19 (T3.6 done — `RUN_LIVE_TESTS=1`
   live-test lane)**: Closes §6.8 row T3.6. New
