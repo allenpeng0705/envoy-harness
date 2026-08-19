@@ -25,12 +25,12 @@ import { z } from "zod";
 import {
   DefaultMcpClientRegistry,
   MCP_TOOL_PREFIX,
-  McpClient,
-  McpClientRegistry,
-  McpCallToolResult,
-  McpTool,
   mcpToolName,
   parseMcpToolName,
+  type McpCallToolResult,
+  type McpClient,
+  type McpClientRegistry,
+  type McpTool,
 } from "../src/mcp/index.js";
 
 // ---------------------------------------------------------------------------

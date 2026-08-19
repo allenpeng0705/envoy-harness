@@ -385,3 +385,15 @@ export {
   type McpCallToolResult,
   type McpTool,
 } from "./mcp/index.js";
+
+// T3.4: re-export the OS sandbox executor interface
+// + the no-op default. Closes §2.5 row #3 (the
+// seam side; landlock / process-fs-namespace
+// backends land in T3.4.1 / T3.4.2 with a Linux
+// test environment).
+export {
+  NoopSandboxExecutor,
+  type SandboxContext,
+  type SandboxExecutor,
+  type SandboxResult,
+} from "./sandbox/index.js";
