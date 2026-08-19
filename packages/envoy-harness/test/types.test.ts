@@ -183,7 +183,7 @@ describe("ProfileRef and SandboxPolicy (TypeScript-only)", () => {
       backend: "linux-landlock",
       writableRoots: ["/tmp"],
       networkAccess: false,
-      excludeSlashTmp: true,
+      slashTmpWritable: true,
     };
     expect(policy.mode).toBe("workspace-write");
     expect(policy.writableRoots.length).toBe(1);
@@ -202,7 +202,7 @@ describe("BashValidator (TypeScript-only)", () => {
       backend: "linux-landlock",
       writableRoots: [],
       networkAccess: false,
-      excludeSlashTmp: true,
+      slashTmpWritable: true,
     };
     const input: BashValidationInput = {
       command: "ls -la",

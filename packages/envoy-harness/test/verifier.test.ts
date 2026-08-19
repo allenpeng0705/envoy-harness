@@ -52,7 +52,7 @@ function makeAgentResult(overrides: {
     backend: "linux-landlock",
     writableRoots: ["/tmp"],
     networkAccess: false,
-    excludeSlashTmp: true,
+    slashTmpWritable: true,
   };
   return {
     content: overrides.content ?? [{ type: "text", text: "ok" }],

@@ -77,7 +77,7 @@ const READ_ONLY_POLICY: SandboxPolicy = {
   backend: "linux-landlock",
   writableRoots: [],
   networkAccess: true, // read-only does not block network
-  excludeSlashTmp: false,
+  slashTmpWritable: false,
 };
 
 const WORKSPACE_WRITE_NO_NET: SandboxPolicy = {
@@ -86,7 +86,7 @@ const WORKSPACE_WRITE_NO_NET: SandboxPolicy = {
   backend: "linux-landlock",
   writableRoots: ["/home/alice/project"],
   networkAccess: false,
-  excludeSlashTmp: true,
+  slashTmpWritable: true,
 };
 
 const WORKSPACE_WRITE_WITH_NET: SandboxPolicy = {
@@ -95,7 +95,7 @@ const WORKSPACE_WRITE_WITH_NET: SandboxPolicy = {
   backend: "linux-landlock",
   writableRoots: ["/home/alice/project"],
   networkAccess: true,
-  excludeSlashTmp: true,
+  slashTmpWritable: true,
 };
 
 const DANGER_FULL_ACCESS: SandboxPolicy = {
@@ -104,7 +104,7 @@ const DANGER_FULL_ACCESS: SandboxPolicy = {
   backend: "none",
   writableRoots: [],
   networkAccess: true,
-  excludeSlashTmp: false,
+  slashTmpWritable: false,
 };
 
 // ---------------------------------------------------------------------------

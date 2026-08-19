@@ -131,7 +131,7 @@ export interface SandboxPolicy {
   /** If true, network access is allowed in workspace-write mode. */
   networkAccess: boolean;
   /** If true, /tmp is also writable (default true). */
-  excludeSlashTmp: boolean;
+  slashTmpWritable: boolean;
 }
 
 // ---------------------------------------------------------------------------

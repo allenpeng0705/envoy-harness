@@ -799,7 +799,7 @@ export interface SandboxPolicy {
   /** 如果 true,workspace-write 模式下允许网络。 */
   networkAccess: boolean
   /** 如果 true,/tmp 也可写(默认 true)。 */
-  excludeSlashTmp: boolean
+  slashTmpWritable: boolean
 }
 ```
 
@@ -1267,7 +1267,7 @@ export class LandlockBackend implements SandboxBackend {
         ruleset.addRule(landlock.AccessFS.makeReg, root)
         ruleset.addRule(landlock.AccessFS.makeDir, root)
       }
-      if (policy.excludeSlashTmp) {
+      if (policy.slashTmpWritable) {
         ruleset.addRule(landlock.AccessFS.writeFile, '/tmp')
         ruleset.addRule(landlock.AccessFS.removeFile, '/tmp')
         ruleset.addRule(landlock.AccessFS.makeReg, '/tmp')

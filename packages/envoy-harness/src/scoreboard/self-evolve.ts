@@ -348,7 +348,7 @@ function buildStubResult(task: {
           backend: "linux-landlock",
           writableRoots: ["/tmp"],
           networkAccess: false,
-          excludeSlashTmp: true,
+          slashTmpWritable: true,
         },
         metrics: baseMetrics,
       };
@@ -367,7 +367,7 @@ function buildStubResult(task: {
           backend: "linux-landlock",
           writableRoots: ["/tmp"],
           networkAccess: false,
-          excludeSlashTmp: true,
+          slashTmpWritable: true,
         },
         metrics: baseMetrics,
       };
@@ -384,7 +384,7 @@ function buildStubResult(task: {
           backend: "linux-landlock",
           writableRoots: ["/tmp"],
           networkAccess: false,
-          excludeSlashTmp: true,
+          slashTmpWritable: true,
         },
         metrics: baseMetrics,
       };
@@ -401,7 +401,7 @@ function buildStubResult(task: {
           backend: "linux-landlock",
           writableRoots: ["/tmp"],
           networkAccess: false,
-          excludeSlashTmp: true,
+          slashTmpWritable: true,
         },
         metrics: baseMetrics,
       };

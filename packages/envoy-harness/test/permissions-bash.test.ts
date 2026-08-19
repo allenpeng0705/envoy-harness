@@ -222,7 +222,7 @@ const READ_ONLY: SandboxPolicy = {
   backend: "linux-landlock",
   writableRoots: [],
   networkAccess: true,
-  excludeSlashTmp: false,
+  slashTmpWritable: false,
 };
 
 const WORKSPACE_WRITE: SandboxPolicy = {
@@ -231,7 +231,7 @@ const WORKSPACE_WRITE: SandboxPolicy = {
   backend: "linux-landlock",
   writableRoots: ["/home/alice/project"],
   networkAccess: false,
-  excludeSlashTmp: true,
+  slashTmpWritable: true,
 };
 
 function makeInput(
@@ -648,5 +648,5 @@ const DESTRUCTIVE_POLICY: SandboxPolicy = {
   backend: "none",
   writableRoots: [],
   networkAccess: true,
-  excludeSlashTmp: false,
+  slashTmpWritable: false,
 };

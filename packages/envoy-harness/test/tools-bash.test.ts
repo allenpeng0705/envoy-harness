@@ -148,7 +148,7 @@ describe("bash: permission validation", () => {
         backend: "linux-landlock",
         writableRoots: [],
         networkAccess: false,
-        excludeSlashTmp: true,
+        slashTmpWritable: true,
       },
     };
     const result = await bashTool.execute(

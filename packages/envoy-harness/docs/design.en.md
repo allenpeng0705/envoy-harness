@@ -807,7 +807,7 @@ export interface SandboxPolicy {
   /** If true, network access is allowed in workspace-write mode. */
   networkAccess: boolean
   /** If true, /tmp is also writable (default true). */
-  excludeSlashTmp: boolean
+  slashTmpWritable: boolean
 }
 ```
 
@@ -1275,7 +1275,7 @@ export class LandlockBackend implements SandboxBackend {
         ruleset.addRule(landlock.AccessFS.makeReg, root)
         ruleset.addRule(landlock.AccessFS.makeDir, root)
       }
-      if (policy.excludeSlashTmp) {
+      if (policy.slashTmpWritable) {
         ruleset.addRule(landlock.AccessFS.writeFile, '/tmp')
         ruleset.addRule(landlock.AccessFS.removeFile, '/tmp')
         ruleset.addRule(landlock.AccessFS.makeReg, '/tmp')

@@ -32,7 +32,7 @@ export function policyFromMode(
       backend: "none",
       writableRoots: [],
       networkAccess: true,
-      excludeSlashTmp: true,
+      slashTmpWritable: true,
     };
   }
   return {
@@ -41,6 +41,6 @@ export function policyFromMode(
     backend: "linux-landlock",
     writableRoots: mode === "workspace-write" ? [cwd] : [],
     networkAccess: false,
-    excludeSlashTmp: true,
+    slashTmpWritable: true,
   };
 }
