@@ -10,9 +10,9 @@
 > (`docs/boundary.en.md`) says *what belongs in envoy-harness vs
 > EnvoyMesh*; this file assumes the boundary.
 >
-> **Status as of last commit:** F17.1 done on `phase-1/types`.
+> **Status as of last commit:** F17.2 done on `phase-1/types`.
 >
-> - **Total:** 804 tests across 53 files (envoy-harness 712 / 43
+> - **Total:** 829 tests across 54 files (envoy-harness 737 / 44
 >   files + envoy-harness-adapter 92 / 10 files). All passing.
 > - **Typecheck:** clean (`pnpm -r typecheck`).
 > - **Phase 1 (v0 spine):** ✅ done (Chunks 1-4d, 220 tests)
@@ -20,7 +20,7 @@
 > - **Phase 3 (Self-evolution):** ✅ done (5a-5e + F6, 110 tests)
 > - **Phase 4 (Production-grade):** ✅ done (F9.1-F9.5, 5 sub-chunks)
 > - **Phase 5 (Mesh-native sub-agents):** ✅ done (F10.1-F10.6, 8 sub-chunks)
-> - **Phase 6 (REPL):** ⏳ in progress (F17.1 done; F17.2-F17.4 pending)
+> - **Phase 6 (REPL):** ⏳ in progress (F17.1 + F17.2 done; F17.3 + F17.4 pending)
 >
 > **How to read this document.** §1 is project context (1 page).
 > §2 is the status snapshot (test count + per-module inventory).
@@ -34,7 +34,7 @@
 >
 > **Top of doc:** the design discussion (what & why) for Phase 5 — the mesh-native sub-agents design rationale + type surface — now lives in [`docs/design.en.md`](./design.en.md) §10.3. The *implementation record* (what shipped) is in §3 (chronological by commit). The *plan-with-sub-chunks* (the F10.2, F10.3, etc. plans) is in §6.6.
 >
-> **Branch:** all work is on `phase-1/types`. 8 unpushed commits as of the latest (F10.6 + 2 doc restructure + 2 design/Phase-5 + README/F17 plan + F17.1); Phase 5 complete, Phase 6 (REPL) in progress (F17.1 done; F17.2-F17.4 pending).
+> **Branch:** all work is on `phase-1/types`. 9 unpushed commits as of the latest (F10.6 + 2 doc restructure + 2 design/Phase-5 + README/F17 plan + F17.1 + F17.2); Phase 5 complete, Phase 6 (REPL) in progress (F17.1 + F17.2 done; F17.3 + F17.4 pending).
 
 ---
 
@@ -75,14 +75,14 @@ Per design §1.3, the four design targets are non-negotiable:
 | **Phase 3** | Self-evolution (3 weeks) | ✅ done (5a-5e + F6) | 110 |
 | **Phase 4** | Production-grade (5 sub-chunks: F9.1 + F9.2 + F9.3 + F9.4 + F9.5) | ✅ done | +130 (vs Phase 3) |
 | **Phase 5** | Mesh-native sub-agents (8 sub-chunks: F10.1-F10.6) | ✅ done | +94 (vs Phase 4) |
-| **Phase 6** | Interactive REPL (1 sub-chunk done: F17.1; 3 pending: F17.2-F17.4) | ⏳ in progress | +13 (F17.1 only) |
+| **Phase 6** | Interactive REPL (2 sub-chunks done: F17.1 + F17.2; 2 pending: F17.3 + F17.4) | ⏳ in progress | +38 (F17.1 + F17.2) |
 
-**Cumulative:** 804 tests across 53 files (envoy-harness 712 + envoy-harness-adapter 92), all passing.
+**Cumulative:** 829 tests across 54 files (envoy-harness 737 + envoy-harness-adapter 92), all passing.
 Typecheck clean (`pnpm -r typecheck`).
 
-**Per-module test inventory (43 envoy-harness files + 10 envoy-harness-adapter files = 804 tests):**
+**Per-module test inventory (44 envoy-harness files + 10 envoy-harness-adapter files = 829 tests):**
 
-#### envoy-harness (Package 1, 712 tests / 43 files)
+#### envoy-harness (Package 1, 737 tests / 44 files)
 
 | Module | Tests | File | What it covers |
 |--------|-------|------|----------------|
@@ -129,6 +129,7 @@ Typecheck clean (`pnpm -r typecheck`).
 | Sub-agent fan-out (F10.4.1) | 11 | `test/subagent-fan-out.test.ts` | FanOutSpec, FanOutRegistry, aggregateFanOutResults, task tool fan-out |
 | Sub-agent subagentOf (F10.6) | 5 | `test/subagent-subagent-of.test.ts` | TraceBase.subagentOf, parent events omit, sub-agent events carry |
 | REPL loop (F17.1) | 13 | `test/repl-loop.test.ts` | --repl flag; /quit + /exit + EOF exit; blank-line skip; unknown-slash placeholder; agent reuse across turns; turns + totalCostUsd accounting |
+| REPL commands (F17.2) | 25 | `test/repl-commands.test.ts` | parseCommandLine; ReplCommandRegistry; dispatchCommand; 9 built-ins (help/model/provider/sandbox/approval/clear/cost/status/quit); customCommands; built-in wins on collision |
 
 #### envoy-harness-adapter (Package 3, 92 tests / 10 files)
 
@@ -1160,6 +1161,100 @@ inventory + REPL test row), §3 (this entry),
 **Next: F17.2** (slash command registry: `/help`,
 `/model`, `/provider`, `/sandbox`, `/approval`,
 `/clear`, `/cost`, `/status`, `/quit`).
+
+### F17.2 — Slash command registry (✅ done)
+
+9 built-in slash commands. Open to host extension via
+`ReplOptions.customCommands`. Built-ins always win on
+name collision (custom registers first; built-ins
+register last, overriding).
+
+**What it ships:**
+- `ReplCommand` type (`{ name, description, hidden?,
+  handler }`) — the public shape of a slash command.
+- `ReplCommandRegistry` class (`register`,
+  `registerAll`, `lookup`, `listVisible`, `size`).
+- `parseCommandLine(line)` — tokenizer; returns `null`
+  for non-slash lines, `{ name: "", args: [] }` for
+  a lone `/`.
+- `dispatchCommand(registry, name, args, ctx)` —
+  returns `{ kind: "ok" | "exit" | "unknown" | "error" }`.
+  `/quit` and `/exit` are intercepted at the dispatcher
+  level (return `exit`); unknown names return
+  `unknown` (the REPL prints the message + `/help`
+  hint); handler throws → `error` (the REPL prints
+  `error: <message>` to stderr but the loop continues).
+- 9 built-ins: `/help`, `/model`, `/provider`,
+  `/sandbox`, `/approval`, `/clear`, `/cost`,
+  `/status`, `/quit`. Each is ~10-30 LoC.
+- `Agent.setModel`, `setAskHandler`, `setPermissionMode`
+  — additive public setters so commands can mutate the
+  running agent (model swap, sandbox change).
+- `Agent.clearSession()` — wraps `session.clear()`.
+- `Agent.getCost()` — wraps `costTracker.total()`.
+- `ReplContext.registry` — the live registry; the
+  `/help` command reads it to enumerate visible
+  commands. Set by `runRepl` before dispatching.
+
+**`/model` v0 limitation:** `/model <id>` doesn't
+build an adapter from the id alone (the host injects
+real adapters via `ReplOptions.model`). It prints a
+hint. `/provider <name>` works for the 4 supported
+providers when the matching env var is set (the
+adapter is built via `createProviderAdapter`).
+
+**`/approval` v0 limitation:** for non-`never` modes,
+the installed handler always-allowes. A real
+per-REPL host handler (Tauri app, in-process ask
+queue) is a F17.5+ candidate.
+
+**Files touched (5 new + 2 edited):**
+- `src/cli/repl/registry.ts` (new) — `ReplCommandRegistry`,
+  `parseCommandLine`, `dispatchCommand`.
+- `src/cli/repl/commands.ts` (new) — `BUILTIN_COMMANDS`
+  + 9 command handlers.
+- `src/cli/repl/types.ts` (edit) — `ReplCommand`,
+  `ReplContext.registry`, `ReplOptions.customCommands?`.
+- `src/cli/repl/loop.ts` (edit) — replace the
+  `EXIT_COMMANDS` set + the unknown-slash placeholder
+  with the registry-based dispatch.
+- `src/cli/repl/index.ts` (edit) + `src/cli/index.ts`
+  (edit) + `src/index.ts` (edit) — re-exports.
+- `src/agent.ts` (edit) — 3 setters + 2 helpers
+  (all additive).
+- `test/repl-commands.test.ts` (new) — 25 tests.
+
+**Self-review caught 1 real bug + cleaned 2 smells:**
+1. The first test run failed: the `BUILTIN_COMMANDS`
+   array was registered BEFORE `customCommands`, but
+   `register()` is last-write-wins, so custom `/help`
+   shadowed the built-in. **Fixed:** register
+   `customCommands` first, then `BUILTIN_COMMANDS` last
+   (so built-ins override). Matches the plan's
+   "built-ins always win on name collision" contract.
+2. The `/help` and `/cost` and `/clear` commands used
+   `as unknown as { ... }` casts to access private
+   agent fields (`__registry`, `costTracker`, `session`).
+   **Cleaned:** added `Agent.clearSession()`,
+   `Agent.getCost()`, and `ReplContext.registry`. No
+   more casts; the public types match the actual access
+   surface.
+3. The `getCost()` initial signature used a `calls`
+   field that `RunCost` doesn't have. **Fixed:** dropped
+   `calls` from the getter; `/cost` no longer prints it
+   (a follow-up chunk can extend `RunCost` if needed).
+
+**Total: 829 tests across 54 files** (envoy-harness
+737 + envoy-harness-adapter 92). F17.2 is done.
+F17.3 (history persistence) is the next sub-chunk.
+
+Updated §1 (status line), §2 (status table Phase 6
+row + per-module test inventory + REPL commands row),
+§3 (this entry), §6.7 (F17.2 marked ✅), §11 (F17
+archive updated).
+
+**Next: F17.3** (history persistence:
+`~/.local/state/envoy-harness/history`).
 
 ---
 
@@ -2900,8 +2995,9 @@ laptop has no Tauri app — they need a CLI REPL.
    `agent.run` errors print to stderr but don't kill the REPL —
    the next turn can still run.
 
-2. **F17.2 — Slash command registry.** Built-in slash commands
-   that operate on local state (no model call):
+2. ✅ **F17.2 — Slash command registry** (planned 9bf4735; next
+   commit). Built-in slash commands that operate on local
+   state (no model call):
    - `/help` — list all commands
    - `/model <id>` — swap model (rebuild adapter on next turn)
    - `/provider <name>` — swap provider
@@ -5086,9 +5182,16 @@ in this chunk.
   readline loop + single-`Agent`-across-turns +
   exit on `/quit`/`/exit`/EOF + blank-line skip +
   unknown-slash placeholder + 13 tests. ~150 LoC.
-- ⏳ **F17.2** — Slash command registry (`/help`,
-  `/model`, `/provider`, `/sandbox`, `/approval`,
-  `/clear`, `/cost`, `/status`, `/quit`). ~200 LoC.
+- ✅ **F17.2** — Slash command registry. 9 built-ins
+  (`/help`, `/model`, `/provider`, `/sandbox`,
+  `/approval`, `/clear`, `/cost`, `/status`, `/quit`).
+  `ReplCommandRegistry` class + `parseCommandLine` +
+  `dispatchCommand`. Open to host extension via
+  `ReplOptions.customCommands`; built-ins always
+  win on name collision. Agent gained 3 setters
+  (`setModel`, `setAskHandler`, `setPermissionMode`)
+  + 2 helpers (`clearSession`, `getCost`) — all
+  additive. 25 new tests. ~250 LoC.
 - ⏳ **F17.3** — History persistence
   (`~/.local/state/envoy-harness/history`). ~50 LoC.
 - ⏳ **F17.4** — Tests + e2e (wire tests across

@@ -38,4 +38,16 @@ export {
   type SelfEvolveRunResult,
 } from "./run.js";
 
-export { runRepl, type LineReader, type ReplOptions, type ReplResult } from "./repl/index.js";
+export {
+  BUILTIN_COMMANDS,
+  ReplCommandRegistry,
+  dispatchCommand,
+  parseCommandLine,
+  runRepl,
+  type DispatchResult,
+  type LineReader,
+  type ReplCommand,
+  type ReplContext,
+  type ReplOptions,
+  type ReplResult,
+} from "./repl/index.js";

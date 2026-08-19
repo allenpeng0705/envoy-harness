@@ -1,14 +1,17 @@
 /**
- * F17.1 — REPL types.
+ * F17.1 + F17.2 — REPL types.
  *
  * The interactive REPL reads lines from a `LineReader`, dispatches
  * them to a long-lived `Agent`, and prints the result. A single
  * `Agent` is reused across turns (so the session, hooks, AGENTS.md,
  * and permission state are preserved).
  *
- * **Scope (F17.1):** the loop + agent reuse + exit on `/quit`,
- * `/exit`, or EOF. Slash command dispatch is F17.2; history
- * persistence is F17.3; tests are F17.4.
+ * **Scope:**
+ * - F17.1: the loop + agent reuse + exit on `/quit`, `/exit`, or EOF.
+ * - F17.2: slash command registry (`/help`, `/model`, `/provider`,
+ *   `/sandbox`, `/approval`, `/clear`, `/cost`, `/status`,
+ *   `/quit` + aliases).
+ * - F17.3: history persistence (deferred).
  *
  * **Design doc:** `docs/design.en.md` (Phase 6 F17).
  * **Implementation plan:** `docs/implementation-plan.md` §6.7.
@@ -16,7 +19,9 @@
 
 import type { HookRegistry } from "../../hooks/registry.js";
 import type { ModelAdapter } from "../../model.js";
+import type { Agent } from "../../agent.js";
 import type { RunParsedArgs } from "../argv.js";
+import type { ReplCommandRegistry } from "./registry.js";
 
 /**
  * Async line source for the REPL. The default implementation wraps
@@ -65,6 +70,12 @@ export interface ReplOptions {
    * Tests inject a fake that yields predetermined lines.
    */
   lineReader?: LineReader;
+  /**
+   * F17.2: host-registered slash commands. Built-ins always
+   * win on name collision. Use this to extend the REPL with
+   * project-specific commands (e.g. `/pr`, `/deploy`).
+   */
+  customCommands?: ReadonlyArray<ReplCommand>;
 }
 
 /**
@@ -81,4 +92,62 @@ export interface ReplResult {
   totalCostUsd: number;
   /** The session id (shared across all turns). */
   sessionId: string;
+}
+
+/**
+ * F17.2: the context passed to a slash command's handler.
+ * Carries the live agent + the parsed CLI args + the streams.
+ * Commands can mutate `args` (e.g. `/sandbox` updates the
+ * permission mode) and the next turn picks up the change.
+ */
+export interface ReplContext {
+  /** The current Agent. Commands can mutate it via the
+   *  public setters (`setModel`, `setAskHandler`,
+   *  `setPermissionMode`, `clearSession`, `getCost`). */
+  agent: Agent;
+  /** Current parsed args. Mutable; commands update fields
+   *  in place (e.g. `args.sandbox` after `/sandbox`). */
+  args: RunParsedArgs;
+  /** Streams. */
+  stdout: NodeJS.WritableStream;
+  stderr: NodeJS.WritableStream;
+  /** Counter for turns (read-only; managed by `runRepl`). */
+  turns: number;
+  /** Counter for cost (read-only; managed by `runRepl`). */
+  totalCostUsd: number;
+  /** The live command registry. Set by `runRepl` before
+   *  dispatching; the `/help` command reads it to enumerate
+   *  the visible commands. The type is non-optional because
+   *  the runner always sets it; if a host constructs a
+   *  custom context (in tests), the field is required. */
+  registry: ReplCommandRegistry;
+}
+
+/**
+ * F17.2: the shape of a slash command. The registry is
+ * open: built-ins are registered in `commands.ts`, and
+ * hosts can add project-specific commands via
+ * `ReplOptions.customCommands`.
+ *
+ * **Built-ins always win** on name collision. The registry
+ * resolves names case-sensitively (matches the input
+ * exactly); `/HELP` does NOT match `/help`.
+ */
+export interface ReplCommand {
+  /** The slash name, including the leading `/`. Example: `"/help"`. */
+  name: string;
+  /** One-line description shown in `/help`. */
+  description: string;
+  /** Hidden commands are not listed in `/help` (e.g. `/exit` is an alias of `/quit`). */
+  hidden?: boolean;
+  /**
+   * Run the command. `args` is the tokenized args (the
+   * leading slash-name is stripped; `parseCommandLine`
+   * splits on whitespace, no quote handling in v0).
+   *
+   * **Throw** to surface an error to the user. The REPL
+   * catches the throw and prints `error: <message>` to
+   * stderr; the loop continues.
+   */
+  handler: (args: ReadonlyArray<string>, ctx: ReplContext) => Promise<void> | void;
 }

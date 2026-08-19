@@ -1,25 +1,22 @@
 /**
- * F17.1 — REPL loop.
+ * F17.1 + F17.2 — REPL loop.
  *
  * The interactive REPL reads lines, dispatches them to a long-lived
  * `Agent`, and prints the result. A single `Agent` is reused across
  * turns so the session, hooks, AGENTS.md, and permission state are
  * preserved.
  *
- * **Scope (F17.1):**
- * - `--repl` activates the REPL; no positional prompt required.
- * - Readline-based prompt (`envoy> `).
- * - Single `Agent` constructed once and reused across turns.
- * - Non-slash input → `agent.run(input)` as a new turn.
- * - Exit on `/quit`, `/exit`, or EOF (Ctrl-D).
- * - Empty lines are ignored (don't reach the model).
- * - Unknown `/command` lines print to stderr (F17.2 will replace
- *   with a real registry).
+ * **Scope:**
+ * - F17.1: loop + agent reuse + exit on `/quit`, `/exit`, or EOF.
+ * - F17.2: slash command registry (built-ins: `/help`, `/model`,
+ *   `/provider`, `/sandbox`, `/approval`, `/clear`, `/cost`,
+ *   `/status`, `/quit`; host-extensible via
+ *   `ReplOptions.customCommands`).
  *
  * **Out of scope (later chunks):**
- * - Slash command registry (F17.2).
  * - History persistence (F17.3).
  * - Tab completion (deferred to F17.5 if needed).
+ * - TUI rendering (out of scope for v0; plain readline + ANSI).
  *
  * **Design doc:** `docs/design.en.md` (Phase 6 F17).
  * **Implementation plan:** `docs/implementation-plan.md` §6.7.
@@ -39,13 +36,9 @@ import {
   type Session,
   type SessionMetadata,
 } from "../../index.js";
+import { BUILTIN_COMMANDS } from "./commands.js";
+import { ReplCommandRegistry, dispatchCommand, parseCommandLine } from "./registry.js";
 import type { LineReader, ReplOptions, ReplResult } from "./types.js";
-
-/**
- * Built-in exit commands. F17.1 only knows these; F17.2 will
- * replace the hard-coded set with a real registry.
- */
-const EXIT_COMMANDS = new Set(["/quit", "/exit"]);
 
 /**
  * Run the REPL. Returns when the user types `/quit`/`/exit` or
@@ -97,7 +90,18 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
 
   const agent = new Agent(agentOptions);
 
-  // 3. The loop.
+  // 3. F17.2: build the command registry. Custom commands
+  //    register FIRST; built-ins register LAST so they
+  //    override on name collision. The plan says
+  //    "Built-ins always win on name collision"; this
+  //    order makes that contract true.
+  const registry = new ReplCommandRegistry();
+  if (opts.customCommands) {
+    registry.registerAll(opts.customCommands);
+  }
+  registry.registerAll(BUILTIN_COMMANDS);
+
+  // 4. The loop.
   let turns = 0;
   let totalCostUsd = 0;
   try {
@@ -105,20 +109,40 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
       const line = rawLine.trim();
       if (line === "") continue; // ignore blank lines
 
-      if (EXIT_COMMANDS.has(line)) {
-        // Clean exit.
-        break;
+      // 4a. Slash commands.
+      const parsed = parseCommandLine(line);
+      if (parsed !== null) {
+        const ctx = {
+          agent,
+          args: opts.args,
+          stdout: out,
+          stderr: err,
+          turns,
+          totalCostUsd,
+          registry,
+        };
+        const result = await dispatchCommand(registry, parsed.name, parsed.args, ctx);
+        switch (result.kind) {
+          case "ok":
+            continue;
+          case "exit":
+            // Clean exit.
+            return { exitCode: 0, turns, totalCostUsd, sessionId: session.id };
+          case "unknown":
+            err.write(
+              `unknown command: ${result.name}\n` +
+                `type /help for a list of commands\n`,
+            );
+            continue;
+          case "error":
+            err.write(`error: ${result.message}\n`);
+            continue;
+        }
       }
 
-      if (line.startsWith("/")) {
-        // F17.2 will replace this with the slash command registry.
-        // For F17.1, surface unknown commands and continue.
-        err.write(`unknown command: ${line} (F17.2 will add the registry)\n`);
-        continue;
-      }
-
-      // Send to the agent as a new turn. The session is shared,
-      // so each turn appends to the same transcript.
+      // 4b. Non-slash input → send to the agent as a new turn.
+      //     The session is shared, so each turn appends to
+      //     the same transcript.
       try {
         const result = await agent.run(line);
         const text = result.content

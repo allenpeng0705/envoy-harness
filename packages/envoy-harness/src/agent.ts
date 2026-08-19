@@ -397,6 +397,71 @@ export class Agent {
   }
 
   /**
+   * F17.2: replace the model adapter. Takes effect on the next
+   * `agent.run()` call. The current turn (if any) finishes with
+   * the old model.
+   *
+   * **Why public:** the REPL's `/model` and `/provider` slash
+   * commands need to swap models mid-session without rebuilding
+   * the Agent (and re-discovering AGENTS.md / re-registering
+   * hooks). The swap is just a field replacement; no other
+   * state depends on the model's identity.
+   *
+   * **Cost tracking:** the cost tracker is keyed by the
+   * `response.model` field that each adapter populates, NOT
+   * by the adapter's identity. So a model swap doesn't
+   * require touching the cost tracker — the next response
+   * carries the new model's name.
+   */
+  setModel(model: ModelAdapter): void {
+    this.model = model;
+  }
+
+  /**
+   * F17.2: replace the per-call approval handler. Takes effect
+   * on the next tool call. Pass `undefined` to remove the
+   * handler (the agent falls back to the default deny behavior).
+   */
+  setAskHandler(handler: AskHandler | undefined): void {
+    this.askHandler = handler;
+  }
+
+  /**
+   * F17.2: change the permission mode. Rebuilds the
+   * `sandboxPolicy` from the new mode + the agent's cwd. The
+   * next tool call (e.g. `bash`) sees the new policy.
+   *
+   * **Note:** the session's `metadata.permissionMode` is
+   * immutable (it's `readonly` per the Session contract). We
+   * don't update the session — we just rebuild the local
+   * `sandboxPolicy`. The session's metadata reflects the
+   * mode at session start; the running policy reflects the
+   * current mode.
+   */
+  setPermissionMode(
+    mode: NonNullable<Session["metadata"]["permissionMode"]>,
+  ): void {
+    this.sandboxPolicy = policyFromSessionMode(mode, this.cwd);
+  }
+
+  /**
+   * F17.2: clear the session transcript. The next turn starts
+   * with a clean transcript; the agent's tools, hooks, and
+   * AGENTS.md are preserved.
+   */
+  clearSession(): void {
+    this.session.clear();
+  }
+
+  /**
+   * F17.2: snapshot of the cost tracker's current totals.
+   * Used by `/cost` to print accumulated spend + tokens.
+   */
+  getCost(): { costUsd: number; inputTokens: number; outputTokens: number } {
+    return this.costTracker.total();
+  }
+
+  /**
    * Run the agent loop with the given prompt. Returns the final
    * assistant content blocks and metadata about the run.
    *
