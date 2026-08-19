@@ -152,7 +152,7 @@ ignored.
 | `ask_for_approval` | enum | Initial approval policy |
 | `sandbox_backend` | string | Future use (kernel sandbox backend name) |
 | `network_access` | bool | Future use (allow network in restricted modes) |
-| `slash_tmp_writable` | bool | If `true`, `/tmp` is writable in `workspace-write` (default: `false`) |
+| `slash_tmp_writable` | bool | Future use (allow `/tmp` writes in `workspace-write` when a real sandbox backend lands) — the v0 heuristic 6 bash validators + `writableRoots` cover the practical case today; this field is a no-op until a landlock/namespace backend reads it |
 | `writable_roots` | array of paths | Additional paths allowed in `workspace-write` beyond `cwd` |
 
 Example `~/.config/envoy-harness/config.toml`:
@@ -160,8 +160,10 @@ Example `~/.config/envoy-harness/config.toml`:
 ```toml
 permission_mode = "workspace-write"
 ask_for_approval = "on-request"
-slash_tmp_writable = false
 writable_roots = ["/Users/me/projects"]
+# `sandbox_backend` / `network_access` / `slash_tmp_writable`
+# are accepted by the schema but inert until their backends
+# ship — see the table above.
 ```
 
 Precedence: **CLI > config > default**. So

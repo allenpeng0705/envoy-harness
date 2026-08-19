@@ -65,7 +65,7 @@
 >
 > **Top of doc:** the design discussion (what & why) for Phase 5 — the mesh-native sub-agents design rationale + type surface — now lives in [`docs/design.en.md`](./design.en.md) §10.3. The *implementation record* (what shipped) is in §3 (chronological by commit). The *plan-with-sub-chunks* (the F10.2, F10.3, etc. plans) is in §6.6.
 >
-> **Branch:** all work is on `phase-1/types`. 15 unpushed commits as of the latest (T1.1 + T1.2 + T1.3 + T1.4 + T2.1 + T2.2 + T2.3 + T3.1 + T3.2 + T3.3 + T3.4 + T3.5 + T3.6 + README/QuickStart); Phases 1-7 complete, **Tier 1 review hardening (T1.1-T1.4) ✅ done** (renamed `excludeSlashTmp` → `slashTmpWritable`; added `formatVersion: 1` to both on-disk formats; added the §2.5 "Shipped vs designed" matrix; corrected DeepSeek's stale "verifier never loads" claim — the file IS loaded by `loadRulesetFromFile` at `run.ts:561`). **Tier 2 (T2.1-T2.3) ✅ done** (test helpers consolidated; TOML config loader with 6 fields + `--config` flag; `ToolExecutor` extracted from `agent.ts` with live-getter pattern for mutable state). **Tier 3 (T3.1-T3.6) ✅ done** (full `agent.ts` split; full `cli/run.ts` split with `resolveSession` moved to `session/`; MCP type seam + routing; OS sandbox type seam with `NoopSandboxExecutor`; `write` / `edit` / `git` tools; `RUN_LIVE_TESTS=1` live-test lane with 3 real-network smoke tests). All 12 sub-chunks of the Tier 1+2+3 plan in §6.8 are ✅.
+> **Branch:** all work is on `phase-1/types`. 15 unpushed commits as of the latest (T1.1 + T1.2 + T1.3 + T1.4 + T2.1 + T2.2 + T2.3 + T3.1 + T3.2 + T3.3 + T3.4 + T3.5 + T3.6 + README/QuickStart); Phases 1-7 complete, **Tier 1 review hardening (T1.1-T1.4) ✅ done** (renamed `excludeSlashTmp` → `slashTmpWritable`; added `formatVersion: 1` to both on-disk formats; added the §2.5 "Shipped vs designed" matrix; corrected DeepSeek's stale "verifier never loads" claim — the file IS loaded by `loadRulesetFromFile` at `cli/run/self-evolve.ts:96`). **Tier 2 (T2.1-T2.3) ✅ done** (test helpers consolidated; TOML config loader with 6 fields + `--config` flag; `ToolExecutor` extracted from `agent.ts` with live-getter pattern for mutable state). **Tier 3 (T3.1-T3.6) ✅ done** (full `agent.ts` split; full `cli/run.ts` split with `resolveSession` moved to `session/`; MCP type seam + routing; OS sandbox type seam with `NoopSandboxExecutor`; `write` / `edit` / `git` tools; `RUN_LIVE_TESTS=1` live-test lane with 3 real-network smoke tests). All 12 sub-chunks of the Tier 1+2+3 plan in §6.8 are ✅.
 
 ---
 
@@ -207,9 +207,10 @@ each needs a real use case before the next chunk lands.
 
 **Adjacent v0 honesty notes** (in code, not aspirational):
 
-- **Self-evolve is rule selection, not rule editing.** The committed `verifier-rules.json` is re-loadable via `loadRulesetFromFile` (T1.3) but the file holds *name selections* resolved to real rule objects, not rule bodies. The design still calls this "editing the ruleset" — v0 does not support inventing new rules (DeepSeek's "the verifier never loads" claim from the 2026-08-19 review is stale; the file IS loaded by `runSelfEvolve` at `run.ts:561`). **The narrower caveat that remains true:** the loaded ruleset currently only flows into the CLI's `self-evolve` subcommand + the in-process `runVerifierRules(rules, ctx)` call. `runLocalVerifier` in `envoy-harness-adapter` still defaults to `DEFAULT_RULES` unless the host explicitly passes the loaded ruleset through — so a mesh-side `verify()` call won't yet pick up the committed `verifier-rules.json` automatically. This is a trigger item for when the first real mesh verification lands, not a bug.
+- **Self-evolve is rule selection, not rule editing.** The committed `verifier-rules.json` is re-loadable via `loadRulesetFromFile` (T1.3) but the file holds *name selections* resolved to real rule objects, not rule bodies. The design still calls this "editing the ruleset" — v0 does not support inventing new rules (DeepSeek's "the verifier never loads" claim from the 2026-08-19 review is stale; the file IS loaded by `runSelfEvolve` at `cli/run/self-evolve.ts:96`). **The narrower caveat that remains true:** the loaded ruleset currently only flows into the CLI's `self-evolve` subcommand + the in-process `runVerifierRules(rules, ctx)` call. `runLocalVerifier` in `envoy-harness-adapter` still defaults to `DEFAULT_RULES` unless the host explicitly passes the loaded ruleset through — so a mesh-side `verify()` call won't yet pick up the committed `verifier-rules.json` automatically. This is a trigger item for when the first real mesh verification lands, not a bug.
 - **`--approval` values are `unless-trusted | on-request | granular | never`.** README and help used to list `on-failure | untrusted`; fixed in T1.4 polish. The CLI parses and validates; REPL `/approval` uses the same vocabulary.
 - **`excludeSlashTmp` was renamed to `slashTmpWritable`** (T1.1) — the inverted semantic was confusing (`true` meant "/tmp IS writable", not "exclude /tmp"). 11 files, 23 LoC, no behavior change.
+- **`slash_tmp_writable` is a no-op today** (T3.11 honest-doc realignment) — the field is accepted by the schema (T2.2) and `policyFromMode` hardcodes `slashTmpWritable: true` for all modes (`src/permissions/policy.ts:35, :44`), so the config value has no effect. `pathValidation` (bash) and the `write` / `edit` tools only consult `writableRoots`. The QUICKSTART now marks the field as "Future use (allow `/tmp` writes in `workspace-write` when a real sandbox backend lands)" — same shape as `sandbox_backend` / `network_access`. The rename in T1.1 was a semantic clarification, not an implementation: the field was a no-op as `excludeSlashTmp` too. The real fix is a future landlock/namespace backend (T3.4.1 / T3.4.2) that reads it; per "testability wins on tie" the duplicate flag-clearing check in user code is not worth shipping until a real backend exists.
 - **`formatVersion: 1`** on both the persisted-session JSONL header (T1.2) and the committed self-evolve ruleset (T1.3). Forward-compat concession: v1 accepts missing field; v2+ must require the field.
 
 **Seam philosophy:** when a feature is deferred but the *interface* is
@@ -2175,7 +2176,7 @@ the same versioned-format treatment as T1.2.
 **Honest correction** to DeepSeek's review: the
 file IS loaded — `loadRulesetFromFile` was added
 in a prior F-fix and is wired into
-`runSelfEvolve` at `run.ts:561` (3 tests in
+`runSelfEvolve` at `cli/run/self-evolve.ts:96` (3 tests in
 `test/self-evolve.test.ts` cover the loader). The
 "the verifier never loads the committed file"
 claim was stale. T1.3 is therefore the format
@@ -2426,6 +2427,102 @@ server, replaces `/mcp` placeholder).
 ### T3.4 — OS sandbox backends — pending
 
 ### T3.5 — `write` / `edit` / `git` tools — pending
+
+### T3.11 — F1 + F2 honest doc realignment (this commit)
+
+A second audit pass (post-T3.10) surfaced two doc
+findings + a one-real-doc-vs-code-lie. All three are
+fixed in this commit:
+
+**F1 — stale `run.ts:561` line refs (5 sites).**
+The `loadRulesetFromFile` call moved from
+`run.ts:561` to `cli/run/self-evolve.ts:96` when
+T3.2 split `cli/run.ts` into 8 files. The 5 line
+references in this file (top banner, §2.5 note,
+T1.3 narrative, T1.4 changelog) all pointed at
+the old location. Updated to the new file:line
+in all 5 places.
+
+**F2 — `slash_tmp_writable` is documented as
+functional but is inert.** The QUICKSTART 6-field
+table said "If `true`, `/tmp` is writable in
+`workspace-write` (default: `false`)" + the
+config example set `slash_tmp_writable = false`.
+In reality:
+
+- `policyFromMode` hardcodes `slashTmpWritable:
+  true` for all modes at
+  `src/permissions/policy.ts:35, :44`, so the
+  config value is never read.
+- `pathValidation` (bash) + the `write` / `edit`
+  tools only consult `writableRoots`. Nothing
+  reads `slashTmpWritable`.
+
+The user audit correctly noted this was a doc-vs-
+code lie that predates T1.1 (the field was a no-op
+as `excludeSlashTmp` too). Two clean fixes were
+on the table: (a) mark it "Future use" in
+QUICKSTART like `sandbox_backend` / `network_access`
+already are, or (b) wire it into the bash/write/edit
+tools. Per "testability wins on tie" the v0
+heuristic 6 bash validators + `writableRoots`
+cover the practical case today; a real
+implementation belongs to the future landlock /
+namespace backends (T3.4.1 / T3.4.2). Chose
+option (a).
+
+**What shipped (~+12 LoC, 0 tests, 0 code change):**
+
+- `packages/envoy-harness/QUICKSTART.md` (modified)
+  — the 6-field table row for `slash_tmp_writable`
+  rewritten to "Future use (allow `/tmp` writes in
+  `workspace-write` when a real sandbox backend
+  lands) — the v0 heuristic 6 bash validators +
+  `writableRoots` cover the practical case today;
+  this field is a no-op until a landlock/namespace
+  backend reads it". The config example drops
+  `slash_tmp_writable = false` and adds a comment
+  naming the three inert fields.
+- `docs/implementation-plan.md` (modified) — §2.5
+  "Adjacent v0 honesty notes" gains an explicit
+  entry: "`slash_tmp_writable` is a no-op today"
+  with the line:col refs to `policyFromMode`'s
+  hardcoded `true` + the note that the T1.1 rename
+  was a semantic clarification, not an
+  implementation.
+
+**Why not option (b) — wire `slash_tmp_writable`
+into the path validators:** the user audit's
+option (b) is a real implementation. The
+implementation is straightforward: in
+`pathValidation`, treat `/tmp` as a writable
+root when `slashTmpWritable` is true; in
+`write` / `edit`, same. ~6 lines + 2 tests.
+The reason to defer: a future landlock /
+namespace backend reads `slashTmpWritable` to
+decide whether to allow `/tmp` writes at the
+kernel level — that's the right place for the
+semantic. Shipping a user-space check that
+duplicates what the kernel check will do
+("testability wins on tie") + creates a
+"this flag works in bash but not under the
+landlock backend" gap when the backend lands.
+
+**Why a §2.5 honesty note and not a §2.5 matrix
+row:** the §2.5 matrix rows are whole features
+(TOML config loader, MCP, OS sandbox, write/edit/git).
+`slash_tmp_writable` is a single field within the
+TOML config loader row. The "Adjacent v0 honesty
+notes" section is the right home for "this
+specific thing doesn't work the way it looks like
+it does."
+
+**Cumulative:** 1005 hermetic envoy-harness + 93
+envoy-harness-adapter = 1098 tests passing;
+typecheck clean across both packages. No code
+change; no test change; no schema change (the
+field is still accepted by `ConfigLayerSchema`;
+just not honored).
 
 ### T3.10 — design doc pointers to `implementation-plan §2.5` (this commit)
 
@@ -5285,6 +5382,37 @@ useful.
 
 ## 10. Change log
 
+- **2026-08-20 (T3.11 done — F1 + F2 honest doc
+  realignment)**: Audit pass #2 surfaced two doc
+  findings + one real doc-vs-code lie, all fixed
+  in this commit. (F1) Five `run.ts:561` line
+  refs in `implementation-plan.md` were stale
+  after T3.2 split `cli/run.ts` into 8 files;
+  the `loadRulesetFromFile` call now lives in
+  `cli/run/self-evolve.ts:96`. All 5 sites
+  updated. (F2) `slash_tmp_writable` was
+  documented as functional in the QUICKSTART
+  6-field table but is a no-op:
+  `policyFromMode` hardcodes `true` at
+  `src/permissions/policy.ts:35, :44` (ignoring
+  the config), and the path validators + write/edit
+  tools only consult `writableRoots`. QUICKSTART
+  now marks the field "Future use" + the example
+  drops it. `implementation-plan.md §2.5` gains
+  an "Adjacent v0 honesty notes" entry explaining
+  the gap (the T1.1 rename was a semantic
+  clarification, not an implementation; the
+  field was a no-op as `excludeSlashTmp` too).
+  The real fix is a future landlock / namespace
+  backend (T3.4.1 / T3.4.2) reading the flag —
+  per "testability wins on tie" the duplicate
+  user-space check is not worth shipping until
+  then. No code change; no test change. Cumulative:
+  1005 hermetic envoy-harness + 93
+  envoy-harness-adapter = 1098 tests passing;
+  typecheck clean. Updated §2.5 (honesty note
+  added), §3.7 (T3.11 entry), §10 (this entry).
+
 - **2026-08-19 (T3.10 done — design doc pointers
   to `implementation-plan §2.5`)**: The §2.5
   "Shipped vs designed" matrix in this file is the
@@ -5513,7 +5641,7 @@ useful.
   when the next chunk lands. Adjacent honesty notes
   cover: self-evolve is rule selection not rule
   editing (the file IS loaded by `loadRulesetFromFile`
-  at `run.ts:561`; DeepSeek's stale claim is
+  at `cli/run/self-evolve.ts:96`; DeepSeek's stale claim is
   explicitly corrected); `--approval` value list
   (`unless-trusted | on-request | granular | never`,
   the old `on-failure | untrusted` is wrong);
@@ -5545,7 +5673,7 @@ useful.
   08-19 review: the "the verifier never loads the
   committed file" claim was stale —
   `loadRulesetFromFile` was added in a prior F-fix
-  and is wired into `runSelfEvolve` at `run.ts:561`
+  and is wired into `runSelfEvolve` at `cli/run/self-evolve.ts:96`
   (3 tests cover the loader). T1.3 is therefore
   the format version + visibility log + edge-case
   tests, not a fresh wiring. Visibility log: prints
