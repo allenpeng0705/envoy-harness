@@ -140,7 +140,7 @@ function wireToLocalAgentResult(wire: WireAgentResult): LocalAgentResult {
       backend: "linux-landlock",
       writableRoots: [],
       networkAccess: false,
-      excludeSlashTmp: true,
+      slashTmpWritable: true,
     },
     metrics: {
       inputTokens: wire.metrics.promptTokens ?? 0,

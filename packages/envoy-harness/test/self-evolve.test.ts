@@ -570,7 +570,8 @@ describe("loadRulesetFromFile", () => {
       { content: [{ type: "text", text: "x" }] } as never,
       "test",
     );
-    expect(verdict.kind).toBe("pass");
+    expect(verdict).not.toBeNull();
+    expect(verdict!.kind).toBe("pass");
   });
 
   it("runOneCycle throws when the frozen benchmark is missing", async () => {

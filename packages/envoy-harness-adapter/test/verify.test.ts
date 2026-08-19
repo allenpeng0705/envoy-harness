@@ -163,7 +163,7 @@ describe("runLocalVerifierOnLocal", () => {
         backend: "linux-landlock",
         writableRoots: [],
         networkAccess: false,
-        excludeSlashTmp: true,
+        slashTmpWritable: true,
       },
       metrics: { inputTokens: 100, outputTokens: 50, costUsd: 0.005 },
       iterations: 2,

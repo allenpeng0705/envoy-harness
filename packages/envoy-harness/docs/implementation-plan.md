@@ -10,18 +10,21 @@
 > (`docs/boundary.en.md`) says *what belongs in envoy-harness vs
 > EnvoyMesh*; this file assumes the boundary.
 >
-> **Status as of last commit:** F14.3 done on `phase-1/types` (Phase 7 complete).
+> **Status as of last commit:** T1.4 done on `phase-1/types` (Tier 1 review hardening pass complete).
 >
-> - **Total:** 1025 tests across 62 files (envoy-harness 932 / 52
+> - **Total:** 1043 tests across 67 files (envoy-harness 950 / 57
 >   files + envoy-harness-adapter 93 / 10 files). All passing.
 > - **Typecheck:** clean (`pnpm -r typecheck`).
 > - **Docs:** README.md brought up to Phase 6+7
 >   (REPL section + persistence section + updated
 >   feature table + 26-command listing + project
->   layout + test count 1025); new QUICKSTART.md
->   focused on how-to (Part 1: use it; Part 2: embed
->   it; Part 3: bridge to EnvoyMesh). README is
->   the reference; QUICKSTART is the recipe.
+>   layout); new QUICKSTART.md focused on how-to
+>   (Part 1: use it; Part 2: embed it; Part 3:
+>   bridge to EnvoyMesh). §2.5 of this plan adds
+>   the "Shipped vs designed" matrix that the
+>   DeepSeek 2026-08-19 review asked for
+>   (4 documented-but-unimplemented features with
+>   v0 status + trigger for the next chunk).
 > - **Phase 1 (v0 spine):** ✅ done (Chunks 1-4d, 220 tests)
 > - **Phase 2 (Mesh-native):** ✅ done (F7 + F8, 540 tests)
 > - **Phase 3 (Self-evolution):** ✅ done (5a-5e + F6, 110 tests)
@@ -35,20 +38,34 @@
 >   The F18 gap-analysis commands (`/rename`, `/copy`,
 >   `/review`, `/export`) are all shipped; `/new`
 >   was already in F17.5.
+> - **Tier 1 review hardening (2026-08-19):**
+>   ✅ done (T1.1 + T1.2 + T1.3 + T1.4 — see §3.7).
+>   Renamed `excludeSlashTmp` → `slashTmpWritable`;
+>   added `formatVersion: 1` to both on-disk
+>   formats (persisted-session JSONL header + the
+>   committed self-evolve ruleset); §2.5 "Shipped
+>   vs designed" matrix closes the third category
+>   of the DeepSeek review (the other 6 categories
+>   are Tier 2 / Tier 3 work — see §6.8).
 >
 > **How to read this document.** §1 is project context (1 page).
 > §2 is the status snapshot (test count + per-module inventory).
-> §3 is the chronological "done work" record (per-commit, by phase).
-> §4 is the architectural invariants (the 7 things we hold). §5 is
-> the in-flight risks and known issues. §6 is the planned work
-> (Phase 6+). §7 is the sub-chunk archive (the F6 archive; F10
-> plans are kept in §6.6 for in-context reference). §8 is the
+> §2.5 is the "shipped vs designed" matrix (4 features that
+> the design describes but v0 doesn't ship, with status +
+> trigger). §3 is the chronological "done work" record
+> (per-commit, by phase). §3.5 is the Phase 6 (REPL) done
+> work. §3.7 is the Tier 1 done work. §4 is the architectural
+> invariants (the 7 things we hold). §5 is the in-flight
+> risks and known issues. §6 is the planned work
+> (Phase 6+). §6.8 is the Tier 2 / Tier 3 plan.
+> §7 is the sub-chunk archive (the F6 archive; F10 plans
+> are kept in §6.6 for in-context reference). §8 is the
 > "how to extend" recipes. §9 is references. §10 is the change
 > log (chronological).
 >
 > **Top of doc:** the design discussion (what & why) for Phase 5 — the mesh-native sub-agents design rationale + type surface — now lives in [`docs/design.en.md`](./design.en.md) §10.3. The *implementation record* (what shipped) is in §3 (chronological by commit). The *plan-with-sub-chunks* (the F10.2, F10.3, etc. plans) is in §6.6.
 >
-> **Branch:** all work is on `phase-1/types`. 20 unpushed commits as of the latest (F10.6 + 2 doc restructure + 2 design/Phase-5 + README/F17 plan + F17.1 + F17.2 + commands sweep plan + F17.2.5 + F17.3 + F17.4 + F17.5 + F17.6 + fix-bugs + F14.1 + F14.2 + F14.3); Phase 5 complete, Phase 6 (REPL) fully complete, **Phase 7 (F14 persistence + bundled F18 commands) ✅ done** (F14.1 + F14.2 + F14.3 all shipped; the F18 commands `/rename` `/copy` `/review` `/export` are all live; `/new` was already in F17.5). `/undo` deferred to a future chunk (action journal scope too big; "testability wins on tie").
+> **Branch:** all work is on `phase-1/types`. 5 unpushed commits as of the latest (T1.1 + T1.2 + T1.3 + T1.4 + README/QuickStart); Phases 1-7 complete, **Tier 1 review hardening (T1.1-T1.4) ✅ done** (renamed `excludeSlashTmp` → `slashTmpWritable`; added `formatVersion: 1` to both on-disk formats; added the §2.5 "Shipped vs designed" matrix; corrected DeepSeek's stale "verifier never loads" claim — the file IS loaded by `loadRulesetFromFile` at `run.ts:561`). Tier 2 (test helpers + TOML config + ToolExecutor extraction) and Tier 3 (full agent.ts split + full cli/run.ts split + MCP + OS sandbox + write/edit/git tools + `RUN_LIVE_TESTS=1` lane) are planned in §6.8.
 
 ---
 
@@ -92,12 +109,12 @@ Per design §1.3, the four design targets are non-negotiable:
 | **Phase 6** | Interactive REPL (7 sub-chunks done: F17.1 + F17.2 + F17.2.5 + F17.3 + F17.4 + F17.5 + F17.6) | ✅ **done** | +103 (F17.1 + F17.2 + F17.2.5 + F17.3 + F17.4 + F17.5 + F17.6) |
 | **Phase 7** | Persistence + bundled F18 REPL commands (F14.1 + F14.2 + F14.3 done) | ✅ **done** | +130 (F14.1 + F14.2 + F14.3) |
 
-**Cumulative:** 1025 tests across 67 files (envoy-harness 932 / 57 files + envoy-harness-adapter 93 / 10 files), all passing.
+**Cumulative:** 1043 tests across 67 files (envoy-harness 950 / 57 files + envoy-harness-adapter 93 / 10 files), all passing.
 Typecheck clean (`pnpm -r typecheck`).
 
 **Per-module test inventory (57 envoy-harness files + 10 envoy-harness-adapter files = 67 files):**
 
-#### envoy-harness (Package 1, 773 tests / 47 files)
+#### envoy-harness (Package 1, 950 tests / 57 files)
 
 | Module | Tests | File | What it covers |
 |--------|-------|------|----------------|
@@ -110,13 +127,15 @@ Typecheck clean (`pnpm -r typecheck`).
 | bash tool | 12 | `test/tools-bash.test.ts` | Permission modes, output capture, timeout, abort |
 | read_file tool | 5 | `test/tools-read-file.test.ts` | Success, maxBytes, ENOENT, EISDIR |
 | Session | 10 | `test/session.test.ts` | Append-only, content-block copy, newSessionId uniqueness |
+| Persisted session (F14.1) | 26 | `test/persisted-session.test.ts` | JSONL format: header validation, append, mkdir -p parent, malformed lines; +5 formatVersion tests (T1.2: missing field = v1 backward compat, non-numeric → error, non-current → "unsupported formatVersion N") |
+| Session store (F14.1) | 6 | `test/session-store.test.ts` | SessionStore.list / load / save / delete; on-disk index |
 | Agent loop (§3.4) | 17 | `test/agent.test.ts` | Single-turn, tool flow, hook integration, limits, model error |
 | CLI runner (§19) | 32 | `test/cli.test.ts` | argv parsing (run + self-evolve), runner, error paths |
 | CLI provider dispatch (F7.5) | 28 | `test/cli-provider-dispatch.test.ts` | --provider openai/anthropic/deepseek/ollama; --max-cost-usd |
 | E2E | 3 | `test/e2e.test.ts` | read → run → summarize (direct + via CLI) |
 | Verifier rule engine (§12) | 26 | `test/verifier.test.ts` | Each of 6 rules, runVerifierRules, combineVerdicts |
 | Scoreboard data (§13) | 16 | `test/scoreboard.test.ts` | Schemas, file I/O, hash, sign |
-| Self-evolve (§13.1) | 19 | `test/self-evolve.test.ts` | Contamination guard, parseHypothesis, 5 steps |
+| Self-evolve (§13.1) | 32 | `test/self-evolve.test.ts` | Contamination guard, parseHypothesis, 5 steps + 6 versioned-ruleset tests (T1.3: v1 object format, v0 bare-array backward compat, unknown future formatVersion → clear error, non-array `rules` field, malformed shape, end-to-end with real rule impls) |
 | Self-evolve e2e (§13) | 4 | `test/self-evolve-e2e.test.ts` | Frozen benchmark, shadow cycle, end-to-end contamination |
 | Federated pull (F6.1) | 11 | `test/federated.test.ts` | PeerSource, LocalPeerSource, filter+verify, opt-in default |
 | Federated local gate (F6.2) | 6 | `test/federated-local-gate.test.ts` | runOneCycleAgainst, adopt() splitting |
@@ -168,6 +187,39 @@ Typecheck clean (`pnpm -r typecheck`).
 | Integration (F8) | 7 | `test/integration.test.ts` | end-to-end adapter behavior |
 | RemoteMeshSubmitter (F10.3.2) | 10 | `test/remote-mesh-submitter.test.ts` | RemoteSubmitterTransport seam; thin wrapper over injected transport |
 | Smoke | 2 | `test/smoke.test.ts` | Package version export |
+
+---
+
+## 2.5 Shipped vs designed (doc-vs-code gaps)
+
+The design and the README describe four features that are
+**planned but not shipped in v0**. Each has a "deferred to /
+not in v0" status and a clear trigger for when work resumes.
+"Testability wins on tie" — none of these block adoption, and
+each needs a real use case before the next chunk lands.
+
+| # | Feature | Design ref | v0 status | Trigger / next chunk |
+|---|---------|------------|-----------|----------------------|
+| 1 | **TOML config loader** | design §20 (config schema), design §2.2 step 3, README "Profiles" | **Planned (T2.2)** — `ReplOptions.profileLoader` seam ships; the built-in TOML loader (`~/.config/envoy-harness/config.toml` / `$ENVOY_HARNESS_CONFIG`) does not. The README marks the loader explicitly as "not in v0". | T2.2 — first Tier 2 chunk; needs a `ReplProfile` consumer (the REPL `/profile` info command is the one today) |
+| 2 | **MCP (bidirectional: client + server)** | design invariant #4 §8, design §11 | **Deferred — no v0 code** — `/mcp` REPL command is a placeholder that prints "no MCP servers (the MCP integration lands in a future chunk)" (`src/cli/repl/commands-info.ts:155-167`). `McpClientRegistry` and the `[mcp_server]` config block are not implemented; no `mcp__*` tool registration path. | Tier 3 (T3.3); needs a consumer use case |
+| 3 | **OS sandbox backends (landlock / namespace)** | design §5.2 / §7 (sandbox), design §2.2 step 5 | **Deferred — heuristic only** — six bash validators + read-only redirect hardening + interpreter-blocking (`tee` etc.) are the only enforcement. The `SandboxBackend` type ships (`src/types.ts:109-114`) but no backend is implemented. The design doc and §12 explicitly note: "interpreter writes remain a documented heuristic limitation (needs the OS sandbox, design §7)". | Tier 3 (T3.4); needs a target platform + a sandbox requirement |
+| 4 | **`write` / `edit` / `git` tools** | design §10.1 (tools table), design §10.2 (git tool) | **Deferred — bash-only** — `BUILTIN_TOOLS` ships only `read_file` and `bash` (`src/tools/builtin/index.ts:17`). Code edits today go through `bash` with the 6 bash validators enforcing `git` mutating verbs + `tee` etc. The skill catalog is honest about tool exposure; the design table is aspirational. | Tier 3 (T3.5); needs a UX gap that bash doesn't cover (e.g. structured edits) |
+
+**Adjacent v0 honesty notes** (in code, not aspirational):
+
+- **Self-evolve is rule selection, not rule editing.** The committed `verifier-rules.json` is re-loadable via `loadRulesetFromFile` (T1.3) but the file holds *name selections* resolved to real rule objects, not rule bodies. The design still calls this "editing the ruleset" — v0 does not support inventing new rules (DeepSeek's "the verifier never loads" claim from the 2026-08-19 review is stale; the file IS loaded by `runSelfEvolve` at `run.ts:561`).
+- **`--approval` values are `unless-trusted | on-request | granular | never`.** README and help used to list `on-failure | untrusted`; fixed in T1.4 polish. The CLI parses and validates; REPL `/approval` uses the same vocabulary.
+- **`excludeSlashTmp` was renamed to `slashTmpWritable`** (T1.1) — the inverted semantic was confusing (`true` meant "/tmp IS writable", not "exclude /tmp"). 11 files, 23 LoC, no behavior change.
+- **`formatVersion: 1`** on both the persisted-session JSONL header (T1.2) and the committed self-evolve ruleset (T1.3). Forward-compat concession: v1 accepts missing field; v2+ must require the field.
+
+**Seam philosophy:** when a feature is deferred but the *interface* is
+shipped, the host (REPL or EnvoyMesh) can inject the missing piece without
+a package upgrade. Today:
+
+- `ReplOptions.profileLoader` — host supplies; v0 has no built-in
+- `McpClientRegistry` / `mcpServer` — no seam yet; lands with T3.3
+- `SandboxBackend` type exists; no `SandboxExecutor` seam; lands with T3.4
+- `write` / `edit` / `git` — no `ToolDefinition`; lands with T3.5
 
 ---
 
@@ -2032,6 +2084,160 @@ Cumulative 932 + 93 = 1025 tests passing.
   or MD only)
 - `/export --redact` (v0 is raw, no secret
   redaction)
+
+---
+
+## 3.7 Tier 1 — review hardening pass (2026-08-19)
+
+After Phase 7 closed, a full code + design review
+(DeepSeek, 2026-08-19) found four categories of
+remaining work: structural concerns in `agent.ts` /
+`cli/run.ts`, doc-vs-code gaps (the new §2.5 matrix),
+on-disk format versioning, and a stale flag name. The
+**Tier 1 sub-chunks** close the format-versioning
++ flag-name + matrix-doc gaps, none of which require
+a refactor of the loop or the CLI. **Tier 2 / Tier 3**
+hold the structural and feature-deferred work
+(consolidate test helpers, TOML config loader, split
+`agent.ts`, split `cli/run.ts`, MCP, OS sandbox,
+write/edit/git tools).
+
+### T1.1 — rename `excludeSlashTmp` → `slashTmpWritable` (`eb080c8`)
+
+The field name was inverted: `excludeSlashTmp: true`
+meant "/tmp IS writable" (i.e. /tmp is *not* excluded
+from the writable-roots set). The semantic was a
+common foot-gun in the README and the help output.
+
+**What shipped:** 11 files, 23 LoC, no behavior
+change. The default in `BUILTIN_TOOLS` and the
+REPL/CLI plumbing invert accordingly. The
+permission-policy extractor (F14.1 supporting
+refactor) and the bash tool's `pathValidation` both
+read the new name.
+
+**Tests:** no new tests; the existing
+`tools-bash.test.ts` and `permissions-bash.test.ts`
+fixtures already cover both the `slashTmpWritable`
+true and false cases.
+
+### T1.2 — `formatVersion: 1` on persisted-session JSONL header (`dfccc52`)
+
+The persisted-session library (`PersistedSession`)
+writes a JSONL file with a header line and one
+message per line. Pre-release is the time to add
+forward-compat discipline before any real consumer
+ships. T1.2 adds the same `formatVersion` field
+that the SQLite `SCHEMA_VERSION` and the deepseek
+harness `SESSION_FORMAT_VERSION` use.
+
+**What shipped (~162 LoC, +5 tests):**
+- `PersistedHeader.formatVersion: number`
+  (in `src/session/persisted-session.ts`)
+- `PERSISTED_SESSION_FORMAT_VERSION = 1` exported
+  constant
+- `open()` validates: missing field → v1 (backward
+  compat for any file written this week, none in
+  production); non-numeric → `"invalid
+  formatVersion: <value>"`; non-current →
+  `"unsupported formatVersion N (this build
+  supports version V)"` and throws
+- Forward-compat concession (documented in the
+  constant's JSDoc): v1 accepts the missing field;
+  v2+ MUST require the field. We enforce that when
+  we bump `PERSISTED_SESSION_FORMAT_VERSION`.
+
+**5 new tests in `test/persisted-session.test.ts`:**
+missing field = v1 (backward compat); non-numeric →
+throws; non-current (e.g. 2) → throws with the
+"unsupported" message; round-trip preserves
+formatVersion; corrupt header is still rejected.
+
+### T1.3 — version + visibility for the self-evolve ruleset file (`81eb4e6`)
+
+The verifier's committed ruleset file
+(`verifier-rules.json`) is the on-disk artifact the
+self-evolve cycle writes. Pre-T1.3 the file was
+a bare array `[{name, ...}]`; pre-release we add
+the same versioned-format treatment as T1.2.
+**Honest correction** to DeepSeek's review: the
+file IS loaded — `loadRulesetFromFile` was added
+in a prior F-fix and is wired into
+`runSelfEvolve` at `run.ts:561` (3 tests in
+`test/self-evolve.test.ts` cover the loader). The
+"the verifier never loads the committed file"
+claim was stale. T1.3 is therefore the format
+version + visibility log + edge-case tests, not
+a fresh wiring.
+
+**What shipped (~190 LoC, +6 tests):**
+- `RULESET_FORMAT_VERSION = 1` exported constant
+  (parallel to T1.2's `PERSISTED_SESSION_FORMAT_VERSION`)
+- `commitCandidate` writes
+  `{formatVersion: 1, rules: [...]}`
+- `loadRulesetFromFile` accepts both v1 (object
+  with `formatVersion` + `rules`) and v0 (bare
+  array, legacy). Any other `formatVersion` →
+  clear error
+- Visibility log: `runSelfEvolve` prints whether
+  it's using the committed ruleset (with rule
+  count + path) or the `DEFAULT_RULES` (with the
+  reason). Without this, a fresh install silently
+  uses `DEFAULT_RULES` and the user wonders why
+  their committed file isn't being read
+- Dropped the `_stderr` (underscore-prefix) arg
+  idiom in `runSelfEvolve` — it's now a real
+  `stderr` parameter
+
+**6 new tests in `test/self-evolve.test.ts`:**
+v1 file (object with `formatVersion` + `rules`);
+v0 file (bare array) for backward compat;
+unknown future `formatVersion` → clear error;
+v1 file with non-array `rules` field → `null`;
+malformed shape (neither array nor object) →
+`null`; end-to-end: a v1 file's rule impls are
+the real ones (not stubs); the loader returns
+them ready to call.
+
+### T1.4 — "Shipped vs designed" matrix (this commit)
+
+Doc-only. Adds §2.5 to this plan, listing the four
+documented-but-unimplemented features (TOML config
+loader, MCP, OS sandbox backends, write/edit/git
+tools) with their design reference, v0 status, and
+the next chunk that resumes the work. Also fixes
+adjacent honesty notes: self-evolve is rule
+selection not rule editing, `--approval` value list,
+`excludeSlashTmp` → `slashTmpWritable` rename, and
+the `formatVersion: 1` discipline on the two
+on-disk formats.
+
+**What shipped (~0 LoC, 0 tests):**
+- New §2.5 "Shipped vs designed" matrix (4 rows
+  + adjacent v0 honesty notes + seam philosophy)
+- Per-module inventory updated: cumulative 1025
+  → 1043 (+18 across `persisted-session.test.ts`
+  and `self-evolve.test.ts`); Self-evolve row 19 → 32
+  (with T1.3 +6 note); new Persisted session
+  (F14.1, 26) and Session store (F14.1, 6) rows
+- New §3.7 (this section) for the Tier 1 done
+  work; new §6.8 (below) for the Tier 2 / Tier 3
+  plan
+- §10 change log entry for T1.4
+
+**Out of scope (deferred to Tier 2 / Tier 3):**
+- TOML config loader → T2.2
+- Consolidate test helpers → T2.1
+- Extract `ToolExecutor` from `agent.ts` → T2.3
+- Full `agent.ts` split (`ToolExecutor` + `RunState`
+  + REPL-only facade) → T3.1
+- Full `cli/run.ts` split (`one-shot` / `repl` /
+  `team` / `self-evolve` + dispatcher; move
+  `resolveSession` into `session/`) → T3.2
+- MCP (bidirectional) → T3.3
+- OS sandbox backends (landlock / namespace) → T3.4
+- `write` / `edit` / `git` tools → T3.5
+- `RUN_LIVE_TESTS=1` live-test lane → T3.6
 
 ---
 
@@ -4166,6 +4372,50 @@ plan (this section) → data layer (types) → algorithm
 
 ---
 
+## 6.8 Tier 2 / Tier 3 — post-Phase-7 cleanup (2026-08-19)
+
+Phase 7 (F14 persistence + bundled F18 commands) is
+done. DeepSeek's 2026-08-19 review identified
+structural concerns and feature gaps that don't
+block adoption. The work is split into Tier 2
+(structural cleanup, no new features) and Tier 3
+(features + bigger refactors).
+
+| ID | Scope | Files | Status |
+|----|-------|-------|--------|
+| **T1.1** | Rename `excludeSlashTmp` → `slashTmpWritable` (inverted semantic was confusing) | 11 files, 23 LoC | ✅ done (`eb080c8`) |
+| **T1.2** | `formatVersion: 1` on persisted-session JSONL header; `PERSISTED_SESSION_FORMAT_VERSION` constant; `open()` validates (missing = v1, non-numeric → error, non-current → "unsupported") | `src/session/persisted-session.ts` + 1 test file | ✅ done (`dfccc52`) |
+| **T1.3** | `RULESET_FORMAT_VERSION: 1` on committed ruleset; `loadRulesetFromFile` accepts v1 + v0 (legacy bare array); visibility log in `runSelfEvolve` ("using committed ruleset (N rules from <path>)" or "using DEFAULT_RULES") | `src/scoreboard/self-evolve.ts` + 1 test file | ✅ done (`81eb4e6`) |
+| **T1.4** | §2.5 "Shipped vs designed" matrix (4 features) + per-module inventory updates + §3.7 done-work entries + this section | doc-only | ✅ done (this commit) |
+| **T2.1** | Consolidate test helpers (`StringWritable`, `scriptedModel`, `fakeLineReader`, `makeArgs`, etc.) into `test/helpers.ts` — moves ~150 LoC, no new tests. Do this BEFORE the first Tier 3 sub-chunk so we don't duplicate the helpers again. | `test/helpers.ts` (new) + 6 test files | ⏳ planned |
+| **T2.2** | TOML config loader (`src/config/`). Closes §2.5 row #1. Loads `~/.config/envoy-harness/config.toml` + `$ENVOY_HARNESS_CONFIG` + `.envoy/config.toml` in cwd (design §20.1 layer composition). Resolved at session start. Wires into `AgentOptions` and the CLI. ~150 LoC, +5 tests. | `src/config/loader.ts` (new) + `src/config/schema.ts` (new) + `src/types.ts` (additive) + 1 test file | ⏳ planned |
+| **T2.3** | Extract `ToolExecutor` from `agent.ts` (hook → approval → permission → execute → trace seam). Pure refactor; no behavior change; the seam the mesh-side hook surface plugs into. ~200 LoC moved. | `src/agent/executor.ts` (new) + `src/agent.ts` (thinner) | ⏳ planned |
+| **T3.1** | Full `agent.ts` split: `ToolExecutor` (T2.3) + `RunState` (policy + cost + abort + `setTitle` + `compact` + `newSession`) + facade (public methods delegate to RunState). REPL-only mutators (`setTitle`, `compact`, `newSession`, `clearSession`) live behind a `ReplAgent` facade or `Agent` private methods exposed only via a separate `ReplAgentHandle`. | `src/agent/{facade,state,executor,types}.ts` + `src/agent.ts` (thin) | ⏳ planned |
+| **T3.2** | Full `cli/run.ts` split: `cli/run/{one-shot,repl,team,self-evolve}.ts` + dispatcher. Move `resolveSession` into `session/` (next to `SessionStore`). | `src/cli/run/{index,one-shot,repl,team,self-evolve}.ts` (new) + `src/session/resolve.ts` (new) | ⏳ planned |
+| **T3.3** | MCP (bidirectional: client + server) per design §11 + invariant #4. `McpClientRegistry` (consume) + `mcpServer` (expose tools). Replace `/mcp` placeholder. ~400-600 LoC, +10-15 tests. | `src/mcp/{client,server,registry,index}.ts` (new) + `src/types.ts` (additive) + `src/cli/repl/commands-info.ts` (replace placeholder) | ⏳ planned |
+| **T3.4** | OS sandbox backends per design §5.2 / §7. `linux-landlock` (Linux) + `process-fs-namespace` (POSIX). `SandboxExecutor` seam. Closes the "interpreter writes" heuristic gap. | `src/sandbox/{backend,linux-landlock,process-fs-namespace,index}.ts` (new) + `src/agent.ts` (additive) | ⏳ planned |
+| **T3.5** | `write` / `edit` / `git` tools per design §10.1. Three `ToolDefinition`s + the auto-branch git tool. Reduces the bash-only edit path. | `src/tools/builtin/{write,edit,git}.ts` (new) + `BUILTIN_TOOLS` (additive) + 1-2 test files | ⏳ planned |
+| **T3.6** | `RUN_LIVE_TESTS=1` live-test lane for the real provider/transport wiring (OpenAI/Anthropic/DeepSeek/RemoteMeshSubmitter) that hermetic tests can't cover. Opt-in via env var; requires API keys. Lives next to the hermetic tests; doesn't run in CI. | `test/live/*.test.ts` (new) + `package.json` scripts | ⏳ planned |
+
+**Why this order:**
+
+1. **T2.1 first** (test helper consolidation). Every Tier 3 sub-chunk adds new tests; doing T2.1 first stops the duplication cycle. ~1 day.
+2. **T2.2 + T2.3 in parallel** with the first Tier 3 sub-chunk that needs them. T2.2 (TOML config loader) is independent and can land any time; T2.3 (`ToolExecutor` extraction) is a precondition for T3.1 (full `agent.ts` split).
+3. **T3.1 before T3.2** (agent before CLI). T3.2's `one-shot` / `repl` / `team` / `self-evolve` modules call `Agent.run`; if `agent.ts` is still the god object, the splits have to thread through a 1266-line file. Doing T3.1 first means T3.2 splits against a thin facade.
+4. **T3.3 / T3.4 / T3.5** are independent features — order by real use case, not by code dependency.
+5. **T3.6 last** (live-test lane) — needs the most code to exist (T3.3 in particular) for the live tests to be meaningful.
+
+**What we're NOT doing (deferred to a future milestone):**
+
+- **T10.7** (`RemoteMeshSubmitter` impl in EnvoyMesh) — lives in the EnvoyMesh monorepo, not envoy-harness; tracked separately under "Phase 8 — envoy-harness as EnvoyMesh built-in".
+- **F11** (progressive disclosure for `AGENTS.md`) — no use case yet.
+- **F12** (per-host tool installation) — current workaround: custom factory.
+- **F13** (streaming tool output) — model waits for full result today; works for v0.
+- **F15** (multi-tier fan-out + dynamic count) — `FanOutSpec` + `maxSubagents` cover the v0 need.
+- **F16** (capability-driven cross-node routing) — needs a real `RemoteSubmitterTransport` impl, which is a Phase 8 item.
+
+---
+
 ## 7. F6 sub-chunk archive (Phase 3 §13.3 — federated scoreboard)
 
 F6 was planned in §6.1 and split into 4 sub-chunks. The
@@ -4300,6 +4550,103 @@ useful.
 
 ## 10. Change log
 
+- **2026-08-19 (T1.4 done — Tier 1 review hardening
+  pass)**: doc-only. Closes the third category of
+  DeepSeek's 2026-08-19 review (the "shipped vs
+  designed" matrix) by adding §2.5 to this plan: 4
+  documented-but-unimplemented features (TOML config
+  loader, MCP, OS sandbox backends, write/edit/git
+  tools), each with a v0 status and a trigger for
+  when the next chunk lands. Adjacent honesty notes
+  cover: self-evolve is rule selection not rule
+  editing (the file IS loaded by `loadRulesetFromFile`
+  at `run.ts:561`; DeepSeek's stale claim is
+  explicitly corrected); `--approval` value list
+  (`unless-trusted | on-request | granular | never`,
+  the old `on-failure | untrusted` is wrong);
+  `excludeSlashTmp` → `slashTmpWritable` (T1.1);
+  `formatVersion: 1` on both on-disk formats (T1.2 +
+  T1.3). The seam philosophy ("ship the interface
+  when you defer the implementation") is stated so
+  the §2.5 matrix has a consistent pattern. New §3.7
+  (this section) for the Tier 1 done work; new §6.8
+  (below) for the Tier 2 / Tier 3 plan. Per-module
+  inventory updated: cumulative 1025 → 1043; new
+  `Persisted session (F14.1)` (26) and
+  `Session store (F14.1)` (6) rows; `Self-evolve`
+  row 19 → 32 with the T1.3 +6 note. 0 LoC, 0
+  tests. **Next:** T2.1 (test helper consolidation,
+  no new tests, ~150 LoC moved) — do this BEFORE
+  the first Tier 3 sub-chunk so we don't duplicate
+  the helpers again.
+- **2026-08-19 (T1.3 done — version + visibility
+  for the self-evolve ruleset file)**: pre-release
+  versioned-format discipline, parallel to T1.2.
+  New const `RULESET_FORMAT_VERSION = 1`;
+  `commitCandidate` writes
+  `{formatVersion: 1, rules: [...]}`;
+  `loadRulesetFromFile` accepts both v1 (object
+  with `formatVersion` + `rules`) and v0 (bare
+  array, legacy). Any other `formatVersion` → clear
+  error. **Honest correction** to DeepSeek's 2026-
+  08-19 review: the "the verifier never loads the
+  committed file" claim was stale —
+  `loadRulesetFromFile` was added in a prior F-fix
+  and is wired into `runSelfEvolve` at `run.ts:561`
+  (3 tests cover the loader). T1.3 is therefore
+  the format version + visibility log + edge-case
+  tests, not a fresh wiring. Visibility log: prints
+  either "using committed ruleset (N rules from
+  <path>)" or "using DEFAULT_RULES (N rules; no
+  committed ruleset at <path>)". Without this, a
+  fresh install silently uses `DEFAULT_RULES` and
+  the user wonders why their committed file isn't
+  being read. 3 files, +190 LoC, +6 tests in
+  `test/self-evolve.test.ts`: v1 file; v0 file
+  (backward compat); unknown future formatVersion
+  → clear error; v1 file with non-array `rules`
+  field → null; malformed shape → null;
+  end-to-end with real rule impls (not stubs).
+  Cumulative 950 envoy-harness + 93 adapter = 1043
+  tests passing; typecheck clean. Commit `81eb4e6`.
+  **Next:** T1.4 (doc-only Shipped vs Designed
+  matrix).
+- **2026-08-19 (T1.2 done — `formatVersion: 1` on
+  persisted-session JSONL header)**: pre-release
+  forward-compat discipline, parallel to the SQLite
+  `SCHEMA_VERSION` and `SESSION_FORMAT_VERSION`.
+  New const `PERSISTED_SESSION_FORMAT_VERSION = 1`;
+  `PersistedHeader.formatVersion: number`;
+  `open()` validates: missing field → v1 (backward
+  compat for any file written this week, none in
+  production); non-numeric → "invalid
+  formatVersion: <value>"; non-current → "unsupported
+  formatVersion N (this build supports version V)"
+  and throws. Forward-compat concession (documented
+  in the constant's JSDoc): v1 accepts the missing
+  field; v2+ MUST require the field. 2 files,
+  +162 LoC, +5 tests in `test/persisted-session.test.ts`:
+  missing field = v1 (backward compat);
+  non-numeric → throws; non-current (e.g. 2) →
+  throws with the "unsupported" message;
+  round-trip preserves formatVersion; corrupt
+  header is still rejected. Typecheck clean. Commit
+  `dfccc52`. **Next:** T1.3 (ruleset format version
+  + visibility log).
+- **2026-08-19 (T1.1 done — rename
+  `excludeSlashTmp` → `slashTmpWritable`)**: the
+  field name was inverted (`true` meant "/tmp IS
+  writable", not "exclude /tmp from exclusion");
+  common foot-gun in the README and the help
+  output. 11 files, 23 LoC, no behavior change.
+  The default in `BUILTIN_TOOLS` and the REPL/CLI
+  plumbing invert accordingly. The
+  permission-policy extractor and the bash tool's
+  `pathValidation` both read the new name. No new
+  tests; the existing fixtures already cover both
+  `slashTmpWritable: true` and `false`. Commit
+  `eb080c8`. **Next:** T1.2 (`formatVersion` on
+  JSONL header).
 - **2026-08-19 (F14.3 done — Phase 7 complete)**: F14.3
   is the final F14 sub-chunk. Ships the two remaining
   F18 commands from the codex/claudecode/pi gap
