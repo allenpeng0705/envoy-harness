@@ -257,3 +257,96 @@ describe("verify() when cross-verify fails", () => {
     expect(disputed.length).toBeGreaterThan(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 8 / Step 6 — buildEnvoyHarnessAdapterWithCrossVerify
+// ---------------------------------------------------------------------------
+
+import { buildEnvoyHarnessAdapterWithCrossVerify } from "../src/index.js";
+import type { AgentAdapter } from "@envoymesh/agent-adapter";
+
+describe("buildEnvoyHarnessAdapterWithCrossVerify", () => {
+  const buildAgent: BuildAgentFn = () => {
+    throw new Error("buildAgent not used in this test");
+  };
+  const signResult: SignResultFn = (unsigned) => ({
+    ...unsigned,
+    signature: "test-sig",
+  });
+  const openClawAdapter: AgentAdapter = {
+    runtime: "openclaw",
+    describeSkills: () => [],
+    buildManifest: async () => {
+      throw new Error("not used");
+    },
+    execute: async () => {
+      throw new Error("openClawAdapter.execute called in this test");
+    },
+    verify: async () => [{ kind: "pass", score: 0.9, confidence: "high" }],
+  };
+
+  it("returns an EnvoyHarnessAdapter with crossVerifyWith wired", () => {
+    const adapter = buildEnvoyHarnessAdapterWithCrossVerify({
+      buildAgent,
+      signResult,
+      workerPeerId: "peer-1",
+      openClawAdapter,
+    });
+    expect(adapter.runtime).toBe("envoy-harness");
+    // The cross-verify is internal; the only way
+    // to assert it's wired is to call verify() and
+    // observe that the cross closure was invoked.
+    // The full e2e is covered in
+    // cross-verify.test.ts (F9.5.2 #2 — "with
+    // crossVerifyWith, verify() returns local +
+    // cross verdicts"). Here we just check the
+    // factory doesn't throw and returns a valid
+    // adapter.
+    expect(typeof adapter.verify).toBe("function");
+  });
+
+  it("wires defaultCrossVerify (cross re-runs skill on openClaw)", async () => {
+    let crossCalled = false;
+    const openClaw: AgentAdapter = {
+      ...openClawAdapter,
+      execute: async () => {
+        crossCalled = true;
+        return {
+          version: "0.1",
+          runtime: "openclaw",
+          skillId: "code-review",
+          workerPeerId: "peer-1",
+          objective: "x",
+          content: [{ kind: "text", text: "cross result" }],
+          inputArtifacts: [],
+          metrics: { promptTokens: 0, completionTokens: 0, costUsd: 0 },
+          createdAt: new Date().toISOString(),
+          correlationId: "corr-1",
+          signature: "",
+          raw: { type: "text", text: "cross result", messages: [], content: [], metrics: { inputTokens: 0, outputTokens: 0, costUsd: 0 }, iterations: 0, toolCalls: 0, stopReason: "end_turn", sandboxPolicy: { mode: "read-only", approval: "on-request", backend: "linux-landlock", writableRoots: [], networkAccess: false, slashTmpWritable: true } },
+        };
+      },
+    };
+    const adapter = buildEnvoyHarnessAdapterWithCrossVerify({
+      buildAgent,
+      signResult,
+      workerPeerId: "peer-1",
+      openClawAdapter: openClaw,
+    });
+    const signedResult: SignedAgentResult = {
+      version: "0.1",
+      runtime: "envoy-harness",
+      skillId: "code-review",
+      workerPeerId: "peer-1",
+      objective: "do the thing",
+      content: [{ kind: "text", text: "local result" }],
+      inputArtifacts: [],
+      metrics: { promptTokens: 0, completionTokens: 0, costUsd: 0 },
+      createdAt: new Date().toISOString(),
+      correlationId: "corr-1",
+      signature: "test-sig",
+    };
+    await adapter.verify({ result: signedResult, objective: "do the thing" });
+    expect(crossCalled).toBe(true);
+  });
+});

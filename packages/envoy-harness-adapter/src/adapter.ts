@@ -78,7 +78,7 @@ import {
 
 import { ENVOY_HARNESS_SKILLS, ENVOY_HARNESS_VERSION, getToolsForSkill } from "./skills.js";
 import { localToWireResult } from "./translation.js";
-import { runLocalVerifier, type CrossVerifyFn } from "./verify.js";
+import { defaultCrossVerify, runLocalVerifier, type CrossVerifyFn } from "./verify.js";
 
 // ---------------------------------------------------------------------------
 // Options
@@ -447,4 +447,76 @@ export function defaultBuildAgentFactory(opts: {
       ...(opts.meshSubmitter ? { meshSubmitter: opts.meshSubmitter } : {}),
     });
   };
+}
+
+// ---------------------------------------------------------------------------
+// Cross-verify factory (Phase 8 / Step 6)
+// ---------------------------------------------------------------------------
+
+/**
+ * Phase 8 / Step 6 — `buildEnvoyHarnessAdapterWithCrossVerify`.
+ *
+ * The EnvoyMesh host's `agent-runtime-envoy/factory.ts`
+ * uses this factory to wire envoy-harness with cross-
+ * verify on the OpenClaw runtime. The factory:
+ * 1. Constructs the `EnvoyHarnessAdapter` with the
+ *    usual inputs (buildAgent, signResult, workerPeerId).
+ * 2. Adds `crossVerifyWith: defaultCrossVerify(openClawAdapter)`
+ *    so `adapter.verify(input)` re-runs the same
+ *    skill on the OpenClaw adapter and returns the
+ *    local verifier's verdicts for the new result.
+ *
+ * **Why the factory lives in the bridge, not the host:**
+ * the bridge is the seam that knows about both
+ * envoy-harness's local verifier rules and the
+ * `defaultCrossVerify` closure. The host just hands
+ * in the OpenClaw adapter; the bridge composes.
+ *
+ * **Why the cross adapter is the OpenClaw runtime:**
+ * the Q4 (a) design intent is "envoy-writes +
+ * OpenClaw-verifies". The orchestrator's
+ * `chain-verify-loop` does this at the orchestrator
+ * level (escalation step); this factory provides
+ * the same primitive at the adapter level (the
+ * `verify()` method). The two paths are
+ * complementary — the adapter-level path is for
+ * callers that want a self-contained cross (e.g.
+ * `node-service-impl`'s test seam); the
+ * orchestrator-level path is for production Team
+ * jobs.
+ *
+ * **v0 limits (inherited from F9.5 `defaultCrossVerify`):**
+ * - `inputArtifacts` is NOT re-passed (the cross
+ *   adapter may not have access to the same files;
+ *   v0 trusts the worker to include any needed
+ *   context in the result content).
+ * - `costCeilingUsd: 0` (the orchestrator is the
+ *   authoritative budget gate; v0 cross-verify
+ *   runs for free to keep the cost predictable).
+ * - `deadlineMs: 30_000` (tight; cross-verify
+ *   should be fast or the orchestrator escalates).
+ *
+ * **Stability:** additive. Existing callers that
+ * pass `crossVerifyWith` directly are unchanged.
+ */
+export interface BuildEnvoyHarnessAdapterWithCrossVerifyInput
+  extends EnvoyHarnessAdapterInput {
+  /**
+   * The OpenClaw adapter (or any other
+   * `AgentAdapter`) used as the cross-verifier.
+   * The factory wires
+   * `defaultCrossVerify(openClawAdapter)` so the
+   * adapter's `verify()` re-runs the same skill
+   * on the cross adapter.
+   */
+  openClawAdapter: AgentAdapter;
+}
+
+export function buildEnvoyHarnessAdapterWithCrossVerify(
+  input: BuildEnvoyHarnessAdapterWithCrossVerifyInput,
+): EnvoyHarnessAdapter {
+  return new EnvoyHarnessAdapter({
+    ...input,
+    crossVerifyWith: defaultCrossVerify(input.openClawAdapter),
+  });
 }

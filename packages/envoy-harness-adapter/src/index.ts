@@ -54,7 +54,9 @@ export {
 export {
   EnvoyHarnessAdapter,
   defaultBuildAgentFactory,
+  buildEnvoyHarnessAdapterWithCrossVerify,
   type BuildAgentFn,
+  type BuildEnvoyHarnessAdapterWithCrossVerifyInput,
   type EnvoyHarnessAdapterInput,
   type SignResultFn,
 } from "./adapter.js";
