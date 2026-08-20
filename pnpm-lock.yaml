@@ -46,7 +46,7 @@ importers:
         specifier: link:../../../EnvoyMesh/packages/agent-adapter
         version: link:../../../EnvoyMesh/packages/agent-adapter
       '@envoymesh/envoy-harness':
-        specifier: workspace:*
+        specifier: link:../envoy-harness
         version: link:../envoy-harness
       '@envoymesh/identity':
         specifier: link:../../../EnvoyMesh/packages/identity

@@ -45,7 +45,7 @@
   ],
   "dependencies": {
     "@envoymesh/agent-adapter": "link:../../../EnvoyMesh/packages/agent-adapter",
-    "@envoymesh/envoy-harness": "workspace:*",
+    "@envoymesh/envoy-harness": "link:../envoy-harness",
     "@envoymesh/identity": "link:../../../EnvoyMesh/packages/identity",
     "@envoymesh/protocol": "link:../../../EnvoyMesh/packages/protocol"
   },
