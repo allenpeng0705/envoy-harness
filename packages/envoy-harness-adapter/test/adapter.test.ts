@@ -422,4 +422,46 @@ describe("defaultBuildAgentFactory", () => {
     expect(isReadOnlySkill("code-review")).toBe(true);
     expect(isReadOnlySkill("code-edit")).toBe(false);
   });
+
+  it("wires a host-injected meshSubmitter into the Agent (so the task tool fires)", () => {
+    // Phase 8 Step 2 / b3 — when the host injects a
+    // `meshSubmitter`, the Agent the factory builds must carry
+    // it (so its `task` tool is registered). The submitter is
+    // opaque here — the factory just passes it through. The
+    // shape: `{ submit: (input, signal) => ... }` is what the
+    // host's LocalCrossRuntimeSubmitter (or a no-op) provides.
+    const model = scriptedModel([]);
+    const fakeSubmitter = { submit: () => Promise.resolve({} as never) };
+    const factory = defaultBuildAgentFactory({
+      model,
+      meshSubmitter: fakeSubmitter as never,
+    });
+    expect(typeof factory).toBe("function");
+    // The factory is opaque; we verify wiring by building an
+    // agent and reading its `meshSubmitter` field (Agent
+    // exposes the field per its `@internal` contract).
+    const agent = factory({
+      skillId: "code-review",
+      objective: "test",
+      costCeilingUsd: 1,
+      signal: new AbortController().signal,
+    });
+    expect(agent.meshSubmitter).toBe(fakeSubmitter);
+  });
+
+  it("omits meshSubmitter when not provided (no task tool — sub-agent is leaf-only)", () => {
+    // The default behavior: no submitter, the Agent has no
+    // `task` tool. The sub-agent can run tools, but it can't
+    // spawn sub-sub-agents. This is the v0 (pre-b3) behavior
+    // — backward compatible.
+    const model = scriptedModel([]);
+    const factory = defaultBuildAgentFactory({ model });
+    const agent = factory({
+      skillId: "code-review",
+      objective: "test",
+      costCeilingUsd: 1,
+      signal: new AbortController().signal,
+    });
+    expect(agent.meshSubmitter).toBeUndefined();
+  });
 });

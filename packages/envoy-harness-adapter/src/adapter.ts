@@ -70,6 +70,7 @@ import {
   InMemorySession,
   newSessionId,
   ToolRegistry,
+  type MeshSubmitter,
   type ModelAdapter,
   type Session,
 } from "@envoymesh/envoy-harness";
@@ -346,10 +347,25 @@ function describeArtifact(named: { key: string; artifact: unknown }): string {
  *
  * The model is taken from the closure's `model` parameter
  * (the same `EnvoyHarnessAdapterInput.model`).
+ *
+ * **Optional `meshSubmitter`:** when provided, the
+ * `Agent` is constructed with a `meshSubmitter` so the
+ * sub-agent's `task` tool fires through the host's
+ * sub-agent pipeline (typically a
+ * `LocalCrossRuntimeSubmitter` + `LocalRuntimeRegistry`
+ * for cross-runtime delegation). Default: no submitter →
+ * no `task` tool (sub-agents can't spawn sub-sub-agents).
+ * The mesh's design invariant #9 ("sub-agents are NEW
+ * sessions, even local") still holds — the sub-agent's
+ * session is fresh, the parent's session is not shared.
  */
 export function defaultBuildAgentFactory(opts: {
   model: ModelAdapter;
   cwd?: string;
+  /** Phase 8 Step 2 / b3 — sub-agent's `task` tool
+   *  routes through this `MeshSubmitter`. Omit to
+   *  skip the `task` tool. */
+  meshSubmitter?: MeshSubmitter;
 }): BuildAgentFn {
   const cwd = opts.cwd ?? process.cwd();
   return ({ skillId, objective, costCeilingUsd, signal }) => {
@@ -385,6 +401,11 @@ export function defaultBuildAgentFactory(opts: {
       // factories may still use the `objective` param for their
       // own system prompts.
       ...(signal ? { abortSignal: signal } : {}),
+      // Phase 8 Step 2 / b3 — when a `meshSubmitter` is
+      // injected, the agent's `task` tool fires through it.
+      // Same DI shape as the sub-agent path in
+      // `defaultBuildSubagentFactory` (Package 1).
+      ...(opts.meshSubmitter ? { meshSubmitter: opts.meshSubmitter } : {}),
     });
   };
 }

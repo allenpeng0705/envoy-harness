@@ -122,12 +122,16 @@ function defaultInnerResult(): SubagentResult {
 function makeInput(
   preferredRuntime: SubagentInput["preferredRuntime"],
 ): SubagentInput {
+  // Note: `exactOptionalPropertyTypes: true` rejects
+  // `preferredRuntime: undefined`. We only spread the
+  // field when it's defined; the runtime "no preferred"
+  // case is the object without the key.
   return {
     objective: `submit to ${preferredRuntime ?? "default"}`,
     capabilityTag: "research",
     costCeilingUsd: 1,
     deadlineMs: 5000,
-    preferredRuntime,
+    ...(preferredRuntime !== undefined ? { preferredRuntime } : {}),
   };
 }
 
