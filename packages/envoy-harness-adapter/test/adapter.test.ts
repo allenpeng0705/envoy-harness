@@ -446,7 +446,8 @@ describe("defaultBuildAgentFactory", () => {
       costCeilingUsd: 1,
       signal: new AbortController().signal,
     });
-    expect(agent.meshSubmitter).toBe(fakeSubmitter);
+    // Use the public getter (the field itself is @internal).
+    expect(agent.getMeshSubmitter()).toBe(fakeSubmitter);
   });
 
   it("omits meshSubmitter when not provided (no task tool — sub-agent is leaf-only)", () => {
@@ -462,6 +463,6 @@ describe("defaultBuildAgentFactory", () => {
       costCeilingUsd: 1,
       signal: new AbortController().signal,
     });
-    expect(agent.meshSubmitter).toBeUndefined();
+    expect(agent.getMeshSubmitter()).toBeUndefined();
   });
 });

@@ -175,6 +175,18 @@ export interface LocalCrossRuntimeSubmitterOptions {
  * shape; future state (caching, retry, etc.) is additive
  * without breaking the interface.
  *
+ * **Nested sub-agents (depth):** when the host injects this
+ * submitter into a sub-agent's `Agent` (via
+ * `defaultBuildAgentFactory({ meshSubmitter })`), the nested
+ * agent ALSO gets a `task` tool routing through the same
+ * submitter. Breadth is capped per turn (`maxSubagents`),
+ * but depth is not — the model decides when to recurse, and
+ * cost ceilings bound the spend. Hosts that want to bound
+ * nesting should pass a leaf-only submitter for nested
+ * sub-agents (e.g. a submitter that throws or a
+ * depth-limited wrapper) rather than relying on the
+ * harness to cap it.
+ *
  * **The interface contract:** `submit(input, signal)` returns
  * a `SubagentResult`. The host sees one seam, regardless of
  * where the sub-agent ran (same runtime, different runtime,
@@ -236,9 +248,12 @@ export class LocalCrossRuntimeSubmitter implements MeshSubmitter {
       // Rewrite the runtime + peerId so downstream verifiers
       // see the right values. The bridge may have set these
       // to envoy-harness defaults; we know better here.
+      // Derive from `targetRuntime` (not the literal) so a
+      // future runtime added through the same bridge is
+      // labeled correctly instead of hardcoding "openclaw".
       return {
         ...result,
-        workerRuntime: "openclaw",
+        workerRuntime: targetRuntime,
         workerPeerId: this.workerPeerId,
       };
     }
