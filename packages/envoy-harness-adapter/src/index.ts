@@ -84,3 +84,41 @@ export {
   type RemoteMeshSubmitterOptions,
   type RemoteSubmitterTransport,
 } from "./remote-mesh-submitter.js";
+
+// Phase 8 Step 2 — cross-runtime (same-node) `MeshSubmitter`
+// for sub-agents that should run on a different local runtime
+// (Built-in OpenClaw today; future runtimes slot into
+// `LocalRuntimeBridge.submitToX`). The host (EnvoyMesh's
+// `LocalRuntimeRegistry`) implements the bridge. The adapter
+// itself imports no per-runtime package — same DI shape as
+// `RemoteSubmitterTransport`.
+export {
+  LocalCrossRuntimeSubmitter,
+  type LocalCrossRuntimeSubmitterOptions,
+  type LocalRuntimeBridge,
+} from "./local-cross-runtime-submitter.js";
+
+// Phase 8 Step 2 — re-export the `MeshSubmitter` types from
+// envoy-harness so the host (EnvoyMesh's `LocalRuntimeRegistry`)
+// can import the types from a single dep — it doesn't need
+// to ALSO add `@envoymesh/envoy-harness` as a direct dep just
+// to type the `LocalRuntimeBridge` interface.
+//
+// **Why here, not in envoy-harness itself:** the bridge is
+// the seam that knows about both the harness types and the
+// mesh. Re-exporting the type surface from the bridge gives
+// the host one canonical import path for cross-runtime
+// sub-agent types.
+//
+// **Stability:** pure re-exports. No type widening, no
+// field renaming. Additive; new exports from envoy-harness
+// can be re-exported here in any order.
+export type {
+  MeshSubmitter,
+  SubagentInput,
+  SubagentResult,
+  SubagentRecord,
+  RoutingHint,
+  SubagentResultSigner,
+  AgentRuntime,
+} from "@envoymesh/envoy-harness";
