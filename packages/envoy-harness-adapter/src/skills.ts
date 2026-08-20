@@ -38,13 +38,24 @@ import type { SkillDescriptor } from "@envoymesh/protocol";
  * The set of skill IDs this adapter advertises. As a
  * literal union (not `string`) so `getToolsForSkill()`
  * and the verifier can exhaustively check.
+ *
+ * Phase 8 / Step 3 commit 2 — the union grew to 8
+ * (5 envoy-harness + 3 B-class). The B-class skill
+ * IDs are kebab-case to match the convention of the
+ * other skills (`code-edit`, `code-review`, etc.);
+ * the matching tool names (`sponsor_friend` /
+ * `list_peers` / `relay_status`, snake_case) live in
+ * `EnvoyHarnessToolName`.
  */
 export type EnvoyHarnessSkillId =
   | "code-edit"
   | "code-review"
   | "doc-search"
   | "bash-run"
-  | "plan";
+  | "plan"
+  | "setup-sponsor-friend"
+  | "peer-list"
+  | "relay-status";
 
 /** The full catalog. The orchestrator reads this for the manifest. */
 export const ENVOY_HARNESS_SKILLS: ReadonlyArray<SkillDescriptor> = [
@@ -88,10 +99,71 @@ export const ENVOY_HARNESS_SKILLS: ReadonlyArray<SkillDescriptor> = [
     maxSensitivity: "private",
     tags: ["plan"],
   },
+  // Phase 8 / Step 3 — B-class skills (canonical in the
+  // bridge). Each is a thin wrapper over a BUILTIN
+  // tool the bridge ships (`sponsor_friend` /
+  // `list_peers` / `relay_status`). The bridge owns
+  // the algorithm; the adapter just advertises the
+  // skill for the manifest + per-skill tool mapping.
+  //
+  // **Why `private`:** these skills are mesh-touching
+  // and operate on the local node's trust + relay
+  // state. Exposing them on the open mesh would
+  // let any node trigger a bond request or read the
+  // local relay book. v0 keeps them `private` (the
+  // orchestrator's manifest picker reads the local
+  // merged manifest; remote nodes don't see them).
+  // A future chunk can lift to `friends` when the
+  // user explicitly opts in to a friend network.
+  //
+  // **Cost ceiling:** the bridge's own algorithm
+  // (search → join → hello → wait) can run for
+  // 6+ minutes. The `costCeilingUsd` is the soft
+  // signal; the orchestrator's `chain-budget-ledger`
+  // is the authoritative gate. v0 sets conservative
+  // ceilings (sponsor-friend is the most expensive
+  // at $1; the two observability skills are $0.1).
+  {
+    skillId: "setup-sponsor-friend",
+    description:
+      "Set up the bond with the canonical sponsor (first-launch auto-bond). " +
+      "Runs the bond flow end-to-end: search → join → hello → wait for " +
+      "bond.established. Backs the installer's primary onboarding step.",
+    costCeilingUsd: 1.0,
+    maxSensitivity: "private",
+    tags: ["mesh", "bond", "sponsor"],
+  },
+  {
+    skillId: "peer-list",
+    description:
+      "List observed peers (LAN + WAN) from the local audit log. Each " +
+      "entry shows the peer's `lastSeenAt` timestamp and the number of " +
+      "messages exchanged. Backs the connectivity diagnostics tile.",
+    costCeilingUsd: 0.1,
+    maxSensitivity: "private",
+    tags: ["mesh", "observability"],
+  },
+  {
+    skillId: "relay-status",
+    description:
+      "Show the local relay manager snapshot. Includes the relay node's " +
+      "peerId / enabled / listen addresses, the peer roster, the relay " +
+      "book, routing counters, and recent relay traces. Backs the relay " +
+      "diagnostics tile.",
+    costCeilingUsd: 0.1,
+    maxSensitivity: "private",
+    tags: ["mesh", "observability"],
+  },
 ];
 
-/** The set of well-known envoy-harness tool names. v0 ships two. */
-export type EnvoyHarnessToolName = "read_file" | "bash";
+/** The set of well-known envoy-harness tool names. v0 ships two
+ *  standard tools + 3 B-class tools (Phase 8 / Step 3). */
+export type EnvoyHarnessToolName =
+  | "read_file"
+  | "bash"
+  | "sponsor_friend"
+  | "list_peers"
+  | "relay_status";
 
 /**
  * Map a skill ID to the local tools the executor should
@@ -120,6 +192,16 @@ export function getToolsForSkill(skillId: string): ReadonlyArray<EnvoyHarnessToo
       return ["bash"];
     case "plan":
       return ["read_file"];
+    // Phase 8 / Step 3 — B-class skills. Each exposes
+    // a single tool (the bridge's BUILTIN tool). The
+    // standard read_file / bash are NOT exposed (B-class
+    // skills are mesh-touching, not file-system).
+    case "setup-sponsor-friend":
+      return ["sponsor_friend"];
+    case "peer-list":
+      return ["list_peers"];
+    case "relay-status":
+      return ["relay_status"];
     default:
       // Unknown skill ID: refuse the surface. The orchestrator
       // would not send this (it reads the manifest), so the

@@ -145,13 +145,18 @@ const baseExecuteInput = {
 // ---------------------------------------------------------------------------
 
 describe("EnvoyHarnessAdapter.describeSkills", () => {
-  it("returns the 5-skill catalog", () => {
+  it("returns the 8-skill catalog (5 envoy-harness + 3 B-class)", () => {
+    // Phase 8 / Step 3 commit 2 — the catalog grew
+    // from 5 to 8 (5 envoy-harness + 3 B-class). The
+    // test asserts the adapter returns the same list
+    // as `ENVOY_HARNESS_SKILLS` (defensive against
+    // accidental drift).
     const a = new EnvoyHarnessAdapter({
       buildAgent: buildAgentWith(scriptedModel([])),
       signResult: fakeSign("peer-1"),
       workerPeerId: "peer-1",
     });
-    expect(a.describeSkills()).toHaveLength(5);
+    expect(a.describeSkills()).toHaveLength(8);
     expect(a.describeSkills().map((s) => s.skillId).sort()).toEqual(
       [...ENVOY_HARNESS_SKILLS.map((s) => s.skillId)].sort(),
     );
@@ -165,7 +170,11 @@ describe("EnvoyHarnessAdapter.describeSkills", () => {
     });
     const skills = a.describeSkills();
     skills.pop();
-    expect(a.describeSkills()).toHaveLength(5);
+    // Phase 8 / Step 3 commit 2 — the catalog grew to 8
+    // (5 envoy-harness + 3 B-class). The defensive copy
+    // still holds: mutating the returned array doesn't
+    // affect the adapter's internal catalog.
+    expect(a.describeSkills()).toHaveLength(8);
   });
 });
 
@@ -189,7 +198,7 @@ describe("EnvoyHarnessAdapter.buildManifest", () => {
     expect(m.runtimeVersion).toBe(ENVOY_HARNESS_SKILLS[0]?.description ? "0.0.0" : "0.0.0");
     expect(m.peerId).toBe("peer-1");
     expect(m.ownerId).toBe("owner-1");
-    expect(m.skills).toHaveLength(5);
+    expect(m.skills).toHaveLength(8);
     expect(m.reputationBySkill).toEqual({
       "code-edit": 0.9,
       "code-review": 0.8,

@@ -24,18 +24,28 @@ import {
 } from "../src/skills.js";
 
 describe("ENVOY_HARNESS_SKILLS catalog", () => {
-  it("has exactly 5 skills", () => {
-    expect(ENVOY_HARNESS_SKILLS).toHaveLength(5);
+  it("has exactly 8 skills (5 envoy-harness + 3 B-class)", () => {
+    // Phase 8 / Step 3 commit 2 — the catalog grew from
+    // 5 to 8 with the addition of 3 B-class skills
+    // (setup-sponsor-friend / peer-list / relay-status).
+    // Both runtimes advertise the same 3 B-class skills
+    // per the "invoking-runtime tag" decision; see
+    // `docs/agent-harness-integration-step3.md` §3.4
+    // (EnvoyMesh monorepo) for the rationale.
+    expect(ENVOY_HARNESS_SKILLS).toHaveLength(8);
   });
 
-  it("includes the 5 expected skill IDs", () => {
+  it("includes the 8 expected skill IDs", () => {
     const ids = ENVOY_HARNESS_SKILLS.map((s) => s.skillId).sort();
     expect(ids).toEqual([
       "bash-run",
       "code-edit",
       "code-review",
       "doc-search",
+      "peer-list",
       "plan",
+      "relay-status",
+      "setup-sponsor-friend",
     ]);
   });
 
@@ -56,7 +66,7 @@ describe("ENVOY_HARNESS_SKILLS catalog", () => {
     }
   });
 
-  it("cost ceilings match the design §11 values", () => {
+  it("cost ceilings match the design §11 values (5 envoy-harness + 3 B-class)", () => {
     const ceilings = Object.fromEntries(
       ENVOY_HARNESS_SKILLS.map((s) => [s.skillId, s.costCeilingUsd]),
     );
@@ -66,6 +76,14 @@ describe("ENVOY_HARNESS_SKILLS catalog", () => {
       "doc-search": 1.0,
       "bash-run": 0.5,
       plan: 1.0,
+      // Phase 8 / Step 3 — B-class skill cost ceilings.
+      // The bridge's own algorithm can run for 6+
+      // minutes (12 attempts × 30s+), so the soft
+      // ceiling is conservative ($1); the
+      // observability skills are cheaper ($0.1 each).
+      "setup-sponsor-friend": 1.0,
+      "peer-list": 0.1,
+      "relay-status": 0.1,
     });
   });
 });
@@ -130,14 +148,27 @@ describe("ENVOY_HARNESS_VERSION", () => {
 });
 
 describe("EnvoyHarnessSkillId literal union", () => {
-  it("matches the 5 catalog IDs", () => {
+  it("matches the 8 catalog IDs", () => {
+    // Phase 8 / Step 3 commit 2 — the literal union
+    // grew to 8 (5 envoy-harness + 3 B-class).
+    // Note: `EnvoyHarnessSkillId` is the *adapter-
+    // internal* union (for the tool-name mapping in
+    // `getToolsForSkill`); the wire-side `skillId`
+    // is a plain `string` (per `@envoymesh/protocol`).
+    // The 3 B-class skill IDs here are the kebab-case
+    // string IDs, not the snake_case tool names
+    // (`sponsor_friend` / `list_peers` / `relay_status`
+    // live in `EnvoyHarnessToolName`).
     const ids: EnvoyHarnessSkillId[] = [
       "code-edit",
       "code-review",
       "doc-search",
       "bash-run",
       "plan",
+      "setup-sponsor-friend",
+      "peer-list",
+      "relay-status",
     ];
-    expect(new Set(ids).size).toBe(5);
+    expect(new Set(ids).size).toBe(8);
   });
 });

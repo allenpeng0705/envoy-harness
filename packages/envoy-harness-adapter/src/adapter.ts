@@ -73,6 +73,7 @@ import {
   type MeshSubmitter,
   type ModelAdapter,
   type Session,
+  type Tool,
 } from "@envoymesh/envoy-harness";
 
 import { ENVOY_HARNESS_SKILLS, ENVOY_HARNESS_VERSION, getToolsForSkill } from "./skills.js";
@@ -358,6 +359,25 @@ function describeArtifact(named: { key: string; artifact: unknown }): string {
  * The mesh's design invariant #9 ("sub-agents are NEW
  * sessions, even local") still holds — the sub-agent's
  * session is fresh, the parent's session is not shared.
+ *
+ * **Optional `bClassTools`:** Phase 8 / Step 3 — the
+ * 3 B-class skills (sponsor-friend / peer-list /
+ * relay-status) are exposed as additional BUILTIN
+ * tools. The host (EnvoyMesh's
+ * `createRealEnvoyHarnessRuntime`) builds the deps
+ * for each tool and passes them in. Per-skill
+ * registration: the factory checks each tool's name
+ * against the skill's tool set (per
+ * `getToolsForSkill`); only matching tools are
+ * registered for the current skill.
+ *
+ * **Why the per-skill filter:** the model sees a
+ * different tool set per skill (e.g. `code-review`
+ * gets `read_file`; `peer-list` gets `list_peers`).
+ * The bClassTools are no exception: when the
+ * orchestrator's `requiredSkill` is `code-edit`, the
+ * model does NOT see `sponsor_friend`. The
+ * registration is per-skill, not per-factory.
  */
 export function defaultBuildAgentFactory(opts: {
   model: ModelAdapter;
@@ -366,6 +386,12 @@ export function defaultBuildAgentFactory(opts: {
    *  routes through this `MeshSubmitter`. Omit to
    *  skip the `task` tool. */
   meshSubmitter?: MeshSubmitter;
+  /** Phase 8 / Step 3 — the 3 B-class tools
+   *  (sponsor_friend / list_peers / relay_status).
+   *  The host builds the deps (mesh / profile /
+   *  config / audit) and passes them in. Omit
+   *  to disable B-class tools for this agent. */
+  bClassTools?: ReadonlyArray<Tool>;
 }): BuildAgentFn {
   const cwd = opts.cwd ?? process.cwd();
   return ({ skillId, objective, costCeilingUsd, signal }) => {
@@ -383,9 +409,22 @@ export function defaultBuildAgentFactory(opts: {
     });
     const toolNames = new Set(getToolsForSkill(skillId));
     const tools = new ToolRegistry();
+    // Standard BUILTIN tools (read_file, bash, etc.).
     for (const t of BUILTIN_TOOLS) {
       if (toolNames.has(t.name as "read_file" | "bash")) {
         tools.register(t);
+      }
+    }
+    // Phase 8 / Step 3 — B-class tools. The tool's
+    // `name` is checked against the skill's tool set;
+    // only matching tools are registered. This lets the
+    // orchestrator pick `peer-list` and have the model
+    // see `list_peers` (not `sponsor_friend`).
+    if (opts.bClassTools) {
+      for (const t of opts.bClassTools) {
+        if (toolNames.has(t.name as "read_file" | "bash" | "sponsor_friend" | "list_peers" | "relay_status")) {
+          tools.register(t);
+        }
       }
     }
     return new Agent({

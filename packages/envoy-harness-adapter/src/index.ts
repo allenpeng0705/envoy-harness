@@ -122,3 +122,34 @@ export type {
   SubagentResultSigner,
   AgentRuntime,
 } from "@envoymesh/envoy-harness";
+
+// Phase 8 / Step 3 — B-class skills (canonical in the bridge).
+// The bridge owns the canonical impl for the 3 mesh-touching
+// capabilities (sponsor-friend / peer-list / relay-status).
+// Both envoy-harness and OpenClaw consume from the bridge
+// through their respective adapter.
+export {
+  listPeersBridge,
+  listPeersTool,
+  relayStatusBridge,
+  buildRelayStatusTool,
+  runSponsorFriendBridge,
+  sponsorFriendTool,
+  __resetActiveSponsorLoopsForTests,
+  type BClassPeerListDeps,
+  type PeerListResult,
+  type PeerListEntry,
+  type BClassRelayStatusDeps,
+  type BClassRelayStatusResult,
+  type BClassRelaySnapshot,
+  type BClassAuditEventLike,
+  type BClassSponsorFriendDeps,
+  type BClassSponsorFriendMeshDeps,
+  type BClassSponsorFriendProfileDeps,
+  type BClassSponsorFriendConfigDeps,
+  type BClassSponsorFriendAuditDeps,
+  type BClassPersistedNodeConfig,
+  type BClassHelloProfile,
+  type BClassResolvedSponsorFriend,
+  type BClassSponsorFriendResult,
+} from "./b-class-skills/index.js";
