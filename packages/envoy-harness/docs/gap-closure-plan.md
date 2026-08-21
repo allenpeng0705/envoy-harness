@@ -1,10 +1,19 @@
 # Gap-closure plan — envoy-harness vs codex / deepseek-harness
 
-> **Status:** DRAFT (2026-08-21). Input to `design.md` / `implementation-plan.md` —
+> **Status:** DRAFT v2 (2026-08-21). Input to `design.md` / `implementation-plan.md` —
 > each item below becomes a design chunk with its own acceptance criteria and
-> tests before it ships. This document answers the question "what do we need to
-> build to reach local parity with codex / deepseek-harness **and** keep the
-> mesh-native moat?"
+> tests before it ships.
+>
+> **Phase progress (as of 2026-08-21):**
+> - ✅ **Phase A** — Loop & context (items 1, 2, 5, 6) — **DONE** (4 commits on
+>   `fix_gaps`: `15ad4b4` item 1, `798f757` item 2, `8404c8f`+`97c7a7e`+`28c7aae`
+>   item 5, chunk 6 pending). 1218 tests passing.
+> - ⏳ **Phase B** — Runtime extensibility (items 3, 15) — next.
+> - ⏳ Phase C — Environment & long-running (items 7, 8, 9, 13).
+> - ⏳ Phase D — Data & observability (items 14a, 14b, 16, 17).
+> - ⏳ Phase E — Automation & embedding (items 10, 11).
+> - ⏳ Phase F — OS sandbox (item 4).
+> - ⏳ Phase G — Mesh-native integration (12, 13-adapter, 14b-remote, …).
 >
 > **Scenario contract:** envoy-harness runs either (a) locally and independently,
 > or (b) as one node in EnvoyMesh collaborating with other nodes. Every item is
@@ -33,32 +42,36 @@
 
 ## Item map
 
-| # | Capability | Recommendation | Effort | Phase |
-|---|---|---|---|---|
-| 1 | Compaction variants | Follow codex (algorithm family) | M (2 chunks) | A |
-| 2 | Memories | Hybrid: codex format + deepseek retrieval discipline | M (2–3 chunks) | A |
-| 3 | Plugins at runtime | **Invent** a lightweight capability-module seam; adopt deepseek contract shapes | L (3–4 chunks) | B |
-| 4 | OS sandbox kernels | Reuse deepseek's published landlock-run npm family (Linux) + seatbelt (macOS) | M (2 chunks) | F |
-| 5 | Ask-user / elicitation | Follow deepseek interaction/user-questions | S–M (1–2 chunks) | A |
-| 6 | Plan | Follow deepseek plan-mode (logged collaboration state) | S (1 chunk) | A |
-| 7 | Background jobs | Follow deepseek jobs family contract | M (2 chunks) | C |
-| 8 | Web search / fetch | Follow deepseek web family (provider seam) | M (2 chunks) | C |
-| 9 | Persistent PTY / terminal | Follow deepseek terminal family | M (2 chunks) | C |
-| 10 | Automation protocol | Follow deepseek ACP server | M (2 chunks) | E |
-| 11 | SDK / embedding | Follow deepseek JSON-RPC SDK + TS client; Python later | M (2 chunks) + L (py) | E |
-| 12 | TUI / rich UI | Follow codex TUI *design*, but build in EnvoyMesh's Tauri host, not the core | REPL S; Tauri L | G |
-| 13 | Secrets / credentials / keyring | Hybrid: deepseek-style provider seam in P1; mesh credentials in the adapter | M (2 chunks) | C/G |
-| 14a | Session query / history search | Follow deepseek session-query | M (2 chunks) | D |
-| 14b | Cross-machine resume | Follow deepseek durable-session projection (simpler than codex rollouts) | M (2 chunks) | D/G |
-| 15 | External config import | Both: codex-style importers + deepseek-style hook bridges | S–M (1–2 chunks) | B |
-| 16 | Feedback loop | Follow deepseek feedback family, wired into verifier/self-evolution | M (2 chunks) | D |
-| 17 | Observability | Follow deepseek runtime-diagnostics + telemetry sink seam | M (2 chunks) | D |
+| # | Capability | Recommendation | Effort | Phase | Status |
+|---|---|---|---|---|---|
+| 1 | Compaction variants | Follow codex (algorithm family) | M (2 chunks) | A | ✅ done (`15ad4b4`) |
+| 2 | Memories | Hybrid: codex format + deepseek retrieval discipline | M (2–3 chunks) | A | ✅ done (`798f757`) |
+| 3 | Plugins at runtime | **Invent** a capability-module seam; adopt deepseek contract shapes; curated Cordis-compat container later | L (3–4 chunks) | B | ⏳ next |
+| 4 | OS sandbox kernels | Reuse deepseek's published landlock-run npm family (Linux) + seatbelt (macOS) | M (2 chunks) | F | ⏳ |
+| 5 | Ask-user / elicitation | Follow deepseek interaction/user-questions | S–M (1–2 chunks) | A | ✅ done (`8404c8f` + `97c7a7e` + self-review `28c7aae`) |
+| 6 | Plan | Follow deepseek plan-mode (logged collaboration state) | S (1 chunk) | A | ✅ done (pending commit) |
+| 7 | Background jobs | Follow deepseek jobs family contract | M (2 chunks) | C | ⏳ |
+| 8 | Web search / fetch | Follow deepseek web family (provider seam) | M (2 chunks) | C | ⏳ |
+| 9 | Persistent PTY / terminal | Follow deepseek terminal family | M (2 chunks) | C | ⏳ |
+| 10 | Automation protocol | Follow deepseek ACP server | M (2 chunks) | E | ⏳ |
+| 11 | SDK / embedding | Follow deepseek JSON-RPC SDK + TS client; Python later | M (2 chunks) + L (py) | E | ⏳ |
+| 12 | TUI / rich UI | Follow codex TUI *design*, but build in EnvoyMesh's Tauri host, not the core | REPL S; Tauri L | G | ⏳ |
+| 13 | Secrets / credentials / keyring | Hybrid: deepseek-style provider seam in P1; mesh credentials in the adapter | M (2 chunks) | C/G | ⏳ |
+| 14a | Session query / history search | Follow deepseek session-query | M (2 chunks) | D | ⏳ |
+| 14b | Cross-machine resume | Follow deepseek durable-session projection (simpler than codex rollouts) | M (2 chunks) | D/G | ⏳ |
+| 15 | External config import | Both: codex-style importers + deepseek-style hook bridges | S–M (1–2 chunks) | B | ✅ chunks 15.1 + 15.2 done (pending user commit) |
+| 16 | Feedback loop | Follow deepseek feedback family, wired into verifier/self-evolution | M (2 chunks) | D | ⏳ |
+| 17 | Observability | Follow deepseek runtime-diagnostics + telemetry sink seam | M (2 chunks) | D | ⏳ |
 
 ## Phases
 
 - **Phase A — Loop & context** (1–2 weeks): 1, 2, 5, 6. Unblocks the agent's
-  day-to-day power.
+  day-to-day power. **✅ DONE** (2026-08-21).
 - **Phase B — Runtime extensibility** (1–2 weeks): 3, 15. Foundation for C/D/E.
+  **🚧 in progress** — item 15 chunk 1 (codex config importer) +
+  chunk 2 (deepseek `cordis.yml` + CC hooks.json + deepseek codec)
+  shipped (pending user commit). Item 3 (3–4 chunks, the bigger
+  platform piece) is next.
 - **Phase C — Environment & long-running** (2–3 weeks): 7, 8, 9, 13 (P1 part).
   Depends on B.
 - **Phase D — Data & observability** (2 weeks): 14a, 14b (P1 part), 16, 17.
@@ -66,346 +79,611 @@
 - **Phase E — Automation & embedding** (1–2 weeks): 10, 11. Depends on A + B.
 - **Phase F — OS sandbox** (1 week): 4. Independent; needs a Linux CI job.
 - **Phase G — Mesh-native integration** (continuous): 13 (adapter), 14b (remote
-  transport), distributed skills/memory/jobs, 12 (Tauri UI). Depends on
-  EnvoyMesh v2.2 transport.
+  transport), distributed skills/memory/jobs, 12 (Tauri UI), Cordis-compat
+  container (if justified). Depends on EnvoyMesh v2.2 transport.
 
 ---
 
+# Extension reuse strategy (deepseek / codex / other harnesses)
+
+## Why this needs its own section
+
+"Reuse extensions" is ambiguous across three very different extension models.
+Before designing item 3, we verified what each ecosystem's extensions actually
+are:
+
+- **Deepseek plugins** are **Cordis plugins**: `apply(ctx, config)` on a Cordis
+  `Context`, `inject: ['tools', 'skills', ...]`, config via `schemastery`,
+  scope/layer semantics, peer dependencies on `@deepseek-ai/*` workspaces
+  (Cordis itself is vendored under `vendor/`). Verified in
+  `packages/jobs/jobs-local/src/index.ts` (imports `Context from
+  '@deepseek-ai/cordis'`, `ScopedLayers`, `scopeOf`) and
+  `packages/skill/tool-skill/package.json` (peer deps on `dsh-agent`,
+  `dsh-skill`, `dsh-tools`, `cordis`).
+- **Codex extensions** are skills (`SKILL.md` markdown), Rust-native plugins
+  (`plugin` crate), hooks (`hooks.json`, JSON-RPC over stdio), and memories
+  (markdown). Only the non-Rust surfaces are portable.
+- **Claude Code extensions** are hooks (same JSON-RPC family), `CLAUDE.md`,
+  and JS plugins under `.claude/plugins` (hooks + slash commands) — JS, so
+  conceptually loadable, but not on any near-term path.
+- **Universal standards:** SKILL.md (codex + deepseek both read it), MCP
+  (language-agnostic), ACP (automation clients), LSP, AGENTS.md/CLAUDE.md
+  conventions, JSONL session logs.
+
+## Reuse taxonomy — five layers
+
+| Layer | What it is | Examples | envoy-harness action |
+|---|---|---|---|
+| **L0 — Formats & standards** | Open specs both ecosystems use | SKILL.md, AGENTS.md, MCP, ACP, LSP, JSON-RPC hooks, JSONL sessions | Implement against the standard; interoperate with everyone |
+| **L1 — Published artifacts** | Installable packages that are not platform-coupled | deepseek `landlock-run` npm family, `node-pty`, third-party MCP servers, E2B SDK | Direct dependency behind a seam |
+| **L2 — Copyable code** | MIT/Apache code worth porting with attribution | deepseek `hook-protocol` codec, skill-file parsing, session-query indexing, ACP protocol mapping | Port; cite source; keep license headers |
+| **L3 — Contract ports** | Deepseek capability contracts implemented natively over envoy seams | `ctx.jobs`, `ctx.skills`, `ctx.terminals`, `ctx.web`, `ctx.credentials`, `ctx.userQuestions`, `ctx.sessionQuery` | Adopt the type shapes + lifecycle; implement over envoy's session/hooks/tools/config |
+| **L4 — Runtime plugin adapters** | Hosting another platform's plugins inside envoy | A curated whitelist of Cordis plugins (skill-filesystem, jobs-local, credentials-local) | `envoy-harness-cordis` compatibility container (experimental, Phase G) |
+| **L5 — Wire-level reuse** | Cross-process/cross-node extension | A mesh node hosting a plugin exposed via MCP/ACP to other nodes | Adapter/transport concern |
+
+**Rule of thumb:** do L0 → L1 → L3 first (they deliver most value with least
+coupling). L4 only when a concrete high-value plugin cannot be ported. L5 rides
+the v2.2 remote-submitter transport.
+
+## Deepseek package feasibility matrix
+
+Verified against the actual repo (`packages/*`):
+
+| Deepseek package | Cordis-coupled? | Reuse path | envoy value |
+|---|---|---|---|
+| `native/landlock-run` (npm family) | No (standalone launcher) | **L1 direct dep** | Linux sandbox backend (item 4) |
+| `hooks/hook-protocol` | Yes (peer: dsh-shell/session) | **L2 copy codec** | JSON-RPC hook runner (item 15) |
+| `skill/skill-filesystem` | Partial (registry API only) | **L2/L3** — port SKILL.md parsing | Skill loader (item 3) |
+| `skill/tool-skill` | Yes (needs agents/tools/skills ctx) | **L3** — port contract | Model-facing `skill` tool |
+| `jobs`, `jobs-local` | Yes | **L3** — port contract | Background jobs (item 7) |
+| `terminal`, `terminal-bash`, `tool-terminal` | Yes | **L3** — port contract + node-pty (L1) | PTY (item 9) |
+| `web`, `web-search-*` | Yes | **L3** — port contract; providers are thin API wrappers | Web (item 8) |
+| `credentials`, `credentials-local`, `authorization` | Yes | **L3** — port contract | Secrets (item 13) |
+| `session-query` | Yes | **L3** — port contract + sqlite (L1) | Search (item 14a) |
+| `plan-mode` | Yes | **L3** — port contract | Plan (item 6) |
+| `interaction/user-questions` | Yes | **L3** — port contract | Ask-user (item 5) |
+| `feedback` family | Yes | **L3** — port contract | Feedback (item 16) |
+| `acp`, `sdk` | Yes | **L2** — protocol is standard; copy mapping | ACP/SDK (items 10–11) |
+| `e2b` | Partial | **L1** (E2B SDK) + **L3** composition | Remote sandbox (item 4) |
+| Any other Cordis plugin | Yes | **L4** shim only, whitelist | — |
+
+## Codex reuse table
+
+| Codex surface | Portable? | envoy action |
+|---|---|---|
+| `skills` (SKILL.md) | Yes | L0 loader (item 3) |
+| `AGENTS.md` discovery | Yes | **Already adopted** (`src/agents-md/`) |
+| Hooks JSON-RPC protocol | Yes | L0/L2 hook runner (item 15) |
+| Memories (markdown + citations) | Yes | L0/L2 format adoption (item 2) |
+| Context fragments + token budgets | Yes | **Already adopted** (`src/context/fragment.ts`); finish assembly (item 1) |
+| Compaction algorithms | Yes (pure logic) | L3 port (item 1) |
+| `plugin` / `core-plugins` (Rust) | No | Not reusable |
+| TUI, app-server, cloud | No (product layer) | Do not copy |
+
+## The Cordis-compat container (L4) — design
+
+**Goal (optional, Phase G):** host a *curated whitelist* of deepseek Cordis
+plugins inside envoy-harness so "reuse deepseek extensions" is literally true
+for the highest-value plugins, not just contract ports.
+
+**Where it lives:** a separate package `@envoymesh/envoy-harness-cordis` (or a
+`src/compat/cordis/` module) — never in the Package-1 critical path. It depends
+on the vendored `@deepseek-ai/cordis` types + the whitelisted `@deepseek-ai/*`
+packages at pinned versions.
+
+**Minimal Context facade** (the subset deepseek plugins actually touch):
+
+```ts
+interface CordisCompatContext {
+  // envoy-native backends, Cordis-shaped
+  tools: { register(tool: CordisTool): Disposable };
+  skills: SkillRegistryCompat;        // wraps src/skills
+  jobs: JobRegistryCompat;            // wraps src/jobs
+  terminals: TerminalRegistryCompat;  // wraps src/terminal
+  web: WebProviderRegistryCompat;     // wraps src/web
+  credentials: CredentialsCompat;     // wraps src/credentials
+  session: SessionCompat;             // wraps SessionStore
+  model?: ModelAdapterCompat;         // optional
+  // lifecycle
+  inject(keys: string[]): Record<string, unknown>;
+  dispose(): Promise<void>;           // ordered composite teardown
+}
+```
+
+**Loader rules:**
+1. Scan `~/.config/envoy-harness/capabilities/` and `.envoy/capabilities/`.
+2. Accept only packages whose manifest lists a single `apply(ctx, config)`
+   export **and** whose declared `inject` keys are in the whitelist.
+3. **Audit checklist per plugin** (documented in the container README):
+   - No use of Cordis fibers/`fork` outside the whitelist.
+   - No `scope`/layer mutation beyond the documented registry writes.
+   - No direct `ctx.model` streaming assumptions (envoy adapters differ).
+   - No reliance on Cordis event-bus semantics not present in envoy hooks.
+4. Reject anything failing the audit; the container never degrades into a
+   "load anything and hope" loader.
+
+**Startup whitelist (max 3):** `skill-filesystem` (if the L0 loader doesn't
+cover it), `jobs-local`, `credentials-local`. Each gets a behavior-parity test
+against its envoy-native counterpart; a plugin is dropped if parity can't be
+held.
+
+**Risks & mitigations:**
+- Version drift (`@deepseek-ai/*` moves fast) → pin versions, lockfile in the
+  container package.
+- Untested ctx surfaces → the audit checklist + parity tests are the gate.
+- Scope-layer semantics → the container implements only the documented
+  registry read/merge behavior; anything deeper is rejected.
+- Maintenance cost → this is why L4 is *last* and *optional*; L3 contract
+  ports are the default answer.
+
+**Recommendation:** ship L0 (SKILL.md), L1 (landlock-run, node-pty), and L3
+(contract ports) first. Defer L4 until a real user asks for a specific deepseek
+plugin that L3 cannot cover. This keeps "reuse deepseek" real without adopting
+Cordis as a platform.
+
+## SKILL.md loader — the standard-first extensibility path (design)
+
+Both codex and deepseek load `SKILL.md` markdown; the emerging Agent Skills
+spec uses the same shape. One loader makes envoy-harness compatible with all of
+them.
+
+**Module layout (`src/skills/`):**
+
+```ts
+// types.ts
+interface SkillSummary {
+  name: string;               // kebab-case
+  description: string;
+  whenToUse?: string;
+  provider: string;           // "filesystem" | "embedded" | "mesh"
+  invocation: { modelInvocable: boolean; userInvocable: boolean };
+}
+interface SkillDefinition extends SkillSummary {
+  resourceBase: string | URL;
+  instructions: string;       // parsed body of SKILL.md
+}
+interface SkillProvider {
+  name: string;
+  list(opts: { cwd: string; signal: AbortSignal }): Promise<SkillSummary[]>;
+  get(name: string, opts: { cwd: string; signal: AbortSignal }): Promise<SkillDefinition>;
+}
+
+// registry.ts — registerProvider / list / get / snapshot, layers like deepseek
+// fs-provider.ts — project roots (.envoy/skills), user roots, ~/.agents/skills
+// frontmatter.ts — SKILL.md frontmatter parser (name, description, whenToUse, metadata)
+// render.ts — renderSkillContent(): canonical <skill_content> block (deepseek shape)
+// tool-skill.ts — model-facing `skill` tool
+// catalog.ts — catalog projection as a bounded ContextualUserFragment + digest
+```
+
+**Catalog behavior (deepseek pattern):** at each `PreToolUse`/session start,
+`snapshot()` the registry for the cwd; publish the catalog as a durable
+user-role bounded fragment (name + description only — never bodies); on
+membership/description change, publish a full replacement; the model loads a
+skill via the `skill` tool and receives the canonical `<skill_content>` block.
+Digest-based refresh so catalog churn never causes cache misses.
+
+**Compatibility notes:**
+- Codex skill roots (`~/.codex/skills`, project `.codex/skills`) can be
+  scanned read-only by an optional provider — zero migration.
+- Deepseek skill roots (`~/.dsh/skills`, `~/.agents/skills`) likewise.
+- The loader is the model-facing half of item 3; the capability-module seam is
+  the code-facing half. Both share the `CapabilityContext`.
+
+---
+
+# Item detail
+
 ## 1. Compaction variants — follow codex
 
-**What codex has:** a compaction family — core `compact.rs`, token-budget
-compaction (`compact_token_budget.rs`), remote-history compaction
-(`compact_remote*.rs`), model-fallback (`compact_model_fallback.rs`), and thread
-rollout truncation (`thread_rollout_truncation.rs`). envoy-harness today has
-drop-oldest + LLM-summarize (`src/agent/compact.ts`).
+**Reference:** codex `core/src/compact.rs`, `compact_token_budget.rs`,
+`compact_remote*.rs`, `compact_model_fallback.rs`, `thread_rollout_truncation.rs`.
 
-**What to port (algorithms, not code):**
-- **Token-budget-aware compaction:** estimate tokens per message (we already
-  have `src/tokenize.ts`), drop/summarize the oldest prefix until the transcript
-  fits a budget, keep the newest turns intact.
-- **Remote-history compaction:** maintain a rolling summary of the dropped
-  prefix so repeated compactions degrade gracefully (compact of a compact).
-- **Model-fallback:** if the summarizer fails → drop-oldest (the REPL already
-  does this; promote it into the strategy).
+**Design (`src/context/budget.ts` + extend `src/agent/compact.ts`):**
 
-**Seam:** extend `compactMessages`/`compactMessagesWithSummary` with a strategy
-union (`"drop-oldest" | "summarize" | "budget" | "remote-history"`) and wire
-`/compact` flags. `ContextualUserFragment` keeps injected summaries bounded.
-
-**Mesh angle:** budget-aware compaction matters most in chain work — a worker
-that compacts badly loses context; surface compaction quality in the scoreboard
-(penalize repeated poor compaction) once fragments carry size metadata.
-
-**Tests:** budget math, rolling-summary idempotency, fallback on summarizer
-failure, no-op edges (system-message case already covered).
-
-## 2. Memories — analyze first, then hybrid
-
-**Codex model:** a startup consolidation pipeline (`memories/write`: Phase 1 +
-Phase 2 prompts, `raw_memories.md`, extension resources, guard limits) plus a
-read path (`memories/read`) that injects **cited, bounded memory fragments** and
-parses citations. Memory is markdown files under a known root — portable and
-user-visible.
-
-**Deepseek model:** no consolidation; `session-query` gives **authorized
-retrieval over durable session logs** (trusted reads, relationship queries,
-search), independent of compaction. Memory = searchable history, not a curated
-file.
-
-**Recommendation — hybrid, biased to codex's format:**
-1. **User memory files** (markdown, codex-compatible root/format) injected as
-   bounded fragments with citations. Reuses `src/context/fragment.ts`.
-2. **Session-derived memory:** a lightweight consolidation on session end (one
-   summarizer call) that appends decisions/file paths to the user memory file.
-   No Phase-1/Phase-2 pipeline in v1 — keep it one-pass.
-3. **Retrieval seam borrowed from deepseek:** `SessionQueryService`
-   (workspace-authorized reads over live + persisted sessions) — see 14a.
-
-**Mesh angle:** later, memory files can be federated (a worker's consolidation
-is queryable by the verifier) — this is a differentiator, not a parity item.
-
-**Tests:** citation rendering, bounded injection, consolidation prompt shape,
-no-duplication on repeated session ends.
-
-## 3. Plugins at runtime — invent, don't copy Cordis
-
-**Why not Cordis (deepseek):** its plugin model (`apply(ctx, config)`, `inject`,
-scope layers, disposers) is coupled to the Cordis runtime; adopting it means
-adopting the platform. **Why not codex plugins:** Rust-native, compiled in.
-
-**Recommendation — a small envoy capability-module seam:**
 ```ts
+type CompactionStrategy =
+  | { kind: "drop-oldest"; keep: number }
+  | { kind: "summarize"; keep: number; summarize: SummarizeFn }
+  | { kind: "budget"; tokenBudget: number; summarize: SummarizeFn }  // NEW
+  | { kind: "remote-history"; keep: number; summarize: SummarizeFn }; // NEW
+
+// budget.ts
+estimateTokens(message: Message): number;           // reuse src/tokenize.ts
+selectDroppablePrefix(messages, budget): { drop: Message[]; keep: Message[] };
+rollingSummaryKey(summary: string): string;          // for idempotent re-compact
+```
+
+- **Budget strategy:** keep newest messages intact; drop+summarize the oldest
+  prefix until `estimateTokens(kept) <= tokenBudget`; the summary becomes a
+  bounded fragment (reuses `createBoundedFragment`).
+- **Remote-history:** the summary block carries a `rollingSummaryKey`; compact
+  of a compact merges old + new summaries instead of double-summarizing.
+- **Model fallback:** promoted from the REPL into the strategy (summarizer
+  throws → drop-oldest with a trace event).
+- **CLI:** `/compact --budget <tokens>` and `/compact --remote`.
+
+**Chunks:** C1 budget math + `budget` strategy; C2 remote-history + fallback +
+CLI flags.
+**Tests:** budget boundary (exact/over/under), summary idempotency, fallback
+path, system-message preservation (existing edge), persisted-session
+round-trip.
+**Mesh angle:** a worker's compaction quality becomes scoreboard-visible once
+fragments carry `estimatedTokens` (compaction that silently loses context can
+be penalized).
+
+## 2. Memories — hybrid (codex format + deepseek retrieval)
+
+**Reference:** codex `memories/write` + `memories/read` (markdown + citations);
+deepseek `session-query` (authorized retrieval).
+
+**Design (`src/memories/`):**
+
+```ts
+// store.ts — MemoryStore: user memory files (markdown), session consolidations
+//   root: ~/.config/envoy-harness/memories/ (codex-compatible layout:
+//   memories/*.md, extensions/ subdir, citations as [memory:file#anchor])
+// consolidate.ts — on SessionEnd: one summarizer call → append
+//   decisions / file paths / open questions to memory.md (dedup by hash)
+// inject.ts — read path: memories → bounded ContextualUserFragment(s) with
+//   citations; cap total by fragment budget; only when the user opts in
+// citations.ts — parse/render [memory:...] citations (codex syntax)
+```
+
+**Rules:**
+- Memory never enters context raw — always through bounded fragments with
+  citations.
+- Consolidation is one-pass in v1 (no Phase-1/Phase-2 pipeline); runs at most
+  once per session end and is skippable (`/memory off`).
+- Retrieval seam (deepseek): `SessionQueryService` (item 14a) is the
+  *authorized* search over sessions; memories are the *curated* layer on top.
+
+**Chunks:** C1 store + citations + bounded injection; C2 consolidation +
+`/memory` commands + dedup; C3 (optional) memory extensions.
+**Tests:** citation rendering, injection caps, dedup, consent gating, format
+compatibility (parse a codex-format memory file).
+
+## 3. Plugins at runtime — invent the seam; reuse contracts; defer Cordis shim
+
+**Two halves:**
+
+**(a) Capability-module seam (default path):**
+
+```ts
+// src/capabilities/types.ts
 interface CapabilityContext {
   config: ConfigLayer;
   hooks: HookRegistry;
-  tools: ToolRegistry;          // register model-facing tools
-  session: SessionStore;        // persisted sessions
+  tools: ToolRegistry;
+  session: SessionStore;
   trace: Tracer;
   cost: CostTracker;
-  submitter: MeshSubmitter;     // optional, for mesh-aware capabilities
-  credentials: CredentialsProvider; // item 13
+  submitter?: MeshSubmitter;
+  skills: SkillRegistry;         // item 3b
+  jobs?: JobRegistry;            // item 7 (registered if present)
+  terminals?: TerminalRegistry;  // item 9
+  web?: WebProviderRegistry;     // item 8
+  credentials?: CredentialsProvider; // item 13
 }
 interface CapabilityModule {
   name: string;
   version: string;
   activate(ctx: CapabilityContext): Promise<Disposable>;
 }
+// src/capabilities/loader.ts — scan ~/.config/envoy-harness/capabilities/
+//   and .envoy/capabilities/; validate manifest; isolate failures (a crashing
+//   capability disables itself, not the agent)
 ```
-Local loader scans `~/.config/envoy-harness/capabilities/` and project
-`.envoy/capabilities/`. **Adopt deepseek's contract shapes** (`ctx.jobs`,
-`ctx.skills`, `ctx.terminals`, `ctx.web`, `ctx.credentials`) so ports from
-deepseek are mechanical — implement the same interface names over envoy's seams.
 
-**Model-facing extensibility is separate:** the SKILL.md loader (standard,
-compatible with codex + deepseek skill catalogs) — do this first if the plugin
-seam is too much; skills cover 80% of the "extend the agent" use case.
+Loader runs at session start; `/capabilities` lists active modules;
+`/capabilities reload` is idempotent. Modules are ESM files with a manifest
+export — no build step.
 
-**Tests:** lifecycle (activate/dispose/idempotent reload), hermetic fake ctx,
-module-size discipline, failure isolation (a crashing capability disables
-itself, not the agent).
+**(b) SKILL.md loader** (L0, standard) — see the dedicated design above.
+Skills are the model-facing extension surface; capability modules are the
+code-facing surface. Skills ship first.
 
-## 4. OS sandbox kernels — reuse deepseek's landlock npm family
+**(c) Cordis-compat container (L4, Phase G, optional)** — see the reuse
+strategy section. Whitelist-only; never the default path.
 
-**Investigation result:** codex implements seatbelt (macOS), bwrap/landlock
-(Linux), Windows sandbox in Rust — not reusable from TS. Deepseek publishes
-**`landlock-run` as a three-package npm family (MIT, `native/landlock-run`)**:
-a self-restrict-then-exec launcher with platform packages as optional deps —
-**directly installable from TS**.
+**Chunks:** C1 skill registry + filesystem provider + frontmatter; C2 `skill`
+tool + catalog fragment + `/skills`; C3 capability-module seam + loader +
+`/capabilities`; C4 (optional) Cordis container.
+**Tests:** lifecycle, failure isolation, idempotent reload, catalog digest,
+SKILL.md compatibility fixtures from codex + deepseek roots.
 
-**Recommendation:**
-- **Linux (primary — EnvoyMesh nodes):** depend on deepseek's landlock-run
-  package behind the existing `SandboxExecutor` seam (`src/sandbox/types.ts`).
-  This is the rare case where depending on a published artifact beats porting:
-  MIT, maintained, platform-packaged.
-- **macOS (local dev):** `SeatbeltSandboxExecutor` spawning `sandbox-exec` with
-  a generated profile — no new dependency.
-- **Windows:** keep the 6 bash validators; defer job-object sandboxing.
-- **Optional later:** E2B remote runtime family (deepseek `packages/e2b`) as a
-  *remote* sandbox provider — fits the mesh story (sandbox on another node).
+## 4. OS sandbox kernels — reuse deepseek landlock-run (Linux), seatbelt (macOS)
 
-**Tests:** executor contract parity tests with a fake kernel; landlock smoke
-test in a Linux CI job (new); seatbelt integration marked live/opt-in on macOS.
+**Investigation result:** codex sandboxes are Rust crates (seatbelt/bwrap/
+landlock/Windows) — not reusable. Deepseek publishes **`landlock-run` as a
+three-package npm family (MIT)** — a self-restrict-then-exec launcher with
+platform packages as optional deps; directly installable from TS.
+
+**Design (`src/sandbox/backends/`):**
+
+```ts
+// landlock.ts — LandlockSandboxExecutor: spawn `landlock-run` (npm dep) with
+//   a policy derived from SandboxPolicy (writable roots, readonly grants,
+//   network off); Linux-only; NoopSandboxExecutor elsewhere until CI covers it
+// seatbelt.ts — SeatbeltSandboxExecutor: spawn `sandbox-exec -p <profile>`
+//   (macOS); generate the profile from SandboxPolicy
+// policy.ts — SandboxPolicy → launcher args/profile translation (the only
+//   place sandbox policy meets kernel syntax)
+```
+
+Selection: existing resolution algorithm in `src/sandbox/index.ts` picks the
+best available backend per platform. Windows keeps the 6 bash validators
+(job-object sandbox deferred).
+
+**Chunks:** C1 landlock backend + policy translation + Linux CI smoke job;
+C2 seatbelt backend + macOS opt-in integration test.
+**Tests:** policy→args translation tables, fake launcher, backend selection,
+Linux CI smoke (real landlock, marked live), failure-to-launch fallback.
 
 ## 5. Ask-user / elicitation — follow deepseek
 
-**What deepseek has:** `ctx.userQuestions` — a provider-neutral service
-(`registerProvider`, `ask(request): Promise<Answer>`), single active provider,
-multiline support, and an `authorization` family for credential-gated flows.
+**Reference:** deepseek `interaction/user-questions` (`ctx.userQuestions`) +
+multiline support.
 
-**What envoy-harness has:** approval-asking (`AskForApproval`/`AskHandler`) but
-no open-ended user-question seam.
+**Design (`src/interaction/`):**
 
-**Recommendation:** add `UserQuestionService` with a REPL stdin provider, a
-Tauri/mesh remote provider (adapter), and a model-facing `ask_user` tool.
-**Extend** the approval flow to delegate to the same provider (one interaction
-surface), don't build a parallel one.
+```ts
+// user-questions.ts
+interface UserQuestionRequest { prompt: string; options?: string[]; multiline?: boolean; timeoutMs?: number; }
+interface UserQuestionAnswer { value: string; optionIndex?: number; cancelled?: boolean; }
+interface UserQuestionService {
+  registerProvider(p: UserQuestionProvider): () => void; // one active provider
+  ask(req: UserQuestionRequest): Promise<UserQuestionAnswer>;
+}
+// providers: repl-stdin.ts (default), tauri.ts / mesh.ts (adapter, later)
+// ask-user-tool.ts — model-facing ask_user tool
+// approval.ts — AskForApproval delegates to the same service
+```
 
-**Tests:** fake provider answers, timeout, single-provider enforcement,
-multiline round-trip, approval delegation.
+**Rules:** one provider per context; `ask` is abortable; REPL provider supports
+multiline (paste mode); approval and ask_user share the service so the human
+has a single interaction surface.
+**Tests:** fake provider, single-provider enforcement, timeout/abort, multiline
+round-trip, approval delegation, cancelled-answer mapping.
 
 ## 6. Plan — follow deepseek plan-mode
 
-**What deepseek has:** plan mode as **logged, per-agent collaboration state**
-(not a generic mode registry): plan state, guidance, commands, and a review
-flow, owned by `ctx.planMode`.
+**Reference:** deepseek `plan-mode` (logged per-agent collaboration state).
 
-**What envoy-harness has:** `--plan` read-only flag in one-shot mode only.
+**Design:** plan state on the session (extends `SessionMetadata`):
 
-**Recommendation:** plan state on the session (flag + plan text + review
-status); `/plan` command; plan injected as a bounded fragment (context budget);
-plan review hands off to the existing verifier (`/review`). **Mesh angle:** a
-worker's plan rides along chain subtasks and is visible to the verifier — plan
-is collaboration state, which is exactly the mesh's job.
+```ts
+interface PlanState { active: boolean; planText: string; reviewStatus: "draft" | "proposed" | "approved" | "rejected"; }
+```
 
-**Tests:** state transitions, guidance injection, review handoff, session
-persistence of plan state.
+`/plan` commands (enter/show/edit/approve/reject/exit); `--plan` (existing
+read-only flag) maps to `active: true`; plan injected as a bounded fragment at
+the top of the transcript while active; `/review` hands the plan + result to
+the existing verifier.
+**Tests:** state transitions, persistence across `/compact` and session
+restore, guidance injection, review handoff.
+**Mesh angle:** a worker's `PlanState` rides the chain subtask envelope; the
+verifier sees plan vs result.
 
 ## 7. Background jobs — follow deepseek jobs family
 
-**What deepseek has:** `ctx.jobs` — job registry + lifecycle contract,
-owner-fenced ids, snapshots, observe/cancel/wait/completion notices, a
-process-local provider, and model-facing `tool-jobs`.
+**Reference:** deepseek `jobs` + `jobs-local` + `tool-jobs` contract
+(registry, owner-fenced ids, snapshots, observe/cancel/wait/completion).
 
-**Recommendation:** port the **contract** into `src/jobs/`: `JobRegistry`,
-`JobHandle` (status, snapshot, cancel, wait), a process-local provider for
-long-running bash/edit commands, and `job_*` tools. Owner-fencing prevents one
-agent killing another's job — important once sub-agents run concurrently
-(`src/subagent/fan-out.ts`).
+**Design (`src/jobs/`):**
 
-**Mesh angle:** later, a remote job handle via `MeshSubmitter` — long-running
-work on another node with observe/cancel.
+```ts
+interface JobHandle {
+  id: string; kind: string; label: string;
+  status(): JobStatus; snapshot(): JobSnapshot;   // never live state
+  cancel(reason?: string): Promise<void>;
+  wait(opts?: { timeoutMs?: number }): Promise<JobOutcome>;
+  readOutput(): string | undefined;
+}
+interface JobRegistry {
+  start(spec: JobStart, owner: string): Promise<JobHandle>; // owner = session/agent id
+  list(owner?: string): JobSnapshot[];
+  onCompleted(fn: (snap: JobSnapshot) => void): () => void;
+}
+// process-provider.ts — spawns a child process, streams output to a bounded
+//   buffer, cancels via SIGTERM→SIGKILL, owner-fenced
+// tools.ts — job_start / job_status / job_cancel / job_wait / job_output
+```
 
-**Tests:** registry lifecycle, owner-fencing, completion notices, cancellation,
-fake long-running command.
+Long-running bash/edit invocations can be submitted as jobs (`bash --job`).
+**Tests:** lifecycle, owner fencing (agent A cannot cancel agent B's job),
+completion notices, bounded output, cancellation of a fake long-running
+process.
+**Mesh angle:** a remote `JobHandle` via `MeshSubmitter` (later): observe/cancel
+long-running work on another node.
 
 ## 8. Web search / fetch — follow deepseek web family
 
-**What deepseek has:** `ctx.web` — provider-neutral registration/selection,
-providers (exa, perplexity, deepseek), and model-facing search/fetch tools.
+**Reference:** deepseek `web` (provider-neutral registration/selection) +
+`web-search-*` providers.
 
-**Recommendation:** `WebProvider` seam in `src/web/` with a fetch provider
-(built-in, no key) + search providers as optional capabilities (keys come from
-item 13's credentials seam). Keep MCP as the alternate path for web tools —
-both coexist. API keys are never in config files shipped to the mesh.
+**Design (`src/web/`):**
 
-**Tests:** provider selection, error mapping, fetch size caps (bounded result
-via fragments), fake providers.
+```ts
+interface WebProvider {
+  name: string;
+  search(q: string, opts: WebSearchOptions): Promise<WebSearchResult[]>;
+  fetch(url: string, opts: WebFetchOptions): Promise<{ content: string; contentType: string }>;
+}
+interface WebProviderRegistry { register(p: WebProvider): () => void; search(...); fetch(...); }
+// fetch-provider.ts — built-in, keyless, size-capped (result becomes a bounded fragment)
+// tools.ts — web_search / web_fetch with result caps and error mapping
+```
+
+Search providers (exa/perplexity/brave) are optional capabilities whose keys
+come from the credentials seam (item 13); MCP servers remain an alternate path.
+**Tests:** provider selection, size caps, error mapping, fake providers, key
+redaction in traces.
 
 ## 9. Persistent PTY / terminal — follow deepseek terminal family
 
-**What deepseek has:** `ctx.terminals` — persistent, owner-scoped PTY sessions
-(backend registry, branded ids, exact-Agent ownership, session ops), a bash
-backend, and six model-facing tools.
+**Reference:** deepseek `terminal` (`ctx.terminals`: backend registry, branded
+ids, exact-Agent ownership, session ops) + `terminal-bash` + `tool-terminal`.
 
-**Recommendation:** `src/terminal/` with a `TerminalBackend` seam, `node-pty`
-as the first backend (justified runtime dep — only this module), and
-`terminal_*` tools. Hermetic tests use a fake backend. Terminal complements
-one-shot bash (stateful workflows, interactive stdin), it doesn't replace it.
+**Design (`src/terminal/`):**
 
-**Mesh angle:** remote terminal on another node via submitter (later).
+```ts
+interface TerminalBackend {
+  create(spec: { cmd: string; cwd: string; env?: Record<string,string> }): Promise<TerminalSession>;
+}
+interface TerminalSession {
+  id: string;
+  write(input: string): void;
+  read(): string;                  // bounded buffer
+  resize(cols: number, rows: number): void;
+  close(): Promise<void>;
+  onExit(fn: (code: number | null) => void): () => void;
+}
+// node-pty backend (new justified dep), fake backend for tests
+// tools.ts — terminal_create / terminal_write / terminal_read / terminal_resize /
+//   terminal_close / terminal_list
+```
+
+Owner-scoped (session id on the handle), exact-Agent ownership like deepseek.
+**Tests:** fake backend, ownership, bounded buffer, exit notification, tool arg
+validation.
+**Mesh angle:** remote terminal via submitter (later).
 
 ## 10. Automation protocol — follow deepseek ACP server
 
-**What deepseek has:** `packages/acp` — an automation-only Agent Client
-Protocol server over JSON-RPC stdio: `initialize`, `session/new`,
-`session/prompt`, `session/cancel`, `session/update` (committed messages),
-`session/request_permission` (one-shot allow/reject). Clients: `subagent-acp`.
+**Reference:** deepseek `acp` (Agent Client Protocol over JSON-RPC stdio).
 
-**Recommendation:** implement ACP in Package 1 reusing the Agent + session
-seams (no editor/fs capabilities advertised). This gives EnvoyMesh a
-programmatic way to drive a harness agent and is the transport backbone for
-item 11.
+**Design (`src/protocol/acp.ts` + `src/protocol/jsonrpc.ts`):** one JSON-RPC
+codec (framing, request/response, notifications) shared with the SDK (item 11).
+Methods: `initialize` (version, capabilities: no editor/fs/terminal), optional
+no-op `authenticate`, `session/new`, `session/prompt` (text + inline images,
+one in-flight per session), `session/cancel`, `session/update` (committed
+messages only — no token-by-token leakage), `session/request_permission`
+(one-shot allow/reject). Reuses the Agent + session seams; permission requests
+map to the existing approval flow.
 
-**Tests:** protocol conformance with a scripted stdio pair (same pattern as
-`test/mcp-stdio.test.ts`), cancellation, permission one-shots, committed-message
-delivery.
+**Chunks:** C1 JSON-RPC codec + ACP server skeleton; C2 session/prompt + cancel
++ permission + committed delivery.
+**Tests:** scripted stdio pair (pattern of `test/mcp-stdio.test.ts`),
+protocol conformance, cancellation races, permission one-shots, image
+integrity (later).
 
-## 11. SDK / embedding — follow deepseek JSON-RPC SDK, TS first
+## 11. SDK / embedding — deepseek JSON-RPC, TS first
 
-**What deepseek has:** a JSON-RPC SDK (`packages/sdk`: protocol, server, TS
-client) and a Python SDK (`python/`).
+**Design:** one JSON-RPC protocol (same codec as ACP) with an SDK surface:
+`session/create`, `session/prompt`, `session/events`, `session/cancel`,
+`config/get`, `tools/list`. Deliverables:
+- `packages/envoy-harness-client` (TS, in this repo) — `EnvoyHarnessClient`
+  over stdio, typed events.
+- ACP and SDK share the transport; ACP is the automation dialect, SDK is the
+  embedding dialect.
+- Python SDK: separate published package, only when a consumer exists
+  (EnvoyMesh nodes are TS; no Python consumer today).
 
-**Recommendation:** ship **one JSON-RPC protocol** used by both ACP (item 10)
-and the SDK — same transport, two surfaces. Deliver `@envoymesh/envoy-harness-client`
-(TS) in this repo; the Python SDK is a separate published package, only when
-there is a consumer (EnvoyMesh nodes are TS; the mesh doesn't need Python).
+**Tests:** client/server round-trip, framing, error mapping, cancel, event
+ordering.
 
-**Tests:** client/server round-trip over stdio, request/response framing, error
-mapping, cancel.
+## 12. TUI / rich UI — codex TUI design, EnvoyMesh Tauri host
 
-## 12. TUI / rich UI — follow codex TUI *design*, build in the mesh host
+**Decision:** Package 1 stays UI-free. The rich UI is the existing EnvoyMesh
+Tauri app (`EnvoyMesh/apps/tauri`), consuming the harness via the ACP/SDK
+surface — bottom-pane composer, transcript view, approval surface, slash
+palette (codex TUI design, mesh-native host). In-repo stopgap: REPL upgrades
+(multiline paste, diff highlighting for `/diff`, scoreboard tables for
+`/scoreboard`).
+**Tests:** REPL upgrades are hermetic; Tauri UI has its own e2e lane in
+EnvoyMesh.
 
-**Investigation result:** codex's TUI (bottom-pane composer, transcript view,
-approval surface, slash-command palette) is a product layer, not a harness
-capability. EnvoyMesh already has a **Tauri app** (`EnvoyMesh/apps/tauri`) that
-consumes the vendored harness — that is the envoy-native UI host.
+## 13. Secrets / credentials / keyring — hybrid, boundary-respecting
 
-**Recommendation:** keep Package 1 UI-free (matches the design's "not a UI
-application" stance). Build the rich UI in the Tauri host over the ACP/SDK
-surface. In-repo stopgap: REPL upgrades (multiline input, diff highlighting,
-scoreboard tables).
+**Package 1 (`src/credentials/`):**
 
-## 13. Secrets / credentials / keyring — hybrid, mesh-aware
+```ts
+interface CredentialReference { name: string; source: "env" | "file" | "ask" | "mesh"; }
+interface CredentialsProvider {
+  resolve(ref: CredentialReference, opts: { signal: AbortSignal }): Promise<string>;
+  list(): CredentialReference[];
+}
+// providers: env.ts (process.env / .env), file.ts (JSON/TOML, 0600),
+//   ask.ts (via user-questions, deepseek authorization pattern)
+// redaction.ts — TraceSink wrapper that redacts resolved values
+```
 
-**Investigation:** deepseek separates reference resolution from provider and
-from "obtain a credential by asking" (`credentials`, `credentials-local`,
-`authorization`). Codex uses OS keyring + login + cloud auth. For EnvoyMesh,
-credentials are **per-peer and signed** (Ed25519 identity already exists).
-
-**Recommendation:**
-- **Package 1:** `CredentialsProvider` seam with env + local-file providers
-  (deepseek-style) and the `authorization` ask flow (via item 5's user-questions
-  seam). No OS keyring in v1.
-- **Package 3 (adapter):** mesh credentials — per-peer API keys, node identity,
-  signed envelope credentials. **Never** mesh secrets in Package 1.
-
-**Tests:** provider selection, reference resolution, ask-flow, redaction in
-traces (a credential must never appear in session logs).
+**Adapter (Package 3):** per-peer API keys, node identity (Ed25519 exists),
+signed-envelope credentials. Mesh secrets never enter Package 1.
+**Tests:** resolution order, ask flow, redaction (a credential never appears in
+session JSONL or traces), file permission check.
 
 ## 14a. Session query / history search — follow deepseek session-query
 
-**What deepseek has:** `session-query` — authorized retrieval over live +
-durable logs (trusted reads, relationship queries, search), SQLite FTS
-provider, model-facing `tool-session-query`, workspace-authorized.
-
-**Recommendation:** index persisted JSONL sessions (`src/session/persisted-session.ts`)
-into a searchable store; `session_query` tool + `/session search`; workspace
-authorization (only the cwd's sessions); results bounded via fragments.
-
-**Mesh angle:** federated query across nodes later — a chain verifier can pull
+**Design (`src/session/query.ts` + `src/session/indexer.ts`):** index persisted
+JSONL sessions into an in-memory (later SQLite FTS) search store: by role,
+tool name, pattern, time range. `SessionQueryService` (trusted reads,
+relationship queries: "sessions where this file was edited"). Model-facing
+`session_query` tool + `/session search`; workspace-authorized (cwd only);
+results bounded via fragments.
+**Tests:** indexing round-trip, query shapes, authorization denial, bounded
+results, compaction-independence (query works after `/compact`).
+**Mesh angle:** federated query across nodes later — a verifier can pull
 relevant prior verdicts/sessions before judging.
 
-**Tests:** indexing, query shapes, authorization denial, bounded results.
+## 14b. Cross-machine resume — deepseek durable projection, not codex rollouts
 
-## 14b. Cross-machine resume — follow deepseek durable projection (not codex rollouts)
+**Design:** session checkpoint/snapshot policy on the existing JSONL durability:
+`--resume <id>` (exists) + `--resume-remote <node>/<session>` once v2.2
+transport lands; provenance field in `SessionMetadata` (origin node, resumed
+from); snapshot on `/compact` and session end. No cloud layer.
+**Tests:** checkpoint/restore round-trip, provenance, remote resume (adapter,
+mocked transport).
 
-**Investigation:** codex rollouts = full session-file persistence + cloud
-resume (single-operator infrastructure). Deepseek = durable session projection
-(checkpoint policy, projection seam, telemetry) — simpler and self-hosted.
+## 15. External config import — codex importers + deepseek hook bridges
 
-**Recommendation:** session checkpoint/snapshot policy on top of the existing
-JSONL durability; `--resume <id>` (exists) + `--resume-remote <node>/<session>`
-once the v2.2 remote-submitter transport lands; provenance field so a resumed
-session records its origin node. **Do not** build a cloud layer.
+**Design (`src/import/`):**
 
-## 15. External config import — both, in the right places
+```ts
+// detect.ts — detect CLAUDE.md, Cursor rules (.cursor/rules), codex config.toml
+//   + AGENTS.md, deepseek preset cordis.yml (later)
+// toConfig.ts — map each source to envoy ConfigLayer + AGENTS.md concat
+// importers/claude.ts, importers/cursor.ts, importers/codex.ts — golden-file tested
+// hook-bridge/ — JSON-RPC-over-stdio hook runner (codex/Claude hook protocol)
+//   beside the existing shell/module runners (same event names)
+```
 
-**Investigation:** codex `external-agent-migration` imports from Claude
-Code/Cursor (detect + config mapping). Deepseek `hooks` bridges run existing
-Claude Code / Codex `hooks.json` handlers faithfully; deepseek `preset`/
-`bundle` compose per-session agent configs.
+`envoy import <dir>` command; hooks bridge makes existing `hooks.json` handlers
+runnable as-is.
+**Tests:** golden files per source, conflict resolution, hook protocol
+conformance against a scripted hook process, timeout/error mapping.
 
-**Recommendation:**
-- **Importers (codex-style):** `src/import/` — detect `CLAUDE.md`, Cursor rules,
-  codex `config.toml`/`AGENTS.md`, and produce envoy config + AGENTS.md. Cheap
-  and high value for the standalone scenario.
-- **Hook bridges (deepseek-style):** add a JSON-RPC-over-stdio hook runner
-  (codex/Claude hook protocol) beside the existing shell/module runners — same
-  event names already (item: hook protocol). This makes existing `hooks.json`
-  handlers runnable as-is.
+## 16. Feedback loop — deepseek contracts + self-evolution input
 
-**Tests:** importer golden files for each source; bridge conformance against a
-scripted hook process.
+**Design (`src/feedback/`):**
+1. `feedback/record` event → session log (immutable remark; never injected
+   raw).
+2. Per-message rating/note sidecar (`messageFeedback.list/put/delete`) +
+   `/feedback`.
+3. **Envoy upgrade:** feedback is a scored input to self-evolution — human
+   ratings + verifier verdicts feed the 5-step ruleset protocol; the
+   contamination guard is preserved (feedback never leaks the rubric to the
+   optimizer).
+**Tests:** record immutability, sidecar CRUD, no-injection guarantee, feedback
+→ self-evolve path, guard intact.
 
-## 16. Feedback loop — follow deepseek, full features, wired to self-evolution
+## 17. Observability — deepseek runtime-diagnostics + telemetry sink
 
-**What deepseek has:** two deliberately separate contracts — an **immutable
-remark** in the session log (`feedback/record`, never enters model context) and
-**editable per-message rating/note sidecar** (`message-feedback`), plus
-human-facing `/feedback`.
-
-**Recommendation:**
-1. `feedback/record` event → session log (never injected raw).
-2. Per-message rating/note sidecar + `/feedback` and `/review` integration.
-3. **The envoy-specific upgrade:** feedback is an **input to self-evolution** —
-   verdicts + human feedback drive the 5-step ruleset protocol (the scoreboard
-   already exists; feedback becomes a scored signal). Model-context purity is
-   preserved: feedback is only injected as a bounded fragment when the user
-   asks.
-
-**Tests:** record immutability, sidecar CRUD, no-injection guarantee, feedback →
-self-evolve path with the contamination guard intact.
-
-## 17. Observability — follow deepseek runtime-diagnostics + telemetry
-
-**What deepseek has:** runtime-diagnostics (invariants, contract assertions),
-session telemetry (otel provider), versioned event shapes. **What codex has:**
-otel + analytics + rollout-trace. **What envoy has:** JSONL/verbose/null
-tracers + cost tracking.
-
-**Recommendation:** a `TelemetrySink` seam (console/JSONL/otel providers),
-versioned event schema (reuse the trace event types), counters + spans
-(turn, tool, compaction, memory, job), and an invariants module for dev-time
-contract checks. EnvoyMesh node monitoring reads the JSONL sink.
-
-**Tests:** event-shape assertions, sink provider contract, redaction
-(credentials never traced — ties to 13).
+**Design (`src/trace/telemetry.ts`):** versioned event schema (reuse trace
+event types); `TelemetrySink` seam with `console` / `jsonl` / `otel` providers;
+counters + spans for turn, tool, compaction, memory, job; `invariants.ts`
+dev-time contract assertions (e.g., session invariants, redaction checks).
+EnvoyMesh node monitoring reads the JSONL sink.
+**Tests:** event-shape assertions, sink contract, redaction (ties to 13),
+invariant failure reporting.
 
 ---
 
 ## Explicit "do not" list
 
-- Do **not** adopt Cordis (deepseek) — the plugin platform is the product.
+- Do **not** adopt Cordis as a platform (deepseek) — the plugin system is the
+  product; the compat container is whitelist-only and optional.
 - Do **not** port codex's Rust crates — different language, no ABI.
 - Do **not** build a cloud/app-server or codex-style rollouts — the distribution
   model is the P2P mesh, not a cloud backend.
@@ -416,6 +694,11 @@ contract checks. EnvoyMesh node monitoring reads the JSONL sink.
 
 - Every item ships with hermetic tests and an additive public seam; module-size
   CI stays green (new families are new modules).
+- L0/L1/L3 reuse is shipped by Phase F: SKILL.md compatibility (codex +
+  deepseek roots readable), landlock-run behind the sandbox seam, and the
+  deepseek contracts implemented natively.
+- L4 (Cordis container) is gated on a real user need and never exceeds the
+  3-plugin whitelist without a documented audit.
 - Local scenario reaches parity: compact/memory/skills/jobs/web/terminal/ask-user/
   plan/search/feedback/observability all work with zero mesh, zero network,
   zero live LLM in tests.

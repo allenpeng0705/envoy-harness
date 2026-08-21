@@ -389,6 +389,35 @@ export class PersistedSession implements Session {
    */
   setTitle(title: string): void {
     this.metadata.title = title;
+    this.rewriteHeader();
+  }
+
+  /**
+   * Phase A / Item 6: set the session's plan state.
+   * Same shape as `setTitle` — the metadata is
+   * rewritten to disk so the plan survives
+   * `--resume`.
+   */
+  setPlan(plan: import("../plan/state.js").PlanState | undefined): void {
+    if (plan === undefined) {
+      delete this.metadata.plan;
+    } else {
+      this.metadata.plan = plan;
+    }
+    this.rewriteHeader();
+  }
+
+  /** Phase A / Item 6: read the current plan state. */
+  getPlan(): import("../plan/state.js").PlanState | undefined {
+    return this.metadata.plan;
+  }
+
+  /**
+   * Rewrite the JSONL header (first line) without
+   * touching the messages. Used by `setTitle` +
+   * `setPlan`. Same error-swallowing pattern.
+   */
+  private rewriteHeader(): void {
     const header: PersistedHeader = {
       _kind: "header",
       id: this.id,

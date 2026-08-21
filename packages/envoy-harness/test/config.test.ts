@@ -157,6 +157,54 @@ describe("loadConfigFile: malformed input", () => {
   });
 });
 
+// Phase B / Item 15.2: the `hooks` field round-trips
+// through the loader. We use the kebab-case form in
+// the TOML and expect the camelCase `hooks` in the
+// result.
+describe("loadConfigFile: hooks field (chunk 15.2)", () => {
+  it("round-trips a [[hooks]] array of tables", async () => {
+    const file = path.join(tmpDir, "hooks.toml");
+    await writeFile(
+      file,
+      [
+        `[[hooks]]`,
+        `event = "PreToolUse"`,
+        `command = "echo pre"`,
+        ``,
+        `  [hooks.match]`,
+        `  pattern = "bash"`,
+        ``,
+        `[[hooks]]`,
+        `event = "Stop"`,
+        `command = "echo stop"`,
+        ``,
+      ].join("\n"),
+      "utf8",
+    );
+    const layer = await loadConfigFile(file);
+    expect(layer.hooks).toEqual([
+      { event: "PreToolUse", command: "echo pre", match: { pattern: "bash" } },
+      { event: "Stop", command: "echo stop" },
+    ]);
+  });
+
+  it("rejects an unknown field inside [[hooks]] (strict schema)", async () => {
+    const file = path.join(tmpDir, "bad-hook.toml");
+    await writeFile(
+      file,
+      [
+        `[[hooks]]`,
+        `event = "PreToolUse"`,
+        `command = "echo pre"`,
+        `bogus = "field"`,
+        ``,
+      ].join("\n"),
+      "utf8",
+    );
+    await expect(loadConfigFile(file)).rejects.toThrow(/bogus/);
+  });
+});
+
 describe("resolveConfigPath: priority", () => {
   it("uses the explicit filePath when given", () => {
     const p = resolveConfigPath("/tmp/explicit.toml");

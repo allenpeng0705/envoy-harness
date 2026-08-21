@@ -26,6 +26,7 @@ import {
   HookRegistry,
   JsonLinesTracer,
   loadConfig,
+  loadConfigWithImport,
   NullTracer,
   ToolRegistry,
   VerboseTracer,
@@ -72,32 +73,88 @@ export async function runAgent(
   //      built-in defaults (design §20.1 layer composition).
   //      Missing file → empty config (silent). Malformed file
   //      → throws ConfigLoadError (caught below as a usage error).
-  let configLayer: ConfigLayer = {};
-  const hasExplicitPath =
-    parsed.config !== undefined ||
-    process.env["ENVOY_HARNESS_CONFIG"] !== undefined;
-  if (hasExplicitPath) {
-    // User explicitly asked for a file (--config or env var) —
-    // surface errors. The loader resolves the env var path
-    // when filePath is undefined.
-    const { layer } = await loadConfig(
-      parsed.config !== undefined ? { filePath: parsed.config } : {},
+  //
+  //      Phase B / Item 15.1: `--import-config <path> --from <format>`
+  //      adds an imported layer (e.g. codex's config.toml).
+  //      Imported values win over the native config; CLI flags
+  //      win over both (enforced below by the `??` chain).
+  //
+  //      Validation: the two flags must appear together. Passing
+  //      one without the other is a usage error (the user almost
+  //      certainly forgot the companion flag).
+  if (
+    (parsed.importConfig === undefined) !==
+    (parsed.importFrom === undefined)
+  ) {
+    throw new CliError(
+      "--import-config and --from must be passed together",
+      EXIT_USAGE,
     );
-    configLayer = layer;
-  } else {
-    // Default path: try, but silence ENOENT (most users don't
-    // have a config file yet). Malformed files still throw.
-    try {
-      const { layer } = await loadConfig();
-      configLayer = layer;
-    } catch (err) {
-      if (
-        !(err instanceof ConfigLoadError) ||
-        !/ENOENT/.test(String(err.cause))
-      ) {
-        throw err;
+  }
+  let configLayer: ConfigLayer = {};
+  let importWarningSummary: string | undefined;
+  if (parsed.importConfig !== undefined) {
+    // The user explicitly asked to import a file. Surface
+    // ALL errors (no ENOENT silencing here — they want THIS
+    // file, and a missing file is a clear mistake).
+    // `parsed.importFrom` is guaranteed defined here (the
+    // XOR check above enforces it), so the conditional
+    // spread is just to satisfy `exactOptionalPropertyTypes`.
+    const result = await loadConfigWithImport({
+      ...(parsed.config !== undefined ? { filePath: parsed.config } : {}),
+      importPath: parsed.importConfig,
+      ...(parsed.importFrom !== undefined ? { importFrom: parsed.importFrom } : {}),
+    });
+    configLayer = result.layer;
+    if (result.importResult !== undefined && result.importResult.warnings.length > 0) {
+      const warnings = result.importResult.warnings;
+      const n = warnings.length;
+      importWarningSummary =
+        `import: ${n} codex key${n === 1 ? "" : "s"} not mapped ` +
+        (parsed.verbose
+          ? `(${warnings.map((w: { key: string }) => w.key).join(", ")})`
+          : "(use --verbose to list)");
+      if (parsed.verbose) {
+        // Print the full list to stderr too (one per line) for
+        // the user who runs --verbose and wants to grep.
+        for (const w of warnings) {
+          stderr.write(`  imported warning: ${w.key} — ${w.reason}\n`);
+        }
       }
     }
+  } else {
+    const hasExplicitPath =
+      parsed.config !== undefined ||
+      process.env["ENVOY_HARNESS_CONFIG"] !== undefined;
+    if (hasExplicitPath) {
+      // User explicitly asked for a file (--config or env var) —
+      // surface errors. The loader resolves the env var path
+      // when filePath is undefined.
+      const { layer } = await loadConfig(
+        parsed.config !== undefined ? { filePath: parsed.config } : {},
+      );
+      configLayer = layer;
+    } else {
+      // Default path: try, but silence ENOENT (most users don't
+      // have a config file yet). Malformed files still throw.
+      try {
+        const { layer } = await loadConfig();
+        configLayer = layer;
+      } catch (err) {
+        if (
+          !(err instanceof ConfigLoadError) ||
+          !/ENOENT/.test(String(err.cause))
+        ) {
+          throw err;
+        }
+      }
+    }
+  }
+  // Surface the import-warning summary (one line) so the user
+  // sees it even without --verbose. We do this BEFORE the agent
+  // runs so the user doesn't miss it.
+  if (importWarningSummary !== undefined) {
+    stderr.write(`${importWarningSummary}\n`);
   }
 
   // 3. Build the agent.
@@ -194,6 +251,25 @@ export async function runAgent(
     agentOptions.tracer = new NullTracer();
   }
   const agent = new Agent(agentOptions);
+
+  // Phase B / Item 15.2: register any hooks loaded from
+  // the config layer. The `hooks` field is produced by
+  // the codex / deepseek importers (via
+  // `loadConfigWithImport`) or by a native TOML config.
+  // Registration is idempotent — the disposer returned
+  // by `registerHooksFromConfig` unregisters everything
+  // it registered, but the runner's lifetime is one
+  // process, so we don't actually need the disposer
+  // (it's just for the type contract).
+  if (configLayer.hooks !== undefined && configLayer.hooks.length > 0) {
+    // Lazy import to keep the one-shot module's import
+    // graph small for callers that don't use the hooks
+    // path.
+    const { registerHooksFromConfig } = await import(
+      "../../hooks/register-from-config.js"
+    );
+    registerHooksFromConfig(agent.hooks, configLayer.hooks);
+  }
 
   // 4. Run the loop.
   const result = await agent.run(prompt);

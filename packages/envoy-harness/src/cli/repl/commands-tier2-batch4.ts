@@ -46,6 +46,12 @@ import { spawnSync } from "node:child_process";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 
+import {
+  applyTransition,
+  createPlanState,
+  PlanTransitionError,
+  type PlanTransition,
+} from "../../plan/index.js";
 import type { ContentBlock, Message, Session } from "../../index.js";
 import type { ReplCommand } from "./types.js";
 
@@ -401,13 +407,199 @@ function isWithin(root: string, p: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// 3. /plan <subcommand> ... — plan mode dispatcher
+// ---------------------------------------------------------------------------
+
+/**
+ * Plan-mode subcommands. Subcommand dispatch is
+ * the same pattern as `/memory` (F14.1) and
+ * `/profile` (F17.2.5): one slash slot, one
+ * capability. The slash-command namespace is
+ * finite; subcommand dispatchers are the way to
+ * keep it that way.
+ *
+ *   - `enter`           — open plan mode
+ *   - `show`            — print the current plan
+ *                         (default when no subcommand)
+ *   - `edit <text>`     — set the plan text
+ *   - `propose`         — mark as "ready for review"
+ *   - `approve`         — mark as approved (will be
+ *                         injected on the next model
+ *                         call as a top-priority
+ *                         bounded fragment)
+ *   - `reject [reason]` — reject the plan
+ *   - `exit`            — leave plan mode (keeps
+ *                         text + status for audit)
+ */
+type PlanSubcommand =
+  | "enter"
+  | "show"
+  | "edit"
+  | "propose"
+  | "approve"
+  | "reject"
+  | "exit";
+
+/**
+ * The plan-mode REPL command. Reads + writes the
+ * plan state on the session (`session.getPlan()`
+ * / `session.setPlan()`); the actual lifecycle
+ * lives in `src/plan/state.ts` (the state
+ * machine). This command is the user-facing
+ * dispatcher — it translates REPL arg tokens to
+ * transitions + applies them.
+ *
+ * **Why a REPL command at all:** the model can
+ * also write a plan in plain text. The REPL
+ * command makes the plan a *structured* record
+ * (with lifecycle metadata), so the next model
+ * call can see "this plan is approved" (the
+ * bounded-fragment machinery in
+ * `src/plan/inject.ts` only injects approved
+ * plans).
+ *
+ * **v0 limitations:** see the file-level JSDoc.
+ */
+const planCommand: ReplCommand = {
+  name: "/plan",
+  description:
+    "plan mode. Subcommands: enter, show, edit <text>, " +
+    "propose, approve, reject [reason], exit.",
+  handler(args, ctx) {
+    const sub = (args[0] ?? "show") as PlanSubcommand | string;
+    // The session's `getPlan()` returns the persisted
+    // state, or `undefined` when no plan has been set.
+    // For the dispatcher's purposes, "no plan" is
+    // equivalent to the initial state (inactive draft).
+    const session = ctx.agent.getSession();
+    const current = session.getPlan() ?? createPlanState();
+    try {
+      switch (sub) {
+        case "enter": {
+          const next = applyTransition(current, { kind: "enter" });
+          session.setPlan(next);
+          ctx.stdout.write(
+            `plan mode: entered (status: ${next.reviewStatus})\n`,
+          );
+          return;
+        }
+        case "show": {
+          if (!current.active) {
+            ctx.stdout.write("(no active plan; use /plan enter to start)\n");
+            return;
+          }
+          if (current.planText.length === 0) {
+            ctx.stdout.write(
+              `(plan is empty, status: ${current.reviewStatus}; ` +
+                "use /plan edit <text> to set the plan)\n",
+            );
+            return;
+          }
+          const reason = current.rejectionReason
+            ? `, rejected: ${current.rejectionReason}`
+            : "";
+          ctx.stdout.write(
+            `--- plan (${current.reviewStatus}, updated ${current.updatedAt}${reason}) ---\n`,
+          );
+          ctx.stdout.write(current.planText);
+          if (!current.planText.endsWith("\n")) {
+            ctx.stdout.write("\n");
+          }
+          ctx.stdout.write("---\n");
+          return;
+        }
+        case "edit": {
+          const text = args.slice(1).join(" ");
+          if (text.length === 0) {
+            ctx.stderr.write("usage: /plan edit <text>\n");
+            return;
+          }
+          const next = applyTransition(current, {
+            kind: "edit",
+            planText: text,
+          });
+          session.setPlan(next);
+          ctx.stdout.write(
+            `plan updated (${text.length} chars, status reverted to draft)\n`,
+          );
+          return;
+        }
+        case "propose": {
+          const next = applyTransition(current, { kind: "propose" });
+          session.setPlan(next);
+          ctx.stdout.write(
+            `plan proposed (status: ${next.reviewStatus})\n`,
+          );
+          return;
+        }
+        case "approve": {
+          const next = applyTransition(current, { kind: "approve" });
+          session.setPlan(next);
+          ctx.stdout.write(
+            "plan approved (will be injected as a top-priority " +
+              "fragment on the next model call)\n",
+          );
+          return;
+        }
+        case "reject": {
+          const reason = args.slice(1).join(" ");
+          // The state machine accepts `reject` with or
+          // without a reason. We build the transition
+          // dynamically to keep the call site readable.
+          const transition: PlanTransition =
+            reason.length > 0
+              ? { kind: "reject", reason }
+              : { kind: "reject" };
+          const next = applyTransition(current, transition);
+          session.setPlan(next);
+          if (reason.length > 0) {
+            ctx.stdout.write(`plan rejected: ${reason}\n`);
+          } else {
+            ctx.stdout.write("plan rejected\n");
+          }
+          return;
+        }
+        case "exit": {
+          const next = applyTransition(current, { kind: "exit" });
+          session.setPlan(next);
+          ctx.stdout.write(
+            "plan mode: exited (plan text + status preserved for audit)\n",
+          );
+          return;
+        }
+        default:
+          ctx.stderr.write(
+            "usage: /plan <enter|show|edit <text>|propose|approve|" +
+              "reject [reason]|exit>\n",
+          );
+      }
+    } catch (err) {
+      // `applyTransition` throws `PlanTransitionError`
+      // on invalid transitions (e.g. `approve` before
+      // `propose`). We unwrap the message and prepend
+      // a friendly "error: " so the user sees the
+      // cause, not the wrapper.
+      const message =
+        err instanceof PlanTransitionError
+          ? err.message.replace(
+              /^plan transition '[^']+' failed: /,
+              "",
+            )
+          : (err as Error).message;
+      ctx.stderr.write(`error: ${message}\n`);
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Public surface
 // ---------------------------------------------------------------------------
 
 /**
- * F14.3: list of the 2 Tier 2 batch 4 commands.
- * The runner includes this in the default registry
- * after `BUILTIN_TIER2_BATCH3_COMMANDS` (built-ins
+ * F14.3 + Phase A / Item 6: list of the 3 Tier 2
+ * batch 4 commands. The runner includes this in
+ * the default registry after
+ * `BUILTIN_TIER2_BATCH3_COMMANDS` (built-ins
  * always win on name collision).
  *
  * **Defined last** because each entry is a `const`
@@ -428,4 +620,5 @@ function isWithin(root: string, p: string): boolean {
 export const BUILTIN_TIER2_BATCH4_COMMANDS: ReadonlyArray<ReplCommand> = [
   reviewCommand,
   exportCommand,
+  planCommand,
 ];

@@ -27,9 +27,58 @@ import { z } from "zod";
 
 import {
   AskForApprovalSchema,
+  HookEventNameSchema,
   PermissionModeSchema,
   SandboxBackendSchema,
 } from "../types.js";
+
+/**
+ * Phase B / Item 15.2: a single hook handler spec in
+ * the config layer. The shape is a strict subset of the
+ * runtime `HookHandler` (no `module` form — the config
+ * layer is data-only; importing code belongs in a
+ * separate `extensions/` directory, not in TOML).
+ *
+ * **Why not the runtime `HookHandler` directly:** the
+ * runtime accepts either `command` or `module` (OR).
+ * The config layer requires `command` (a TOML file
+ * can't import a TS module). Splitting the types keeps
+ * both clean.
+ */
+export const HookHandlerSpecSchema = z
+  .object({
+    /**
+     * The shell command to run. Same wire format as the
+     * runtime `runShellHandler`: `HOOK_EVENT` +
+     * `HOOK_PAYLOAD` env vars, stdout parsed as JSON.
+     */
+    command: z.string().min(1),
+    /**
+     * Optional match clause. When set, the handler only
+     * fires when the event payload matches:
+     * - `tool`: the `tool` field of the payload (e.g.
+     *   `"bash"` for `PreToolUse` / `PostToolUse`).
+     * - `pattern`: a regex tested against the JSON
+     *   payload (deepseek's `matcher` is mapped to
+     *   `pattern` — envoy's match is always regex).
+     */
+    match: z
+      .object({
+        tool: z.string().optional(),
+        pattern: z.string().optional(),
+      })
+      .optional(),
+    /** The event name this handler is registered for. */
+    event: HookEventNameSchema,
+    /**
+     * Max time the handler is allowed to run. Default
+     * 5s (matches the runtime's `runShellHandler`
+     * default).
+     */
+    timeoutMs: z.number().int().positive().optional(),
+  })
+  .strict();
+export type HookHandlerSpec = z.infer<typeof HookHandlerSpecSchema>;
 
 /**
  * The v0 user-config layer. All fields are optional —
@@ -60,6 +109,16 @@ export const ConfigLayerSchema = z
     slashTmpWritable: z.boolean().optional(),
     /** Extra paths writable in workspace-write mode. */
     writableRoots: z.array(z.string()).optional(),
+    /**
+     * Phase B / Item 15.2: hook handlers registered on
+     * the agent's `HookRegistry` at runner startup.
+     * Each entry is one handler (the runtime composes
+     * multiple handlers per event). The same shape is
+     * produced by the codex importer (chunk 15.3+) and
+     * the deepseek importer (this chunk) so a mixed
+     * config (native + imported) is consistent.
+     */
+    hooks: z.array(HookHandlerSpecSchema).optional(),
   })
   .strict();
 export type ConfigLayer = z.infer<typeof ConfigLayerSchema>;

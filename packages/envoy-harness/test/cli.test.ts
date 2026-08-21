@@ -111,6 +111,123 @@ describe("parseArgs", () => {
     expect(() => parseArgs(["--sandbox"])).toThrow(ArgvError);
     expect(() => parseArgs(["--model"])).toThrow(ArgvError);
   });
+
+  // Phase B / Item 15.1: --import-config + --from.
+  it("captures --import-config and --from as valued flags", () => {
+    const a = parseRun([
+      "--import-config", "/tmp/codex.toml",
+      "--from", "codex",
+    ]);
+    expect(a.importConfig).toBe("/tmp/codex.toml");
+    expect(a.importFrom).toBe("codex");
+  });
+
+  it("--import-config + --from work in any flag order", () => {
+    const a = parseRun([
+      "--from", "codex",
+      "--import-config", "/etc/codex.toml",
+    ]);
+    expect(a.importConfig).toBe("/etc/codex.toml");
+    expect(a.importFrom).toBe("codex");
+  });
+
+  it("throws when --import-config or --from has no value", () => {
+    expect(() => parseArgs(["--import-config"])).toThrow(ArgvError);
+    expect(() => parseArgs(["--from"])).toThrow(ArgvError);
+  });
+
+  // Phase B / Item 15.1: the runner's XOR check — both
+  // flags must be passed together. Caught by `run()`,
+  // not `parseArgs` (the parser accepts them
+  // independently; the runner enforces the constraint).
+  it("rejects --import-config without --from with a usage error", async () => {
+    const out = new StringWritable();
+    const err = new StringWritable();
+    try {
+      await run({
+        argv: ["--import-config", "/tmp/codex.toml", "hello"],
+        stdout: out,
+        stderr: err,
+        model: { async complete() { throw new Error("not called"); } },
+      });
+      throw new Error("expected throw");
+    } catch (e) {
+      expect(e).toBeInstanceOf(CliError);
+      expect((e as CliError).exitCode).toBe(64);
+      expect((e as CliError).message).toMatch(/--import-config and --from/);
+    }
+  });
+
+  it("rejects --from without --import-config with a usage error", async () => {
+    const out = new StringWritable();
+    const err = new StringWritable();
+    try {
+      await run({
+        argv: ["--from", "codex", "hello"],
+        stdout: out,
+        stderr: err,
+        model: { async complete() { throw new Error("not called"); } },
+      });
+      throw new Error("expected throw");
+    } catch (e) {
+      expect(e).toBeInstanceOf(CliError);
+      expect((e as CliError).exitCode).toBe(64);
+      expect((e as CliError).message).toMatch(/--import-config and --from/);
+    }
+  });
+
+  // Phase B / Item 15.1: end-to-end. A real codex TOML
+  // gets imported and the agent's permission mode
+  // reflects the imported value. We assert via the
+  // import-warning stderr line (the agent itself
+  // doesn't expose the ConfigLayer — but the warning
+  // proves the import ran).
+  it("imports a real codex config and prints ignored-key warnings", async () => {
+    const { mkdtemp, rm, writeFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const path = await import("node:path");
+    const dir = await mkdtemp(path.join(tmpdir(), "envoy-import-e2e-"));
+    try {
+      const codex = path.join(dir, "codex.toml");
+      await writeFile(
+        codex,
+        [
+          `sandbox_mode = "workspace-write"`,
+          `approval_policy = "on-request"`,
+          // A known-but-ignored key + an unknown one,
+          // so the warning summary line has something
+          // to print.
+          `model = "gpt-5.1"`,
+          `typo_field = 1`,
+          ``,
+        ].join("\n"),
+        "utf8",
+      );
+      const out = new StringWritable();
+      const err = new StringWritable();
+      const fakeModel: ModelAdapter = {
+        async complete(): Promise<ModelResponse> {
+          return {
+            content: [{ type: "text", text: "ok" }],
+            stopReason: "end_turn",
+          };
+        },
+      };
+      await run({
+        argv: ["--import-config", codex, "--from", "codex", "hi"],
+        model: fakeModel,
+        stdout: out,
+        stderr: err,
+      });
+      // Two ignored keys → "2 codex keys not mapped".
+      expect(err.data).toMatch(/2 codex keys not mapped/);
+      // The agent still ran (we're not asserting on its
+      // internal state — just on the import side-effect).
+      expect(out.data).toContain("ok");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("parseArgs: self-evolve subcommand", () => {

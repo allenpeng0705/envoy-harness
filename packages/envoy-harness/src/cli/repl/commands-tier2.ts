@@ -95,7 +95,7 @@ function parseCompactArgs(
 ): { result: CompactArgs; error: string | undefined } {
   const result: CompactArgs = {};
   for (let i = 0; i < args.length; i++) {
-    const a = args[i];
+    const a = args[i]!;
     switch (a) {
       case "--keep": {
         const v = args[++i];

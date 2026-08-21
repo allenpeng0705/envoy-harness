@@ -75,6 +75,7 @@ export { discoverAgentsMd, type DiscoveryOptions } from "./agents-md/index.js";
 export {
   HookRegistry,
   defaultRegistry,
+  registerHooksFromConfig,
   runModuleHandler,
   runShellHandler,
   type HookMiddleware,
@@ -374,14 +375,40 @@ export {
 
 // T2.2: re-export the config loader (TOML). Closes
 // §2.5 row #1 in the implementation plan.
+//
+// Phase B / Item 15: also re-export the codex + deepseek
+// config importers + the import-format helpers +
+// `HookHandlerSpec` (the config-layer hook shape).
+// Chunk 15.1 ships the codex importer; chunk 15.2 adds
+// the deepseek `cordis.yml` importer + the CC hooks.json
+// bridge. The hook-protocol JSON-RPC bridge is folded
+// into `runShellHandler` (deepseek codec extensions).
 export {
   ConfigLayerSchema,
   ConfigLoadError,
   DEFAULT_CONFIG_PATH,
+  HookHandlerSpecSchema,
+  importCodexConfig,
+  importDeepseekConfig,
+  isImportFormat,
   loadConfig,
   loadConfigFile,
+  loadConfigWithImport,
+  parseClaudeCodeHooks,
   resolveConfigPath,
+  SUPPORTED_IMPORT_FORMATS,
   type ConfigLayer,
+  type CodexImportResult,
+  type CodexImportWarning,
+  type DeepseekImportResult,
+  type DeepseekImportWarning,
+  type HookHandlerSpec,
+  type ImportCodexOptions,
+  type ImportDeepseekOptions,
+  type ImportFormat,
+  type ParseClaudeCodeHooksOptions,
+  type ParseClaudeCodeHooksResult,
+  type SkippedCcHook,
 } from "./config/index.js";
 
 // T3.3: re-export the MCP (Model Context Protocol)
@@ -457,3 +484,25 @@ export {
   type MemoryMeta,
   type MemoryStore,
 } from "./memories/index.js";
+
+// Phase A / Item 6 — the plan subsystem.
+// Chunk 6.1: state + injection. Chunk 6.2: /plan REPL
+// command + `runReview` API (the deepseek-style
+// plan-vs-result review). Note: the REPL keeps
+// `/review` reserved for the F14.3 working-tree
+// reviewer; the plan-mode review handoff is exposed
+// via the `runReview` API only (hosts wire it).
+export {
+  PLAN_FRAGMENT_PRIORITY,
+  PlanTransitionError,
+  applyTransition,
+  buildPlanFragment,
+  createPlanState,
+  renderPlanText,
+  runReview,
+  type PlanReviewStatus,
+  type PlanState,
+  type PlanTransition,
+  type ReviewVerdict,
+  type RunReviewOptions,
+} from "./plan/index.js";

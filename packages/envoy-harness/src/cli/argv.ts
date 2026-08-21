@@ -42,6 +42,8 @@ const RUN_FLAGS = new Set([
   "--persist",
   "--session-dir",
   "--config",
+  "--import-config",
+  "--from",
   "--plan",
   "--repl",
   "--no-color",
@@ -83,6 +85,8 @@ const RUN_VALUED_FLAGS = new Set([
   "--fork",
   "--session-dir",
   "--config",
+  "--import-config",
+  "--from",
 ]);
 
 /** A flag that takes a value for the self-evolve subcommand. */
@@ -151,6 +155,24 @@ export interface RunParsedArgs {
    * layer composition).
    */
   config?: string | undefined;
+  /**
+   * Phase B / Item 15.1: `--import-config <path>`:
+   * path to a config file in a foreign format
+   * (codex, deepseek). Imported into the native
+   * `ConfigLayer`; imported values win over the
+   * native `--config` file but lose to explicit
+   * CLI flags. Requires `--from <format>` to
+   * pick the importer.
+   */
+  importConfig?: string | undefined;
+  /**
+   * Phase B / Item 15.1: `--from <format>`: the
+   * format of the `--import-config` file. v0
+   * supports `codex` only. The two flags are
+   * required together (passing one without the
+   * other is a usage error).
+   */
+  importFrom?: string | undefined;
   /**
    * F14.1: `--session-dir <path>`: where to
    * store / load persisted sessions. Default
@@ -290,6 +312,8 @@ function parseRunArgs(argv: ReadonlyArray<string>): RunParsedArgs {
     persist: false,
     sessionDir: undefined,
     config: undefined,
+    importConfig: undefined,
+    importFrom: undefined,
     plan: false,
     repl: false,
     noColor: false,
@@ -386,6 +410,12 @@ function parseRunArgs(argv: ReadonlyArray<string>): RunParsedArgs {
             break;
           case "--config":
             out.config = value;
+            break;
+          case "--import-config":
+            out.importConfig = value;
+            break;
+          case "--from":
+            out.importFrom = value;
             break;
         }
         continue;
@@ -569,6 +599,8 @@ export function formatHelp(version: string): string {
     "  --persist              persist this session to disk (for --resume later)",
     "  --session-dir <path>   session storage dir (default ~/.local/state/envoy-harness/sessions)",
     "  --config <path>        TOML config file (default ~/.config/envoy-harness/config.toml)",
+    "  --import-config <path> import a foreign config file (use with --from <format>)",
+    "  --from <format>        source format for --import-config (v0: codex)",
     "  --plan                 read + plan only, no writes",
     "  --repl                 interactive REPL (no positional prompt)",
     "  --json                 JSON Lines output (machine-readable)",

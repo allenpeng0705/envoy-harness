@@ -170,6 +170,154 @@ export async function loadConfig(
 }
 
 /**
+ * Phase B / Item 15.1: load the native config AND an
+ * imported config (e.g. a codex `config.toml`) and
+ * merge them.
+ *
+ * **Merge order (later wins):**
+ * 1. native `loadConfigFile(path)` — envoy-harness's
+ *    own TOML file,
+ * 2. imported layer — e.g. codex's `config.toml`,
+ * 3. explicit `overrides` (rarely used; the runner
+ *    uses the CLI flags directly, not via this helper).
+ *
+ * **Why imported wins over native:** the user explicitly
+ * passed `--import-config <path>` — they want the
+ * imported file to take effect. The native file is
+ * still loaded (so a user with both files gets the
+ * union of both, with imported as the tiebreaker).
+ *
+ * **CLI flags win over both** — that's enforced by the
+ * runner (`parsed.sandbox ?? configLayer.permissionMode
+ * ?? "read-only"` in `cli/run/one-shot.ts`). This helper
+ * just provides the merge primitive; precedence at the
+ * CLI level is the runner's job.
+ *
+ * **Warnings:** the imported result carries a
+ * `warnings[]` list. The runner surfaces a one-line
+ * summary; `--verbose` prints the full list.
+ *
+ * **Hermetic:** no I/O beyond reading the two files.
+ */
+export async function loadConfigWithImport(options: {
+  /** Explicit path to the native config file. `undefined`
+   *  → use the default (`~/.config/envoy-harness/config.toml`).
+   *  Missing file is silent (matches `loadConfig`). */
+  filePath?: string;
+  /** Explicit path to the imported config file. Required
+   *  when `importFrom` is set. */
+  importPath?: string;
+  /** The format of the imported file. Required when
+   *  `importPath` is set. */
+  importFrom?: string;
+  /** Optional override layer (merged LAST, wins over both). */
+  overrides?: ConfigLayer;
+}): Promise<{
+  layer: ConfigLayer;
+  resolvedPath: string;
+  importResult?: {
+    layer: ConfigLayer;
+    warnings: ReadonlyArray<{ key: string; reason: string }>;
+    sourcePath: string;
+  };
+}> {
+  const { layer: native, resolvedPath } = await loadConfig(
+    options.filePath !== undefined ? { filePath: options.filePath } : {},
+  );
+  if (options.importPath === undefined || options.importFrom === undefined) {
+    return { layer: options.overrides !== undefined ? mergeLayers(native, options.overrides) : native, resolvedPath };
+  }
+  // Lazy import: the importer pulls in `smol-toml` (already
+  // a transitive dep of the loader) and adds a few KB to
+  // the import graph. The lazy import keeps the loader's
+  // own import graph small for callers that don't use the
+  // import flag.
+  const { isImportFormat } = await import("./import/index.js");
+  if (!isImportFormat(options.importFrom)) {
+    throw new ConfigLoadError(
+      `unsupported import format: '${options.importFrom}' ` +
+        `(supported: codex, deepseek-cordis). ` +
+        `Format auto-detection lands in a future chunk.`,
+      options.importPath,
+    );
+  }
+  // Dispatch on format. The lazy import keeps the loader's
+  // own import graph small for callers that don't use the
+  // import flag.
+  const importResult =
+    options.importFrom === "codex"
+      ? await runCodexImport(options.importPath)
+      : await runDeepseekImport(options.importPath);
+  const merged = mergeLayers(native, importResult.layer);
+  const final =
+    options.overrides !== undefined ? mergeLayers(merged, options.overrides) : merged;
+  return {
+    layer: final,
+    resolvedPath,
+    importResult: {
+      layer: importResult.layer,
+      warnings: importResult.warnings,
+      sourcePath: importResult.sourcePath,
+    },
+  };
+}
+
+/** Phase B / Item 15.1: dispatch to the codex importer. */
+async function runCodexImport(filePath: string): Promise<{
+  layer: import("../config/index.js").ConfigLayer;
+  warnings: ReadonlyArray<{ key: string; reason: string }>;
+  sourcePath: string;
+}> {
+  const { importCodexConfig } = await import("./import/index.js");
+  const r = await importCodexConfig({ filePath });
+  return {
+    layer: r.layer,
+    warnings: r.warnings.map((w) => ({ key: w.key, reason: w.reason })),
+    sourcePath: r.sourcePath,
+  };
+}
+
+/** Phase B / Item 15.2: dispatch to the deepseek importer. */
+async function runDeepseekImport(filePath: string): Promise<{
+  layer: import("../config/index.js").ConfigLayer;
+  warnings: ReadonlyArray<{ key: string; reason: string }>;
+  sourcePath: string;
+}> {
+  const { importDeepseekConfig } = await import("./import/index.js");
+  const r = await importDeepseekConfig({ filePath });
+  return {
+    layer: r.layer,
+    warnings: r.warnings.map((w) => ({ key: w.plugin, reason: w.reason })),
+    sourcePath: r.sourcePath,
+  };
+}
+
+/**
+ * Merge two `ConfigLayer`s. The second layer wins on
+ * conflicting keys (the import helper uses this to make
+ * the imported layer override the native one).
+ *
+ * **Why not Object.assign:** `Object.assign` is fine for
+ * a flat object like `ConfigLayer`, but writing the
+ * merge as a typed function makes the intent explicit
+ * + lets us add per-key coercion later if needed.
+ */
+function mergeLayers(a: ConfigLayer, b: ConfigLayer): ConfigLayer {
+  const out: ConfigLayer = { ...a };
+  for (const [k, v] of Object.entries(b)) {
+    if (v !== undefined) {
+      // The `as never` cast is because TypeScript can't
+      // narrow `b[k]` to the specific ConfigLayer key's
+      // type without a switch; the runtime is fine because
+      // the importer already validated the layer against
+      // ConfigLayerSchema.
+      (out as Record<string, unknown>)[k] = v;
+    }
+  }
+  return out;
+}
+
+/**
  * Map the well-known kebab-case TOML keys to the
  * camelCase TypeScript field names. Unknown keys are
  * passed through (the zod schema strips them with

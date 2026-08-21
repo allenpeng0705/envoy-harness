@@ -24,10 +24,10 @@ agent's day-to-day power without touching distribution.
 
 | # | Item | Chunks | Effort | Started | Status |
 |---|---|---|---|---|---|
-| 1 | Compaction variants (budget / remote-history / fallback) | C1 budget math, C2 remote-history + CLI flags | M | next | not started |
-| 2 | Memories (codex format + deepseek retrieval discipline) | C1 store + citations, C2 consolidation + dedup | M | after 1 | not started |
-| 5 | Ask-user / elicitation (open-ended questions) | C1 service + REPL provider, C2 tool + approval delegation | S | **DONE** (chunks 5.1 + 5.2) | ✅ shipped (`8404c8f` + `97c7a7e` + self-review `28c7aae`) |
-| 6 | Plan mode (logged collaboration state) | C1 plan state + /plan commands, C2 review handoff | S | after 5 | not started |
+| 1 | Compaction variants (budget / remote-history / fallback) | C1 budget math, C2 remote-history + CLI flags | M | done | ✅ shipped (`15ad4b4`) |
+| 2 | Memories (codex format + deepseek retrieval discipline) | C1 store + citations, C2 consolidation + dedup | M | done | ✅ shipped (`798f757`) |
+| 5 | Ask-user / elicitation (open-ended questions) | C1 service + REPL provider, C2 tool + approval delegation | S | done | ✅ shipped (`8404c8f` + `97c7a7e` + self-review `28c7aae`) |
+| 6 | Plan mode (logged collaboration state) | C1 plan state + injection + `/plan` REPL command, C2 review API handoff | S | done | ✅ shipped (pending) |
 
 Order rationale: **5 first** (smallest, no dependencies, sets the
 "interaction surface" pattern for the other items), then **1** (compaction
@@ -35,9 +35,24 @@ is the most common failure mode in real usage), then **2** (memories build
 on bounded fragments from item 1's budget math), then **6** (plan state
 references memory + verification results — last in the phase).
 
-**Phase A status (as of 2026-08-21):** item 5 fully shipped (both chunks
-+ a self-review commit that caught a P0 shim-replacement bug). Item 1
-next. Items 2 + 6 queued.
+**Phase A status (as of 2026-08-21):** all 4 items shipped (item 5
+fully + a self-review commit that caught a P0 shim-replacement bug;
+items 1, 2, 6 each shipped as single commits). Total tests: 1218
+passing + 3 live-API tests skipped (no key).
+
+## Phase B — Runtime extensibility (in progress)
+
+The two items that close the "extensibility" gap: a config
+importer that lets hosts already on codex/deepseek drop in their
+existing config files, and the capability-module seam that lets
+plugins extend the harness at runtime. Chunk 15.1 (codex config
+importer) is the first deliverable; chunks 15.2 (deepseek +
+hook-protocol bridge) and 3.1+ (the plugin seam) follow.
+
+| # | Item | Chunks | Effort | Started | Status |
+|---|---|---|---|---|---|
+| 15 | External config import (codex + deepseek) | C1 codex TOML importer, C2 deepseek + hook-protocol bridge | S–M | done | ✅ C1 + C2 shipped (pending user commit) |
+| 3 | Plugins at runtime | C1 capability-module seam, C2 sample plugin, C3 curated Cordis-compat | L | not started | ⏳ after item 15 |
 
 ## Chunk 5.1 — ask-user service + REPL provider (shipped in `8404c8f`)
 
@@ -129,24 +144,29 @@ setters. `setAskHandler(undefined)` now also restores the default
 
 ## Later chunks (Phase A continued)
 
-- **Chunk 1.1** — compaction budget math: `selectDroppablePrefix(messages, budget)`
+All Phase A chunks shipped. Per-chunk sub-plans:
+
+- **Chunk 1.1 + 1.2** — compaction budget math: `selectDroppablePrefix(messages, budget)`
   + a `budget` strategy variant alongside the existing `drop-oldest`
-  and `summarize` variants. The summary block carries a
-  `rollingSummaryKey` for idempotent re-compact. Adds
+  and `summarize` variants + `/compact --budget N` / `--remote` CLI
+  flags + summarizer-throws → drop-oldest fallback. Adds
   `src/context/budget.ts` (the math) + extends
-  `src/agent/compact.ts` (the strategy).
-- **Chunk 1.2** — remote-history strategy + `/compact --budget N` /
-  `--remote` CLI flags + summarizer-throws → drop-oldest fallback.
-- **Chunk 2.1** — `src/memories/store.ts` (codex-format
+  `src/agent/compact.ts` (the strategy). See
+  [`implementation-plan-chunk-1.md`](./implementation-plan-chunk-1.md).
+- **Chunk 2.1 + 2.2** — `src/memories/store.ts` (codex-format
   `memories/*.md` root) + `src/memories/citations.ts` (parse /
   render `[memory:file#anchor]`) + bounded injection as
-  `ContextualUserFragment`s.
-- **Chunk 2.2** — `consolidate.ts` (one-pass summarization at
-  session end, dedup by hash) + `/memory` commands.
-- **Chunk 6.1** — `src/plan/state.ts` (the `PlanState` record) +
-  `/plan enter/show/edit/approve/reject/exit` + bounded injection
-  as a top-priority fragment.
-- **Chunk 6.2** — `/review` handoff: plan + result → verifier.
+  `ContextualUserFragment`s + `consolidate.ts` (one-pass
+  summarization at session end, dedup by hash) + `/memory` commands.
+  See [`implementation-plan-chunk-2.md`](./implementation-plan-chunk-2.md).
+- **Chunk 5.1 + 5.2** — `UserQuestionService` + REPL provider +
+  `ask_user` tool + AskForApproval shim. See
+  [`implementation-plan-chunk-5-2.md`](./implementation-plan-chunk-5-2.md).
+- **Chunk 6.1 + 6.2** — `src/plan/state.ts` (the `PlanState` record) +
+  `/plan enter/show/edit/propose/approve/reject/exit` + bounded
+  injection as a top-priority fragment + `runReview` API (plan +
+  result → verifier). See
+  [`implementation-plan-chunk-6.md`](./implementation-plan-chunk-6.md).
 
 ## Success criteria for Phase A (local scenario parity)
 
@@ -164,3 +184,46 @@ setters. `setAskHandler(undefined)` now also restores the default
   the verifier.
 - All hermetic: no mesh, no network, no live LLM, no real kernel
   in tests. Module-size CI stays green. `pnpm test` runs in < 30s.
+
+## Progress timeline (chronological)
+
+Time-ordered list of what's been done across the phases. The
+"shipped" rows are commits already on `fix_gaps`; the "in
+flight" rows are chunks in design / build right now; the
+"queued" rows are the next deliverables in the order the
+gap-closure plan calls for.
+
+### 2026-08-21 — Phase A complete; Phase B chunk 15.1 in design
+
+| When | Chunk | Status | Commit | Notes |
+|---|---|---|---|---|
+| 2026-08-21 | item 5 chunk 1 (UserQuestionService + REPL provider) | shipped | `8404c8f` | Service + REPL stdin provider; 40 tests. |
+| 2026-08-21 | item 5 chunk 2 (ask_user tool + AskForApproval shim) | shipped | `97c7a7e` | Tool + shim; 40 tests. |
+| 2026-08-21 | item 5 chunk 2 self-review | shipped | `28c7aae` | **P0 shim-replacement fix** + safer `summarizeArgs` (truncate long bash commands). 2 regression tests. |
+| 2026-08-21 | item 1 chunks 1.1 + 1.2 (budget compaction + CLI flags) | shipped | `15ad4b4` | `selectDroppablePrefix` + `/compact --budget N` + `/compact --remote` stub. 29 tests. |
+| 2026-08-21 | item 2 (memories) | shipped | `798f757` | LocalMemoryStore + citations + consolidation + `/memory` REPL command. 57 tests. |
+| 2026-08-21 | item 6 (plan mode) | pending | — | `/plan` REPL command + `runReview` API + 42 tests (state 16 + inject 8 + review 6 + repl-plan 12). Chunk ships with the user commit. |
+| 2026-08-21 | item 15 chunk 1 (codex config importer) | pending | — | Code + tests done; 30 new tests pass (24 import-codex + 5 cli + 1 in-process); 1248 total. Plan: [`implementation-plan-chunk-15-1.md`](./implementation-plan-chunk-15-1.md). |
+| 2026-08-21 | item 15 chunk 2 (deepseek cordis + CC hooks.json + deepseek codec) | pending | — | 37 new tests (12 claude-code + 11 deepseek + 4 register-from-config + 8 runner-codec + 2 config hooks round-trip); 1285 total. Plan: [`implementation-plan-chunk-15-2.md`](./implementation-plan-chunk-15-2.md). |
+
+### Phase A totals (final)
+
+- **4 items shipped** (item 5 in 2 chunks + a self-review; items 1, 2, 6 single-commit each).
+- **158 new tests** (chunk 5.2: 40 + self-review: 2 + chunk 1: 29 + chunk 2: 57 + chunk 6: 42 — note: chunk 6 is pending the user commit but the tests are already green).
+- **1218 total tests passing** + 3 live-API tests skipped (no `DEEPSEEK_API_KEY`).
+- **6 commits** ahead of `origin/fix_gaps` (5 shipped + 1 pending chunk 6).
+
+### Phase B (in progress)
+
+- **Item 15 chunk 1 (codex config importer)** — code + 30 new tests, 1248 total passing. Awaiting user commit. The importer translates codex's TOML config shape (sandbox_mode, approval_policy, sandbox_workspace_write.{writable_roots, network_access, exclude_slash_tmp}) to envoy-harness's `ConfigLayer`. CLI flags `--import-config <path> --from <format>` (v0: only `codex`). Imported values win over the native config; CLI flags win over both. Unknown / ignored codex keys surface as a one-line warning summary (full list with `--verbose`).
+- **Item 15 chunk 2 (deepseek `cordis.yml` + CC hooks.json + deepseek codec)** — code + 37 new tests, 1285 total passing. Awaiting user commit. The deepseek importer reads a `cordis.yml`, finds `dsh-hooks-*` plugin entries, and delegates to per-bridge importers (v0: Claude Code; `dsh-hooks-codex` lands with the codex `[hooks]` support in a future chunk). The Claude Code bridge parses the referenced `hooks.json` (or settings file's `hooks` key) and produces `HookHandlerSpec[]`. The deepseek codec extensions to `runShellHandler` recognize exit 2 → block (with stderr as reason), `permissionDecision` (allow/deny/ask), and `additionalContext` — the same wire format as `deepseek-harness/packages/hooks/hook-protocol`. The `ConfigLayer` schema gains a `hooks: HookHandlerSpec[]` field (the same shape the codex importer will produce in a future chunk, when the codex `[hooks]` table lands). 9 new files / 1 extended file; total 9 over the 500-line target (same as before chunk 15.2; no new offenders).
+
+### Phase B + later (queued)
+
+- **Item 15 chunk 2** — deepseek `cordis.yml` YAML importer + JSON-RPC hook-protocol bridge. Plan TBD after chunk 15.1 ships.
+- **Item 3** — capability-module seam + Cordis-compat container (3–4 chunks). The big platform piece. Lands after item 15.
+- **Phase C** — items 7 (jobs), 8 (web), 9 (terminal), 13 (secrets).
+- **Phase D** — items 14a (session query), 14b (cross-machine resume), 16 (feedback), 17 (observability).
+- **Phase E** — items 10 (ACP), 11 (SDK).
+- **Phase F** — item 4 (OS sandbox: landlock + seatbelt).
+- **Phase G** — item 12 (Tauri UI in the EnvoyMesh host) + mesh-native integrations.
