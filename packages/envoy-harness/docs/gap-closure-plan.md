@@ -55,18 +55,18 @@
 | 4 | OS sandbox kernels | Reuse deepseek's published landlock-run npm family (Linux) + seatbelt (macOS) | M (2 chunks) | F | ⏳ |
 | 5 | Ask-user / elicitation | Follow deepseek interaction/user-questions | S–M (1–2 chunks) | A | ✅ done (`8404c8f` + `97c7a7e` + self-review `28c7aae`) |
 | 6 | Plan | Follow deepseek plan-mode (logged collaboration state) | S (1 chunk) | A | ✅ done (pending commit) |
-| 7 | Background jobs | Follow deepseek jobs family contract | M (2 chunks) | C | ✅ done (L3 port; pending commit) |
-| 8 | Web search / fetch | Follow deepseek web family (provider seam) | M (2 chunks) | C | ✅ done (L3 port; pending commit) |
-| 9 | Persistent PTY / terminal | Follow deepseek terminal family | M (2 chunks) | C | ✅ done (fake backend; `node-pty` deferred) |
+| 7 | Background jobs | Follow deepseek jobs family contract | M (2 chunks) | C | ✅ done (L3 + bash --job sugar) |
+| 8 | Web search / fetch | Follow deepseek web family (provider seam) | M (2 chunks) | C | ✅ done (HTTP fetch + Brave) |
+| 9 | Persistent PTY / terminal | Follow deepseek terminal family | M (2 chunks) | C | ✅ done (fake + optional node-pty) |
 | 10 | Automation protocol | Follow deepseek ACP server | M (2 chunks) | E | ⏳ |
 | 11 | SDK / embedding | Follow deepseek JSON-RPC SDK + TS client; Python later | M (2 chunks) + L (py) | E | ⏳ |
 | 12 | TUI / rich UI | Follow codex TUI *design*, but build in EnvoyMesh's Tauri host, not the core | REPL S; Tauri L | G | ⏳ |
-| 13 | Secrets / credentials / keyring | Hybrid: deepseek-style provider seam in P1; mesh credentials in the adapter | M (2 chunks) | C/G | ⏳ |
-| 14a | Session query / history search | Follow deepseek session-query | M (2 chunks) | D | ⏳ |
-| 14b | Cross-machine resume | Follow deepseek durable-session projection (simpler than codex rollouts) | M (2 chunks) | D/G | ⏳ |
+| 13 | Secrets / credentials / keyring | Hybrid: deepseek-style provider seam in P1; mesh credentials in the adapter | M (2 chunks) | C/G | ✅ P1 done (adapter deferred) |
+| 14a | Session query / history search | Follow deepseek session-query | M (2 chunks) | D | ✅ done |
+| 14b | Cross-machine resume | Follow deepseek durable-session projection (simpler than codex rollouts) | M (2 chunks) | D/G | ✅ P1 done (remote → mesh adapter) |
 | 15 | External config import | Both: codex-style importers + deepseek-style hook bridges | S–M (1–2 chunks) | B | ✅ chunks 15.1 + 15.2 done (pending user commit) |
-| 16 | Feedback loop | Follow deepseek feedback family, wired into verifier/self-evolution | M (2 chunks) | D | ⏳ |
-| 17 | Observability | Follow deepseek runtime-diagnostics + telemetry sink seam | M (2 chunks) | D | ⏳ |
+| 16 | Feedback loop | Follow deepseek feedback family, wired into verifier/self-evolution | M (2 chunks) | D | ✅ done (signals helper; self-evolve hook light) |
+| 17 | Observability | Follow deepseek runtime-diagnostics + telemetry sink seam | M (2 chunks) | D | ✅ done |
 
 ## Phases
 
@@ -80,14 +80,10 @@
   (pending user commit). 1370 tests passing. The Cordis-compat
   container lands in Phase G.
 - **Phase C — Environment & long-running** (2–3 weeks): 7, 8, 9, 13 (P1 part).
-  Depends on B. **✅ items 7/8/9 DONE** (2026-08-22) — item 13 still open.
-  Jobs/web/terminal ship as Cordis-free L3 ports under `src/jobs/`,
-  `src/web/`, `src/terminal/`; CLI wires them via `wireEnvironmentTools`
-  (does not touch `src/plugins/**`). Terminal v0 uses a fake backend;
-  real `node-pty` is a follow-up. Search providers need credentials
-  (item 13); keyless HTTP fetch ships by default.
+  Depends on B. **✅ DONE** (2026-08-22) — jobs/web/terminal + credentials
+  wire, Brave search, optional `node-pty`, `bash --job` sugar.
 - **Phase D — Data & observability** (2 weeks): 14a, 14b (P1 part), 16, 17.
-  Parallel with C.
+  **✅ DONE** locally 2026-08-22 (pending user commit).
 - **Phase E — Automation & embedding** (1–2 weeks): 10, 11. Depends on A + B.
 - **Phase F — OS sandbox** (1 week): 4. Independent; needs a Linux CI job.
 - **Phase G — Mesh-native integration** (continuous): 13 (adapter), 14b (remote
