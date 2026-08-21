@@ -210,6 +210,7 @@ gap-closure plan calls for.
 | 2026-08-22 | item 3.3 (per-plugin config via --plugin-config) | pending | — | Repeatable `--plugin-config <name>.<key>=<value>` (the deepseek-style scoped dot format). `parsePluginConfigEntry` splits on the first dot + first equals; values are JSON-first with a string fallback. `mergePluginConfigs` collapses entries into a `Map<name, config>`. Runner passes the per-plugin config to `register(module, config, ctx)`. 19 new tests (14 config-parser + 5 CLI); 1355 total. Plan: [`implementation-plan-chunk-3-3.md`](./implementation-plan-chunk-3-3.md). |
 | 2026-08-22 | item 3.4 (zod-validated per-plugin configs) | pending | — | New `configSchema?: z.ZodType<Config>` field on `CapabilityModule` (optional — v0 `unknown` config still works). New `PluginConfigError` class (distinct from `PluginLoadError` so the CLI can format a clear "config is invalid" message). `validatePluginConfig` runs `safeParse` and throws on failure. The 3 built-in plugins gained real schemas; their `apply` reads the validated `Config` (no more `as { ... }` casts). 15 new tests (validate-config); 1370 total. Plan: [`implementation-plan-chunk-3-4.md`](./implementation-plan-chunk-3-4.md). |
 | 2026-08-22 | Phase C items 7+8+9 (jobs / web / terminal) | pending | — | Cordis-free L3 ports + CLI `wireEnvironmentTools`. 23 new hermetic tests. Terminal fake backend only (`node-pty` deferred). Plan: [`implementation-plan-phase-c.md`](./implementation-plan-phase-c.md). |
+| 2026-08-22 | Phase C remainder + Phase D (13, 14a, 14b P1, 16, 17) | pending | — | Credentials wire + Brave + node-pty + bash --job + session query + provenance + feedback + telemetry. Plan: [`implementation-plan-phase-d.md`](./implementation-plan-phase-d.md). |
 
 ### Phase A totals (final)
 
@@ -229,17 +230,14 @@ gap-closure plan calls for.
 
 ### Phase B + later (queued)
 
-- **Phase C (items 7 / 8 / 9)** — ✅ done 2026-08-22 (pending user
-  commit). Cordis-free L3 ports under `src/jobs/`, `src/web/`,
-  `src/terminal/` + `wireEnvironmentTools` CLI helper. 23 new
-  hermetic tests. Terminal v0 uses a fake backend (`node-pty`
-  deferred). Plan:
-  [`implementation-plan-phase-c.md`](./implementation-plan-phase-c.md).
-  Item 13 (secrets) remains open.
-- **Item 15 chunk 2** — deepseek `cordis.yml` YAML importer + JSON-RPC hook-protocol bridge. Plan TBD after chunk 15.1 ships.
-- **Item 3** — capability-module seam + Cordis-compat container (3–4 chunks). The big platform piece. Lands after item 15.
-- **Phase C remainder** — item 13 (secrets).
-- **Phase D** — items 14a (session query), 14b (cross-machine resume), 16 (feedback), 17 (observability).
+- **Phase C (items 7 / 8 / 9 / 13)** — ✅ done 2026-08-22 (pending user
+  commit). Cordis-free L3 ports + credentials wire, Brave search,
+  optional `node-pty`, `bash --job` sugar, `CapabilityContext` slots.
+- **Phase D** — ✅ done 2026-08-22 (pending user commit). Items 14a
+  (session query), 14b P1 (provenance + `--resume-remote` stub), 16
+  (feedback), 17 (telemetry/invariants). Plan:
+  [`implementation-plan-phase-d.md`](./implementation-plan-phase-d.md).
 - **Phase E** — items 10 (ACP), 11 (SDK).
 - **Phase F** — item 4 (OS sandbox: landlock + seatbelt).
-- **Phase G** — item 12 (Tauri UI in the EnvoyMesh host) + mesh-native integrations.
+- **Phase G** — item 12 (Tauri UI in the EnvoyMesh host) + mesh-native
+  integrations (13-adapter, 14b-remote).

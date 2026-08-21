@@ -4,7 +4,6 @@
 
 import { describe, expect, it } from "vitest";
 
-import { createEnvCredentialsProvider } from "../../src/credentials/index.js";
 import { createBraveSearchProvider } from "../../src/web/search-brave.js";
 
 describe("createBraveSearchProvider", () => {
@@ -23,14 +22,32 @@ describe("createBraveSearchProvider", () => {
     expect(provider.available()).toBe(false);
   });
 
-  it("available() is true when credentials list the key", () => {
-    const credentials = createEnvCredentialsProvider({
-      knownNames: ["BRAVE_SEARCH_API_KEY"],
-      env: {},
+  it("available() is true when file credentials already list the key", async () => {
+    const { mkdtemp, writeFile, chmod } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const path = await import("node:path");
+    const { createFileCredentialsProvider } = await import(
+      "../../src/credentials/index.js"
+    );
+    const dir = await mkdtemp(path.join(tmpdir(), "brave-"));
+    const filePath = path.join(dir, "creds.json");
+    await writeFile(
+      filePath,
+      JSON.stringify({ BRAVE_SEARCH_API_KEY: "from-file" }),
+    );
+    if (process.platform !== "win32") await chmod(filePath, 0o600);
+    const file = createFileCredentialsProvider({
+      filePath,
+      skipPermissionCheck: process.platform === "win32",
     });
+    // Prime the file cache so list() advertises the key.
+    await file.resolve(
+      { name: "BRAVE_SEARCH_API_KEY", source: "file" },
+      { signal: AbortSignal.timeout(5_000) },
+    );
     const provider = createBraveSearchProvider({
       env: {},
-      credentials,
+      credentials: file,
     });
     expect(provider.available()).toBe(true);
   });

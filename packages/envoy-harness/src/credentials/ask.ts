@@ -4,7 +4,6 @@
 
 import type { UserQuestionService } from "../interaction/user-questions.js";
 import type {
-  CredentialReference,
   CredentialsProvider,
 } from "./types.js";
 import { CredentialError } from "./types.js";

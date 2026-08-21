@@ -34,8 +34,7 @@ provider registered by default; terminal uses fake backend until
 
 ## Deferred follow-ups
 
-- `node-pty` terminal backend (item 9)
-- Paid search providers behind credentials (items 8 + 13)
-- `bash --job` sugar (item 7)
-- Optional `CapabilityContext.jobs|web|terminals` once Phase B lands
-- Item 13 (secrets) remains open in Phase C/G
+- Mesh-remote jobs / terminal / session resume (Phase G adapter)
+- Paid search providers beyond Brave (exa/perplexity)
+- Full self-evolve feedback injection (consume `toSelfEvolveSignals`)
+- OTEL telemetry provider

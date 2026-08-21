@@ -78,10 +78,13 @@ export function createBraveSearchProvider(
     available(): boolean {
       const fromEnv = env[BRAVE_KEY_NAME];
       if (typeof fromEnv === "string" && fromEnv.length > 0) return true;
-      // Cheap, no network: advertise only if credentials
-      // already list the key (env knownNames / file cache).
+      // Cheap, no network / no ask: only treat as available when a
+      // file-backed credential is already cached in list() under
+      // source "file" (env knownNames alone does not count).
       const refs = options.credentials?.list() ?? [];
-      return refs.some((r) => r.name === BRAVE_KEY_NAME);
+      return refs.some(
+        (r) => r.name === BRAVE_KEY_NAME && r.source === "file",
+      );
     },
     async search(
       request: WebSearchRequest,

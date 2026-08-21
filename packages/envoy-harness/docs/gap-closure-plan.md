@@ -7,9 +7,10 @@
 > **Phase progress (as of 2026-08-22):**
 > - ✅ **Phase A** — Loop & context (items 1, 2, 5, 6) — **DONE** (4 commits on
 >   `fix_gaps`: `15ad4b4` item 1, `798f757` item 2, `8404c8f`+`97c7a7e`+`28c7aae`
->   item 5, chunk 6 pending). 1218 tests passing.
-> - 🚧 **Phase B** — Runtime extensibility (items 3, 15) — in progress (MiniMax;
->   item 15 + item 3 chunks 3.1–3.4 code+tests pending user commit).
+>   item 5, chunk 6 bundled into `1fe094f`/`0127c70`).
+> - 🚧 **Phase B** — Runtime extensibility (items 3, 15) — code+tests done
+>   (chunks 3.1–3.4 + 15.1/15.2; pending user commit). Cordis-compat
+>   container deferred to Phase G.
 > - ✅ **Phase C** — Environment & long-running (items 7, 8, 9, 13 P1) — **DONE**
 >   (jobs / web / terminal + credentials wire; Brave search; `node-pty` optional;
 >   `bash --job` sugar).
@@ -51,7 +52,7 @@
 |---|---|---|---|---|---|
 | 1 | Compaction variants | Follow codex (algorithm family) | M (2 chunks) | A | ✅ done (`15ad4b4`) |
 | 2 | Memories | Hybrid: codex format + deepseek retrieval discipline | M (2–3 chunks) | A | ✅ done (`798f757`) |
-| 3 | Plugins at runtime | **Invent** a capability-module seam; adopt deepseek contract shapes; curated Cordis-compat container later | L (3–4 chunks) | B | ⏳ next |
+| 3 | Plugins at runtime | **Invent** a capability-module seam; adopt deepseek contract shapes; curated Cordis-compat container later | L (3–4 chunks) | B | ✅ done (chunks 3.1–3.4 pending commit; Cordis-compat deferred to Phase G) |
 | 4 | OS sandbox kernels | Reuse deepseek's published landlock-run npm family (Linux) + seatbelt (macOS) | M (2 chunks) | F | ⏳ |
 | 5 | Ask-user / elicitation | Follow deepseek interaction/user-questions | S–M (1–2 chunks) | A | ✅ done (`8404c8f` + `97c7a7e` + self-review `28c7aae`) |
 | 6 | Plan | Follow deepseek plan-mode (logged collaboration state) | S (1 chunk) | A | ✅ done (pending commit) |
@@ -77,7 +78,7 @@
   chunk 2 (deepseek `cordis.yml` + CC hooks.json + deepseek codec)
   + item 3 chunks 1, 2, 3, 4 (capability-module seam + 3 sample plugins
   + per-plugin config + zod-validated configs) all shipped locally
-  (pending user commit). 1370 tests passing. The Cordis-compat
+  (pending user commit). 1404 tests passing. The Cordis-compat
   container lands in Phase G.
 - **Phase C — Environment & long-running** (2–3 weeks): 7, 8, 9, 13 (P1 part).
   Depends on B. **✅ DONE** (2026-08-22) — jobs/web/terminal + credentials
@@ -489,12 +490,13 @@ verifier sees plan vs result.
   `job_kill` / `job_list`
 - Hermetic tests: lifecycle, owner fence, limit, wait timeout, onJobDone
 
-**Deferred:** `bash --job` sugar; mesh-remote `JobHandle`.
+**Deferred:** mesh-remote `JobHandle`.
 
 ## 8. Web search / fetch — follow deepseek web family
 
 **Status:** ✅ done (2026-08-22). See
-[`implementation-plan-phase-c.md`](./implementation-plan-phase-c.md).
+[`implementation-plan-phase-c.md`](./implementation-plan-phase-c.md) +
+[`implementation-plan-phase-d.md`](./implementation-plan-phase-d.md).
 
 **Reference:** deepseek `web` (provider-neutral registration/selection) +
 `web-search-*` providers.
@@ -504,16 +506,16 @@ verifier sees plan vs result.
 - Selection: configured id → unique available → else errors
   (`PROVIDER_MISSING` / `UNAVAILABLE` / `AMBIGUOUS`)
 - `createHttpFetchProvider` — keyless, size-capped HTTP(S) fetch
+- `createBraveSearchProvider` — Brave Search API behind credentials/env
 - Tools: `web_search` / `web_fetch`
-- Hermetic tests: selection, truncation, duplicates, no-provider
+- Hermetic tests: selection, truncation, duplicates, no-provider, mocked Brave
 
-**Deferred:** paid search providers (exa/perplexity) behind item 13
-credentials; MCP alternate path already exists.
+**Deferred:** paid search providers (exa/perplexity); MCP alternate path
+already exists.
 
 ## 9. Persistent PTY / terminal — follow deepseek terminal family
 
-**Status:** ✅ done (2026-08-22) with fake backend. Real `node-pty`
-is a documented follow-up (no new native dep in this pass).
+**Status:** ✅ done (2026-08-22) with fake backend + optional `node-pty`.
 
 **Reference:** deepseek `terminal` (`ctx.terminals`: backend registry,
 branded ids, exact-Agent ownership, session ops) + `terminal-bash` +
@@ -523,13 +525,14 @@ branded ids, exact-Agent ownership, session ops) + `terminal-bash` +
 - `TerminalSessionService` — backend registry, `pty-N` ids, owner fence
   (owner = opaque session id, not live Agent instance)
 - Exclusive send per session (`SEND_ACTIVE`)
-- `createFakeTerminalBackend` for hermetic tests + CLI v0
+- `createFakeTerminalBackend` for hermetic tests + CLI fallback
+- `createPtyTerminalBackend` / `isPtyAvailable` (optionalDependency)
 - Tools: `terminal_open` / `terminal_send` / `terminal_read` /
   `terminal_signal` / `terminal_close` / `terminal_list`
 - Hermetic tests: ownership, duplicate backend, send exclusivity,
-  list/kill, tool happy path
+  list/kill, tool happy path, pty availability
 
-**Deferred:** `node-pty` backend (L1 justified dep); mesh-remote terminal.
+**Deferred:** mesh-remote terminal.
 
 ## 10. Automation protocol — follow deepseek ACP server
 
@@ -578,7 +581,9 @@ EnvoyMesh.
 
 ## 13. Secrets / credentials / keyring — hybrid, boundary-respecting
 
-**Package 1 (`src/credentials/`):**
+**Status:** ✅ P1 done (2026-08-22). Mesh adapter part remains Phase G.
+
+**Package 1 (`src/credentials/` + wire):**
 
 ```ts
 interface CredentialReference { name: string; source: "env" | "file" | "ask" | "mesh"; }
@@ -586,37 +591,35 @@ interface CredentialsProvider {
   resolve(ref: CredentialReference, opts: { signal: AbortSignal }): Promise<string>;
   list(): CredentialReference[];
 }
-// providers: env.ts (process.env / .env), file.ts (JSON/TOML, 0600),
-//   ask.ts (via user-questions, deepseek authorization pattern)
+// providers: env.ts, file.ts (JSON 0600), ask.ts (via user-questions)
 // redaction.ts — TraceSink wrapper that redacts resolved values
+// wireEnvironmentTools creates the cascade and returns credentials
 ```
 
 **Adapter (Package 3):** per-peer API keys, node identity (Ed25519 exists),
 signed-envelope credentials. Mesh secrets never enter Package 1.
-**Tests:** resolution order, ask flow, redaction (a credential never appears in
-session JSONL or traces), file permission check.
+**Tests:** resolution order, ask flow, redaction, file permission check,
+wire registration of Brave when env key present.
 
 ## 14a. Session query / history search — follow deepseek session-query
 
-**Design (`src/session/query.ts` + `src/session/indexer.ts`):** index persisted
-JSONL sessions into an in-memory (later SQLite FTS) search store: by role,
-tool name, pattern, time range. `SessionQueryService` (trusted reads,
-relationship queries: "sessions where this file was edited"). Model-facing
-`session_query` tool + `/session search`; workspace-authorized (cwd only);
-results bounded via fragments.
-**Tests:** indexing round-trip, query shapes, authorization denial, bounded
-results, compaction-independence (query works after `/compact`).
-**Mesh angle:** federated query across nodes later — a verifier can pull
-relevant prior verdicts/sessions before judging.
+**Status:** ✅ done (2026-08-22).
+
+**Shipped (`src/session/query.ts` + `src/session/indexer.ts`):** index
+persisted JSONL sessions; `SessionQueryService.search` by role / tool /
+pattern / time; model-facing `session_query` tool; workspace-dir auth.
+**Tests:** indexing round-trip, query shapes, authorization denial,
+bounded results, corrupt-file skip.
 
 ## 14b. Cross-machine resume — deepseek durable projection, not codex rollouts
 
-**Design:** session checkpoint/snapshot policy on the existing JSONL durability:
-`--resume <id>` (exists) + `--resume-remote <node>/<session>` once v2.2
-transport lands; provenance field in `SessionMetadata` (origin node, resumed
-from); snapshot on `/compact` and session end. No cloud layer.
-**Tests:** checkpoint/restore round-trip, provenance, remote resume (adapter,
-mocked transport).
+**Status:** ✅ P1 done (2026-08-22). Remote transport remains Phase G.
+
+**Shipped:** `SessionMetadata.provenance` (`originNode` / `resumedFrom` /
+`checkpointAt`); `PersistedSession.checkpoint()`; `--resume` stamps
+provenance; `--resume-remote` parses and errors
+`"requires mesh adapter"`.
+**Tests:** checkpoint/restore round-trip, provenance on resume, remote stub.
 
 ## 15. External config import — codex importers + deepseek hook bridges
 
@@ -638,27 +641,22 @@ conformance against a scripted hook process, timeout/error mapping.
 
 ## 16. Feedback loop — deepseek contracts + self-evolution input
 
-**Design (`src/feedback/`):**
-1. `feedback/record` event → session log (immutable remark; never injected
-   raw).
-2. Per-message rating/note sidecar (`messageFeedback.list/put/delete`) +
-   `/feedback`.
-3. **Envoy upgrade:** feedback is a scored input to self-evolution — human
-   ratings + verifier verdicts feed the 5-step ruleset protocol; the
-   contamination guard is preserved (feedback never leaks the rubric to the
-   optimizer).
-**Tests:** record immutability, sidecar CRUD, no-injection guarantee, feedback
-→ self-evolve path, guard intact.
+**Status:** ✅ done (2026-08-22).
+
+**Shipped (`src/feedback/`):** append-only `FeedbackStore`; per-message
+sidecar CRUD; `feedback_record` tool; `toSelfEvolveSignals` contamination
+guard (raw notes never included). Full self-evolve wiring can consume the
+signals helper later without prompt injection.
+**Tests:** immutability, sidecar CRUD, no-injection.
 
 ## 17. Observability — deepseek runtime-diagnostics + telemetry sink
 
-**Design (`src/trace/telemetry.ts`):** versioned event schema (reuse trace
-event types); `TelemetrySink` seam with `console` / `jsonl` / `otel` providers;
-counters + spans for turn, tool, compaction, memory, job; `invariants.ts`
-dev-time contract assertions (e.g., session invariants, redaction checks).
-EnvoyMesh node monitoring reads the JSONL sink.
-**Tests:** event-shape assertions, sink contract, redaction (ties to 13),
-invariant failure reporting.
+**Status:** ✅ done (2026-08-22).
+
+**Shipped (`src/trace/telemetry.ts`, `src/trace/invariants.ts`):**
+`TelemetrySink` with turn/tool/job counters; JSONL + null sinks;
+redaction + shape invariants.
+**Tests:** sink contract, invariant failure on secret leak.
 
 ---
 

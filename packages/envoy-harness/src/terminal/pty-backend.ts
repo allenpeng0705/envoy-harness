@@ -206,11 +206,11 @@ export function createPtyTerminalBackend(): TerminalBackend {
         status = {
           kind: "exited",
           exitCode,
-          signal:
-            signal !== undefined
-              ? ((`SIG${signal}` as unknown as NodeJS.Signals) ?? null)
-              : null,
+          signal: null,
         };
+        // node-pty reports numeric signal codes; we don't map them
+        // to NodeJS.Signals names here (fake backend uses string names).
+        void signal;
       });
 
       return createPtySession(
