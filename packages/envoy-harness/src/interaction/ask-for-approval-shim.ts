@@ -1,0 +1,237 @@
+/**
+ * Phase A / Item 5 — the `AskForApproval` shim.
+ *
+ * **Reference:** gap-closure-plan item 5 + deepseek
+ * `approval.ts` (`AskForApproval` delegates to
+ * `ctx.userQuestions`).
+ *
+ * **What this does:** the existing `AskHandler` is the
+ * host's per-call approval callback (F9.1). When a hook
+ * returns `kind: "ask"`, the agent calls the handler; the
+ * handler returns an `AskDecision` (`allow` / `deny` /
+ * `modify`). This shim translates between the
+ * `AskHandler` surface and the `UserQuestionService`
+ * surface (chunk 5.1), so the human sees ONE interaction
+ * surface (REPL picker, Tauri dialog, mesh composer) for
+ * BOTH `ask_user` tool calls and approval asks.
+ *
+ * **Why a factory, not a singleton:** two agents can
+ * share the same `UserQuestionService` but have different
+ * shims (e.g. one agent's shim adds a third "modify"
+ * option later without affecting another). The factory
+ * also takes the service as a closure, keeping the shim
+ * stateless and easy to test.
+ *
+ * **The translation table** is in
+ * [`docs/implementation-plan-chunk-5-2.md`](../../docs/implementation-plan-chunk-5-2.md).
+ * The short version:
+ *
+ * - **Yes (option 0) → `allow`; No (option 1) → `deny`.**
+ *   The picker shows `["Yes", "No"]` by default.
+ * - **Free-form "y" / "yes" / "Y" / "YES" → `allow`;**
+ *   anything else → `deny`. The deepseek convention
+ *   is fail-closed.
+ * - **Cancellation → `deny`** with the cancellation
+ *   reason in the message. "no-provider" becomes
+ *   "no user channel" (matches the tool's
+ *   benign-fall-through semantics).
+ *
+ * **Backward compat:** the shim is INSTALLED by the
+ * `Agent` constructor ONLY when (a) `userQuestions` is
+ * set AND (b) the host did not provide an explicit
+ * `askHandler`. An explicit `askHandler` always wins.
+ *
+ * **Stability:** additive. New translation rules are
+ * additive (e.g. a future "modify" option for
+ * `AskRequest` to expose the existing `modify` decision).
+ */
+
+import type { AskDecision, AskHandler, AskRequest } from "../types.js";
+import type {
+  UserQuestionAnswer,
+  UserQuestionRequest,
+  UserQuestionService,
+} from "./user-questions.js";
+
+// ---------------------------------------------------------------------------
+// Public surface
+// ---------------------------------------------------------------------------
+
+/** Constructor options for `createAskForApprovalShim`. */
+export interface CreateAskForApprovalShimOptions {
+  /**
+   * The user-question service the shim delegates to.
+   * Required. The shim does NOT own the service; the
+   * host (Agent, REPL) registers a provider and shares
+   * the service between the ask_user tool and the
+   * shim.
+   */
+  service: UserQuestionService;
+  /**
+   * Optional override for the "yes" / "no" labels.
+   * Default: `["Yes", "No"]`. The first entry maps to
+   * `allow`; the second to `deny`. More than two
+   * entries are ignored (the picker shows at most
+   * two options for a yes/no decision).
+   */
+  options?: ReadonlyArray<string>;
+  /**
+   * Optional override for the rendered prompt header.
+   * Default: `"Allow {tool} to {action}?\n\n{question}"`
+   * where `{action}` is a short summary of the args
+   * (e.g. the `command` for `bash`, the `path` for
+   * `read_file`).
+   */
+  formatPrompt?: (req: AskRequest) => string;
+}
+
+// ---------------------------------------------------------------------------
+// Factory
+// ---------------------------------------------------------------------------
+
+/**
+ * Build an `AskHandler` that delegates to the given
+ * `UserQuestionService`. The returned handler is
+ * stateless and safe to share across multiple hooks
+ * (one Agent can have one shim).
+ *
+ * @example
+ *   const service = createUserQuestionService();
+ *   const askHandler = createAskForApprovalShim({ service });
+ *   const agent = new Agent({ ..., userQuestions: service, askHandler });
+ *   // OR: just pass `userQuestions`; the agent installs the shim
+ *   // automatically when `askHandler` is absent.
+ */
+export function createAskForApprovalShim(
+  options: CreateAskForApprovalShimOptions,
+): AskHandler {
+  const { service } = options;
+  const labels = options.options ?? DEFAULT_OPTIONS;
+  const format = options.formatPrompt ?? defaultFormatPrompt;
+  return async (req: AskRequest): Promise<AskDecision> => {
+    const uqReq: UserQuestionRequest = {
+      prompt: format(req),
+      options: labels,
+      signal: req.signal,
+    };
+    const answer = await service.ask(uqReq);
+    return translateAnswer(answer);
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Internals
+// ---------------------------------------------------------------------------
+
+/** The default Yes / No labels. The first → `allow`; the second → `deny`. */
+const DEFAULT_OPTIONS = ["Yes", "No"] as const;
+
+/**
+ * Build the prompt the human sees. Includes the tool
+ * name, a short summary of the args, and the original
+ * question.
+ *
+ * **Why a short arg summary:** the human needs enough
+ * context to decide without seeing the full JSON dump.
+ * For `bash` we show the `command`; for `read_file` the
+ * `path`; everything else falls back to
+ * `JSON.stringify(args)`.
+ */
+function defaultFormatPrompt(req: AskRequest): string {
+  const action = summarizeArgs(req.tool, req.args);
+  const lines = [`Allow ${req.tool} to ${action}?`];
+  if (req.question) {
+    lines.push("");
+    lines.push(req.question);
+  }
+  return lines.join("\n");
+}
+
+/**
+ * Pick a short human-legible string summarizing `args`
+ * for the given tool. Falls back to a JSON dump for
+ * tools that don't have a known shape.
+ */
+function summarizeArgs(tool: string, args: unknown): string {
+  if (args === null || typeof args !== "object") {
+    return JSON.stringify(args);
+  }
+  const obj = args as Record<string, unknown>;
+  switch (tool) {
+    case "bash": {
+      if (typeof obj["command"] === "string") {
+        return `run \`${obj["command"]}\``;
+      }
+      break;
+    }
+    case "read_file": {
+      if (typeof obj["path"] === "string") {
+        return `read \`${obj["path"]}\``;
+      }
+      break;
+    }
+    case "write": {
+      if (typeof obj["path"] === "string") {
+        return `write to \`${obj["path"]}\``;
+      }
+      break;
+    }
+    case "edit": {
+      if (typeof obj["path"] === "string") {
+        return `edit \`${obj["path"]}\``;
+      }
+      break;
+    }
+    case "git": {
+      if (typeof obj["subcommand"] === "string") {
+        return `run \`git ${obj["subcommand"]}\``;
+      }
+      break;
+    }
+    case "ask_user": {
+      if (typeof obj["prompt"] === "string") {
+        return `ask you: ${truncate(obj["prompt"], 60)}`;
+      }
+      break;
+    }
+  }
+  // Unknown tool / shape — JSON dump. Long JSON
+  // strings get truncated so the prompt stays scannable.
+  const dumped = JSON.stringify(args);
+  return truncate(dumped, 80);
+}
+
+/** Truncate `s` to `max` characters, adding "..." when cut. */
+function truncate(s: string, max: number): string {
+  if (s.length <= max) return s;
+  return `${s.slice(0, max - 3)}...`;
+}
+
+/**
+ * Map a `UserQuestionAnswer` back to an `AskDecision`.
+ * The translation table lives in
+ * [`docs/implementation-plan-chunk-5-2.md`](../../docs/implementation-plan-chunk-5-2.md).
+ */
+function translateAnswer(answer: UserQuestionAnswer): AskDecision {
+  if (answer.cancelled) {
+    const reason = answer.cancelledReason ?? "aborted";
+    if (reason === "no-provider") {
+      return { kind: "deny", reason: "no user channel" };
+    }
+    return { kind: "deny", reason: `user cancelled (${reason})` };
+  }
+  // Picker choice.
+  if (answer.optionIndex === 0) {
+    return { kind: "allow" };
+  }
+  if (answer.optionIndex !== undefined && answer.optionIndex >= 1) {
+    return { kind: "deny", reason: "user denied" };
+  }
+  // Free-form value. "y" / "yes" (case-insensitive)
+  // → allow; everything else → deny. Fail-closed.
+  const v = answer.value.trim().toLowerCase();
+  if (v === "y" || v === "yes") {
+    return { kind: "allow" };
+  }
+  return { kind: "deny", reason: `user denied (input: ${JSON.stringify(answer.value)})` };
+}

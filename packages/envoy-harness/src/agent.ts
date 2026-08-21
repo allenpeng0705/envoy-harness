@@ -66,6 +66,11 @@ import {
   compactMessages,
   compactMessagesWithSummary,
 } from "./agent/compact.js";
+import {
+  createAskForApprovalShim,
+} from "./interaction/ask-for-approval-shim.js";
+import { makeAskUserTool } from "./interaction/ask-user-tool.js";
+import type { UserQuestionService } from "./interaction/user-questions.js";
 
 /** Default max iterations before the agent throws. */
 export const DEFAULT_MAX_ITERATIONS = 50;
@@ -262,6 +267,33 @@ export interface AgentOptions {
    * sub-chunk.
    */
   mcpClients?: import("./mcp/index.js").McpClientRegistry;
+  /**
+   * Phase A / Item 5: the user-question service. When
+   * set, the agent:
+   *
+   * 1. Auto-registers the `ask_user` tool on the tool
+   *    registry (the model can then call it to ask the
+   *    human questions; the tool delegates to the
+   *    service).
+   * 2. Installs an `AskForApproval` shim as the default
+   *    `askHandler` (when no explicit `askHandler` was
+   *    provided). Hooks that return `kind: "ask"` go
+   *    through the same service, so the human sees ONE
+   *    interaction surface for both `ask_user` and
+   *    approval.
+   *
+   * **No service → no `ask_user` tool, no shim.** The
+   * existing v0 behavior is preserved (no model-facing
+   * ask_user; `askHandler` defaults to deny or the
+   * host-injected handler).
+   *
+   * **Why opt-in:** the headless / Tauri / mesh hosts
+   * each wire their own provider. The CLI one-shot
+   * path deliberately does NOT set this (no human
+   * channel); the existing `defaultAskHandler` (deny +
+   * log) is the right behavior.
+   */
+  userQuestions?: UserQuestionService;
 }
 
 /** What `Agent.run()` returns. */
@@ -377,6 +409,16 @@ export class Agent {
   /** @internal F-fix: approval policy. Defaults to `on-request`. */
   approval: AskForApproval;
   /**
+   * @internal Phase A / Item 5: the user-question service.
+   * When set, the agent exposes the `ask_user` tool and
+   * (when no explicit `askHandler` is configured) routes
+   * approval asks through the same service. The setter
+   * `setUserQuestions` lets hosts (e.g. the REPL) install
+   * the service after construction; the tool is
+   * registered / unregistered on the tool registry.
+   */
+  userQuestions: UserQuestionService | undefined;
+  /**
    * T2.3: the per-tool-call execution seam, extracted
    * from this file. `run()` calls `executor.executeMany(calls, iter)`
    * for each batch of tool calls in the model's response.
@@ -412,12 +454,34 @@ export class Agent {
     this.maxSubagents = options.maxSubagents ?? DEFAULT_MAX_SUBAGENTS;
     this.subagentOf = options.subagentOf;
     this.approval = options.approval ?? "on-request";
+    this.userQuestions = options.userQuestions;
     // F9.2: register the 4 LSP tools when the host provides
     // a manager. We do this AFTER the constructor sets
     // `this.tools` so the registry is available.
     if (this.lspManager) {
       for (const tool of makeLspTools(this.lspManager)) {
         this.tools.register(tool);
+      }
+    }
+    // Phase A / Item 5: register the `ask_user` tool when
+    // the host provides a UserQuestionService. Without
+    // the service, the model never sees the tool (opt-in,
+    // same pattern as `task` + LSP). The tool is built
+    // lazily on first use (the executor re-registers the
+    // fresh closure on each `setUserQuestions` call).
+    if (this.userQuestions) {
+      this.tools.register(makeAskUserTool({ service: this.userQuestions }));
+      // When the host did NOT provide an explicit
+      // `askHandler`, install a shim that delegates to
+      // the same service. The shim is a `AskHandler`
+      // (F9.1) that translates the AskRequest into a
+      // UserQuestionRequest and the answer back into
+      // an AskDecision. Host-supplied handlers always
+      // win (they take precedence over the shim).
+      if (this.askHandler === undefined) {
+        this.askHandler = createAskForApprovalShim({
+          service: this.userQuestions,
+        });
       }
     }
     // F10.1: register the `task` tool when the host
@@ -612,6 +676,50 @@ export class Agent {
    */
   setAskHandler(handler: AskHandler | undefined): void {
     this.askHandler = handler;
+  }
+
+  /**
+   * Phase A / Item 5: install / replace the
+   * `UserQuestionService`. When set, the `ask_user` tool
+   * is (re)registered on the tool registry; when unset
+   * the tool is removed (the model no longer sees it).
+   *
+   * **The approval shim:** if the host did NOT pass an
+   * explicit `askHandler` to the constructor, this
+   * setter ALSO installs the shim that routes approval
+   * asks through the service. If the host DID pass an
+   * explicit handler, the explicit handler is left
+   * alone (it takes precedence). The setter does NOT
+   * overwrite an explicit handler — use
+   * `setAskHandler` for that.
+   *
+   * **Re-registration:** passing a new service replaces
+   * the previously-registered `ask_user` tool (the old
+   * service is no longer reachable from the model). The
+   * shim is rebuilt against the new service so approval
+   * goes through the right one.
+   */
+  setUserQuestions(service: UserQuestionService | undefined): void {
+    this.userQuestions = service;
+    // Replace the tool. The ToolRegistry throws on
+    // duplicate names; unregister the old one first
+    // (idempotent — `false` when no tool was
+    // registered).
+    this.tools.unregister("ask_user");
+    if (service) {
+      this.tools.register(makeAskUserTool({ service }));
+    }
+    // If no explicit `askHandler` is set, install /
+    // replace the shim. We never OVERWRITE an
+    // explicit handler here.
+    if (service && this.askHandler === undefined) {
+      this.askHandler = createAskForApprovalShim({ service });
+    } else if (service === undefined && this.askHandler === undefined) {
+      // Unregister: clear the shim too. If an
+      // explicit handler was set, leave it alone —
+      // the host owns the lifecycle.
+      this.askHandler = undefined;
+    }
   }
 
   /**

@@ -414,10 +414,18 @@ export {
 // (open-ended user questions + approval delegation).
 // The REPL provider is the package-1 default; the
 // Tauri / mesh providers land in the adapter.
+//
+// Chunk 5.1: service + REPL provider.
+// Chunk 5.2: ask_user tool + AskForApproval shim.
 export {
+  createAskForApprovalShim,
   createReplStdinProvider,
   createUserQuestionService,
   DEFAULT_MULTILINE_SENTINEL,
+  makeAskUserTool,
+  type AskUserInput,
+  type CreateAskForApprovalShimOptions,
+  type MakeAskUserToolOptions,
   type ReplStdinProviderOptions,
   type UserQuestionAnswer,
   type UserQuestionProvider,

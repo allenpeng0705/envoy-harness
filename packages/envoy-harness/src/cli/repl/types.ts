@@ -146,6 +146,18 @@ export interface ReplOptions {
    */
   subagentRegistry?: SubagentRegistry;
   /**
+   * Phase A / Item 5: the user-question service. When
+   * set, the REPL loop uses this service instead of
+   * creating a fresh one (the default behavior is
+   * "create a fresh service + register the REPL
+   * stdin provider"). Tests inject a fake service
+   * here to drive `ask_user` tool calls
+   * deterministically. Hosts that want a different
+   * provider (Tauri, mesh) can pass their own
+   * pre-populated service.
+   */
+  userQuestions?: import("../../interaction/index.js").UserQuestionService;
+  /**
    * F14.1: seed value for `ReplContext.lastResponse`.
    * When set, the loop uses this as the initial
    * `lastResponse` (before any turns have run).

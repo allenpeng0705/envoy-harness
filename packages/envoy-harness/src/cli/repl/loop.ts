@@ -39,6 +39,11 @@ import {
   type Session,
   type SessionMetadata,
 } from "../../index.js";
+import {
+  createReplStdinProvider,
+  createUserQuestionService,
+  type UserQuestionService,
+} from "../../interaction/index.js";
 import { BUILTIN_COMMANDS } from "./commands.js";
 import { BUILTIN_INFO_COMMANDS } from "./commands-info.js";
 import { BUILTIN_TIER2_BATCH2_COMMANDS } from "./commands-tier2-batch2.js";
@@ -158,6 +163,25 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
   } else {
     agentOptions.tracer = new NullTracer();
   }
+
+  // Phase A / Item 5: build a `UserQuestionService` +
+  // register the REPL stdin provider. The agent's
+  // constructor uses this to auto-register the
+  // `ask_user` tool + install the approval shim.
+  //
+  // The provider uses the SAME `process.stdin` /
+  // `process.stdout` as the main loop's readline. The
+  // Node `readline` package handles concurrent
+  // interfaces correctly (the second interface pauses
+  // the first; closing the second resumes the first),
+  // so the user prompt for `ask_user` interleaves
+  // cleanly with the main REPL prompt.
+  const userQuestions: UserQuestionService = opts.userQuestions ??
+    createUserQuestionService();
+  const disposeUserQuestionsProvider = userQuestions.registerProvider(
+    createReplStdinProvider(),
+  );
+  agentOptions.userQuestions = userQuestions;
 
   const agent = new Agent(agentOptions);
 
@@ -328,6 +352,11 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
     if (historyPath) {
       await saveHistory(historyPath, history).catch(() => undefined);
     }
+    // Phase A / Item 5: unregister the REPL stdin
+    // provider. The service itself is GC'd with the
+    // agent. Errors here are silent (we're at exit;
+    // a provider-disposal failure is not actionable).
+    disposeUserQuestionsProvider();
   }
 
   return { exitCode: 0, turns, totalCostUsd, sessionId: agent.getSessionId() };
