@@ -64,6 +64,7 @@ import { ToolExecutor, type ToolExecutorContext } from "./agent/tool-executor.js
 import { runAgentLoop } from "./agent/run-loop.js";
 import {
   compactMessages,
+  compactMessagesBudget,
   compactMessagesWithSummary,
 } from "./agent/compact.js";
 import {
@@ -887,6 +888,48 @@ export class Agent {
     for (const m of next) {
       this.session.appendMessage(m.role, m.content);
     }
+  }
+
+  /**
+   * Phase A / Item 1 (chunk 1.1) — compact the session by
+   * TOKEN BUDGET. Drops the oldest messages until the total
+   * token estimate fits `budget`. The token estimate is a
+   * pure, hermetic function (`estimateMessageTokens` in
+   * `src/context/budget.ts`); a real tokenizer can replace
+   * it in a future chunk without changing this signature.
+   *
+   * **When to use:** long-running REPL sessions where tool
+   * results can dominate the token budget. A count-based
+   * compaction (`compact(keep)`) is a bad proxy for the real
+   * budget.
+   *
+   * **No-op** when the session already fits. The system
+   * message is always preserved.
+   *
+   * **Returns** the post-compaction token count + an
+   * `overBudget` flag — `true` means the system message
+   * alone exceeded the budget. The caller can escalate to
+   * `compactWithSummary` in that case.
+   *
+   * @returns `{ totalTokensAfter, overBudget }` from the
+   *   underlying math. `droppedCount` is also returned for
+   *   parity with the other compact variants.
+   */
+  compactWithBudget(budget: number): {
+    totalTokensAfter: number;
+    overBudget: boolean;
+    droppedCount: number;
+  } {
+    const { messages: next, totalTokensAfter, overBudget, droppedCount } =
+      compactMessagesBudget(this.session.messages, budget);
+    if (droppedCount === 0) {
+      return { totalTokensAfter, overBudget, droppedCount };
+    }
+    this.session.clear();
+    for (const m of next) {
+      this.session.appendMessage(m.role, m.content);
+    }
+    return { totalTokensAfter, overBudget, droppedCount };
   }
 
   /**

@@ -22,12 +22,12 @@ don't blow context, memories the model can cite, open-ended user questions,
 logged plan state. All four are small, hermetic, no-mesh — they unblock the
 agent's day-to-day power without touching distribution.
 
-| # | Item | Chunks | Effort | Started |
-|---|---|---|---|---|
-| 1 | Compaction variants (budget / remote-history / fallback) | C1 budget math, C2 remote-history + CLI flags | M | next |
-| 2 | Memories (codex format + deepseek retrieval discipline) | C1 store + citations, C2 consolidation + dedup | M | after 1 |
-| 5 | Ask-user / elicitation (open-ended questions) | C1 service + REPL provider, C2 tool + approval delegation | S | **THIS PR** |
-| 6 | Plan mode (logged collaboration state) | C1 plan state + /plan commands, C2 review handoff | S | after 5 |
+| # | Item | Chunks | Effort | Started | Status |
+|---|---|---|---|---|---|
+| 1 | Compaction variants (budget / remote-history / fallback) | C1 budget math, C2 remote-history + CLI flags | M | next | not started |
+| 2 | Memories (codex format + deepseek retrieval discipline) | C1 store + citations, C2 consolidation + dedup | M | after 1 | not started |
+| 5 | Ask-user / elicitation (open-ended questions) | C1 service + REPL provider, C2 tool + approval delegation | S | **DONE** (chunks 5.1 + 5.2) | ✅ shipped (`8404c8f` + `97c7a7e` + self-review `28c7aae`) |
+| 6 | Plan mode (logged collaboration state) | C1 plan state + /plan commands, C2 review handoff | S | after 5 | not started |
 
 Order rationale: **5 first** (smallest, no dependencies, sets the
 "interaction surface" pattern for the other items), then **1** (compaction
@@ -35,7 +35,11 @@ is the most common failure mode in real usage), then **2** (memories build
 on bounded fragments from item 1's budget math), then **6** (plan state
 references memory + verification results — last in the phase).
 
-## Chunk 5.1 — ask-user service + REPL provider (this commit)
+**Phase A status (as of 2026-08-21):** item 5 fully shipped (both chunks
++ a self-review commit that caught a P0 shim-replacement bug). Item 1
+next. Items 2 + 6 queued.
+
+## Chunk 5.1 — ask-user service + REPL provider (shipped in `8404c8f`)
 
 **Goal:** one `UserQuestionService` interface + a default REPL provider.
 No model-facing tool yet; that's chunk 5.2. The service stands alone so
@@ -96,7 +100,7 @@ the "options picker" prompt into a small helper if it grows.
 - Tauri / mesh provider (adapter package, later)
 - `/plan` command (item 6)
 
-## Chunk 5.2 — ask_user tool + approval delegation (next commit)
+## Chunk 5.2 — ask_user tool + approval delegation (shipped in `97c7a7e` + self-review `28c7aae`)
 
 **Goal:** wire the model-facing `ask_user` tool + the existing
 `AskForApproval` flow into the same `UserQuestionService`. The human
@@ -115,6 +119,13 @@ needs your input" and "tool wants to do X, allow?" the same way.
   available" answer so the model knows to fall through.
 - `timeoutMs`: a `setTimeout` that aborts the signal; the provider
   treats the abort as `cancelled: true`.
+
+**Self-review catch (commit `28c7aae`):** `setUserQuestions(s2)` was
+NOT replacing the auto-installed shim — the shim still closed over s1
+while the `ask_user` tool closed over s2. Fixed by adding a private
+`askHandlerIsShim: boolean` field tracked by the constructor +
+setters. `setAskHandler(undefined)` now also restores the default
+(shim if service set, else deny). 2 regression tests added.
 
 ## Later chunks (Phase A continued)
 

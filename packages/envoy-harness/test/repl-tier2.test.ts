@@ -29,6 +29,7 @@ import {
   BUILTIN_INFO_COMMANDS,
   BUILTIN_TIER2_COMMANDS,
   runRepl,
+  type LineReader,
   type ModelAdapter,
 } from "../src/index.js";
 import {
@@ -305,6 +306,130 @@ describe("/compact", () => {
     // 2 messages (1 user + 1 assistant); 2 < 100, so it's
     // a no-op. The command still prints the summary.
     expect(out.data).toMatch(/^compacted: 2 → 2 messages \(kept last 100\)$/m);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase A / Item 1 (chunks 1.1 + 1.2) — `/compact` flags:
+// `--keep N`, `--budget N`, `--summarize`, `--remote`.
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a line reader that issues N user prompts before
+ * the command, so the session has enough messages for the
+ * compaction to actually drop something.
+ */
+function multiTurnLineReader(command: string, n: number): LineReader {
+  const lines = Array.from({ length: n }, (_, i) => `prompt ${i + 1}`);
+  lines.push(command, "/quit");
+  return fakeLineReader(lines);
+}
+
+describe("/compact flags (Phase A item 1)", () => {
+  it("/compact --keep 3 is the same as /compact 3 (legacy + new)", async () => {
+    // 6 turns = 12 messages; keep 3 → drop 9.
+    const responses = Array.from({ length: 6 }, () => ({
+      content: [textBlock("r")],
+    }));
+    const model = scriptedModel(responses);
+    const out = new StringWritable();
+    await runRepl({
+      model,
+      args: makeArgs(),
+      lineReader: multiTurnLineReader("/compact --keep 3", 6),
+      stdout: out,
+      stderr: new StringWritable(),
+      historyPath: "",
+    });
+    expect(out.data).toMatch(/^compacted: 12 → 3 messages \(kept last 3\)$/m);
+  });
+
+  it("/compact --budget 100 uses the budget strategy", async () => {
+    const responses = Array.from({ length: 6 }, () => ({
+      content: [textBlock("r")],
+    }));
+    const model = scriptedModel(responses);
+    const out = new StringWritable();
+    await runRepl({
+      model,
+      args: makeArgs(),
+      lineReader: multiTurnLineReader("/compact --budget 100", 6),
+      stdout: out,
+      stderr: new StringWritable(),
+      historyPath: "",
+    });
+    // The budget strategy adds a strategy label.
+    expect(out.data).toMatch(
+      /^compacted \(budget\): 12 → \d+ messages \(\d+ tokens, dropped \d+\)$/m,
+    );
+  });
+
+  it("/compact --budget 0 prints the overBudget warning note", async () => {
+    // Need a long enough session to get overBudget.
+    const responses = Array.from({ length: 6 }, () => ({
+      content: [textBlock("r")],
+    }));
+    const model = scriptedModel(responses);
+    const out = new StringWritable();
+    const err = new StringWritable();
+    await runRepl({
+      model,
+      args: makeArgs(),
+      lineReader: multiTurnLineReader("/compact --budget 0", 6),
+      stdout: out,
+      stderr: err,
+      historyPath: "",
+    });
+    expect(out.data).toContain("over budget");
+  });
+
+  it("/compact --remote is a stub that falls back to --budget (with warning)", async () => {
+    const responses = Array.from({ length: 6 }, () => ({
+      content: [textBlock("r")],
+    }));
+    const model = scriptedModel(responses);
+    const out = new StringWritable();
+    const err = new StringWritable();
+    await runRepl({
+      model,
+      args: makeArgs(),
+      lineReader: multiTurnLineReader("/compact --remote", 6),
+      stdout: out,
+      stderr: err,
+      historyPath: "",
+    });
+    expect(err.data).toMatch(/--remote is a stub in v0/);
+    expect(out.data).toMatch(/^compacted \(budget\):/m);
+  });
+
+  it("/compact --unknown-flag is an error", async () => {
+    const model = scriptedModel([{ content: [textBlock("ok")] }]);
+    const out = new StringWritable();
+    const err = new StringWritable();
+    await runRepl({
+      model,
+      args: makeArgs(),
+      lineReader: fakeLineReader(["prompt", "/compact --foo", "/quit"]),
+      stdout: out,
+      stderr: err,
+      historyPath: "",
+    });
+    expect(err.data).toContain("unknown flag: --foo");
+  });
+
+  it("/compact --keep abc is an error", async () => {
+    const model = scriptedModel([{ content: [textBlock("ok")] }]);
+    const out = new StringWritable();
+    const err = new StringWritable();
+    await runRepl({
+      model,
+      args: makeArgs(),
+      lineReader: fakeLineReader(["prompt", "/compact --keep abc", "/quit"]),
+      stdout: out,
+      stderr: err,
+      historyPath: "",
+    });
+    expect(err.data).toContain("invalid --keep value: abc");
   });
 });
 
