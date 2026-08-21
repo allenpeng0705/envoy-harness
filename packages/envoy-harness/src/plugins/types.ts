@@ -24,8 +24,12 @@
 
 import type { z } from "zod";
 
+import type { CredentialsProvider } from "../credentials/types.js";
 import type { HookRegistry } from "../hooks/registry.js";
+import type { JobRegistry } from "../jobs/types.js";
+import type { TerminalSessionService } from "../terminal/types.js";
 import type { ToolRegistry } from "../tools/registry.js";
+import type { WebRuntime } from "../web/types.js";
 
 /**
  * A `Disposable` cleans up plugin-owned resources
@@ -90,6 +94,16 @@ export interface CapabilityContext {
    * harness's own warnings use).
    */
   readonly logger: PluginLogger;
+  /**
+   * Phase C/D — optional environment handles when the
+   * host wired them via `wireEnvironmentTools`.
+   * Plugins must tolerate absence (local one-shot
+   * without environment still works).
+   */
+  readonly jobs?: JobRegistry;
+  readonly web?: WebRuntime;
+  readonly terminals?: TerminalSessionService;
+  readonly credentials?: CredentialsProvider;
 }
 
 /**
@@ -164,6 +178,26 @@ export class PluginLoadError extends Error {
 }
 
 /**
+ * A structural zod-issue shape. We don't reach into
+ * zod's internal type names (`$ZodIssue` in v4,
+ * `ZodIssue` in v3) so this works across the zod
+ * minor versions the harness pulls in. The
+ * `message` + `path` are the only fields the error
+ * formatter needs; everything else is forwarded
+ * as opaque metadata (callers can introspect for
+ * IDE integrations).
+ *
+ * Re-exported from `validate-config.ts` for the
+ * public surface (the alias `ZodIssueLike`).
+ */
+export interface ZodIssueLike {
+  readonly path: ReadonlyArray<PropertyKey>;
+  readonly message: string;
+  readonly code?: string;
+  readonly [key: string]: unknown;
+}
+
+/**
  * Phase B / Item 3.4 — an error thrown by
  * `validatePluginConfig` when the parsed config
  * fails the plugin's `configSchema` validation.
@@ -177,12 +211,7 @@ export class PluginConfigError extends Error {
   override readonly name = "PluginConfigError";
   constructor(
     readonly pluginName: string,
-    readonly issues: ReadonlyArray<{
-      readonly path: ReadonlyArray<PropertyKey>;
-      readonly message: string;
-      readonly code?: string;
-      readonly [key: string]: unknown;
-    }>,
+    readonly issues: ReadonlyArray<ZodIssueLike>,
   ) {
     // Format the issues into a one-line message.
     // The full issue list is on the `issues` field

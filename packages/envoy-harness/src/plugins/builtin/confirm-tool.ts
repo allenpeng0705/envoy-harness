@@ -1,5 +1,5 @@
 /**
- * Phase B / Item 3.2 — built-in sample plugin: `confirm-tool`.
+ * Phase B / Item 3.2 + 3.4 — built-in sample plugin: `confirm-tool`.
  *
  * **What this is:** a hook plugin that asks the user
  * to confirm every invocation of a particular tool
@@ -42,10 +42,10 @@
  * the returned `HookDecision`.
  *
  * **Config shape:** `{ tool?: string }` — the tool
- * name to ask on. v0 accepts `unknown` (chunk 3.4
- * adds a zod schema). The plugin reads
- * `config?.tool ?? "bash"` and falls back to
- * `"bash"` when the field is absent.
+ * name to ask on. The schema is exported as
+ * `ConfirmToolConfigSchema`. The plugin reads
+ * `config.tool` and falls back to `"bash"` when
+ * the field is absent.
  */
 
 import { z } from "zod";

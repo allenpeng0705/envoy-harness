@@ -30,6 +30,7 @@ import {
   type CapabilityModule,
 } from "./types.js";
 import {
+  getBuiltinPlugin,
   isBuiltinPlugin,
   isWhitelistedPlugin,
 } from "./whitelist.js";
@@ -96,11 +97,18 @@ export async function loadPlugin<Config = unknown>(
   if (isBuiltinPlugin(modulePath)) {
     // The built-in map is populated at module load
     // time; the plugin module is a direct reference
-    // (validated when it was added to the map).
+    // (the built-in modules in `src/plugins/builtin/`
+    // are statically imported by `whitelist.ts` so
+    // they're already validated by the same TS
+    // compiler pass that compiles this file).
+    //
     // Cast: built-in plugins are typed against
-    // `unknown` config (chunk 3.4 adds the typed
-    // path via zod schemas).
-    const { getBuiltinPlugin } = await import("./whitelist.js");
+    // specific Config types (e.g. `AuditLogConfig`),
+    // but the loader's generic is caller-supplied.
+    // The double cast erases the specific type to
+    // the caller's `Config`. The chunk 3.4 schema
+    // validation is what actually enforces the
+    // shape at runtime.
     const builtIn = getBuiltinPlugin(modulePath);
     if (builtIn === undefined) {
       // Defensive: `isBuiltinPlugin` returned true

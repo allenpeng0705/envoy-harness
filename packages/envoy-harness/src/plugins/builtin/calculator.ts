@@ -1,5 +1,5 @@
 /**
- * Phase B / Item 3.2 — built-in sample plugin: `calculator`.
+ * Phase B / Item 3.2 + 3.4 — built-in sample plugin: `calculator`.
  *
  * **What this is:** a tool plugin that registers a
  * `calculator` tool on the agent's `ToolRegistry`.
@@ -29,6 +29,7 @@
  * currency, or 10 for scientific notation. v0
  * exposes `precision` as a config so the user can
  * tune the output. Default: 6 decimal places.
+ * Capped at 0..15 by the zod schema.
  *
  * **Hermetic:** the expression evaluator is pure
  * (no I/O, no LLM). The test suite invokes the
@@ -36,8 +37,8 @@
  * `ToolContext`. No real network / kernel / agent.
  *
  * **Config shape:** `{ precision?: number }` — the
- * number of decimal places to round to. v0 accepts
- * `unknown` (chunk 3.4 adds a zod schema).
+ * number of decimal places to round to. The
+ * schema is exported as `CalculatorConfigSchema`.
  */
 
 import { z } from "zod";
@@ -284,31 +285,12 @@ const CalculatorParams = z.object({
   expression: z.string().min(1, "expression must not be empty"),
 });
 
-/** The calculator tool. Pure function of (args, context)
- *  → result. The `ToolRegistry` wraps `execute` in
- *  try/catch (so a thrown `CalculatorError` becomes
- *  `{ isError: true }`). */
-export const calculatorTool: Tool<typeof CalculatorParams> = {
-  name: "calculator",
-  description:
-    "Evaluate a basic arithmetic expression. Supports +, -, *, /, " +
-    "parens, and integer / decimal literals (e.g. \"2 + 2 * 3\").",
-  parameters: CalculatorParams,
-  async execute(args, _context) {
-    // v0: round the result to the configured precision
-    // (default 6). The precision is a per-plugin config
-    // that chunk 3.3 wires from the CLI; chunk 3.4
-    // adds the typed schema path.
-    //
-    // Note: the tool itself doesn't have access to its
-    // own plugin's config (the Tool interface is
-    // config-agnostic). The plugin's `apply` closes over
-    // the config and constructs a configured `Tool`
-    // instance. See `makeCalculatorPlugin` below.
-    void _context;
-    return { content: { expression: args.expression, value: "see configured tool" } };
-  },
-};
+/** The calculator tool's description. Exposed as a
+ *  constant so the plugin's `makeCalculatorTool(precision)`
+ *  factory reuses it (no duplication). */
+const CALCULATOR_DESCRIPTION =
+  "Evaluate a basic arithmetic expression. Supports +, -, *, /, " +
+  "parens, and integer / decimal literals (e.g. \"2 + 2 * 3\").";
 
 /**
  * Build a configured calculator tool. The plugin's
@@ -323,7 +305,7 @@ export const calculatorTool: Tool<typeof CalculatorParams> = {
 export function makeCalculatorTool(precision: number): Tool<typeof CalculatorParams> {
   return {
     name: "calculator",
-    description: calculatorTool.description,
+    description: CALCULATOR_DESCRIPTION,
     parameters: CalculatorParams,
     async execute(args, _context) {
       void _context;

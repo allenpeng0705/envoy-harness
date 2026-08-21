@@ -147,6 +147,21 @@ describe("PluginRegistry: register", () => {
     expect(observedCwd).toBe("/test");
     expect(observedTools).toBe(ctx.tools);
   });
+
+  it("does NOT register a plugin when apply throws (no half-registered state)", () => {
+    const registry = new PluginRegistry();
+    const ctx = makeCtx();
+    const plugin = makePlugin("p1", { applyThrows: new Error("boom") });
+    expect(() => registry.register(plugin, {}, ctx)).toThrow(/boom/);
+    // The failed apply must not leave a record behind.
+    expect(registry.size()).toBe(0);
+    expect(registry.list()).toEqual([]);
+    // A second register with the same name should
+    // succeed (the failed apply didn't reserve the name).
+    expect(() =>
+      registry.register(makePlugin("p1"), {}, ctx),
+    ).not.toThrow();
+  });
 });
 
 describe("PluginRegistry: dispose", () => {
@@ -217,6 +232,74 @@ describe("PluginRegistry: dispose", () => {
     registry.disposeAll();
     // Reverse order: c, b, a.
     expect(order).toEqual(["c", "b", "a"]);
+  });
+
+  it("disposeAll() aggregates errors: all disposes still run, first error re-thrown", () => {
+    const registry = new PluginRegistry();
+    const ctx = makeCtx();
+    const calls: string[] = [];
+    const firstErr = new Error("first plugin's dispose threw");
+    const secondErr = new Error("second plugin's dispose threw");
+    registry.register(
+      makePlugin("a", {
+        applyReturns: () => {
+          calls.push("a");
+          throw firstErr;
+        },
+      }),
+      {},
+      ctx,
+    );
+    registry.register(
+      makePlugin("b", {
+        applyReturns: () => {
+          calls.push("b");
+          throw secondErr;
+        },
+      }),
+      {},
+      ctx,
+    );
+    registry.register(
+      makePlugin("c", {
+        applyReturns: () => {
+          calls.push("c");
+          return undefined;
+        },
+      }),
+      {},
+      ctx,
+    );
+    // disposeAll should: call c, b, a (reverse), capture
+    // the FIRST error (b's — a is last to dispose, so b
+    // is the first one that throws), and re-throw it.
+    // a still gets its chance after b throws.
+    expect(() => registry.disposeAll()).toThrow(secondErr);
+    expect(calls).toEqual(["c", "b", "a"]);
+    // The map is cleared regardless of the errors.
+    expect(registry.size()).toBe(0);
+  });
+
+  it("dispose(name) re-throws the plugin's original error", () => {
+    const registry = new PluginRegistry();
+    const ctx = makeCtx();
+    const origErr = new Error("plugin's dispose threw");
+    registry.register(
+      makePlugin("p1", {
+        applyReturns: () => {
+          throw origErr;
+        },
+      }),
+      {},
+      ctx,
+    );
+    // dispose re-throws the original error (not a
+    // wrapped PluginLoadError — the dispose path is
+    // runtime teardown, not module loading).
+    expect(() => registry.dispose("p1")).toThrow(origErr);
+    // The record was removed from the map before the
+    // throw; a re-dispose is idempotent.
+    expect(registry.dispose("p1")).toBe(false);
   });
 });
 

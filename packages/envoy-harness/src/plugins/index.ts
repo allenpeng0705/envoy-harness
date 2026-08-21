@@ -15,6 +15,7 @@ export {
   type CapabilityModule,
   type Disposable,
   type PluginLogger,
+  type ZodIssueLike,
 } from "./types.js";
 export { loadPlugin, type LoadedPlugin, type LoadPluginOptions } from "./loader.js";
 export { PluginRegistry } from "./registry.js";
@@ -30,10 +31,7 @@ export {
   PluginConfigParseError,
   type PluginConfigEntry,
 } from "./config-parser.js";
-export {
-  validatePluginConfig,
-  type ZodIssueLike,
-} from "./validate-config.js";
+export { validatePluginConfig } from "./validate-config.js";
 export {
   auditLogPlugin,
   AuditLogConfigSchema,

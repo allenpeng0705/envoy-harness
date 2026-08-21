@@ -231,6 +231,7 @@ export function makeArgs(
     maxTurns: undefined,
     maxCostUsd: undefined,
     resume: undefined,
+    resumeRemote: undefined,
     fork: undefined,
     plugins: [],
     pluginConfigs: [],

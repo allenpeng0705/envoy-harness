@@ -71,6 +71,22 @@ export async function resolveSession(
   sessionDir: string,
   stderr: NodeJS.WritableStream,
 ): Promise<Session> {
+  // --resume-remote requires the mesh adapter (Package 3).
+  // Package 1 parses the flag and fails clearly — no network.
+  if (parsed.resumeRemote) {
+    const parts = parsed.resumeRemote.split("/");
+    if (parts.length < 2 || parts[0] === "" || parts.slice(1).join("/") === "") {
+      throw new CliError(
+        "--resume-remote expects <node>/<session>",
+        EXIT_USAGE,
+      );
+    }
+    throw new CliError(
+      `--resume-remote ${parsed.resumeRemote} requires mesh adapter (Package 3)`,
+      EXIT_USAGE,
+    );
+  }
+
   // --resume and --fork are mutually exclusive.
   if (parsed.resume && parsed.fork) {
     throw new CliError(
@@ -100,11 +116,22 @@ export async function resolveSession(
   if (parsed.resume) {
     try {
       const session = await store.load(parsed.resume);
-      // The session's cwd + permissionMode come from when
-      // it was created. We don't override (the user might
-      // have changed cwd since then; that's their call).
+      // Stamp provenance so a later checkpoint/round-trip
+      // records that this process resumed the session.
+      if (session.metadata.provenance === undefined) {
+        session.metadata.provenance = { resumedFrom: parsed.resume };
+      } else if (session.metadata.provenance.resumedFrom === undefined) {
+        session.metadata.provenance = {
+          ...session.metadata.provenance,
+          resumedFrom: parsed.resume,
+        };
+      }
+      if ("checkpoint" in session && typeof session.checkpoint === "function") {
+        await session.checkpoint({ resumedFrom: parsed.resume });
+      }
       return session;
     } catch (err) {
+      if (err instanceof CliError) throw err;
       throw new CliError(
         `failed to load session ${parsed.resume}: ${(err as Error).message}`,
         EXIT_USAGE,

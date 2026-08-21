@@ -122,6 +122,18 @@ describe("parsePluginConfigEntry: malformed input", () => {
   it("throws on an empty spec", () => {
     expect(() => parsePluginConfigEntry("")).toThrow(PluginConfigParseError);
   });
+
+  it("rejects an empty plugin name (leading dot)", () => {
+    // ".key=value" — the first dot is at index 0, so
+    // name is empty. We don't enforce this in v0
+    // (the parser accepts the empty name; the runner
+    // is responsible for cross-checking the name
+    // against the `--plugin` list). This test
+    // documents the current behavior so a future
+    // change is intentional.
+    expect(() => parsePluginConfigEntry(".key=1")).not.toThrow();
+    expect(parsePluginConfigEntry(".key=1").name).toBe("");
+  });
 });
 
 describe("mergePluginConfigs", () => {

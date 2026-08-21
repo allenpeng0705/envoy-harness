@@ -39,6 +39,7 @@ import {
   type Session,
   type SessionMetadata,
 } from "../../index.js";
+import { wireEnvironmentTools } from "../../environment/index.js";
 import {
   createReplStdinProvider,
   createUserQuestionService,
@@ -128,6 +129,8 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
   }
   const tools = new ToolRegistry();
   for (const t of BUILTIN_TOOLS) tools.register(t);
+  // Phase C: jobs / web / terminal (Cordis-free L3 ports).
+  const environment = wireEnvironmentTools(tools);
   const hooks = opts.hooks ?? new HookRegistry();
 
   const agentOptions: ConstructorParameters<typeof Agent>[0] = {
@@ -372,6 +375,7 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
     // agent. Errors here are silent (we're at exit;
     // a provider-disposal failure is not actionable).
     disposeUserQuestionsProvider();
+    await environment.dispose().catch(() => undefined);
   }
 
   return { exitCode: 0, turns, totalCostUsd, sessionId: agent.getSessionId() };

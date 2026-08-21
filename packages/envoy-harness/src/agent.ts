@@ -272,11 +272,14 @@ export interface AgentOptions {
    * Phase B / Item 3.1: capability-module registry.
    * When set, the constructor stores it on the
    * `agent.plugins` field. The host (the CLI runner)
-   * has already loaded + registered the plugins BEFORE
-   * constructing the agent (so the plugin's hooks
-   * fire on the SAME `HookRegistry` the agent uses).
-   * The agent itself doesn't auto-wire plugins — the
-   * host owns that step.
+   * constructs the agent FIRST (so the plugin's
+   * hooks / tools can register on the SAME
+   * `HookRegistry` / `ToolRegistry` the agent uses),
+   * then loads + registers the plugins via
+   * `registry.register(module, config, ctx)` where
+   * `ctx.hooks` and `ctx.tools` are the agent's own
+   * registries. The agent itself doesn't auto-wire
+   * plugins — the host owns that step.
    *
    * **Future chunks** add the integration: `/plugins`
    * REPL command, sub-agent inheritance, and the

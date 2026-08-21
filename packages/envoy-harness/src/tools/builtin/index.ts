@@ -9,7 +9,7 @@
  */
 
 export { readFileTool } from "./read-file.js";
-export { bashTool } from "./bash.js";
+export { bashTool, makeBashTool, type MakeBashToolOptions } from "./bash.js";
 export { writeTool } from "./write.js";
 export { editTool } from "./edit.js";
 export { gitTool } from "./git.js";

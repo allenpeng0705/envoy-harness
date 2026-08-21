@@ -45,6 +45,22 @@ export interface SessionMetadata {
    * change).
    */
   plan?: import("./plan/state.js").PlanState;
+  /**
+   * Phase D / Item 14b: cross-machine resume provenance.
+   * Optional; local sessions omit it. Remote resume
+   * (mesh adapter) stamps `originNode` / `resumedFrom`.
+   */
+  provenance?: SessionProvenance;
+}
+
+/** Provenance fields for cross-machine / checkpoint resume. */
+export interface SessionProvenance {
+  /** Node id that originally created the session (mesh). */
+  originNode?: string;
+  /** Session id this one was resumed/forked from. */
+  resumedFrom?: string;
+  /** ISO timestamp of the last checkpoint. */
+  checkpointAt?: string;
 }
 
 export interface Session {

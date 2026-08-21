@@ -1,5 +1,5 @@
 /**
- * Phase B / Item 3.2 — built-in `calculator` plugin tests.
+ * Phase B / Item 3.2 + 3.4 — built-in `calculator` plugin tests.
  *
  * **Hermetic:** the expression evaluator is pure; the
  * `calculator` tool's `execute` is a pure function of
@@ -13,11 +13,11 @@
  *    result `{ result: "4.000000" }` (the default
  *    precision is 6).
  * 3. `calculator.invoke({ expression: "1 / 3" })` →
- *    result `{ result: "0.166667" }` (1/3 rounded to
+ *    result `{ result: "0.333333" }` (1/3 rounded to
  *    6 decimal places).
  * 4. Custom precision via `config.precision`:
  *    `{ precision: 2 }` → `1/3` rounds to
- *    `{ result: "0.17" }`.
+ *    `{ result: "0.33" }`.
  * 5. The expression evaluator handles parens,
  *    unary minus, and chained operations
  *    (3 + 4 * 2 = 11; (3 + 4) * 2 = 14;

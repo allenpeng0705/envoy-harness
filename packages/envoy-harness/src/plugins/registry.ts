@@ -3,7 +3,7 @@
  *
  * **What this is:** the harness-side store for active
  * plugins. The lifecycle:
- * 1. Host calls `registry.register(module, config)`.
+ * 1. Host calls `registry.register(module, config, ctx)`.
  * 2. The registry calls `module.apply(ctx, config)` and
  *    stashes the returned `Disposable` (or a no-op).
  * 3. Later, the host calls `registry.dispose(name)` or
@@ -22,13 +22,11 @@
  * makes the state ownership explicit; the methods are
  * the surface.
  *
- * **Why no applyAll() auto-call:** v0 lets the host
- * control when plugins run. The `Agent` constructor
- * wires the registry's `applyAll` to its own
- * `CapabilityContext`, but the registry itself is
- * passive (the host drives it). A future chunk may add
- * a "auto-apply on register" mode if the use case
- * emerges.
+ * **Why no auto-call on register:** v0 lets the host
+ * control when plugins run. The runner calls
+ * `register(...)` for every `--plugin` entry in order;
+ * each call invokes `apply` synchronously. The registry
+ * itself is passive (the host drives it).
  */
 
 import {
@@ -63,8 +61,8 @@ export class PluginRegistry {
    * **Duplicate names throw.** The registry keys by
    * `module.name`; a second register with the same
    * name is a programmer error (caller forgot to
-   * dispose the first one). The CLI runner uses
-   * `ReplOptions.plugins` as a singleton, so this
+   * dispose the first one). The CLI runner creates
+   * a fresh registry per `run()` invocation, so this
    * rarely fires in practice.
    *
    * **Apply errors throw.** If `module.apply` throws,
@@ -104,27 +102,22 @@ export class PluginRegistry {
    * a plugin was disposed, `false` if the name was not
    * registered. Idempotent (a second call returns
    * `false`).
+   *
+   * **Throws** the underlying error when the plugin's
+   * `dispose()` throws. The record is already removed
+   * from the map before the call, so a re-dispose
+   * after a throw is idempotent.
    */
   dispose(name: string): boolean {
     const record = this.plugins.get(name);
     if (!record) return false;
     this.plugins.delete(name);
-    try {
-      record.dispose();
-    } catch (err) {
-      // A throwing `dispose` is a plugin bug. The
-      // registry continues (we've already removed the
-      // record from the map, so a re-dispose is
-      // idempotent). The error is surfaced to the
-      // caller's `catch` block; we don't re-throw here
-      // because that would mask the fact that OTHER
-      // plugins might need disposing.
-      throw new PluginLoadError(
-        `plugin '${name}' threw during dispose: ${(err as Error).message}`,
-        name,
-        err,
-      );
-    }
+    // Re-throw the original error (not a
+    // `PluginLoadError` — that's a load-side concept;
+    // dispose is a runtime teardown concern). The
+    // caller can `instanceof Error` or `instanceof
+    // <PluginSpecificError>` to introspect.
+    record.dispose();
     return true;
   }
 
@@ -157,31 +150,6 @@ export class PluginRegistry {
     }
     if (firstErr !== undefined) {
       throw firstErr;
-    }
-  }
-
-  /**
-   * Apply every registered plugin with the supplied
-   * context. v0 doesn't call this from the
-   * constructor (the host does); the method exists for
-   * the `Agent` constructor's "wire on first use" path
-   * and for tests.
-   *
-   * **Note:** `applyAll` does NOT re-apply plugins that
-   * are already registered (the registry already holds
-   * the result of their `apply`). It's intended for the
-   * initial wiring.
-   */
-  applyAll(ctx: CapabilityContext): void {
-    for (const record of this.plugins.values()) {
-      // Re-apply is unusual; v0 doesn't use it. The
-      // method is here for symmetry with `disposeAll`
-      // and for future "re-wire to a new context" flows.
-      // We DO NOT call `record.module.apply(ctx, record.config)`
-      // because the registry doesn't store the config
-      // (the host does). This is a no-op in v0.
-      void record;
-      void ctx;
     }
   }
 

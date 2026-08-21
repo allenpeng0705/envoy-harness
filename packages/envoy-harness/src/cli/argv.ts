@@ -43,6 +43,7 @@ const RUN_FLAGS = new Set([
   "--max-turns",
   "--max-cost-usd",
   "--resume",
+  "--resume-remote",
   "--fork",
   "--persist",
   "--session-dir",
@@ -89,6 +90,7 @@ const RUN_VALUED_FLAGS = new Set([
   "--max-turns",
   "--max-cost-usd",
   "--resume",
+  "--resume-remote",
   "--fork",
   "--session-dir",
   "--config",
@@ -144,6 +146,12 @@ export interface RunParsedArgs {
   maxCostUsd: number | undefined;
   /** `--resume <session-id>`: resume a saved session. */
   resume: string | undefined;
+  /**
+   * Phase D / Item 14b: `--resume-remote <node>/<session>`.
+   * Parsed for forward-compat; Package 1 stubs with a clear
+   * "requires mesh adapter" error (no network).
+   */
+  resumeRemote: string | undefined;
   /** `--fork <session-id>`: fork a saved session. */
   fork: string | undefined;
   /**
@@ -339,6 +347,7 @@ function parseRunArgs(argv: ReadonlyArray<string>): RunParsedArgs {
     maxTurns: undefined,
     maxCostUsd: undefined,
     resume: undefined,
+    resumeRemote: undefined,
     fork: undefined,
     persist: false,
     sessionDir: undefined,
@@ -434,6 +443,9 @@ function parseRunArgs(argv: ReadonlyArray<string>): RunParsedArgs {
           }
           case "--resume":
             out.resume = value;
+            break;
+          case "--resume-remote":
+            out.resumeRemote = value;
             break;
           case "--fork":
             out.fork = value;
@@ -643,6 +655,7 @@ export function formatHelp(version: string): string {
     "  --max-turns <n>        agent loop iteration cap (default 50)",
     "  --max-cost-usd <n>     cost ceiling (default 5.00)",
     "  --resume <session-id>  resume a previous session",
+    "  --resume-remote <node>/<session>  resume from a mesh peer (requires mesh adapter)",
     "  --fork <session-id>    fork a previous session",
     "  --persist              persist this session to disk (for --resume later)",
     "  --session-dir <path>   session storage dir (default ~/.local/state/envoy-harness/sessions)",

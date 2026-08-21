@@ -4,13 +4,18 @@
 > each item below becomes a design chunk with its own acceptance criteria and
 > tests before it ships.
 >
-> **Phase progress (as of 2026-08-21):**
+> **Phase progress (as of 2026-08-22):**
 > - ✅ **Phase A** — Loop & context (items 1, 2, 5, 6) — **DONE** (4 commits on
 >   `fix_gaps`: `15ad4b4` item 1, `798f757` item 2, `8404c8f`+`97c7a7e`+`28c7aae`
 >   item 5, chunk 6 pending). 1218 tests passing.
-> - ⏳ **Phase B** — Runtime extensibility (items 3, 15) — next.
-> - ⏳ Phase C — Environment & long-running (items 7, 8, 9, 13).
-> - ⏳ Phase D — Data & observability (items 14a, 14b, 16, 17).
+> - 🚧 **Phase B** — Runtime extensibility (items 3, 15) — in progress (MiniMax;
+>   item 15 + item 3 chunks 3.1–3.4 code+tests pending user commit).
+> - ✅ **Phase C** — Environment & long-running (items 7, 8, 9, 13 P1) — **DONE**
+>   (jobs / web / terminal + credentials wire; Brave search; `node-pty` optional;
+>   `bash --job` sugar).
+> - ✅ **Phase D** — Data & observability (items 14a, 14b P1, 16, 17) — **DONE**
+>   locally 2026-08-22 (pending user commit). See
+>   [`implementation-plan-phase-d.md`](./implementation-plan-phase-d.md).
 > - ⏳ Phase E — Automation & embedding (items 10, 11).
 > - ⏳ Phase F — OS sandbox (item 4).
 > - ⏳ Phase G — Mesh-native integration (12, 13-adapter, 14b-remote, …).
@@ -50,9 +55,9 @@
 | 4 | OS sandbox kernels | Reuse deepseek's published landlock-run npm family (Linux) + seatbelt (macOS) | M (2 chunks) | F | ⏳ |
 | 5 | Ask-user / elicitation | Follow deepseek interaction/user-questions | S–M (1–2 chunks) | A | ✅ done (`8404c8f` + `97c7a7e` + self-review `28c7aae`) |
 | 6 | Plan | Follow deepseek plan-mode (logged collaboration state) | S (1 chunk) | A | ✅ done (pending commit) |
-| 7 | Background jobs | Follow deepseek jobs family contract | M (2 chunks) | C | ⏳ |
-| 8 | Web search / fetch | Follow deepseek web family (provider seam) | M (2 chunks) | C | ⏳ |
-| 9 | Persistent PTY / terminal | Follow deepseek terminal family | M (2 chunks) | C | ⏳ |
+| 7 | Background jobs | Follow deepseek jobs family contract | M (2 chunks) | C | ✅ done (L3 port; pending commit) |
+| 8 | Web search / fetch | Follow deepseek web family (provider seam) | M (2 chunks) | C | ✅ done (L3 port; pending commit) |
+| 9 | Persistent PTY / terminal | Follow deepseek terminal family | M (2 chunks) | C | ✅ done (fake backend; `node-pty` deferred) |
 | 10 | Automation protocol | Follow deepseek ACP server | M (2 chunks) | E | ⏳ |
 | 11 | SDK / embedding | Follow deepseek JSON-RPC SDK + TS client; Python later | M (2 chunks) + L (py) | E | ⏳ |
 | 12 | TUI / rich UI | Follow codex TUI *design*, but build in EnvoyMesh's Tauri host, not the core | REPL S; Tauri L | G | ⏳ |
@@ -75,7 +80,12 @@
   (pending user commit). 1370 tests passing. The Cordis-compat
   container lands in Phase G.
 - **Phase C — Environment & long-running** (2–3 weeks): 7, 8, 9, 13 (P1 part).
-  Depends on B.
+  Depends on B. **✅ items 7/8/9 DONE** (2026-08-22) — item 13 still open.
+  Jobs/web/terminal ship as Cordis-free L3 ports under `src/jobs/`,
+  `src/web/`, `src/terminal/`; CLI wires them via `wireEnvironmentTools`
+  (does not touch `src/plugins/**`). Terminal v0 uses a fake backend;
+  real `node-pty` is a follow-up. Search providers need credentials
+  (item 13); keyless HTTP fetch ships by default.
 - **Phase D — Data & observability** (2 weeks): 14a, 14b (P1 part), 16, 17.
   Parallel with C.
 - **Phase E — Automation & embedding** (1–2 weeks): 10, 11. Depends on A + B.
@@ -469,87 +479,61 @@ verifier sees plan vs result.
 
 ## 7. Background jobs — follow deepseek jobs family
 
+**Status:** ✅ done (2026-08-22). See
+[`implementation-plan-phase-c.md`](./implementation-plan-phase-c.md).
+
 **Reference:** deepseek `jobs` + `jobs-local` + `tool-jobs` contract
 (registry, owner-fenced ids, snapshots, observe/cancel/wait/completion).
 
-**Design (`src/jobs/`):**
+**Shipped (`src/jobs/`):**
+- `JobRegistry` / `JobHooks` / `JobSnapshot` (owner = opaque session id)
+- `createLocalJobRegistry` — concurrency cap, kill→stopping, wait timeout
+- `createProcessJobHooks` — child-process producer with bounded output
+- Tools: `job_start` / `job_status` / `job_output` / `job_wait` /
+  `job_kill` / `job_list`
+- Hermetic tests: lifecycle, owner fence, limit, wait timeout, onJobDone
 
-```ts
-interface JobHandle {
-  id: string; kind: string; label: string;
-  status(): JobStatus; snapshot(): JobSnapshot;   // never live state
-  cancel(reason?: string): Promise<void>;
-  wait(opts?: { timeoutMs?: number }): Promise<JobOutcome>;
-  readOutput(): string | undefined;
-}
-interface JobRegistry {
-  start(spec: JobStart, owner: string): Promise<JobHandle>; // owner = session/agent id
-  list(owner?: string): JobSnapshot[];
-  onCompleted(fn: (snap: JobSnapshot) => void): () => void;
-}
-// process-provider.ts — spawns a child process, streams output to a bounded
-//   buffer, cancels via SIGTERM→SIGKILL, owner-fenced
-// tools.ts — job_start / job_status / job_cancel / job_wait / job_output
-```
-
-Long-running bash/edit invocations can be submitted as jobs (`bash --job`).
-**Tests:** lifecycle, owner fencing (agent A cannot cancel agent B's job),
-completion notices, bounded output, cancellation of a fake long-running
-process.
-**Mesh angle:** a remote `JobHandle` via `MeshSubmitter` (later): observe/cancel
-long-running work on another node.
+**Deferred:** `bash --job` sugar; mesh-remote `JobHandle`.
 
 ## 8. Web search / fetch — follow deepseek web family
+
+**Status:** ✅ done (2026-08-22). See
+[`implementation-plan-phase-c.md`](./implementation-plan-phase-c.md).
 
 **Reference:** deepseek `web` (provider-neutral registration/selection) +
 `web-search-*` providers.
 
-**Design (`src/web/`):**
+**Shipped (`src/web/`):**
+- Split `WebSearchProvider` / `WebFetchProvider` on one `WebRuntime`
+- Selection: configured id → unique available → else errors
+  (`PROVIDER_MISSING` / `UNAVAILABLE` / `AMBIGUOUS`)
+- `createHttpFetchProvider` — keyless, size-capped HTTP(S) fetch
+- Tools: `web_search` / `web_fetch`
+- Hermetic tests: selection, truncation, duplicates, no-provider
 
-```ts
-interface WebProvider {
-  name: string;
-  search(q: string, opts: WebSearchOptions): Promise<WebSearchResult[]>;
-  fetch(url: string, opts: WebFetchOptions): Promise<{ content: string; contentType: string }>;
-}
-interface WebProviderRegistry { register(p: WebProvider): () => void; search(...); fetch(...); }
-// fetch-provider.ts — built-in, keyless, size-capped (result becomes a bounded fragment)
-// tools.ts — web_search / web_fetch with result caps and error mapping
-```
-
-Search providers (exa/perplexity/brave) are optional capabilities whose keys
-come from the credentials seam (item 13); MCP servers remain an alternate path.
-**Tests:** provider selection, size caps, error mapping, fake providers, key
-redaction in traces.
+**Deferred:** paid search providers (exa/perplexity) behind item 13
+credentials; MCP alternate path already exists.
 
 ## 9. Persistent PTY / terminal — follow deepseek terminal family
 
-**Reference:** deepseek `terminal` (`ctx.terminals`: backend registry, branded
-ids, exact-Agent ownership, session ops) + `terminal-bash` + `tool-terminal`.
+**Status:** ✅ done (2026-08-22) with fake backend. Real `node-pty`
+is a documented follow-up (no new native dep in this pass).
 
-**Design (`src/terminal/`):**
+**Reference:** deepseek `terminal` (`ctx.terminals`: backend registry,
+branded ids, exact-Agent ownership, session ops) + `terminal-bash` +
+`tool-terminal`.
 
-```ts
-interface TerminalBackend {
-  create(spec: { cmd: string; cwd: string; env?: Record<string,string> }): Promise<TerminalSession>;
-}
-interface TerminalSession {
-  id: string;
-  write(input: string): void;
-  read(): string;                  // bounded buffer
-  resize(cols: number, rows: number): void;
-  close(): Promise<void>;
-  onExit(fn: (code: number | null) => void): () => void;
-}
-// node-pty backend (new justified dep), fake backend for tests
-// tools.ts — terminal_create / terminal_write / terminal_read / terminal_resize /
-//   terminal_close / terminal_list
-```
+**Shipped (`src/terminal/`):**
+- `TerminalSessionService` — backend registry, `pty-N` ids, owner fence
+  (owner = opaque session id, not live Agent instance)
+- Exclusive send per session (`SEND_ACTIVE`)
+- `createFakeTerminalBackend` for hermetic tests + CLI v0
+- Tools: `terminal_open` / `terminal_send` / `terminal_read` /
+  `terminal_signal` / `terminal_close` / `terminal_list`
+- Hermetic tests: ownership, duplicate backend, send exclusivity,
+  list/kill, tool happy path
 
-Owner-scoped (session id on the handle), exact-Agent ownership like deepseek.
-**Tests:** fake backend, ownership, bounded buffer, exit notification, tool arg
-validation.
-**Mesh angle:** remote terminal via submitter (later).
+**Deferred:** `node-pty` backend (L1 justified dep); mesh-remote terminal.
 
 ## 10. Automation protocol — follow deepseek ACP server
 

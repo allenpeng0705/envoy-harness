@@ -24,26 +24,8 @@
  * set at all).
  */
 
-import type { z } from "zod";
-import type { CapabilityModule } from "./types.js";
+import type { CapabilityModule, ZodIssueLike } from "./types.js";
 import { PluginConfigError } from "./types.js";
-
-/**
- * A structural zod-issue shape. We don't reach into
- * zod's internal type names (`$ZodIssue` in v4,
- * `ZodIssue` in v3) so this module works across
- * the zod minor versions the harness pulls in. The
- * `message` + `path` are the only fields the error
- * formatter needs; everything else is forwarded
- * as opaque metadata (callers can introspect for
- * IDE integrations).
- */
-export interface ZodIssueLike {
-  readonly path: ReadonlyArray<PropertyKey>;
-  readonly message: string;
-  readonly code?: string;
-  readonly [key: string]: unknown;
-}
 
 /**
  * Validate a plugin's config against its
@@ -71,9 +53,10 @@ export function validatePluginConfig<Config>(
   // `safeParse` returns `{ success, data }` or
   // `{ success: false, error: ZodError }`. We use
   // the safe variant so we can format the error
-  // into our own `PluginConfigError`.
-  const schema = module.configSchema as z.ZodType<Config>;
-  const result = schema.safeParse(config);
+  // into our own `PluginConfigError`. The schema
+  // is already typed as `z.ZodSchema<Config>` on
+  // `CapabilityModule`, so no cast is needed.
+  const result = module.configSchema.safeParse(config);
   if (!result.success) {
     // `result.error.issues` is zod's issue array.
     // The shape is stable across zod minor versions

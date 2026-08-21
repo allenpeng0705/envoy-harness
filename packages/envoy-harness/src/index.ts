@@ -107,6 +107,7 @@ export {
   newSessionId,
   type Session,
   type SessionMetadata,
+  type SessionProvenance,
 } from "./session.js";
 
 // F14.1: re-export the persistence layer (PersistedSession
@@ -117,6 +118,18 @@ export {
   type PersistedSessionCreateOptions,
   SessionStore,
   type SessionStoreOptions,
+  createSessionQueryService,
+  makeSessionQueryTool,
+  registerSessionQueryTool,
+  indexSessionDirectory,
+  indexSessionFile,
+  isPathInside,
+  type SessionIndexEntry,
+  type SessionIndexerOptions,
+  type SessionQueryHit,
+  type SessionQueryRequest,
+  type SessionQueryService,
+  type SessionQueryServiceOptions,
 } from "./session/index.js";
 
 // Re-export the agent loop (§3.4 of the design doc)
@@ -131,7 +144,9 @@ export {
 export {
   BUILTIN_TOOLS,
   bashTool,
+  makeBashTool,
   readFileTool,
+  type MakeBashToolOptions,
 } from "./tools/builtin/index.js";
 
 // Re-export cost tracking (§14 of the design doc, F7.1)
@@ -266,6 +281,12 @@ export {
   NullTracer,
   VerboseTracer,
   formatVerbose,
+  createJsonlTelemetrySink,
+  createNullTelemetrySink,
+  wrapTracerAsTelemetrySink,
+  assertRedactionInvariant,
+  assertTraceEventShape,
+  InvariantError,
   type AgentEndEvent,
   type AgentStartEvent,
   type ErrorEvent,
@@ -275,6 +296,11 @@ export {
   type TraceEvent,
   type Tracer,
   type WritableStream,
+  type TelemetryCounters,
+  type TelemetrySink,
+  type JsonlTelemetrySinkOptions,
+  type InvariantKind,
+  type RedactionInvariantOptions,
 } from "./trace/index.js";
 
 // Re-export the team layer (F9.3, §22 of the design doc)
@@ -542,3 +568,117 @@ export {
   type ReviewVerdict,
   type RunReviewOptions,
 } from "./plan/index.js";
+
+// Phase C — environment & long-running (items 7 / 8 / 9).
+export {
+  createLocalJobRegistry,
+  createProcessJobHooks,
+  JobError,
+  makeJobTools,
+  registerJobTools,
+  type JobDoneListener,
+  type JobHooks,
+  type JobOutcome,
+  type JobRead,
+  type JobRegistry,
+  type JobSnapshot,
+  type JobStart,
+  type JobStatus,
+  type LocalJobRegistryOptions,
+  type ProcessJobOptions,
+} from "./jobs/index.js";
+
+export {
+  createFakeFetchProvider,
+  createFakeSearchProvider,
+  createHttpFetchProvider,
+  createBraveSearchProvider,
+  createWebRuntime,
+  makeWebTools,
+  registerWebTools,
+  WebError,
+  type BraveSearchProviderOptions,
+  type HttpFetchProviderOptions,
+  type WebErrorCode,
+  type WebFetchBody,
+  type WebFetchProvider,
+  type WebFetchRequest,
+  type WebFetchResult,
+  type WebRuntime,
+  type WebRuntimeConfig,
+  type WebSearchProvider,
+  type WebSearchRequest,
+  type WebSearchResult,
+  type WebSearchSource,
+} from "./web/index.js";
+
+export {
+  createFakeTerminalBackend,
+  createPtyTerminalBackend,
+  isPtyAvailable,
+  createTerminalSessionService,
+  makeTerminalTools,
+  registerTerminalTools,
+  TerminalError,
+  type FakeTerminalBackendOptions,
+  type FakeTerminalSessionState,
+  type TerminalBackend,
+  type TerminalBackendSession,
+  type TerminalBackendSpawnSpec,
+  type TerminalErrorCode,
+  type TerminalReadRequest,
+  type TerminalReadResult,
+  type TerminalSendOperation,
+  type TerminalSendRequest,
+  type TerminalSendResult,
+  type TerminalSessionService,
+  type TerminalSessionSnapshot,
+  type TerminalSessionStatus,
+  type TerminalSignal,
+  type TerminalSpawnRequest,
+  type TerminalWaitReason,
+} from "./terminal/index.js";
+
+export {
+  createDefaultCredentials,
+  wireEnvironmentTools,
+  type EnvironmentCapabilities,
+  type WireEnvironmentOptions,
+} from "./environment/index.js";
+
+// Phase C / Item 13 — credentials
+export {
+  createAskCredentialsProvider,
+  createCredentialsProvider,
+  createEnvCredentialsProvider,
+  createFileCredentialsProvider,
+  createRedactingTracer,
+  CredentialError,
+  type AskCredentialsOptions,
+  type CredentialErrorCode,
+  type CredentialReference,
+  type CredentialSource,
+  type CredentialsProvider,
+  type EnvCredentialsOptions,
+  type FileCredentialsOptions,
+  type RedactingTracerOptions,
+  type ResolveCredentialOptions,
+} from "./credentials/index.js";
+
+// Phase D / Item 16 — feedback
+export {
+  createFeedbackSidecar,
+  createFeedbackStore,
+  makeFeedbackTools,
+  registerFeedbackTools,
+  toSelfEvolveSignals,
+  type FeedbackEvent,
+  type FeedbackPolarity,
+  type FeedbackSidecar,
+  type FeedbackSidecarOptions,
+  type FeedbackStore,
+  type FeedbackStoreOptions,
+  type MessageFeedback,
+  type RecordFeedbackInput,
+  type SelfEvolveFeedbackSignal,
+} from "./feedback/index.js";

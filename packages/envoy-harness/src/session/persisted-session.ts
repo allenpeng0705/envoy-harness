@@ -451,4 +451,22 @@ export class PersistedSession implements Session {
   async flush(): Promise<void> {
     await this.writeChain;
   }
+
+  /**
+   * Phase D / Item 14b: flush pending writes and stamp
+   * `metadata.provenance.checkpointAt`. Optionally merge
+   * extra provenance fields (e.g. `resumedFrom`).
+   */
+  async checkpoint(
+    extra?: Partial<import("../session.js").SessionProvenance>,
+  ): Promise<void> {
+    const prev = this.metadata.provenance ?? {};
+    this.metadata.provenance = {
+      ...prev,
+      ...extra,
+      checkpointAt: new Date().toISOString(),
+    };
+    this.rewriteHeader();
+    await this.flush();
+  }
 }

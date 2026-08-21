@@ -1,5 +1,5 @@
 /**
- * Phase B / Item 3.1 — built-in sample plugin: `audit-log`.
+ * Phase B / Item 3.1 + 3.4 — built-in sample plugin: `audit-log`.
  *
  * **What this is:** the smallest possible plugin that
  * exercises the full lifecycle. It registers a
@@ -13,15 +13,17 @@
  * 2. The `apply(ctx, config)` lifecycle.
  * 3. Hook registration on `ctx.hooks`.
  * 4. The `dispose()` cleanup path.
+ * 5. (chunk 3.4) A zod `configSchema` that the runner
+ *    validates before calling `apply`.
  *
  * **Hermetic:** no I/O, no LLM, no real kernel. The test
  * suite exercises the hook by firing a synthetic
  * `PostToolUse` event on a real `HookRegistry`.
  *
  * **Config shape:** `{ prefix?: string }` — the log
- * line prefix. v0 accepts `unknown` (chunk 3.4 adds a
- * zod schema). The plugin reads `config.prefix` and
- * falls back to `"audit"` when the field is absent.
+ * line prefix. The schema is exported as
+ * `AuditLogConfigSchema`. The plugin reads `config.prefix`
+ * and falls back to `"audit"` when the field is absent.
  */
 
 import { z } from "zod";
@@ -67,12 +69,11 @@ export const auditLogPlugin: CapabilityModule<AuditLogConfig> = {
   configSchema: AuditLogConfigSchema,
 
   apply(ctx, config): Disposable {
-    // Chunk 3.4: the config has been validated by
-    // the runner against `configSchema` (when
-    // reached via the runner path). For tests that
-    // call `apply` directly, the cast to
-    // `AuditLogConfig` is the same as the pre-3.4
-    // v0 contract.
+    // The runner validated `config` against
+    // `configSchema` (chunk 3.4). Tests that call
+    // `apply` directly pass a `Partial<AuditLogConfig>`-
+    // shaped object; the destructuring default
+    // handles the missing `prefix`.
     const { prefix = "audit" } = config;
     // The handler captures `prefix` via closure. The
     // `tool` and `isError` come from the `PostToolUse`

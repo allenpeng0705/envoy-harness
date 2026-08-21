@@ -34,6 +34,7 @@ import {
   type Session,
   type SessionMetadata,
 } from "../../index.js";
+import { wireEnvironmentTools } from "../../environment/index.js";
 import { resolveSession } from "../../session/resolve.js";
 import type { ParsedArgs } from "../argv.js";
 import { CliError } from "./errors.js";
@@ -194,6 +195,8 @@ export async function runAgent(
 
   const tools = new ToolRegistry();
   for (const t of BUILTIN_TOOLS) tools.register(t);
+  // Phase C: jobs / web / terminal (Cordis-free L3 ports).
+  const environment = wireEnvironmentTools(tools);
   const hooks = options.hooks ?? new HookRegistry();
 
   const agentOptions: ConstructorParameters<typeof Agent>[0] = {
@@ -314,6 +317,10 @@ export async function runAgent(
       hooks: agent.hooks,
       tools: agent.tools,
       logger: pluginLogger,
+      jobs: environment.jobs,
+      web: environment.web,
+      terminals: environment.terminals,
+      credentials: environment.credentials,
     };
     // Build the per-plugin config map once (the
     // merge is pure). Plugins with no `--plugin-config`
@@ -381,6 +388,8 @@ export async function runAgent(
   if (!parsed.quiet) {
     stdout.write(text + "\n");
   }
+
+  await environment.dispose().catch(() => undefined);
 
   return {
     subcommand: "run",

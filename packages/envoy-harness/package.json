@@ -54,6 +54,9 @@
     "yaml": "^2.6.0",
     "zod": "^3.23.8"
   },
+  "optionalDependencies": {
+    "node-pty": "^1.0.0"
+  },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "tsx": "^4.19.0",
