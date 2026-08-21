@@ -10,6 +10,11 @@
 > (`docs/boundary.en.md`) says *what belongs in envoy-harness vs
 > EnvoyMesh*; this file assumes the boundary.
 >
+> **Gap-closure plan:** `docs/gap-closure-plan.md` tracks the
+> 17-item roadmap for reaching local parity with codex /
+> deepseek-harness while keeping the mesh-native moat. Each item
+> becomes a chunk in this file when its design is accepted.
+>
 > **Status as of last commit:** T1.4 done on `phase-1/types` (Tier 1 review hardening pass complete).
 >
 > - **Total:** 1043 tests across 67 files (envoy-harness 950 / 57
