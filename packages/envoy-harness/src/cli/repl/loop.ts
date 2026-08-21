@@ -44,6 +44,8 @@ import {
   createUserQuestionService,
   type UserQuestionService,
 } from "../../interaction/index.js";
+import { LocalMemoryStore } from "../../memories/index.js";
+import type { MemoryStore } from "../../memories/index.js";
 import { BUILTIN_COMMANDS } from "./commands.js";
 import { BUILTIN_INFO_COMMANDS } from "./commands-info.js";
 import { BUILTIN_TIER2_BATCH2_COMMANDS } from "./commands-tier2-batch2.js";
@@ -183,6 +185,18 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
   );
   agentOptions.userQuestions = userQuestions;
 
+  // Phase A / Item 2: build the default memory store
+  // when the host didn't inject one. The default is
+  // `./memories` (relative to the REPL's cwd) or
+  // `$ENVOY_MEMORY_DIR` when set. The store is NOT
+  // created (just referenced) — the first `write`
+  // call creates the directory on demand. Tests
+  // inject a `LocalMemoryStore` rooted at a temp dir.
+  const memoryStore: MemoryStore = opts.memoryStore ??
+    new LocalMemoryStore({
+      memoryRoot: process.env["ENVOY_MEMORY_DIR"] ?? "./memories",
+    });
+
   const agent = new Agent(agentOptions);
 
   // F17.6: extract the sub-agent registry from the
@@ -290,6 +304,7 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
           ...(subagentRegistry ? { subagentRegistry } : {}),
           ...(lastResponse !== undefined ? { lastResponse } : {}),
           ...(opts.reviewDiff ? { reviewDiff: opts.reviewDiff } : {}),
+          ...(memoryStore ? { memoryStore } : {}),
         };
         const result = await dispatchCommand(registry, parsed.name, parsed.args, ctx);
         switch (result.kind) {

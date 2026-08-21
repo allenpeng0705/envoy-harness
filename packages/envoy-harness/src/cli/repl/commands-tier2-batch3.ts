@@ -191,7 +191,108 @@ const copyCommand: ReplCommand = {
  * and `BUILTIN_TIER2_BATCH2_COMMANDS` in
  * `commands-tier2-batch2.ts`).
  */
+// ---------------------------------------------------------------------------
+// 3. /memory — memory store commands (list / read / add)
+// ---------------------------------------------------------------------------
+
+/**
+ * `/memory <subcommand> ...` — inspect + write the
+ * memory store. Subcommands:
+ *
+ * - `list` — print the title of every memory.
+ * - `read <name>` — print one memory's full body.
+ * - `add <name> <body>` — write a new memory.
+ *
+ * **Why a single `/memory` command (not three
+ * separate slash commands):** the slash-command
+ * namespace is finite; using 3 slots for one
+ * capability wastes it. The subcommand dispatcher
+ * keeps the surface minimal.
+ *
+ * **Hermetic:** no LLM. The store reads + writes
+ * files. `add` is the user-as-judge path; the LLM
+ * path lives in `consolidateMemories` (called by
+ * the host at session end, not from a slash
+ * command).
+ */
+const memoryCommand: ReplCommand = {
+  name: "/memory",
+  description:
+    "memory commands. Subcommands: list, read <name>, add <name> <body>.",
+  async handler(args, ctx) {
+    if (!ctx.memoryStore) {
+      ctx.stderr.write("no memory store configured\n");
+      return;
+    }
+    const sub = args[0] ?? "list";
+    switch (sub) {
+      case "list": {
+        const list = await ctx.memoryStore.list();
+        if (list.length === 0) {
+          ctx.stdout.write("(no memories)\n");
+          return;
+        }
+        for (const m of list) {
+          const tags = m.tags.length > 0 ? ` [${m.tags.join(", ")}]` : "";
+          ctx.stdout.write(`- ${m.name}${tags} — ${m.title}\n`);
+        }
+        return;
+      }
+      case "read": {
+        const name = args[1];
+        if (name === undefined) {
+          ctx.stderr.write("usage: /memory read <name>\n");
+          return;
+        }
+        const mem = await ctx.memoryStore.read(name);
+        if (mem === undefined) {
+          ctx.stderr.write(`memory not found: ${name}\n`);
+          return;
+        }
+        ctx.stdout.write(`# ${mem.title}\n\n${mem.body}\n`);
+        return;
+      }
+      case "add": {
+        const name = args[1];
+        const body = args.slice(2).join(" ");
+        if (name === undefined || body.length === 0) {
+          ctx.stderr.write("usage: /memory add <name> <body>\n");
+          return;
+        }
+        try {
+          await ctx.memoryStore.write({
+            name,
+            title: titleFromName(name),
+            tags: [],
+            created: new Date().toISOString().slice(0, 10),
+            body,
+          });
+          ctx.stdout.write(`added: ${name}\n`);
+        } catch (err) {
+          ctx.stderr.write(`error: ${(err as Error).message}\n`);
+        }
+        return;
+      }
+      default:
+        ctx.stderr.write(
+          `unknown /memory subcommand: ${sub} (try: list, read, add)\n`,
+        );
+    }
+  },
+};
+
+/** Default title for a newly-added memory: a
+ *  humanized version of the name. The user can
+ *  rename via the underlying store (or a future
+ *  `/memory edit` command). */
+function titleFromName(name: string): string {
+  return name
+    .replace(/[-_]+/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 export const BUILTIN_TIER2_BATCH3_COMMANDS: ReadonlyArray<ReplCommand> = [
   renameCommand,
   copyCommand,
+  memoryCommand,
 ];

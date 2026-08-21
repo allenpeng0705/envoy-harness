@@ -158,6 +158,16 @@ export interface ReplOptions {
    */
   userQuestions?: import("../../interaction/index.js").UserQuestionService;
   /**
+   * Phase A / Item 2: the memory store. When set,
+   * the REPL's `/memory` commands use this store
+   * directly. The default behavior (when unset) is
+   * to create a fresh `LocalMemoryStore` rooted at
+   * `./memories` (or `$ENVOY_MEMORY_DIR` when set).
+   * Tests inject a `LocalMemoryStore` rooted at a
+   * temp dir.
+   */
+  memoryStore?: import("../../memories/index.js").MemoryStore;
+  /**
    * F14.1: seed value for `ReplContext.lastResponse`.
    * When set, the loop uses this as the initial
    * `lastResponse` (before any turns have run).
@@ -346,6 +356,14 @@ export interface ReplContext {
    *  "no sub-agents (the agent has no meshSubmitter
    *  or the submitter doesn't implement listSubagents)". */
   subagentRegistry?: SubagentRegistry;
+  /** Phase A / Item 2: the memory store. The `/memory`
+   * commands read + write this; when undefined, the
+   * commands print "no memory store configured".
+   * The REPL loop sets this from
+   * `ReplOptions.memoryStore` (or constructs a
+   * `LocalMemoryStore` from `$ENVOY_MEMORY_DIR` /
+   * `./memories` as a default). */
+  memoryStore?: import("../../memories/index.js").MemoryStore;
   /**
    * F14.1: the last assistant text from the most recent
    * agent turn. The loop updates this after every turn;

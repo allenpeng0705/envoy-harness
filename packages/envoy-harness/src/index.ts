@@ -432,3 +432,28 @@ export {
   type UserQuestionRequest,
   type UserQuestionService,
 } from "./interaction/index.js";
+
+// Phase A / Item 2 — the memory subsystem.
+// Chunk 2.1: file-based store + citations + bounded
+// injection. Chunk 2.2: session-end consolidation.
+export {
+  LocalMemoryStore,
+  buildIndexFragment,
+  buildMemoryFragment,
+  buildMemoryIndex,
+  consolidateMemories,
+  estimateMemoryTokens,
+  hashMemoryBody,
+  parseCitation,
+  parseMemoryFile,
+  renderCitation,
+  serializeMemoryFile,
+  slugify,
+  type ConsolidateOptions,
+  type ConsolidateResult,
+  type LocalMemoryStoreOptions,
+  type Memory,
+  type MemoryCitation,
+  type MemoryMeta,
+  type MemoryStore,
+} from "./memories/index.js";
