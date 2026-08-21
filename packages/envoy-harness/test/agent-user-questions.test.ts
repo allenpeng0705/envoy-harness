@@ -410,6 +410,101 @@ describe("Agent + userQuestions — setUserQuestions (live wire)", () => {
     // Explicit handler was still called (host wins).
     expect(explicitHandlerCalled).toBe(true);
   });
+
+  // Self-review regression test: previously, calling
+  // `setUserQuestions(s2)` to replace `s1` updated the
+  // `ask_user` tool but NOT the auto-installed shim
+  // (the shim still closed over `s1`). The shim is now
+  // tracked via `askHandlerIsShim` and replaced on
+  // every service change. The new shim closes over the
+  // new service.
+  it("setUserQuestions REPLACES the shim with the new service's shim", async () => {
+    const { service: s1, calls: c1 } = buildFakeService({
+      value: "Yes",
+      optionIndex: 0,
+      cancelled: false,
+    });
+    const { service: s2, calls: c2 } = buildFakeService({
+      value: "Yes",
+      optionIndex: 0,
+      cancelled: false,
+    });
+    const hook = async (): Promise<import("../src/types.js").HookDecision> => ({
+      kind: "ask",
+      question: "Allow?",
+    });
+    const bash: Tool = {
+      name: "bash",
+      description: "test",
+      parameters: z.object({ command: z.string() }),
+      async execute({ command }) {
+        return { content: `ran: ${command}` };
+      },
+    };
+    const { agent } = agentWithUserQuestions({
+      userQuestions: s1,
+      tools: [bash],
+      hook,
+      model: scriptedModel([
+        {
+          content: [
+            {
+              type: "tool_call",
+              id: "t1",
+              name: "bash",
+              args: { command: "ls" },
+            },
+          ],
+        },
+        { content: [{ type: "text", text: "ok" }] },
+      ]),
+    });
+    // Replace s1 with s2. The shim should now
+    // close over s2 (s1 was replaced).
+    agent.setUserQuestions(s2);
+    await agent.run("hi");
+    expect(c2.length).toBeGreaterThan(0);
+    expect(c1.length).toBe(0);
+  });
+
+  // Self-review regression test: `setAskHandler(undefined)`
+  // restores the default — if a service is registered,
+  // the shim is RE-installed; if not, the handler
+  // stays `undefined` (deny default).
+  it("setAskHandler(undefined) restores the shim when a service is registered", async () => {
+    const { service, calls } = buildFakeService({
+      value: "Yes",
+      optionIndex: 0,
+      cancelled: false,
+    });
+    const hook = async (): Promise<import("../src/types.js").HookDecision> => ({
+      kind: "ask",
+      question: "Allow?",
+    });
+    const { agent } = agentWithUserQuestions({
+      userQuestions: service,
+      hook,
+      model: scriptedModel([
+        {
+          content: [
+            {
+              type: "tool_call",
+              id: "t1",
+              name: "bash",
+              args: { command: "ls" },
+            },
+          ],
+        },
+        { content: [{ type: "text", text: "ok" }] },
+      ]),
+    });
+    // Initially: shim is installed (service set + no
+    // explicit handler). Clearing the handler should
+    // RE-INSTALL the shim (default behavior).
+    agent.setAskHandler(undefined);
+    await agent.run("hi");
+    expect(calls.length).toBeGreaterThan(0);
+  });
 });
 
 // ---------------------------------------------------------------------------

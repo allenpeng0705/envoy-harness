@@ -419,6 +419,21 @@ export class Agent {
    */
   userQuestions: UserQuestionService | undefined;
   /**
+   * @internal Phase A / Item 5 (self-review): `true` when
+   * `this.askHandler` is the auto-installed
+   * `AskForApproval` shim (i.e. NOT an explicit
+   * host-supplied handler). Used by `setUserQuestions`
+   * to know whether the shim should be REPLACED on a
+   * service change, and by `setAskHandler(undefined)`
+   * to know whether to install / clear the shim.
+   *
+   * **Invariant:** `this.askHandlerIsShim === false`
+   * whenever `this.askHandler` is an explicit
+   * host-supplied handler. The constructor + both
+   * setters keep this invariant.
+   */
+  askHandlerIsShim: boolean;
+  /**
    * T2.3: the per-tool-call execution seam, extracted
    * from this file. `run()` calls `executor.executeMany(calls, iter)`
    * for each batch of tool calls in the model's response.
@@ -446,6 +461,13 @@ export class Agent {
         ? options.maxCostUsd
         : undefined;
     this.askHandler = options.askHandler;
+    // Phase A / Item 5 (self-review): the shim is NOT
+    // installed at this point — the explicit handler
+    // wins by default. The shim is installed below
+    // (in the `userQuestions` block) when both
+    // `userQuestions` is set AND no explicit `askHandler`
+    // was provided.
+    this.askHandlerIsShim = false;
     this.lspManager = options.lspManager;
     this.tracer = options.tracer ?? new NullTracer();
     this.meshSubmitter = options.meshSubmitter;
@@ -466,9 +488,9 @@ export class Agent {
     // Phase A / Item 5: register the `ask_user` tool when
     // the host provides a UserQuestionService. Without
     // the service, the model never sees the tool (opt-in,
-    // same pattern as `task` + LSP). The tool is built
-    // lazily on first use (the executor re-registers the
-    // fresh closure on each `setUserQuestions` call).
+    // same pattern as `task` + LSP). The tool closes
+    // over the service; `setUserQuestions(s)` replaces
+    // it with a fresh closure over the new service.
     if (this.userQuestions) {
       this.tools.register(makeAskUserTool({ service: this.userQuestions }));
       // When the host did NOT provide an explicit
@@ -482,6 +504,7 @@ export class Agent {
         this.askHandler = createAskForApprovalShim({
           service: this.userQuestions,
         });
+        this.askHandlerIsShim = true;
       }
     }
     // F10.1: register the `task` tool when the host
@@ -672,10 +695,41 @@ export class Agent {
   /**
    * F17.2: replace the per-call approval handler. Takes effect
    * on the next tool call. Pass `undefined` to remove the
-   * handler (the agent falls back to the default deny behavior).
+   * handler and fall back to the default (deny by default;
+   * the auto-installed shim if a `UserQuestionService` is
+   * registered).
+   *
+   * **Phase A / Item 5 (self-review):** the handler is
+   * considered "explicit" (the host owns it) whenever
+   * `handler !== undefined` OR `this.askHandlerIsShim`
+   * is false. The shim is the default; `setAskHandler`
+   * is the only way to install a non-default explicit
+   * handler. Calling `setAskHandler(undefined)` RESTORES
+   * the default — if a service is registered, the shim
+   * is re-installed; if not, the handler stays
+   * `undefined` (deny).
    */
   setAskHandler(handler: AskHandler | undefined): void {
     this.askHandler = handler;
+    if (handler !== undefined) {
+      // Explicit handler — host owns it. The shim
+      // is no longer active.
+      this.askHandlerIsShim = false;
+      return;
+    }
+    // `handler === undefined` — restore the default.
+    if (this.userQuestions !== undefined) {
+      // A service is registered; the default IS the
+      // shim. Install a fresh one.
+      this.askHandler = createAskForApprovalShim({
+        service: this.userQuestions,
+      });
+      this.askHandlerIsShim = true;
+    } else {
+      // No service; the default is deny. Stay
+      // `undefined`; clear the shim flag.
+      this.askHandlerIsShim = false;
+    }
   }
 
   /**
@@ -684,14 +738,15 @@ export class Agent {
    * is (re)registered on the tool registry; when unset
    * the tool is removed (the model no longer sees it).
    *
-   * **The approval shim:** if the host did NOT pass an
-   * explicit `askHandler` to the constructor, this
-   * setter ALSO installs the shim that routes approval
-   * asks through the service. If the host DID pass an
-   * explicit handler, the explicit handler is left
-   * alone (it takes precedence). The setter does NOT
-   * overwrite an explicit handler — use
-   * `setAskHandler` for that.
+   * **The approval shim:** if the current `askHandler`
+   * is the auto-installed shim (i.e. NO explicit
+   * handler is set), this setter REPLACES the shim
+   * with a new one that closes over the new service
+   * (so approval hooks go through the right service).
+   * If the host passed an explicit handler, the
+   * explicit handler is left alone (it takes
+   * precedence). The setter does NOT overwrite an
+   * explicit handler — use `setAskHandler` for that.
    *
    * **Re-registration:** passing a new service replaces
    * the previously-registered `ask_user` tool (the old
@@ -709,16 +764,23 @@ export class Agent {
     if (service) {
       this.tools.register(makeAskUserTool({ service }));
     }
-    // If no explicit `askHandler` is set, install /
-    // replace the shim. We never OVERWRITE an
-    // explicit handler here.
-    if (service && this.askHandler === undefined) {
+    // Replace the shim if (a) the current askHandler
+    // is the previously-installed shim OR (b) no
+    // askHandler is set at all. In both cases, the
+    // new shim is the "default" — install it. An
+    // EXPLICIT askHandler always wins (no shim
+    // install).
+    const shimIsCurrent =
+      this.askHandlerIsShim || this.askHandler === undefined;
+    if (service && shimIsCurrent) {
       this.askHandler = createAskForApprovalShim({ service });
-    } else if (service === undefined && this.askHandler === undefined) {
-      // Unregister: clear the shim too. If an
-      // explicit handler was set, leave it alone —
-      // the host owns the lifecycle.
+      this.askHandlerIsShim = true;
+    } else if (service === undefined && this.askHandlerIsShim) {
+      // Unregister: clear the shim. If an explicit
+      // handler was set, leave it alone — the host
+      // owns the lifecycle.
       this.askHandler = undefined;
+      this.askHandlerIsShim = false;
     }
   }
 

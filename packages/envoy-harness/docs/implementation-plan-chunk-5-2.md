@@ -126,6 +126,29 @@ factory takes the service as a closure (one shim per service), so two
 agents can share the same service but have independent shims (e.g. one agent
 adds a "modify" option later without affecting another).
 
+### 4a. Tracking the shim (`askHandlerIsShim`)
+
+The agent tracks whether the current `askHandler` is the auto-installed
+shim via a private `askHandlerIsShim: boolean` field. This is what lets
+`setUserQuestions(s)` REPLACE the shim when the service changes
+(was: a real P0 bug — the shim still closed over the old service while
+the `ask_user` tool closed over the new one).
+
+**Why a flag, not a separate field:** the tool-executor reads `askHandler`
+directly via `getAskHandler`; storing them separately would require
+changing the tool-executor to read both + merge. A flag keeps the
+invariants local to the agent.
+
+**Invariants maintained by the constructor + setters:**
+
+- After construction, `askHandlerIsShim === true` iff (a) `userQuestions`
+  was provided AND (b) no explicit `askHandler` was provided.
+- `setAskHandler(explicit)` → `askHandlerIsShim = false` (host owns it).
+- `setAskHandler(undefined)` → restores the default: shim if service set,
+  else `askHandlerIsShim = false`.
+- `setUserQuestions(s)` → if current is the shim OR undefined, install
+  a new shim for `s`; else (explicit handler) leave it alone.
+
 ### 5. REPL integration
 
 `runRepl` constructs a `UserQuestionService` and registers the REPL provider

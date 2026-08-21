@@ -160,31 +160,36 @@ function summarizeArgs(tool: string, args: unknown): string {
   switch (tool) {
     case "bash": {
       if (typeof obj["command"] === "string") {
-        return `run \`${obj["command"]}\``;
+        // Truncate long commands so the prompt stays
+        // scannable. A 200-char `cat foo.txt` is not a
+        // help to the human — they can see the args
+        // in the AskRequest's `args` field if they
+        // want the full thing.
+        return `run \`${truncate(obj["command"], 100)}\``;
       }
       break;
     }
     case "read_file": {
       if (typeof obj["path"] === "string") {
-        return `read \`${obj["path"]}\``;
+        return `read \`${truncate(obj["path"], 100)}\``;
       }
       break;
     }
     case "write": {
       if (typeof obj["path"] === "string") {
-        return `write to \`${obj["path"]}\``;
+        return `write to \`${truncate(obj["path"], 100)}\``;
       }
       break;
     }
     case "edit": {
       if (typeof obj["path"] === "string") {
-        return `edit \`${obj["path"]}\``;
+        return `edit \`${truncate(obj["path"], 100)}\``;
       }
       break;
     }
     case "git": {
       if (typeof obj["subcommand"] === "string") {
-        return `run \`git ${obj["subcommand"]}\``;
+        return `run \`git ${truncate(obj["subcommand"], 60)}\``;
       }
       break;
     }
