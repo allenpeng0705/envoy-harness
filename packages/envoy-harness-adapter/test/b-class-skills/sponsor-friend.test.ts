@@ -203,6 +203,11 @@ describe("runSponsorFriendBridge (Phase 8 / Step 3 — sponsor-friend B-class sk
       // The last save should have setupSponsorFriendCompletedAt.
       const lastSave = saveLog[saveLog.length - 1]!;
       expect(lastSave.setupSponsorFriendCompletedAt).toBeDefined();
+      // F-fix: the attempt count persists under the canonical
+      // `setupSponsorFriendAttempts` key (the success path used
+      // to write a stray `attempts` key that nothing reads).
+      expect(lastSave.setupSponsorFriendAttempts).toBe(1);
+      expect("attempts" in lastSave).toBe(false);
     });
   });
 

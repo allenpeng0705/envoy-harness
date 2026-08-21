@@ -25,6 +25,9 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      - name: Module-size lint (Codex LOC rule)
+        run: node scripts/check-module-size.mjs packages/envoy-harness/src
+
       - name: Typecheck
         run: pnpm -r run typecheck
 

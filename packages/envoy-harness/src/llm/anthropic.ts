@@ -112,10 +112,15 @@ interface AnthropicToolResultBlock {
   content: string;
 }
 
+/** A user content block (text or tool result) — used when a
+ *  user message carries both kinds (after role-merge). */
+type AnthropicUserBlock = AnthropicTextBlock | AnthropicToolResultBlock;
+
 /** A message in Anthropic's wire format. */
 type AnthropicWireMessage =
   | { role: "user"; content: string }
   | { role: "user"; content: AnthropicToolResultBlock[] }
+  | { role: "user"; content: AnthropicUserBlock[] }
   | { role: "assistant"; content: Array<AnthropicTextBlock | AnthropicToolUseBlock> };
 
 /** A tool definition in Anthropic's wire format. */
@@ -320,7 +325,54 @@ export function messagesToAnthropic(
       }
     }
   }
-  return out;
+  // Role-merge: Anthropic requires strict user ↔ assistant
+  // alternation, but compaction / repeated appends can produce
+  // consecutive same-role messages (e.g. two user prompts after
+  // `/compact`, or a user message carrying both text and tool
+  // results — which this converter emits as two wire messages).
+  // Merge adjacent same-role messages so the request is valid.
+  return mergeConsecutiveAnthropicMessages(out);
+}
+
+/** Merge adjacent same-role wire messages (Anthropic alternation). */
+function mergeConsecutiveAnthropicMessages(
+  messages: AnthropicWireMessage[],
+): AnthropicWireMessage[] {
+  const merged: AnthropicWireMessage[] = [];
+  for (const msg of messages) {
+    const last = merged[merged.length - 1];
+    if (last && last.role === msg.role) {
+      merged[merged.length - 1] = mergeAnthropicPair(last, msg);
+    } else {
+      merged.push(msg);
+    }
+  }
+  return merged;
+}
+
+function mergeAnthropicPair(
+  a: AnthropicWireMessage,
+  b: AnthropicWireMessage,
+): AnthropicWireMessage {
+  if (a.role === "assistant" && b.role === "assistant") {
+    return { role: "assistant", content: [...a.content, ...b.content] };
+  }
+  if (a.role === "user" && b.role === "user") {
+    return {
+      role: "user",
+      content: [...userBlocks(a.content), ...userBlocks(b.content)],
+    };
+  }
+  return b; // roles differ — guarded by the caller
+}
+
+/** Normalize user content to an array of blocks (for merging). */
+function userBlocks(
+  content: string | AnthropicUserBlock[],
+): AnthropicUserBlock[] {
+  return typeof content === "string"
+    ? [{ type: "text", text: content }]
+    : content;
 }
 
 /** Extract tool_result blocks from a message's content array. */

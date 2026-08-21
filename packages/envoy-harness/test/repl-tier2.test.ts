@@ -241,6 +241,56 @@ describe("/compact", () => {
     expect(out.data).not.toMatch(/^compacted:/m);
   });
 
+  it("/compact --summarize runs a one-shot summarizer and injects a summary block", async () => {
+    let summarySeenByTurn = false;
+    let calls = 0;
+    const model: ModelAdapter = {
+      async complete(input) {
+        calls++;
+        // The second call (the post-compact turn) should see the
+        // injected summary block in its context.
+        const hasSummary = input.messages.some((m) =>
+          m.content.some(
+            (b) =>
+              b.type === "text" &&
+              b.text.includes("Summarized: auth refactor"),
+          ),
+        );
+        if (hasSummary) summarySeenByTurn = true;
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                calls === 1
+                  ? "Summarized: auth refactor"
+                  : "ok",
+            },
+          ],
+          stopReason: "end_turn",
+        };
+      },
+    };
+    const out = new StringWritable();
+    const err = new StringWritable();
+    await runRepl({
+      model,
+      args: makeArgs({ cwd: tempCwd }),
+      lineReader: fakeLineReader([
+        "first turn",
+        "/compact --summarize 1",
+        "second turn",
+        "/quit",
+      ]),
+      stdout: out,
+      stderr: err,
+      historyPath: "",
+    });
+    expect(err.data).toBe("");
+    expect(out.data).toContain("with summary");
+    expect(summarySeenByTurn).toBe(true);
+  });
+
   it("is a no-op when the session is shorter than <keep>", async () => {
     const model = scriptedModel([{ content: [textBlock("ok")] }]);
     const out = new StringWritable();

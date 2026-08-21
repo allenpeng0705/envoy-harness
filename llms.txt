@@ -1,0 +1,26 @@
+# envoy-harness
+
+> Machine-readable docs index for AI agents (llms.txt).
+> The repo contains EnvoyMesh's home-team agent harness
+> (Package 1) + the reference MAP adapter (Package 3).
+
+## Key docs
+
+- [README](README.md): monorepo overview, architecture diagrams (package boundary + runtime flow), layout, commands.
+- [Package README](packages/envoy-harness/README.md): the CLI agent's capabilities, quickstart, REPL commands, persistence, embedding API.
+- [Design (EN)](packages/envoy-harness/docs/design.en.md): the full design — what and why. Source of truth for architecture.
+- [Design (ZH)](packages/envoy-harness/docs/design.zh.md): 中文版设计文档。
+- [Implementation plan](packages/envoy-harness/docs/implementation-plan.md): what shipped, where it lives, what's still open. Per-sub-chunk commit history + test inventory.
+- [Boundary](packages/envoy-harness/docs/boundary.en.md): the package split — envoy-harness vs envoy-harness-adapter vs EnvoyMesh.
+- [QUICKSTART](packages/envoy-harness/QUICKSTART.md): focused how-to — use, embed, integrate with EnvoyMesh.
+- [Adapter README](packages/envoy-harness-adapter/README.md): the MAP bridge (EnvoyHarnessAdapter, RemoteMeshSubmitter, B-class skills).
+
+## Source layout
+
+- [Agent loop](packages/envoy-harness/src/agent.ts): the turn loop + public Agent API.
+- [Tool executor](packages/envoy-harness/src/agent/tool-executor.ts): the per-tool-call pipeline (hooks, approval, permission, trace).
+- [Session](packages/envoy-harness/src/session.ts): Session interface + InMemorySession.
+- [Persistence](packages/envoy-harness/src/session/): PersistedSession + SessionStore (JSONL).
+- [Sub-agents](packages/envoy-harness/src/subagent/): MeshSubmitter seam, LocalMeshSubmitter, fan-out.
+- [Adapter](packages/envoy-harness-adapter/src/adapter.ts): EnvoyHarnessAdapter (execute/verify/manifest).
+- [B-class skills](packages/envoy-harness-adapter/src/b-class-skills/): sponsor-friend, peer-list, relay-status bridges.

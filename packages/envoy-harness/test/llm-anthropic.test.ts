@@ -304,7 +304,7 @@ describe("messagesToAnthropic", () => {
     ]);
   });
 
-  it("emits a user message with text + tool results as two wire messages", () => {
+  it("merges a user message with text + tool results into one wire message", () => {
     const msg: Message = {
       role: "user",
       content: [
@@ -313,10 +313,45 @@ describe("messagesToAnthropic", () => {
       ],
     };
     expect(messagesToAnthropic([msg])).toEqual([
-      { role: "user", content: "see above" },
       {
         role: "user",
-        content: [{ type: "tool_result", tool_use_id: "t1", content: "result" }],
+        content: [
+          { type: "text", text: "see above" },
+          { type: "tool_result", tool_use_id: "t1", content: "result" },
+        ],
+      },
+    ]);
+  });
+
+  it("merges consecutive same-role messages (compaction scenario)", () => {
+    // `/compact` can produce consecutive user messages (two prompts) and
+    // consecutive assistant messages (text + tool call). Anthropic requires
+    // strict user <-> assistant alternation, so they must be merged.
+    const out = messagesToAnthropic([
+      userMsg("first prompt"),
+      userMsg("second prompt"),
+      assistantText("thinking"),
+      assistantToolCall("t1", "bash", { command: "ls" }),
+      toolResult("t1", "file1"),
+    ]);
+    expect(out).toEqual([
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "first prompt" },
+          { type: "text", text: "second prompt" },
+        ],
+      },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "thinking" },
+          { type: "tool_use", id: "t1", name: "bash", input: { command: "ls" } },
+        ],
+      },
+      {
+        role: "user",
+        content: [{ type: "tool_result", tool_use_id: "t1", content: "file1" }],
       },
     ]);
   });
@@ -331,23 +366,21 @@ describe("messagesToAnthropic", () => {
     // The system message is stripped by splitSystemAndMessages first.
     const split = splitSystemAndMessages([sys, u1, a1, a2, tr, a3]);
     const out = messagesToAnthropic(split.messages);
-    expect(out).toHaveLength(5);
+    // a1 + a2 are adjacent assistant messages and merge into one.
+    expect(out).toHaveLength(4);
     expect(out[0]).toEqual({ role: "user", content: "hi" });
     expect(out[1]).toEqual({
       role: "assistant",
-      content: [{ type: "text", text: "ok" }],
-    });
-    expect(out[2]).toEqual({
-      role: "assistant",
       content: [
+        { type: "text", text: "ok" },
         { type: "tool_use", id: "t1", name: "bash", input: { command: "ls" } },
       ],
     });
-    expect(out[3]).toEqual({
+    expect(out[2]).toEqual({
       role: "user",
       content: [{ type: "tool_result", tool_use_id: "t1", content: "file1" }],
     });
-    expect(out[4]).toEqual({
+    expect(out[3]).toEqual({
       role: "assistant",
       content: [{ type: "text", text: "done" }],
     });

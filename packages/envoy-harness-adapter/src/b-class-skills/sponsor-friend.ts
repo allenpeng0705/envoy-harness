@@ -545,7 +545,12 @@ export async function runSponsorFriendBridge(
           setupSponsorFriendLastErrorKind: undefined,
           setupSponsorFriendCooldownUntil: undefined,
           setupSponsorFriendSkipReason: undefined,
-          attempts: attempt,
+          // F-fix: persist under the canonical key
+          // (`setupSponsorFriendAttempts`), matching the
+          // failure path + the host's PersistedNodeConfig
+          // schema. The success path used to write a stray
+          // `attempts` key that nothing reads.
+          setupSponsorFriendAttempts: attempt,
           updatedAt: new Date(now).toISOString(),
         });
         trace(5, "PASS", "auto-bond COMPLETE", { attempt });

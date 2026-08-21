@@ -1,9 +1,8 @@
 /**
  * MCP (Model Context Protocol) — public API.
  *
- * **T3.3 scope:** the type seam + a default
- * registry. The actual transport (stdio JSON-RPC
- * child process) lands in a follow-up sub-chunk.
+ * **T3.3 + T3.3.1 scope:** the type seam + a default
+ * registry + the stdio transport (`StdioMcpClient`).
  *
  * Re-exports the types, the helpers, and the
  * default registry.
@@ -18,3 +17,10 @@ export {
   type McpTool,
 } from "./types.js";
 export { DefaultMcpClientRegistry } from "./registry.js";
+export {
+  jsonSchemaToZod,
+  MCP_PROTOCOL_VERSION,
+  StdioMcpClient,
+  type McpStdioProcess,
+  type StdioMcpClientOptions,
+} from "./stdio-client.js";

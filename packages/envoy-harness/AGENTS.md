@@ -24,6 +24,7 @@ Node version: **22+** (see `.nvmrc`). Engines field requires `>=22.19`.
 - **No EnvoyMesh-internal deps** in this package (Package 1). The mesh integration lives in `@envoymesh/envoy-harness-adapter` (in EnvoyMesh's monorepo, Package 3). The wire contract lives in `@envoymesh/protocol` (Package 2, in EnvoyMesh's monorepo). This package imports neither.
 - **No runtime dependencies** at Phase 0. Add deps deliberately, with rationale. The first external dep likely lands in Phase 1.
 - **Tests are independent** — every test must run without a mesh, a peer, a network, a `libp2p` daemon, an EnvoyMesh install, or a live LLM key. Mock everything. If a test needs a real mesh, it belongs in the adapter package, not here. **This is design target #4 — non-negotiable.**
+- **Module size (Codex LOC rule)** — target modules under **500** lines; if a file exceeds roughly **800** lines, add new functionality in a **new module** instead of extending the file (unless there is a strong documented reason). Existing oversized modules are allowlisted in `scripts/module-size-allowlist.json`; CI (`scripts/check-module-size.mjs`) fails on new growth above 800. Removing an allowlist entry is a good sign.
 
 ## Project layout
 

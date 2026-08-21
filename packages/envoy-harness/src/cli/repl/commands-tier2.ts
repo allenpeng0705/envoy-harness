@@ -53,8 +53,16 @@ const newCommand: ReplCommand = {
 
 const compactCommand: ReplCommand = {
   name: "/compact",
-  description: "compact the session (drop oldest messages, keep recent N)",
-  handler(args, ctx) {
+  description: "compact the session (drop oldest, keep recent N; --summarize to LLM-summarize the dropped part)",
+  async handler(args, ctx) {
+    // Phase 8 / v2.1 — `/compact --summarize [keep]`: summarize
+    // the dropped messages with a one-shot model call (Codex
+    // compaction parity) instead of dropping them silently.
+    let summarize = false;
+    if (args[0] === "--summarize") {
+      summarize = true;
+      args = args.slice(1);
+    }
     // Parse optional `<keep>` arg (default 20).
     let keep = DEFAULT_COMPACT_KEEP;
     if (args.length > 0) {
@@ -74,10 +82,49 @@ const compactCommand: ReplCommand = {
     }
 
     const before = ctx.agent.getMessageCount();
-    ctx.agent.compact(keep);
+    if (summarize) {
+      try {
+        await ctx.agent.compactWithSummary(keep, async (dropped) => {
+          const text = dropped
+            .map((m) => `${m.role}: ${JSON.stringify(m.content)}`)
+            .join("\n");
+          const result = await ctx.agent.getModel().complete({
+            messages: [
+              {
+                role: "system",
+                content: [
+                  {
+                    type: "text",
+                    text:
+                      "You are a session summarizer. Summarize the dropped " +
+                      "conversation below into 2-4 sentences, preserving " +
+                      "decisions, file paths, and unresolved questions. " +
+                      "Output ONLY the summary.",
+                  },
+                ],
+              },
+              { role: "user", content: [{ type: "text", text }] },
+            ],
+            tools: [],
+          });
+          return result.content
+            .filter((b) => b.type === "text")
+            .map((b) => b.text)
+            .join("\n")
+            .trim();
+        });
+      } catch (err) {
+        ctx.stderr.write(
+          `error: summarization failed (${(err as Error).message}); falling back to drop-oldest\n`,
+        );
+        ctx.agent.compact(keep);
+      }
+    } else {
+      ctx.agent.compact(keep);
+    }
     const after = ctx.agent.getMessageCount();
     ctx.stdout.write(
-      `compacted: ${before} → ${after} messages (kept last ${keep})\n`,
+      `compacted: ${before} → ${after} messages (kept last ${keep}${summarize ? ", with summary" : ""})\n`,
     );
   },
 };

@@ -62,6 +62,10 @@ import { makeTaskTool } from "./subagent/tools.js";
 import type { FanOutRegistry } from "./subagent/fan-out.js";
 import { ToolExecutor, type ToolExecutorContext } from "./agent/tool-executor.js";
 import { runAgentLoop } from "./agent/run-loop.js";
+import {
+  compactMessages,
+  compactMessagesWithSummary,
+} from "./agent/compact.js";
 
 /** Default max iterations before the agent throws. */
 export const DEFAULT_MAX_ITERATIONS = 50;
@@ -663,24 +667,54 @@ export class Agent {
    * (Tauri app) can also wire it to a manual button.
    */
   compact(keep: number): void {
-    const messages = this.session.messages;
-    if (messages.length <= keep) {
-      // Nothing to compact.
-      return;
-    }
-    // Find the system message (always at the start in v0
-    // per agent.run's logic; if present, preserve it).
-    const hasSystem = messages.length > 0 && messages[0]?.role === "system";
-    const systemMsg = hasSystem ? messages[0] : undefined;
-    const restMessages = messages.slice(hasSystem ? 1 : 0);
-    // Keep the last `keep` of the non-system messages.
-    const toKeep = restMessages.slice(-keep);
+    const next = compactMessages(this.session.messages, keep);
+    // No-op when there was nothing to drop (the function returns
+    // the same transcript unchanged).
+    if (next.length === this.session.messages.length) return;
     // Clear + re-append.
     this.session.clear();
-    if (systemMsg) {
-      this.session.appendMessage("system", systemMsg.content);
+    for (const m of next) {
+      this.session.appendMessage(m.role, m.content);
     }
-    for (const m of toKeep) {
+  }
+
+  /**
+   * Phase 8 / v2.1 — compact with LLM summarization (Codex
+   * compaction parity). Drops the oldest messages (keeping the
+   * last `keep` + the system message) and injects a summary of
+   * the dropped messages as a system block, so the model keeps
+   * the gist without the full history.
+   *
+   * **Why a summarizer callback (not a model call inside
+   * Agent):** the Agent doesn't own the model call policy
+   * (cost, prompts); the host decides. The REPL wires a
+   * one-shot `getModel().complete(...)` call; a Tauri host can
+   * inject a different summarizer.
+   *
+   * **No-op** when the session is shorter than `keep` (nothing
+   * to summarize). The summary is inserted BEFORE the kept
+   * messages so the model sees it as prior context.
+   *
+   * @param keep The number of most-recent messages to keep.
+   * @param summarize Receives the dropped messages and returns
+   *   a summary string (may be empty — then no block is added).
+   */
+  async compactWithSummary(
+    keep: number,
+    summarize: (dropped: ReadonlyArray<import("./tools/index.js").Message>) => Promise<string>,
+  ): Promise<void> {
+    const { messages: next, droppedCount } = await compactMessagesWithSummary(
+      this.session.messages,
+      keep,
+      summarize,
+    );
+    // No-op when there was nothing to drop (the function returns
+    // the same transcript unchanged). Note: message COUNT is not a
+    // reliable no-op signal — a one-for-one summary insertion keeps
+    // the count equal while changing content.
+    if (droppedCount === 0) return;
+    this.session.clear();
+    for (const m of next) {
       this.session.appendMessage(m.role, m.content);
     }
   }

@@ -1,0 +1,4 @@
+[
+  "packages/envoy-harness/src/agent.ts",
+  "packages/envoy-harness/src/scoreboard/self-evolve.ts"
+]

@@ -335,6 +335,42 @@ describe("Agent: hooks", () => {
   });
 });
 
+describe("Agent.compactWithSummary", () => {
+  it("inserts the summary as a USER message and preserves the system prompt", async () => {
+    const model = new FakeModel([textResponse("ok"), textResponse("ok")]);
+    const { agent, session } = makeAgent(model, { systemPrompt: "SYSTEM" });
+    await agent.run("first"); // [system, user, assistant]
+    await agent.compactWithSummary(1, async () => "SUMMARY");
+    const roles = session.messages.map((m) => m.role);
+    expect(roles[0]).toBe("system");
+    expect(roles[1]).toBe("user"); // the summary block (not system!)
+    expect(session.messages[1]?.content[0]).toMatchObject({
+      type: "text",
+      text: expect.stringContaining("SUMMARY"),
+    });
+    // The next run must NOT duplicate the real system prompt
+    // (a system-role summary would have suppressed it).
+    await agent.run("third");
+    expect(session.messages.filter((m) => m.role === "system")).toHaveLength(1);
+  });
+
+  it("skips the summarizer when nothing would be dropped (system-message edge)", async () => {
+    let called = false;
+    const { agent, session } = makeAgent(new FakeModel([textResponse("ok")]), {
+      systemPrompt: "SYSTEM",
+    });
+    await agent.run("first"); // [system, user, assistant]
+    // keep=2: the non-system messages are exactly 2 — nothing to drop,
+    // even though `messages.length` (3) exceeds `keep`.
+    await agent.compactWithSummary(2, async () => {
+      called = true;
+      return "S";
+    });
+    expect(called).toBe(false);
+    expect(session.messages).toHaveLength(3);
+  });
+});
+
 describe("Agent: limits and abort", () => {
   it("throws when maxIterations is exceeded", async () => {
     // Scripted: model always returns a tool call (never reaches end_turn).

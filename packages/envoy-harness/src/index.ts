@@ -360,6 +360,18 @@ export {
   type VerifierRuleset,
 } from "./scoreboard/index.js";
 
+// Re-export the bounded context fragments (Phase 8 / v2.1,
+// the Codex ContextualUserFragment rule, ported)
+export {
+  assembleFragments,
+  createBoundedFragment,
+  DEFAULT_ASSEMBLY_TOKEN_BUDGET,
+  DEFAULT_FRAGMENT_TOKEN_CAP,
+  type AssembledContext,
+  type BoundedFragmentOptions,
+  type ContextualUserFragment,
+} from "./context/fragment.js";
+
 // T2.2: re-export the config loader (TOML). Closes
 // §2.5 row #1 in the implementation plan.
 export {
