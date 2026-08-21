@@ -11,7 +11,14 @@
  * (via `run.js`). The split is internal —
  * external consumers see no change.
  */
-import type { HookRegistry, ModelAdapter, Tracer } from "../../index.js";
+import type { Readable } from "node:stream";
+
+import type {
+  HookRegistry,
+  ModelAdapter,
+  ProtocolSessionBackend,
+  Tracer,
+} from "../../index.js";
 import type { LineReader } from "../repl/index.js";
 
 /** Options the runner accepts. The bin script and tests both
@@ -30,6 +37,18 @@ export interface RunOptions {
   stdout?: NodeJS.WritableStream;
   /** Where to write errors / status. Default: stderr. */
   stderr?: NodeJS.WritableStream;
+  /**
+   * Phase E / G: stdin for `--acp` JSON-RPC. Default:
+   * `process.stdin`. Tests inject a `PassThrough`.
+   */
+  stdin?: Readable;
+  /**
+   * Phase E / G: override the ACP session backend (tests /
+   * EnvoyMesh inject a live `createAgentSessionBackend`).
+   * When unset, `--acp` uses the demo fake unless `model`
+   * is also set.
+   */
+  protocolBackend?: ProtocolSessionBackend;
   /** F9.1: per-call approval handler. When the agent loop
    *  hits a hook decision of `kind: "ask"`, this handler is
    *  called. The default (when undefined) is a built-in

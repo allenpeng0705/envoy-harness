@@ -155,3 +155,15 @@ export {
   type BClassResolvedSponsorFriend,
   type BClassSponsorFriendResult,
 } from "./b-class-skills/index.js";
+
+// Phase G — mesh credential + remote session transport seams
+export {
+  createMeshCredentialsProvider,
+  type MeshCredentialsTransport,
+} from "./mesh-credentials.js";
+export {
+  loadRemoteSession,
+  type RemoteSessionProjection,
+  type RemoteSessionRef,
+  type RemoteSessionTransport,
+} from "./remote-session.js";

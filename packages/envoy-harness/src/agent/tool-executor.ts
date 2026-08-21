@@ -43,6 +43,7 @@ import type {
   AskRequest,
   SandboxPolicy,
 } from "../types.js";
+import type { SandboxExecutor } from "../sandbox/types.js";
 import type { TraceEvent } from "../trace/index.js";
 import type { MeshSubmitter } from "../subagent/index.js";
 // T3.12: import the constant rather than hardcoding
@@ -96,6 +97,13 @@ export interface ToolExecutorContext {
    * The bash tool reads this.
    */
   readonly getSandboxPolicy: () => SandboxPolicy;
+  /**
+   * Phase F: live OS sandbox executor. Read at call
+   * time so a host can swap backends without
+   * reconstructing the agent. Bash uses this after
+   * the 6 validators.
+   */
+  readonly getSandboxExecutor: () => SandboxExecutor | undefined;
   /**
    * The live ask handler. Read at call time so a
    * future host swap takes effect on the next ask.
@@ -390,6 +398,7 @@ export class ToolExecutor {
     const toolStart = Date.now();
 
     try {
+      const sandboxExecutor = this.ctx.getSandboxExecutor();
       const result = await tool.execute(parsed.data, {
         cwd: this.ctx.cwd,
         session: this.ctx.session,
@@ -397,6 +406,7 @@ export class ToolExecutor {
         // Pass the live policy so the bash tool enforces the
         // current mode, not the session-start mode.
         sandboxPolicy: this.ctx.getSandboxPolicy(),
+        ...(sandboxExecutor !== undefined ? { sandboxExecutor } : {}),
       });
       resultContent = result.content;
       isError = result.isError ?? false;

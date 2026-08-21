@@ -30,6 +30,7 @@ import { parseArgs, type ParsedArgs } from "./argv.js";
 import { CliError } from "./run/errors.js";
 import { EXIT_USAGE } from "./run/types.js";
 import { formatHelpText, makeEmptyRunResult } from "./run/helpers.js";
+import { runAcpDispatch } from "./run/acp.js";
 import { runAgent } from "./run/one-shot.js";
 import { runReplDispatch } from "./run/repl.js";
 import { runSelfEvolve } from "./run/self-evolve.js";
@@ -67,8 +68,9 @@ export type {
  * 3. `--version` → print version + return empty.
  * 4. `self-evolve` subcommand → `runSelfEvolve`.
  * 5. `team` subcommand → `runTeam`.
- * 6. `run` + `--repl` (no positional) → `runReplDispatch`.
- * 7. `run` (default) → `runAgent`.
+ * 6. `run` + `--acp` → `runAcpDispatch` (stdio ACP server).
+ * 7. `run` + `--repl` (no positional) → `runReplDispatch`.
+ * 8. `run` (default) → `runAgent`.
  */
 export async function run(
   options: import("./run/types.js").RunOptions = {},
@@ -102,7 +104,11 @@ export async function run(
   if (parsed.subcommand === "team") {
     return runTeam(parsed, options, stdout, stderr);
   }
-  // 3a. F17.1: --repl activates the interactive REPL. The
+  // 3a. Phase E / G: --acp serves ACP JSON-RPC on stdio.
+  if (parsed.subcommand === "run" && parsed.acp) {
+    return runAcpDispatch(parsed, options, stdout, stderr);
+  }
+  // 3b. F17.1: --repl activates the interactive REPL. The
   //     REPL takes no positional prompt; a positional + --repl
   //     is a usage error.
   if (parsed.repl) {

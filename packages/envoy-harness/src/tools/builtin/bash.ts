@@ -190,21 +190,26 @@ function envRecord(): Record<string, string> {
 }
 
 /**
- * Spawn `sh -c <command>` and collect stdout/stderr/exitCode.
- * Honors both the per-tool timeout and the agent's abort signal.
+ * Spawn `sh -c <command>` (or the configured sandbox executor)
+ * and collect stdout/stderr/exitCode.
  *
  * @param preWarning - if set, prefixed to the result so the model
  *   sees the warning. Comes from `validateBash`'s warn verdict.
  */
 async function runBash(
   command: string,
-  ctx: { cwd: string; abortSignal: AbortSignal },
+  ctx: ToolContext,
   timeoutMs: number | undefined,
   maxOutputBytes: number | undefined,
   preWarning: string | undefined,
 ): Promise<{ content: string; isError?: boolean }> {
   const timeout = timeoutMs ?? DEFAULT_BASH_TIMEOUT_MS;
   const cap = maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
+
+  if (ctx.sandboxExecutor !== undefined) {
+    return runBashViaExecutor(command, ctx, timeout, cap, preWarning);
+  }
+
   return new Promise((resolve) => {
     const child = spawn("sh", ["-c", command], {
       cwd: ctx.cwd,
@@ -251,21 +256,18 @@ async function runBash(
     child.on("close", (code) => {
       clearTimeout(timer);
       ctx.abortSignal.removeEventListener("abort", onAbort);
-      const parts: string[] = [];
-      if (preWarning) parts.push(`[warning] ${preWarning}\n`);
-      if (stdout.length > 0) {
-        parts.push(stdout);
-        if (stdoutTruncated) parts.push(`\n[stdout truncated at ${cap} bytes]`);
-      }
-      if (stderr.length > 0) {
-        parts.push(`\n[stderr]\n${stderr}`);
-        if (stderrTruncated) parts.push(`\n[stderr truncated at ${cap} bytes]`);
-      }
-      parts.push(`\n[exit code: ${code ?? "null"}]`);
-      if (killed) parts.push(`\n[command was killed]`);
-      const content = parts.join("");
-      const isError = code !== 0;
-      resolve({ content, isError });
+      resolve(
+        formatBashResult({
+          stdout,
+          stderr,
+          exitCode: code,
+          stdoutTruncated,
+          stderrTruncated,
+          killed,
+          cap,
+          preWarning,
+        }),
+      );
     });
 
     child.on("error", (err) => {
@@ -277,4 +279,81 @@ async function runBash(
       });
     });
   });
+}
+
+async function runBashViaExecutor(
+  command: string,
+  ctx: ToolContext,
+  timeoutMs: number,
+  cap: number,
+  preWarning: string | undefined,
+): Promise<{ content: string; isError?: boolean }> {
+  const executor = ctx.sandboxExecutor!;
+  const policy =
+    ctx.sandboxPolicy ??
+    policyFromMode(ctx.session.metadata.permissionMode ?? "read-only", ctx.cwd);
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), timeoutMs);
+  const onAbort = (): void => ac.abort();
+  if (ctx.abortSignal.aborted) ac.abort();
+  else ctx.abortSignal.addEventListener("abort", onAbort, { once: true });
+
+  try {
+    const result = await executor.execute(command, {
+      policy,
+      cwd: ctx.cwd,
+      signal: ac.signal,
+    });
+    const stdout =
+      result.stdout.length > cap ? result.stdout.slice(0, cap) : result.stdout;
+    const stderr =
+      result.stderr.length > cap ? result.stderr.slice(0, cap) : result.stderr;
+    return formatBashResult({
+      stdout,
+      stderr,
+      exitCode: result.exitCode,
+      stdoutTruncated: result.stdout.length > cap,
+      stderrTruncated: result.stderr.length > cap,
+      killed: ac.signal.aborted,
+      cap,
+      preWarning,
+    });
+  } catch (err) {
+    return {
+      content: `bash sandbox error: ${(err as Error).message}`,
+      isError: true,
+    };
+  } finally {
+    clearTimeout(timer);
+    ctx.abortSignal.removeEventListener("abort", onAbort);
+  }
+}
+
+function formatBashResult(opts: {
+  stdout: string;
+  stderr: string;
+  exitCode: number | null;
+  stdoutTruncated: boolean;
+  stderrTruncated: boolean;
+  killed: boolean;
+  cap: number;
+  preWarning: string | undefined;
+}): { content: string; isError?: boolean } {
+  const parts: string[] = [];
+  if (opts.preWarning) parts.push(`[warning] ${opts.preWarning}\n`);
+  if (opts.stdout.length > 0) {
+    parts.push(opts.stdout);
+    if (opts.stdoutTruncated) {
+      parts.push(`\n[stdout truncated at ${opts.cap} bytes]`);
+    }
+  }
+  if (opts.stderr.length > 0) {
+    parts.push(`\n[stderr]\n${opts.stderr}`);
+    if (opts.stderrTruncated) {
+      parts.push(`\n[stderr truncated at ${opts.cap} bytes]`);
+    }
+  }
+  parts.push(`\n[exit code: ${opts.exitCode ?? "null"}]`);
+  if (opts.killed) parts.push(`\n[command was killed]`);
+  return { content: parts.join(""), isError: opts.exitCode !== 0 };
 }

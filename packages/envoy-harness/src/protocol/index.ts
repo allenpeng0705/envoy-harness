@@ -1,0 +1,61 @@
+/**
+ * Phase E — protocol public surface.
+ */
+
+export {
+  JsonRpcError,
+  JsonRpcErrorCode,
+  isJsonRpcNotification,
+  isJsonRpcRequest,
+  isJsonRpcResponse,
+  type JsonRpcErrorObject,
+  type JsonRpcFailure,
+  type JsonRpcId,
+  type JsonRpcMessage,
+  type JsonRpcNotification,
+  type JsonRpcRequest,
+  type JsonRpcResponse,
+  type JsonRpcSuccess,
+} from "./types.js";
+
+export { encodeFrame, FrameDecoder } from "./framing.js";
+
+export {
+  JsonRpcConnection,
+  type JsonRpcConnectionOptions,
+  type NotificationHandler,
+  type RequestHandler,
+} from "./connection.js";
+
+export {
+  createInProcessJsonRpcPair,
+  type InProcessPair,
+} from "./in-process.js";
+
+export {
+  createFakeSessionBackend,
+  type ProtocolCommittedMessage,
+  type ProtocolPermissionDecision,
+  type ProtocolPermissionRequest,
+  type ProtocolPromptResult,
+  type ProtocolSessionBackend,
+  type ProtocolToolInfo,
+} from "./session-backend.js";
+
+export {
+  ACP_PROTOCOL_VERSION,
+  attachAcpServer,
+  type AcpServerOptions,
+} from "./acp-server.js";
+
+export { attachSdkServer, type SdkServerOptions } from "./sdk-server.js";
+
+export {
+  createAgentSessionBackend,
+  type AgentSessionBackendOptions,
+} from "./agent-backend.js";
+
+export {
+  installToolPermissionAskHook,
+  type ToolPermissionAskHookOptions,
+} from "./permission-hook.js";

@@ -1,25 +1,25 @@
 # Gap-closure plan — envoy-harness vs codex / deepseek-harness
 
-> **Status:** DRAFT v2 (2026-08-21). Input to `design.md` / `implementation-plan.md` —
-> each item below becomes a design chunk with its own acceptance criteria and
-> tests before it ships.
+> **Status:** DRAFT v2 → progress updated 2026-08-22. Scheduled A–G gap items
+> are done; optional future work lives under Intentional deferrals.
 >
 > **Phase progress (as of 2026-08-22):**
-> - ✅ **Phase A** — Loop & context (items 1, 2, 5, 6) — **DONE** (4 commits on
->   `fix_gaps`: `15ad4b4` item 1, `798f757` item 2, `8404c8f`+`97c7a7e`+`28c7aae`
->   item 5, chunk 6 bundled into `1fe094f`/`0127c70`).
-> - 🚧 **Phase B** — Runtime extensibility (items 3, 15) — code+tests done
->   (chunks 3.1–3.4 + 15.1/15.2; pending user commit). Cordis-compat
->   container deferred to Phase G.
+> - ✅ **Phase A** — Loop & context (items 1, 2, 5, 6) — **DONE**
+> - ✅ **Phase B** — Runtime extensibility (items 3, 15) — **DONE**
+>   (capability-module seam + config import; Cordis-compat optional — see
+>   Intentional deferrals)
 > - ✅ **Phase C** — Environment & long-running (items 7, 8, 9, 13 P1) — **DONE**
 >   (jobs / web / terminal + credentials wire; Brave search; `node-pty` optional;
->   `bash --job` sugar).
-> - ✅ **Phase D** — Data & observability (items 14a, 14b P1, 16, 17) — **DONE**
->   locally 2026-08-22 (pending user commit). See
->   [`implementation-plan-phase-d.md`](./implementation-plan-phase-d.md).
-> - ⏳ Phase E — Automation & embedding (items 10, 11).
-> - ⏳ Phase F — OS sandbox (item 4).
-> - ⏳ Phase G — Mesh-native integration (12, 13-adapter, 14b-remote, …).
+>   `bash --job` sugar)
+> - ✅ **Phase D** — Data & observability (items 14a, 14b P1, 16, 17) — **DONE**.
+>   See [`implementation-plan-phase-d.md`](./implementation-plan-phase-d.md).
+> - ✅ **Phase E** — Automation & embedding (items 10, 11 TS) — **DONE**
+>   (JSON-RPC codec + ACP/SDK + `@envoymesh/envoy-harness-client`)
+> - ✅ **Phase F** — OS sandbox (item 4) — **DONE** (landlock + seatbelt +
+>   resolve; Linux/macOS)
+> - ✅ **Phase G** — Dual-host UI + adapter seams — **DONE** for scheduled
+>   scope: **12a** TUI, **12b** Pi-surface + per-tool `pi:proposal`, **13/14b**
+>   adapter transport seams. Optional future work only — see Intentional deferrals.
 >
 > **Scenario contract:** envoy-harness runs either (a) locally and independently,
 > or (b) as one node in EnvoyMesh collaborating with other nodes. Every item is
@@ -52,44 +52,36 @@
 |---|---|---|---|---|---|
 | 1 | Compaction variants | Follow codex (algorithm family) | M (2 chunks) | A | ✅ done (`15ad4b4`) |
 | 2 | Memories | Hybrid: codex format + deepseek retrieval discipline | M (2–3 chunks) | A | ✅ done (`798f757`) |
-| 3 | Plugins at runtime | **Invent** a capability-module seam; adopt deepseek contract shapes; curated Cordis-compat container later | L (3–4 chunks) | B | ✅ done (chunks 3.1–3.4 pending commit; Cordis-compat deferred to Phase G) |
-| 4 | OS sandbox kernels | Reuse deepseek's published landlock-run npm family (Linux) + seatbelt (macOS) | M (2 chunks) | F | ⏳ |
+| 3 | Plugins at runtime | **Invent** a capability-module seam; adopt deepseek contract shapes; curated Cordis-compat container later | L (3–4 chunks) | B | ✅ done (chunks 3.1–3.4; Cordis-compat optional) |
+| 4 | OS sandbox kernels | Reuse deepseek's published landlock-run npm family (Linux) + seatbelt (macOS) | M (2 chunks) | F | ✅ done (Linux/macOS) |
 | 5 | Ask-user / elicitation | Follow deepseek interaction/user-questions | S–M (1–2 chunks) | A | ✅ done (`8404c8f` + `97c7a7e` + self-review `28c7aae`) |
-| 6 | Plan | Follow deepseek plan-mode (logged collaboration state) | S (1 chunk) | A | ✅ done (pending commit) |
+| 6 | Plan | Follow deepseek plan-mode (logged collaboration state) | S (1 chunk) | A | ✅ done |
 | 7 | Background jobs | Follow deepseek jobs family contract | M (2 chunks) | C | ✅ done (L3 + bash --job sugar) |
 | 8 | Web search / fetch | Follow deepseek web family (provider seam) | M (2 chunks) | C | ✅ done (HTTP fetch + Brave) |
 | 9 | Persistent PTY / terminal | Follow deepseek terminal family | M (2 chunks) | C | ✅ done (fake + optional node-pty) |
-| 10 | Automation protocol | Follow deepseek ACP server | M (2 chunks) | E | ⏳ |
-| 11 | SDK / embedding | Follow deepseek JSON-RPC SDK + TS client; Python later | M (2 chunks) + L (py) | E | ⏳ |
-| 12 | TUI / rich UI | Follow codex TUI *design*, but build in EnvoyMesh's Tauri host, not the core | REPL S; Tauri L | G | ⏳ |
-| 13 | Secrets / credentials / keyring | Hybrid: deepseek-style provider seam in P1; mesh credentials in the adapter | M (2 chunks) | C/G | ✅ P1 done (adapter deferred) |
+| 10 | Automation protocol | Follow deepseek ACP server | M (2 chunks) | E | ✅ done |
+| 11 | SDK / embedding | Follow deepseek JSON-RPC SDK + TS client; Python later | M (2 chunks) + L (py) | E | ✅ done (TS) |
+| 12 | TUI / rich UI | Dual-host: Codex *design* via ACP/SDK — terminal TUI in this repo first; EnvoyMesh Tauri later; future desktop/web host optional | TUI M; Tauri L | G | ✅ 12a G1–G5; ✅ 12b Pi-surface + per-tool pi:proposal |
+| 13 | Secrets / credentials / keyring | Hybrid: deepseek-style provider seam in P1; mesh credentials in the adapter | M (2 chunks) | C/G | ✅ done (P1 + adapter seam) |
 | 14a | Session query / history search | Follow deepseek session-query | M (2 chunks) | D | ✅ done |
-| 14b | Cross-machine resume | Follow deepseek durable-session projection (simpler than codex rollouts) | M (2 chunks) | D/G | ✅ P1 done (remote → mesh adapter) |
-| 15 | External config import | Both: codex-style importers + deepseek-style hook bridges | S–M (1–2 chunks) | B | ✅ chunks 15.1 + 15.2 done (pending user commit) |
+| 14b | Cross-machine resume | Follow deepseek durable-session projection (simpler than codex rollouts) | M (2 chunks) | D/G | ✅ done (P1 + adapter seam) |
+| 15 | External config import | Both: codex-style importers + deepseek-style hook bridges | S–M (1–2 chunks) | B | ✅ done (chunks 15.1 + 15.2) |
 | 16 | Feedback loop | Follow deepseek feedback family, wired into verifier/self-evolution | M (2 chunks) | D | ✅ done (signals helper; self-evolve hook light) |
 | 17 | Observability | Follow deepseek runtime-diagnostics + telemetry sink seam | M (2 chunks) | D | ✅ done |
 
 ## Phases
 
-- **Phase A — Loop & context** (1–2 weeks): 1, 2, 5, 6. Unblocks the agent's
-  day-to-day power. **✅ DONE** (2026-08-21).
-- **Phase B — Runtime extensibility** (1–2 weeks): 3, 15. Foundation for C/D/E.
-  **🚧 in progress** — item 15 chunk 1 (codex config importer) +
-  chunk 2 (deepseek `cordis.yml` + CC hooks.json + deepseek codec)
-  + item 3 chunks 1, 2, 3, 4 (capability-module seam + 3 sample plugins
-  + per-plugin config + zod-validated configs) all shipped locally
-  (pending user commit). 1404 tests passing. The Cordis-compat
-  container lands in Phase G.
-- **Phase C — Environment & long-running** (2–3 weeks): 7, 8, 9, 13 (P1 part).
-  Depends on B. **✅ DONE** (2026-08-22) — jobs/web/terminal + credentials
-  wire, Brave search, optional `node-pty`, `bash --job` sugar.
-- **Phase D — Data & observability** (2 weeks): 14a, 14b (P1 part), 16, 17.
-  **✅ DONE** locally 2026-08-22 (pending user commit).
-- **Phase E — Automation & embedding** (1–2 weeks): 10, 11. Depends on A + B.
-- **Phase F — OS sandbox** (1 week): 4. Independent; needs a Linux CI job.
-- **Phase G — Mesh-native integration** (continuous): 13 (adapter), 14b (remote
-  transport), distributed skills/memory/jobs, 12 (Tauri UI), Cordis-compat
-  container (if justified). Depends on EnvoyMesh v2.2 transport.
+- **Phase A — Loop & context** (1–2 weeks): 1, 2, 5, 6. **✅ DONE** (2026-08-21).
+- **Phase B — Runtime extensibility** (1–2 weeks): 3, 15. **✅ DONE**.
+- **Phase C — Environment & long-running** (2–3 weeks): 7, 8, 9, 13 (P1).
+  **✅ DONE** (2026-08-22).
+- **Phase D — Data & observability** (2 weeks): 14a, 14b (P1), 16, 17.
+  **✅ DONE** (2026-08-22).
+- **Phase E — Automation & embedding** (1–2 weeks): 10, 11 (TS). **✅ DONE**.
+- **Phase F — OS sandbox** (1 week): 4 (Linux/macOS). **✅ DONE**.
+- **Phase G — Mesh-native + dual-host UI**: **12a/12b + 13/14b seams ✅**.
+  Optional only: Cordis-compat, **12c**, mesh JobHandle, Python SDK, Windows
+  job-object — see Intentional deferrals.
 
 ---
 
@@ -127,7 +119,7 @@ are:
 | **L1 — Published artifacts** | Installable packages that are not platform-coupled | deepseek `landlock-run` npm family, `node-pty`, third-party MCP servers, E2B SDK | Direct dependency behind a seam |
 | **L2 — Copyable code** | MIT/Apache code worth porting with attribution | deepseek `hook-protocol` codec, skill-file parsing, session-query indexing, ACP protocol mapping | Port; cite source; keep license headers |
 | **L3 — Contract ports** | Deepseek capability contracts implemented natively over envoy seams | `ctx.jobs`, `ctx.skills`, `ctx.terminals`, `ctx.web`, `ctx.credentials`, `ctx.userQuestions`, `ctx.sessionQuery` | Adopt the type shapes + lifecycle; implement over envoy's session/hooks/tools/config |
-| **L4 — Runtime plugin adapters** | Hosting another platform's plugins inside envoy | A curated whitelist of Cordis plugins (skill-filesystem, jobs-local, credentials-local) | `envoy-harness-cordis` compatibility container (experimental, Phase G) |
+| **L4 — Runtime plugin adapters** | Hosting another platform's plugins inside envoy | A curated whitelist of Cordis plugins (skill-filesystem, jobs-local, credentials-local) | `envoy-harness-cordis` compatibility container (experimental, optional) |
 | **L5 — Wire-level reuse** | Cross-process/cross-node extension | A mesh node hosting a plugin exposed via MCP/ACP to other nodes | Adapter/transport concern |
 
 **Rule of thumb:** do L0 → L1 → L3 first (they deliver most value with least
@@ -171,7 +163,7 @@ Verified against the actual repo (`packages/*`):
 
 ## The Cordis-compat container (L4) — design
 
-**Goal (optional, Phase G):** host a *curated whitelist* of deepseek Cordis
+**Goal (optional, future):** host a *curated whitelist* of deepseek Cordis
 plugins inside envoy-harness so "reuse deepseek extensions" is literally true
 for the highest-value plugins, not just contract ports.
 
@@ -392,7 +384,7 @@ export — no build step.
 Skills are the model-facing extension surface; capability modules are the
 code-facing surface. Skills ship first.
 
-**(c) Cordis-compat container (L4, Phase G, optional)** — see the reuse
+**(c) Cordis-compat container (L4, optional)** — see the reuse
 strategy section. Whitelist-only; never the default path.
 
 **Chunks:** C1 skill registry + filesystem provider + frontmatter; C2 `skill`
@@ -403,31 +395,30 @@ SKILL.md compatibility fixtures from codex + deepseek roots.
 
 ## 4. OS sandbox kernels — reuse deepseek landlock-run (Linux), seatbelt (macOS)
 
+**Status:** ✅ done (2026-08-22). Linux landlock + macOS seatbelt shipped;
+Windows keeps the 6 bash validators (no job-object backend — see Intentional
+deferrals).
+
 **Investigation result:** codex sandboxes are Rust crates (seatbelt/bwrap/
-landlock/Windows) — not reusable. Deepseek publishes **`landlock-run` as a
-three-package npm family (MIT)** — a self-restrict-then-exec launcher with
+landlock/Windows) — not reusable. Deepseek publishes **`@deepseek-ai/node-addon-landlock-run`
+as a three-package npm family (MIT)** — a self-restrict-then-exec launcher with
 platform packages as optional deps; directly installable from TS.
 
-**Design (`src/sandbox/backends/`):**
+**Shipped (`src/sandbox/`):**
 
 ```ts
-// landlock.ts — LandlockSandboxExecutor: spawn `landlock-run` (npm dep) with
-//   a policy derived from SandboxPolicy (writable roots, readonly grants,
-//   network off); Linux-only; NoopSandboxExecutor elsewhere until CI covers it
-// seatbelt.ts — SeatbeltSandboxExecutor: spawn `sandbox-exec -p <profile>`
-//   (macOS); generate the profile from SandboxPolicy
-// policy.ts — SandboxPolicy → launcher args/profile translation (the only
-//   place sandbox policy meets kernel syntax)
+// backends/landlock.ts — LandlockSandboxExecutor: spawn landlock-run with
+//   grants from SandboxPolicy; fail-closed when probe is unusable
+// backends/seatbelt.ts — SeatbeltSandboxExecutor: sandbox-exec -p <profile>
+// policy.ts — SandboxPolicy → --ro/--rw grants + seatbelt profile
+// resolve.ts — linux→landlock, darwin→seatbelt, backend:none→noop
 ```
 
-Selection: existing resolution algorithm in `src/sandbox/index.ts` picks the
-best available backend per platform. Windows keeps the 6 bash validators
-(job-object sandbox deferred).
+Agent wires `resolveSandboxExecutor` into ToolContext; bash runs through the
+executor when present. Windows keeps the 6 bash validators only.
 
-**Chunks:** C1 landlock backend + policy translation + Linux CI smoke job;
-C2 seatbelt backend + macOS opt-in integration test.
-**Tests:** policy→args translation tables, fake launcher, backend selection,
-Linux CI smoke (real landlock, marked live), failure-to-launch fallback.
+**Tests:** `test/sandbox-backends.test.ts` (policy translation, fake launcher,
+fail-closed, selection) + existing noop suite.
 
 ## 5. Ask-user / elicitation — follow deepseek
 
@@ -490,7 +481,7 @@ verifier sees plan vs result.
   `job_kill` / `job_list`
 - Hermetic tests: lifecycle, owner fence, limit, wait timeout, onJobDone
 
-**Deferred:** mesh-remote `JobHandle`.
+**Out of scope:** mesh-remote `JobHandle` (optional; see Intentional deferrals).
 
 ## 8. Web search / fetch — follow deepseek web family
 
@@ -510,8 +501,8 @@ verifier sees plan vs result.
 - Tools: `web_search` / `web_fetch`
 - Hermetic tests: selection, truncation, duplicates, no-provider, mocked Brave
 
-**Deferred:** paid search providers (exa/perplexity); MCP alternate path
-already exists.
+**Out of scope:** additional paid search providers (exa/perplexity). MCP
+alternate path already exists.
 
 ## 9. Persistent PTY / terminal — follow deepseek terminal family
 
@@ -532,56 +523,73 @@ branded ids, exact-Agent ownership, session ops) + `terminal-bash` +
 - Hermetic tests: ownership, duplicate backend, send exclusivity,
   list/kill, tool happy path, pty availability
 
-**Deferred:** mesh-remote terminal.
+**Out of scope:** mesh-remote terminal (optional; see Intentional deferrals).
 
 ## 10. Automation protocol — follow deepseek ACP server
 
+**Status:** ✅ done (2026-08-22). Python/editor capabilities still out of scope.
+
 **Reference:** deepseek `acp` (Agent Client Protocol over JSON-RPC stdio).
 
-**Design (`src/protocol/acp.ts` + `src/protocol/jsonrpc.ts`):** one JSON-RPC
-codec (framing, request/response, notifications) shared with the SDK (item 11).
+**Design (`src/protocol/`):** one JSON-RPC codec (Content-Length framing,
+bidirectional request/response, notifications) shared with the SDK (item 11).
 Methods: `initialize` (version, capabilities: no editor/fs/terminal), optional
-no-op `authenticate`, `session/new`, `session/prompt` (text + inline images,
-one in-flight per session), `session/cancel`, `session/update` (committed
-messages only — no token-by-token leakage), `session/request_permission`
-(one-shot allow/reject). Reuses the Agent + session seams; permission requests
-map to the existing approval flow.
+no-op `authenticate`, `session/new`, `session/prompt` (text; one in-flight per
+session), `session/cancel`, `session/update` (committed messages only — no
+token-by-token leakage), `session/request_permission` (server→client one-shot
+allow/reject). Backends: `createFakeSessionBackend` (tests) and
+`createAgentSessionBackend` (Agent.run + askHandler).
 
 **Chunks:** C1 JSON-RPC codec + ACP server skeleton; C2 session/prompt + cancel
 + permission + committed delivery.
-**Tests:** scripted stdio pair (pattern of `test/mcp-stdio.test.ts`),
-protocol conformance, cancellation races, permission one-shots, image
-integrity (later).
+**Tests:** `test/protocol/protocol.test.ts` (in-process pair), permission
+one-shots, cancel races.
 
 ## 11. SDK / embedding — deepseek JSON-RPC, TS first
 
-**Design:** one JSON-RPC protocol (same codec as ACP) with an SDK surface:
-`session/create`, `session/prompt`, `session/events`, `session/cancel`,
-`config/get`, `tools/list`. Deliverables:
-- `packages/envoy-harness-client` (TS, in this repo) — `EnvoyHarnessClient`
-  over stdio, typed events.
+**Status:** ✅ done (2026-08-22) for TypeScript. Python package is optional —
+see Intentional deferrals.
+
+**Design:** same codec as ACP with SDK surface:
+`session/create`, `session/prompt`, `session/event` notifications,
+`session/cancel`, `config/get`, `tools/list`. Deliverables:
+- `packages/envoy-harness-client` — `EnvoyHarnessClient` over stdio, typed
+  events / permission callbacks.
 - ACP and SDK share the transport; ACP is the automation dialect, SDK is the
   embedding dialect.
-- Python SDK: separate published package, only when a consumer exists
-  (EnvoyMesh nodes are TS; no Python consumer today).
+- Python SDK: separate published package only if a consumer appears
+  (EnvoyMesh nodes are TS today).
 
-**Tests:** client/server round-trip, framing, error mapping, cancel, event
-ordering.
+**Tests:** client/server round-trip in `packages/envoy-harness-client/test/`
+plus harness protocol suite.
 
-## 12. TUI / rich UI — codex TUI design, EnvoyMesh Tauri host
+## 12. TUI / rich UI — dual-host (terminal TUI first, EnvoyMesh Tauri second)
 
-**Decision:** Package 1 stays UI-free. The rich UI is the existing EnvoyMesh
-Tauri app (`EnvoyMesh/apps/tauri`), consuming the harness via the ACP/SDK
-surface — bottom-pane composer, transcript view, approval surface, slash
-palette (codex TUI design, mesh-native host). In-repo stopgap: REPL upgrades
-(multiline paste, diff highlighting for `/diff`, scoreboard tables for
-`/scoreboard`).
-**Tests:** REPL upgrades are hermetic; Tauri UI has its own e2e lane in
-EnvoyMesh.
+**Decision (2026-08-22):** Ship **both** hosts on one ACP/SDK contract.
+**12a** (this repo) and **12b** (EnvoyMesh Tauri / Pi surface) are done.
+
+| Host | Location | Status |
+|------|----------|--------|
+| **12a Terminal TUI** | This monorepo: `packages/envoy-harness-tui` (sibling of Package 1, not inside the engine) | **✅** — G1–G5 (in-process + live `--acp` spawn/attach) |
+| **12b Tauri UI** | EnvoyMesh `apps/tauri` | **✅** — Pi surface + per-tool `pi:proposal` / `autoRunPolicy`; EnvoyGo unchanged |
+| **12c Extra desktop/web** | Optional future host in this monorepo | Not scheduled — only if a consumer needs it |
+
+**Invariant:** Package 1 (`@envoymesh/envoy-harness`) stays UI-free except the
+hermetic REPL stopgap. Both rich hosts speak ACP/SDK only — no second agent
+loop, no EnvoyMesh imports in the TUI package.
+
+**12a scope (Codex design, not Codex code):** bottom composer, transcript of
+committed messages, approval surface (`session/request_permission`), slash
+palette. Spawns or attaches to harness stdio ACP.
+
+**In-repo REPL stopgap (still useful):** multiline paste, `/diff` highlight,
+scoreboard tables — complementary to 12a, not a substitute.
+
+**Tests:** TUI unit/hermetic (fake ACP pair); Tauri e2e stays in EnvoyMesh.
 
 ## 13. Secrets / credentials / keyring — hybrid, boundary-respecting
 
-**Status:** ✅ P1 done (2026-08-22). Mesh adapter part remains Phase G.
+**Status:** ✅ done (2026-08-22). P1 providers + adapter transport seam.
 
 **Package 1 (`src/credentials/` + wire):**
 
@@ -594,12 +602,16 @@ interface CredentialsProvider {
 // providers: env.ts, file.ts (JSON 0600), ask.ts (via user-questions)
 // redaction.ts — TraceSink wrapper that redacts resolved values
 // wireEnvironmentTools creates the cascade and returns credentials
+// source: "mesh" rejected in P1 (MESH_FORBIDDEN)
 ```
 
-**Adapter (Package 3):** per-peer API keys, node identity (Ed25519 exists),
-signed-envelope credentials. Mesh secrets never enter Package 1.
-**Tests:** resolution order, ask flow, redaction, file permission check,
-wire registration of Brave when env key present.
+**Adapter (`@envoymesh/envoy-harness-adapter`):**
+`createMeshCredentialsProvider(transport)` — host injects
+`MeshCredentialsTransport.fetch`; mesh secrets never enter Package 1.
+Live peer/keyring transport remains a host concern (EnvoyMesh).
+
+**Tests:** P1 resolution order, ask flow, redaction, file permission check,
+Brave wire; adapter hermetic transport tests.
 
 ## 14a. Session query / history search — follow deepseek session-query
 
@@ -613,13 +625,19 @@ bounded results, corrupt-file skip.
 
 ## 14b. Cross-machine resume — deepseek durable projection, not codex rollouts
 
-**Status:** ✅ P1 done (2026-08-22). Remote transport remains Phase G.
+**Status:** ✅ done (2026-08-22). P1 provenance/checkpoint + adapter transport seam.
 
-**Shipped:** `SessionMetadata.provenance` (`originNode` / `resumedFrom` /
-`checkpointAt`); `PersistedSession.checkpoint()`; `--resume` stamps
-provenance; `--resume-remote` parses and errors
-`"requires mesh adapter"`.
-**Tests:** checkpoint/restore round-trip, provenance on resume, remote stub.
+**Shipped (Package 1):** `SessionMetadata.provenance` (`originNode` /
+`resumedFrom` / `checkpointAt`); `PersistedSession.checkpoint()`; `--resume`
+stamps provenance; `--resume-remote` parses and errors
+`"requires mesh adapter"` until a host wires the adapter.
+
+**Adapter (`@envoymesh/envoy-harness-adapter`):**
+`loadRemoteSession(transport, ref)` + `RemoteSessionTransport.fetch` —
+host injects live mesh fetch and materializes into Package 1 session store.
+
+**Tests:** checkpoint/restore round-trip, provenance on resume, remote stub;
+adapter hermetic transport tests.
 
 ## 15. External config import — codex importers + deepseek hook bridges
 
@@ -657,6 +675,25 @@ signals helper later without prompt injection.
 `TelemetrySink` with turn/tool/job counters; JSONL + null sinks;
 redaction + shape invariants.
 **Tests:** sink contract, invariant failure on secret leak.
+
+---
+
+## Intentional deferrals (optional / no consumer yet)
+
+Scheduled gap items (1–17 in scope for A–G) are **done**. What remains below
+is optional future work — not unfinished Package-1 gaps.
+
+| Item | Why optional | When to pick up |
+|------|--------------|-----------------|
+| **Cordis-compat (L4)** | Plan forbids adopting Cordis as platform; whitelist-only if ever | Real unmodified Cordis plugin demand |
+| **Python SDK (11)** | EnvoyMesh nodes are TS; no Python consumer | A Python host appears |
+| **12c extra desktop/web host** | 12a + 12b cover hosts | A consumer needs a third host in this monorepo |
+| **Windows job-object sandbox (4)** | Linux/macOS backends shipped; Windows uses validators | Windows CI + demand |
+| **Mesh-remote JobHandle / terminal** | Local jobs/terminal done; remote needs mesh protocol | EnvoyMesh job/terminal protocol |
+
+**Resolved (removed from deferrals):** 12b per-tool `pi:proposal`; 13
+`createMeshCredentialsProvider`; 14b `loadRemoteSession`. Live mesh
+*transports* for 13/14b stay host-injected (by design), not Package-1 work.
 
 ---
 

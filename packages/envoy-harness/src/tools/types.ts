@@ -91,6 +91,13 @@ export interface ToolContext {
    * construct a `ToolContext` directly.
    */
   sandboxPolicy?: import("../types.js").SandboxPolicy;
+  /**
+   * Phase F: optional OS sandbox executor. When set, bash
+   * runs commands through this executor (landlock / seatbelt /
+   * noop) after the 6 validators. When unset, bash spawns
+   * `sh -c` directly (v0 behavior).
+   */
+  sandboxExecutor?: import("../sandbox/types.js").SandboxExecutor;
 }
 
 // ---------------------------------------------------------------------------

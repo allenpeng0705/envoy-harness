@@ -53,6 +53,8 @@ import type {
 } from "./types.js";
 import { CostTracker } from "./cost.js";
 import { policyFromMode } from "./permissions/policy.js";
+import { resolveSandboxExecutor } from "./sandbox/resolve.js";
+import type { SandboxExecutor } from "./sandbox/types.js";
 import type { LspManager } from "./lsp/index.js";
 import { makeLspTools } from "./lsp/tools.js";
 import { NullTracer } from "./trace/null-tracer.js";
@@ -269,6 +271,14 @@ export interface AgentOptions {
    */
   mcpClients?: import("./mcp/index.js").McpClientRegistry;
   /**
+   * Phase F: optional explicit OS sandbox executor.
+   * When omitted, the agent resolves one from the
+   * live sandbox policy + host platform (landlock
+   * on Linux, seatbelt on macOS, noop elsewhere /
+   * when `backend: "none"`).
+   */
+  sandboxExecutor?: import("./sandbox/types.js").SandboxExecutor;
+  /**
    * Phase B / Item 3.1: capability-module registry.
    * When set, the constructor stores it on the
    * `agent.plugins` field. The host (the CLI runner)
@@ -392,6 +402,12 @@ export class Agent {
   toolCallCount = 0;
   /** @internal Effective sandbox policy, derived from the session. The verifier reads this. */
   sandboxPolicy: SandboxPolicy;
+  /**
+   * @internal Phase F: optional host-supplied OS sandbox
+   * executor. When undefined, `getSandboxExecutor` resolves
+   * from policy + platform.
+   */
+  sandboxExecutor: SandboxExecutor | undefined;
   /** @internal Cost tracker; populated across the run. F7.1. */
   costTracker: CostTracker;
   /** @internal F7.5: cost ceiling; when exceeded, the agent aborts. */
@@ -596,6 +612,7 @@ export class Agent {
       this.session.metadata.permissionMode ?? "read-only",
       this.cwd,
     );
+    this.sandboxExecutor = options.sandboxExecutor;
     // Cost tracker. v0 defaults to "local" (which has $0 pricing);
     // F7.2+ adapters set the model name in their ModelResponse, so
     // cost is attributed per-response rather than per-construction.
@@ -625,6 +642,9 @@ export class Agent {
       session: this.session,
       cwd: this.cwd,
       getSandboxPolicy: () => this.sandboxPolicy,
+      getSandboxExecutor: () =>
+        this.sandboxExecutor ??
+        resolveSandboxExecutor({ policy: this.sandboxPolicy }),
       getAskHandler: () => this.askHandler,
       getApproval: () => this.approval,
       abortSignal: this.abortController.signal,

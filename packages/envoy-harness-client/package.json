@@ -1,0 +1,33 @@
+{
+  "name": "@envoymesh/envoy-harness-client",
+  "version": "0.0.0",
+  "description": "TypeScript stdio client for envoy-harness ACP / embedding SDK dialects.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "README.md", "LICENSE"],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "engines": {
+    "node": ">=22.19"
+  },
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@envoymesh/envoy-harness": "link:../envoy-harness"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}

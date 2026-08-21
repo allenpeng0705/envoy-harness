@@ -239,6 +239,7 @@ export function makeArgs(
     sessionDir: undefined,
     plan: false,
     repl: options.repl ?? false,
+    acp: false,
     noColor: false,
     verbose: false,
     quiet: false,

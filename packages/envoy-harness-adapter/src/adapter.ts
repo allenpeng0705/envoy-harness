@@ -68,8 +68,10 @@ import {
   BUILTIN_TOOLS,
   HookRegistry,
   InMemorySession,
+  installToolPermissionAskHook,
   newSessionId,
   ToolRegistry,
+  type AskHandler,
   type MeshSubmitter,
   type ModelAdapter,
   type Session,
@@ -392,6 +394,17 @@ export function defaultBuildAgentFactory(opts: {
    *  config / audit) and passes them in. Omit
    *  to disable B-class tools for this agent. */
   bClassTools?: ReadonlyArray<Tool>;
+  /**
+   * Phase G / 12b — optional live AskHandler (e.g. ACP →
+   * pi:proposal). Resolved per Agent construction so the
+   * host can swap the bridge between asks.
+   */
+  getAskHandler?: () => AskHandler | undefined;
+  /**
+   * When `getAskHandler` is set, PreToolUse asks only when
+   * this returns true. Default: ask for every tool.
+   */
+  shouldAskTool?: (toolName: string) => boolean;
 }): BuildAgentFn {
   const cwd = opts.cwd ?? process.cwd();
   return ({ skillId, objective, costCeilingUsd, signal }) => {
@@ -427,11 +440,20 @@ export function defaultBuildAgentFactory(opts: {
         }
       }
     }
+    const hooks = new HookRegistry();
+    const askHandler = opts.getAskHandler?.();
+    if (askHandler !== undefined) {
+      installToolPermissionAskHook(hooks, {
+        ...(opts.shouldAskTool !== undefined
+          ? { shouldAsk: opts.shouldAskTool }
+          : {}),
+      });
+    }
     return new Agent({
       model: opts.model,
       tools,
       session,
-      hooks: new HookRegistry(),
+      hooks,
       cwd,
       maxCostUsd: costCeilingUsd,
       // v0 set `systemPrompt: objective`, which duplicated the
@@ -445,6 +467,7 @@ export function defaultBuildAgentFactory(opts: {
       // Same DI shape as the sub-agent path in
       // `defaultBuildSubagentFactory` (Package 1).
       ...(opts.meshSubmitter ? { meshSubmitter: opts.meshSubmitter } : {}),
+      ...(askHandler !== undefined ? { askHandler } : {}),
     });
   };
 }

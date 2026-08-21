@@ -237,7 +237,13 @@ gap-closure plan calls for.
   (session query), 14b P1 (provenance + `--resume-remote` stub), 16
   (feedback), 17 (telemetry/invariants). Plan:
   [`implementation-plan-phase-d.md`](./implementation-plan-phase-d.md).
-- **Phase E** — items 10 (ACP), 11 (SDK).
-- **Phase F** — item 4 (OS sandbox: landlock + seatbelt).
-- **Phase G** — item 12 (Tauri UI in the EnvoyMesh host) + mesh-native
-  integrations (13-adapter, 14b-remote).
+- **Phase E** — ✅ done 2026-08-22 (pending user commit). Items 10
+  (ACP) + 11 (TS SDK client). See
+  [`implementation-plan-phase-e.md`](./implementation-plan-phase-e.md).
+- **Phase F** — ✅ done 2026-08-22 (pending user commit). Item 4
+  (landlock + seatbelt). See
+  [`implementation-plan-phase-f.md`](./implementation-plan-phase-f.md).
+- **Phase G** — ✅ done for scheduled scope (2026-08-22): **12a** TUI,
+  **12b** EnvoyMesh Pi-surface + per-tool `pi:proposal`, **13/14b** adapter
+  seams. See [`implementation-plan-phase-g.md`](./implementation-plan-phase-g.md).
+  Optional: Cordis / **12c** / mesh JobHandle (gap-closure Intentional deferrals).

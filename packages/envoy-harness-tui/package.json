@@ -1,0 +1,38 @@
+{
+  "name": "@envoymesh/envoy-harness-tui",
+  "version": "0.0.0",
+  "description": "Terminal TUI host for envoy-harness (Codex-style interaction over ACP).",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "envoy-harness-tui": "./dist/bin.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "README.md", "LICENSE"],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "start": "tsx src/bin.ts",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "engines": {
+    "node": ">=22.19"
+  },
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@envoymesh/envoy-harness": "link:../envoy-harness",
+    "@envoymesh/envoy-harness-client": "link:../envoy-harness-client"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}

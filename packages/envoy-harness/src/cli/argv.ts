@@ -54,6 +54,7 @@ const RUN_FLAGS = new Set([
   "--plugin-config",
   "--plan",
   "--repl",
+  "--acp",
   "--no-color",
   "--verbose",
   "--quiet",
@@ -225,6 +226,12 @@ export interface RunParsedArgs {
   plan: boolean;
   /** `--repl`: enter the interactive REPL (F17.1). */
   repl: boolean;
+  /**
+   * Phase E / G: `--acp` — serve ACP JSON-RPC on stdio
+   * (Content-Length framing). No positional prompt.
+   * Mutually exclusive with `--repl`.
+   */
+  acp: boolean;
   /** `--no-color`: disable ANSI colors. */
   noColor: boolean;
   /** `--verbose`: print hook fires and validator verdicts. */
@@ -358,6 +365,7 @@ function parseRunArgs(argv: ReadonlyArray<string>): RunParsedArgs {
     pluginConfigs: [],
     plan: false,
     repl: false,
+    acp: false,
     noColor: false,
     verbose: false,
     quiet: false,
@@ -382,6 +390,10 @@ function parseRunArgs(argv: ReadonlyArray<string>): RunParsedArgs {
       }
       if (arg === "--repl") {
         out.repl = true;
+        continue;
+      }
+      if (arg === "--acp") {
+        out.acp = true;
         continue;
       }
       if (arg === "--persist") {
@@ -666,6 +678,7 @@ export function formatHelp(version: string): string {
     "  --plugin-config <spec> per-plugin config (repeatable; '<name>.<key>=<value>')",
     "  --plan                 read + plan only, no writes",
     "  --repl                 interactive REPL (no positional prompt)",
+    "  --acp                  serve ACP JSON-RPC on stdio (hosts / TUI)",
     "  --json                 JSON Lines output (machine-readable)",
     "  --quiet                suppress human output",
     "  --no-color             disable ANSI colors",
