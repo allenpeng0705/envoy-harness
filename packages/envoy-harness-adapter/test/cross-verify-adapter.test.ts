@@ -312,18 +312,21 @@ describe("buildEnvoyHarnessAdapterWithCrossVerify", () => {
       execute: async () => {
         crossCalled = true;
         return {
-          version: "0.1",
-          runtime: "openclaw",
           skillId: "code-review",
-          workerPeerId: "peer-1",
-          objective: "x",
-          content: [{ kind: "text", text: "cross result" }],
-          inputArtifacts: [],
-          metrics: { promptTokens: 0, completionTokens: 0, costUsd: 0 },
-          createdAt: new Date().toISOString(),
+          runtime: "openclaw",
+          peerId: "peer-1",
           correlationId: "corr-1",
-          signature: "",
-          raw: { type: "text", text: "cross result", messages: [], content: [], metrics: { inputTokens: 0, outputTokens: 0, costUsd: 0 }, iterations: 0, toolCalls: 0, stopReason: "end_turn", sandboxPolicy: { mode: "read-only", approval: "on-request", backend: "linux-landlock", writableRoots: [], networkAccess: false, slashTmpWritable: true } },
+          content: [{ kind: "text", text: "cross result" }],
+          citations: [],
+          metrics: {
+            durationMs: 0,
+            costUsd: 0,
+            promptTokens: 0,
+            completionTokens: 0,
+          },
+          raw: { note: "openclaw-raw" },
+          completedAt: new Date().toISOString(),
+          signature: "openclaw-sig",
         };
       },
     };
@@ -334,16 +337,19 @@ describe("buildEnvoyHarnessAdapterWithCrossVerify", () => {
       openClawAdapter: openClaw,
     });
     const signedResult: SignedAgentResult = {
-      version: "0.1",
-      runtime: "envoy-harness",
       skillId: "code-review",
-      workerPeerId: "peer-1",
-      objective: "do the thing",
-      content: [{ kind: "text", text: "local result" }],
-      inputArtifacts: [],
-      metrics: { promptTokens: 0, completionTokens: 0, costUsd: 0 },
-      createdAt: new Date().toISOString(),
+      runtime: "envoy-harness",
+      peerId: "peer-1",
       correlationId: "corr-1",
+      content: [{ kind: "text", text: "local result" }],
+      citations: [],
+      metrics: {
+        durationMs: 0,
+        costUsd: 0,
+        promptTokens: 0,
+        completionTokens: 0,
+      },
+      completedAt: new Date().toISOString(),
       signature: "test-sig",
     };
     await adapter.verify({ result: signedResult, objective: "do the thing" });
