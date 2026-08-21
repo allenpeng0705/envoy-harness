@@ -409,3 +409,18 @@ export {
   type SandboxExecutor,
   type SandboxResult,
 } from "./sandbox/index.js";
+
+// Phase A / Item 5 — the user-question service
+// (open-ended user questions + approval delegation).
+// The REPL provider is the package-1 default; the
+// Tauri / mesh providers land in the adapter.
+export {
+  createReplStdinProvider,
+  createUserQuestionService,
+  DEFAULT_MULTILINE_SENTINEL,
+  type ReplStdinProviderOptions,
+  type UserQuestionAnswer,
+  type UserQuestionProvider,
+  type UserQuestionRequest,
+  type UserQuestionService,
+} from "./interaction/index.js";
