@@ -411,6 +411,42 @@ export {
   type SkippedCcHook,
 } from "./config/index.js";
 
+// Phase B / Item 3.1: the plugin system. The
+// capability-module seam + the built-in `audit-log`
+// sample + the curated whitelist.
+export {
+  auditLogPlugin,
+  AuditLogConfigSchema,
+  CalculatorError,
+  calculatorPlugin,
+  CalculatorConfigSchema,
+  confirmToolPlugin,
+  ConfirmToolConfigSchema,
+  evaluateExpression,
+  getBuiltinPlugin,
+  isBuiltinPlugin,
+  isWhitelistedPlugin,
+  loadPlugin,
+  mergePluginConfigs,
+  parsePluginConfigEntry,
+  PLUGIN_WHITELIST,
+  PluginConfigError,
+  PluginConfigParseError,
+  PluginLoadError,
+  PluginRegistry,
+  validatePluginConfig,
+  type AuditLogConfig,
+  type CalculatorConfig,
+  type CapabilityContext,
+  type CapabilityModule,
+  type ConfirmToolConfig,
+  type Disposable,
+  type LoadPluginOptions,
+  type PluginConfigEntry,
+  type PluginLogger,
+  type ZodIssueLike,
+} from "./plugins/index.js";
+
 // T3.3: re-export the MCP (Model Context Protocol)
 // type seam. Closes §2.5 row #2 (the type side;
 // the stdio transport is a follow-up sub-chunk).

@@ -70,8 +70,10 @@
 - **Phase B — Runtime extensibility** (1–2 weeks): 3, 15. Foundation for C/D/E.
   **🚧 in progress** — item 15 chunk 1 (codex config importer) +
   chunk 2 (deepseek `cordis.yml` + CC hooks.json + deepseek codec)
-  shipped (pending user commit). Item 3 (3–4 chunks, the bigger
-  platform piece) is next.
+  + item 3 chunks 1, 2, 3, 4 (capability-module seam + 3 sample plugins
+  + per-plugin config + zod-validated configs) all shipped locally
+  (pending user commit). 1370 tests passing. The Cordis-compat
+  container lands in Phase G.
 - **Phase C — Environment & long-running** (2–3 weeks): 7, 8, 9, 13 (P1 part).
   Depends on B.
 - **Phase D — Data & observability** (2 weeks): 14a, 14b (P1 part), 16, 17.

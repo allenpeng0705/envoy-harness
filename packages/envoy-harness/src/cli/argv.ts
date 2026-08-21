@@ -24,6 +24,11 @@
  */
 
 import type { PermissionMode } from "../types.js";
+import {
+  parsePluginConfigEntry,
+  PluginConfigParseError,
+  type PluginConfigEntry,
+} from "../plugins/config-parser.js";
 
 /** v0 flag set for the `run` subcommand (default). */
 const RUN_FLAGS = new Set([
@@ -44,6 +49,8 @@ const RUN_FLAGS = new Set([
   "--config",
   "--import-config",
   "--from",
+  "--plugin",
+  "--plugin-config",
   "--plan",
   "--repl",
   "--no-color",
@@ -87,6 +94,8 @@ const RUN_VALUED_FLAGS = new Set([
   "--config",
   "--import-config",
   "--from",
+  "--plugin",
+  "--plugin-config",
 ]);
 
 /** A flag that takes a value for the self-evolve subcommand. */
@@ -173,6 +182,28 @@ export interface RunParsedArgs {
    * other is a usage error).
    */
   importFrom?: string | undefined;
+  /**
+   * Phase B / Item 3.1: `--plugin <module>` (repeatable):
+   * a plugin module path to load. The path MUST be in
+   * the curated whitelist (security boundary). v0
+   * accepts the built-in samples (e.g.
+   * `envoy-harness-plugin-audit-log`). An empty array
+   * means "no plugins loaded" (the default).
+   */
+  plugins: string[];
+  /**
+   * Phase B / Item 3.3: `--plugin-config <name>.<key>=<value>`
+   * (repeatable): a per-plugin config entry. The
+   * `<name>.` prefix scopes the entry to a specific
+   * plugin; multiple flags for the same plugin
+   * accumulate. The runner builds a
+   * `Map<name, Record<string, unknown>>` via
+   * `mergePluginConfigs` and passes the right config
+   * to each plugin's `register(module, config, ctx)`.
+   * An empty array means "no configs supplied" (the
+   * default; every plugin gets `{}`).
+   */
+  pluginConfigs: PluginConfigEntry[];
   /**
    * F14.1: `--session-dir <path>`: where to
    * store / load persisted sessions. Default
@@ -314,6 +345,8 @@ function parseRunArgs(argv: ReadonlyArray<string>): RunParsedArgs {
     config: undefined,
     importConfig: undefined,
     importFrom: undefined,
+    plugins: [],
+    pluginConfigs: [],
     plan: false,
     repl: false,
     noColor: false,
@@ -416,6 +449,21 @@ function parseRunArgs(argv: ReadonlyArray<string>): RunParsedArgs {
             break;
           case "--from":
             out.importFrom = value;
+            break;
+          case "--plugin":
+            out.plugins.push(value);
+            break;
+          case "--plugin-config":
+            try {
+              out.pluginConfigs.push(parsePluginConfigEntry(value));
+            } catch (err) {
+              if (err instanceof PluginConfigParseError) {
+                // Re-throw as `ArgvError` so the runner
+                // converts to `CliError(EXIT_USAGE)`.
+                throw new ArgvError(err.message);
+              }
+              throw err;
+            }
             break;
         }
         continue;
@@ -601,6 +649,8 @@ export function formatHelp(version: string): string {
     "  --config <path>        TOML config file (default ~/.config/envoy-harness/config.toml)",
     "  --import-config <path> import a foreign config file (use with --from <format>)",
     "  --from <format>        source format for --import-config (v0: codex)",
+    "  --plugin <name>        load a plugin (repeatable; must be in the curated whitelist)",
+    "  --plugin-config <spec> per-plugin config (repeatable; '<name>.<key>=<value>')",
     "  --plan                 read + plan only, no writes",
     "  --repl                 interactive REPL (no positional prompt)",
     "  --json                 JSON Lines output (machine-readable)",

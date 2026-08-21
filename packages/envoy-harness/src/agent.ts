@@ -269,6 +269,22 @@ export interface AgentOptions {
    */
   mcpClients?: import("./mcp/index.js").McpClientRegistry;
   /**
+   * Phase B / Item 3.1: capability-module registry.
+   * When set, the constructor stores it on the
+   * `agent.plugins` field. The host (the CLI runner)
+   * has already loaded + registered the plugins BEFORE
+   * constructing the agent (so the plugin's hooks
+   * fire on the SAME `HookRegistry` the agent uses).
+   * The agent itself doesn't auto-wire plugins — the
+   * host owns that step.
+   *
+   * **Future chunks** add the integration: `/plugins`
+   * REPL command, sub-agent inheritance, and the
+   * `disposeAll()` call on `clearSession` /
+   * `newSession`.
+   */
+  plugins?: import("./plugins/index.js").PluginRegistry;
+  /**
    * Phase A / Item 5: the user-question service. When
    * set, the agent:
    *
@@ -407,6 +423,15 @@ export class Agent {
    *  attribute events without consumer-side
    *  inference. Undefined for the root agent. */
   subagentOf: string | undefined;
+  /**
+   * @internal Phase B / Item 3.1: capability-module
+   * registry. When set, the agent exposes a
+   * `CapabilityContext` to the registry (so plugins can
+   * register hooks / tools on this agent). The host
+   * owns the registry's lifetime; the agent is just
+   * a consumer.
+   */
+  plugins: import("./plugins/index.js").PluginRegistry | undefined;
   /** @internal F-fix: approval policy. Defaults to `on-request`. */
   approval: AskForApproval;
   /**
@@ -478,6 +503,7 @@ export class Agent {
     this.subagentOf = options.subagentOf;
     this.approval = options.approval ?? "on-request";
     this.userQuestions = options.userQuestions;
+    this.plugins = options.plugins;
     // F9.2: register the 4 LSP tools when the host provides
     // a manager. We do this AFTER the constructor sets
     // `this.tools` so the registry is available.

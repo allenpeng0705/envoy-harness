@@ -136,6 +136,59 @@ describe("parseArgs", () => {
     expect(() => parseArgs(["--from"])).toThrow(ArgvError);
   });
 
+  // Phase B / Item 3.1: --plugin is a repeatable valued
+  // flag. Each occurrence appends to the plugins list.
+  it("captures --plugin (repeatable) as a list", () => {
+    const a = parseRun(["--plugin", "alpha", "--plugin", "beta"]);
+    if (a.subcommand !== "run") throw new Error("expected run");
+    expect(a.plugins).toEqual(["alpha", "beta"]);
+  });
+
+  it("defaults plugins to an empty array when --plugin is absent", () => {
+    const a = parseRun(["hello"]);
+    if (a.subcommand !== "run") throw new Error("expected run");
+    expect(a.plugins).toEqual([]);
+  });
+
+  it("throws when --plugin has no value", () => {
+    expect(() => parseArgs(["--plugin"])).toThrow(ArgvError);
+  });
+
+  // Phase B / Item 3.3: --plugin-config is a
+  // repeatable valued flag. Each occurrence parses
+  // `<name>.<key>=<value>` and appends to the
+  // `pluginConfigs` list.
+  it("captures --plugin-config (repeatable) as a list of entries", () => {
+    const a = parseArgs([
+      "--plugin-config", "alpha.precision=2",
+      "--plugin-config", "alpha.separator=,",
+    ]);
+    if (a.subcommand !== "run") throw new Error("expected run");
+    expect(a.pluginConfigs).toEqual([
+      { name: "alpha", key: "precision", value: 2 },
+      { name: "alpha", key: "separator", value: "," },
+    ]);
+  });
+
+  it("defaults pluginConfigs to an empty array when --plugin-config is absent", () => {
+    const a = parseArgs(["hello"]);
+    if (a.subcommand !== "run") throw new Error("expected run");
+    expect(a.pluginConfigs).toEqual([]);
+  });
+
+  it("throws when --plugin-config has no value", () => {
+    expect(() => parseArgs(["--plugin-config"])).toThrow(ArgvError);
+  });
+
+  it("throws on a malformed --plugin-config spec (no dot)", () => {
+    expect(() => parseArgs(["--plugin-config", "nodot"])).toThrow(ArgvError);
+    expect(() => parseArgs(["--plugin-config", "nodot"])).toThrow(/<name>\.<key>/);
+  });
+
+  it("throws on a malformed --plugin-config spec (dot but no equals)", () => {
+    expect(() => parseArgs(["--plugin-config", "foo.noequals"])).toThrow(ArgvError);
+  });
+
   // Phase B / Item 15.1: the runner's XOR check — both
   // flags must be passed together. Caught by `run()`,
   // not `parseArgs` (the parser accepts them

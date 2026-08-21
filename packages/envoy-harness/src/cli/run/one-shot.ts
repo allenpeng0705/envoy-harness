@@ -271,6 +271,101 @@ export async function runAgent(
     registerHooksFromConfig(agent.hooks, configLayer.hooks);
   }
 
+  // Phase B / Item 3.1: load + register plugins. The
+  // host (the runner) is the wire-up: it builds a
+  // `CapabilityContext` from the agent's already-
+  // constructed sub-registries + cwd, then registers
+  // each plugin on a `PluginRegistry`. The agent
+  // doesn't need to know about plugins for chunk 3.1;
+  // the registry is held by the runner (or passed to
+  // the agent via `options.plugins` for future chunks
+  // that need it for `/plugins` listing / sub-agent
+  // inheritance).
+  //
+  // Phase B / Item 3.3: per-plugin configs from
+  // `--plugin-config <name>.<key>=<value>`. The
+  // runner merges every entry into a
+  // `Map<name, Record<string, unknown>>` and passes
+  // the right config to each plugin's
+  // `register(module, config, ctx)`. Plugins without
+  // a matching `--plugin-config` entry get `{}`.
+  if (parsed.plugins.length > 0) {
+    const {
+      PluginRegistry,
+      loadPlugin,
+      isWhitelistedPlugin,
+      mergePluginConfigs,
+      PluginConfigError,
+      PluginLoadError,
+      validatePluginConfig,
+    } = await import("../../plugins/index.js");
+    const registry = new PluginRegistry();
+    const pluginLogger = {
+      info: (msg: string) => stderr.write(`[plugin] ${msg}\n`),
+      warn: (msg: string) => stderr.write(`[plugin] warn: ${msg}\n`),
+      error: (msg: string) => stderr.write(`[plugin] error: ${msg}\n`),
+    };
+    // The plugin's `CapabilityContext` exposes the same
+    // `hooks` + `tools` registries the agent uses.
+    // Plugins register hooks / tools on these
+    // registries; the agent picks them up.
+    const pluginCtx = {
+      cwd: agent.cwd,
+      hooks: agent.hooks,
+      tools: agent.tools,
+      logger: pluginLogger,
+    };
+    // Build the per-plugin config map once (the
+    // merge is pure). Plugins with no `--plugin-config`
+    // entries get `{}` (the merge returns an empty
+    // map, and the `get(name) ?? {}` below supplies
+    // the default).
+    const configByPlugin = mergePluginConfigs(parsed.pluginConfigs);
+    for (const modulePath of parsed.plugins) {
+      // Quick whitelist check (the loader also
+      // checks; this just gives the user a friendlier
+      // error before the async import kicks in).
+      if (!isWhitelistedPlugin(modulePath)) {
+        throw new CliError(
+          `plugin not in whitelist: ${modulePath}`,
+          EXIT_USAGE,
+        );
+      }
+      let loaded;
+      try {
+        loaded = await loadPlugin({ modulePath });
+      } catch (err) {
+        if (err instanceof PluginLoadError) {
+          throw new CliError(err.message, EXIT_USAGE);
+        }
+        throw err;
+      }
+      // v0: pass the per-plugin config (or `{}` if
+      // the user didn't supply any for this plugin).
+      // Chunk 3.4: validate the config against the
+      // plugin's `configSchema` (when present) BEFORE
+      // calling `apply`. A bad config throws
+      // `PluginConfigError`; we convert to
+      // `CliError(EXIT_USAGE)` so the user sees a
+      // clear "config is invalid" message.
+      const rawConfig = configByPlugin.get(modulePath) ?? {};
+      let config: unknown = rawConfig;
+      try {
+        config = validatePluginConfig(loaded.module, rawConfig);
+      } catch (err) {
+        if (err instanceof PluginConfigError) {
+          throw new CliError(err.message, EXIT_USAGE);
+        }
+        throw err;
+      }
+      registry.register(loaded.module, config, pluginCtx);
+    }
+    // The registry is held by the runner for the
+    // agent's lifetime. We don't dispose at the
+    // end (the process is exiting anyway).
+    void registry;
+  }
+
   // 4. Run the loop.
   const result = await agent.run(prompt);
 

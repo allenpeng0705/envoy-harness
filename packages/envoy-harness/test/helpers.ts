@@ -232,6 +232,8 @@ export function makeArgs(
     maxCostUsd: undefined,
     resume: undefined,
     fork: undefined,
+    plugins: [],
+    pluginConfigs: [],
     persist: false,
     sessionDir: undefined,
     plan: false,
