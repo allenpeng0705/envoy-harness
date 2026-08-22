@@ -4,6 +4,15 @@
 
 import type { JsonRpcMessage } from "./types.js";
 
+/**
+ * Maximum frame body size in bytes. A malicious peer can claim
+ * any `Content-Length`; without this cap a single line would
+ * allocate the full buffer before parsing. 16 MB is generous
+ * for a JSON-RPC request and well above any honest message
+ * the harness produces.
+ */
+export const MAX_FRAME_BYTES = 16 * 1024 * 1024;
+
 export function encodeFrame(message: unknown): Buffer {
   const body = Buffer.from(JSON.stringify(message), "utf8");
   const header = Buffer.from(
@@ -16,6 +25,13 @@ export function encodeFrame(message: unknown): Buffer {
 /** Incremental Content-Length decoder. */
 export class FrameDecoder {
   #buf = Buffer.alloc(0);
+  /** Override the per-frame size cap (hermetic tests; do not
+   *  raise this in production). Default: `MAX_FRAME_BYTES`. */
+  readonly #maxBytes: number;
+
+  constructor(options?: { maxBytes?: number }) {
+    this.#maxBytes = options?.maxBytes ?? MAX_FRAME_BYTES;
+  }
 
   feed(chunk: Buffer | string): void {
     const next = typeof chunk === "string" ? Buffer.from(chunk, "utf8") : chunk;
@@ -42,6 +58,16 @@ export class FrameDecoder {
       throw new Error(`missing Content-Length in header: ${header}`);
     }
     const length = Number(match[1]);
+    // `(\d+)` only captures non-negative integers, so
+    // `Number.isFinite` and `length < 0` are unreachable
+    // here — the regex's "missing" branch handles
+    // `Content-Length: -1` and `Content-Length: abc` before
+    // we get to this point.
+    if (length > this.#maxBytes) {
+      throw new Error(
+        `frame too large: ${length} bytes (max ${this.#maxBytes})`,
+      );
+    }
     const bodyStart = sep + 4;
     if (this.#buf.byteLength < bodyStart + length) return undefined;
     const body = this.#buf.subarray(bodyStart, bodyStart + length);

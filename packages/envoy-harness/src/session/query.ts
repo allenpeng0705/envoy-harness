@@ -77,9 +77,6 @@ export function createSessionQueryService(
   return {
     dir,
     async reindex() {
-      if (!isPathInside(dir, dir)) {
-        // always true; kept for symmetry with auth checks
-      }
       const result = await indexSessionDirectory({ dir });
       entries = result.entries;
       return { entryCount: entries.length, errors: result.errors };

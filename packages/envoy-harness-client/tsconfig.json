@@ -1,7 +1,7 @@
 {
   "extends": "../envoy-harness/tsconfig.json",
   "compilerOptions": {
-    "rootDir": "src",
+    "rootDir": "./",
     "outDir": "dist",
     "composite": false,
     "noEmit": true

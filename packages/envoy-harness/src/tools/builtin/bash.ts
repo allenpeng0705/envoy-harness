@@ -303,6 +303,11 @@ async function runBashViaExecutor(
       policy,
       cwd: ctx.cwd,
       signal: ac.signal,
+      // Let the executor stream-cap too. We still slice
+      // here for the final cap (in case the executor didn't
+      // honor it or used a higher cap), but with this
+      // passthrough we avoid buffering huge outputs.
+      maxOutputBytes: cap,
     });
     const stdout =
       result.stdout.length > cap ? result.stdout.slice(0, cap) : result.stdout;
@@ -312,8 +317,8 @@ async function runBashViaExecutor(
       stdout,
       stderr,
       exitCode: result.exitCode,
-      stdoutTruncated: result.stdout.length > cap,
-      stderrTruncated: result.stderr.length > cap,
+      stdoutTruncated: result.stdout.length > cap || result.stdoutTruncated === true,
+      stderrTruncated: result.stderr.length > cap || result.stderrTruncated === true,
       killed: ac.signal.aborted,
       cap,
       preWarning,

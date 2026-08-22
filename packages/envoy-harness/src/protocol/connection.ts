@@ -30,7 +30,16 @@ export interface JsonRpcConnectionOptions {
   output: Writable;
   onRequest?: RequestHandler;
   onNotification?: NotificationHandler;
+  /**
+   * Default timeout for outbound `request()` calls in
+   * milliseconds. The server-initiated `request_permission`
+   * path typically uses a longer timeout — pass it per-call.
+   * Default 30s; pass `Infinity` to disable.
+   */
+  defaultRequestTimeoutMs?: number;
 }
+
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 
 /** @alias {@link RequestHandler} */
 export type JsonRpcRequestHandler = RequestHandler;
@@ -51,9 +60,12 @@ export class JsonRpcConnection {
   #closed = false;
   #onRequest: RequestHandler;
   #onNotification: NotificationHandler;
+  #defaultRequestTimeoutMs: number;
 
   constructor(options: JsonRpcConnectionOptions) {
     this.#output = options.output;
+    this.#defaultRequestTimeoutMs =
+      options.defaultRequestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
     this.#onRequest =
       options.onRequest ??
       (async (method) => {
@@ -78,7 +90,17 @@ export class JsonRpcConnection {
     options.input.on("error", (err: Error) => this.#events.emit("error", err));
   }
 
-  request(method: string, params?: unknown): Promise<unknown> {
+  /**
+   * Send a JSON-RPC request. `timeoutMs` defaults to
+   * `defaultRequestTimeoutMs` (30s); pass `Infinity` to
+   * disable the timeout for long-running ops (e.g.
+   * `session/request_permission`).
+   */
+  request(
+    method: string,
+    params?: unknown,
+    timeoutMs: number = this.#defaultRequestTimeoutMs,
+  ): Promise<unknown> {
     if (this.#closed) {
       return Promise.reject(new Error("json-rpc connection closed"));
     }
@@ -90,7 +112,30 @@ export class JsonRpcConnection {
       ...(params !== undefined ? { params } : {}),
     };
     return new Promise((resolve, reject) => {
-      this.#pending.set(id, { resolve, reject });
+      const pending: Pending = { resolve, reject };
+      this.#pending.set(id, pending);
+      // Skip the timer entirely if the timeout is disabled.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
+        timer = setTimeout(() => {
+          this.#pending.delete(id);
+          reject(
+            new Error(
+              `json-rpc request '${method}' (id=${id}) timed out after ${timeoutMs}ms`,
+            ),
+          );
+        }, timeoutMs);
+      }
+      const origResolve = pending.resolve;
+      const origReject = pending.reject;
+      pending.resolve = (value) => {
+        if (timer !== undefined) clearTimeout(timer);
+        origResolve(value);
+      };
+      pending.reject = (err) => {
+        if (timer !== undefined) clearTimeout(timer);
+        origReject(err);
+      };
       this.#write(msg);
     });
   }

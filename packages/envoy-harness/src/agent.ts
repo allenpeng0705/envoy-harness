@@ -38,7 +38,6 @@
  */
 
 import {
-  defaultRegistry,
   HookRegistry,
 } from "./hooks/index.js";
 import { InMemorySession, newSessionId } from "./session.js";
@@ -91,7 +90,11 @@ export interface AgentOptions {
   tools: ToolRegistry;
   /** The session. The agent appends to its transcript. */
   session: Session;
-  /** Hook registry. Defaults to the singleton `defaultRegistry`. */
+  /**
+   * Hook registry. Defaults to a **fresh** `HookRegistry` per Agent so
+   * PreToolUse / ACP permission hooks cannot stack on a process-wide
+   * singleton. Pass `defaultRegistry` explicitly only when intentional.
+   */
   hooks?: HookRegistry;
   /** Working directory for tool execution. Defaults to `process.cwd()`. */
   cwd?: string;
@@ -498,7 +501,7 @@ export class Agent {
     this.model = options.model;
     this.tools = options.tools;
     this.session = options.session;
-    this.hooks = options.hooks ?? defaultRegistry;
+    this.hooks = options.hooks ?? new HookRegistry();
     this.cwd = options.cwd ?? process.cwd();
     this.maxIterations = options.maxIterations ?? DEFAULT_MAX_ITERATIONS;
     this.maxCostUsd =

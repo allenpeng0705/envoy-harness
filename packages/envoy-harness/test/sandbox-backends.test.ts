@@ -142,6 +142,46 @@ describe("LandlockSandboxExecutor with fake launcher", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout.trim()).toBe("hello-f");
   });
+
+  it("fail-closes when launcherPath() throws (regression)", async () => {
+    // Before the fix, `api.launcherPath()` throwing would
+    // propagate out of `execute()` and bypass the fail-closed
+    // path. The new code catches the throw and routes it
+    // through `onUnusable` like the "unusable probe" case.
+    const exec = new LandlockSandboxExecutor({
+      api: {
+        LAUNCHER_FAILURE_EXIT: 125,
+        launcherPath: () => {
+          throw new Error("launcher binary corrupted");
+        },
+        probe: () => "full",
+        grantArgs: () => [],
+      },
+      onUnusable: "error",
+    });
+    const result = await exec.execute("echo hi", makeCtx(READ_ONLY));
+    expect(result.isError).toBe(true);
+    expect(result.exitCode).toBe(125);
+    expect(result.stderr).toMatch(/sandbox unavailable/i);
+    expect(result.stderr).toMatch(/launcher binary corrupted/);
+  });
+
+  it("falls back to bare sh when launcherPath() throws + onUnusable: noop", async () => {
+    const exec = new LandlockSandboxExecutor({
+      api: {
+        LAUNCHER_FAILURE_EXIT: 125,
+        launcherPath: () => {
+          throw new Error("nope");
+        },
+        probe: () => "full",
+        grantArgs: () => [],
+      },
+      onUnusable: "noop",
+    });
+    const result = await exec.execute("echo fallback-ok", makeCtx(READ_ONLY));
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.trim()).toBe("fallback-ok");
+  });
 });
 
 describe("SeatbeltSandboxExecutor fail-closed", () => {
@@ -154,6 +194,54 @@ describe("SeatbeltSandboxExecutor fail-closed", () => {
     expect(result.isError).toBe(true);
     expect(result.exitCode).toBe(125);
     expect(result.stderr).toMatch(/sandbox unavailable/i);
+  });
+
+  it("falls back to bare sh when binary is missing and onUnusable: noop", async () => {
+    const exec = new SeatbeltSandboxExecutor({
+      binary: "/nonexistent-sandbox-exec",
+      onUnusable: "noop",
+    });
+    const result = await exec.execute("echo seatbelt-fallback", makeCtx(WORKSPACE));
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.trim()).toBe("seatbelt-fallback");
+  });
+});
+
+describe("sandbox output cap (DoS hardening, regression)", () => {
+  it("NoopSandboxExecutor truncates stdout at maxOutputBytes", async () => {
+    // head -c 1M /dev/zero → 1 MiB of NULs → cap at 4 KiB.
+    const exec = new NoopSandboxExecutor();
+    const result = await exec.execute("head -c 1048576 /dev/zero", {
+      ...makeCtx({ ...READ_ONLY, backend: "none", mode: "danger-full-access" }),
+      maxOutputBytes: 4 * 1024,
+    });
+    expect(result.stdoutTruncated).toBe(true);
+    expect(result.stdout.length).toBe(4 * 1024);
+  });
+
+  it("LandlockSandboxExecutor truncates stdout via spawn-capture (noop fallback)", async () => {
+    // We can't easily fake landlock-run in a unit test (the
+    // real launcher execs the inner command; a fake `/bin/true`
+    // ignores it). To exercise the same `spawnCapture` path
+    // through the LandlockSandboxExecutor, force the
+    // "unusable probe" + onUnusable: "noop" branch — the
+    // backend then falls back to `sh -c <command>` and we
+    // can verify the cap is honored.
+    const exec = new LandlockSandboxExecutor({
+      api: {
+        LAUNCHER_FAILURE_EXIT: 125,
+        launcherPath: () => "/bin/true",
+        probe: () => "unusable",
+        grantArgs: () => [],
+      },
+      onUnusable: "noop",
+    });
+    const result = await exec.execute("head -c 1048576 /dev/zero", {
+      ...makeCtx(READ_ONLY),
+      maxOutputBytes: 4096,
+    });
+    expect(result.stdoutTruncated).toBe(true);
+    expect(result.stdout.length).toBe(4096);
   });
 });
 

@@ -34,6 +34,7 @@
  * tool doesn't change).
  */
 import type { SandboxPolicy } from "../types.js";
+import { spawnCapture } from "./backends/spawn-capture.js";
 
 /**
  * The context a `SandboxExecutor.execute` sees.
@@ -61,6 +62,14 @@ export interface SandboxContext {
    * abort semantics work the same way).
    */
   readonly signal: AbortSignal;
+  /**
+   * Per-stream output cap in bytes. Default 1 MiB.
+   * A chatty command (`cat /dev/urandom`) is
+   * truncated to this cap; the rest is dropped and
+   * `stdoutTruncated` / `stderrTruncated` are set
+   * on the {@link SandboxResult}.
+   */
+  readonly maxOutputBytes?: number;
 }
 
 /**
@@ -82,6 +91,17 @@ export interface SandboxResult {
   exitCode: number;
   /** If true, the sandbox itself rejected the command. */
   isError: boolean;
+  /**
+   * True when stdout was truncated by the executor's
+   * output cap. Backends that pipe through the sandbox
+   * wrapper report the wrapped stream's truncation;
+   * backends that capture directly report the
+   * pipe-buffer truncation. Always false when the
+   * command's stdout fit under the cap.
+   */
+  readonly stdoutTruncated?: boolean;
+  /** Same as {@link SandboxResult.stdoutTruncated} but for stderr. */
+  readonly stderrTruncated?: boolean;
 }
 
 /**
@@ -148,37 +168,14 @@ export class NoopSandboxExecutor implements SandboxExecutor {
     command: string,
     context: SandboxContext,
   ): Promise<SandboxResult> {
-    // Dynamic import to keep the bash tool's
-    // startup path light (Node's child_process
-    // is a built-in; no need to import it for
-    // the noop case).
-    const { spawn } = await import("node:child_process");
-    return new Promise<SandboxResult>((resolve) => {
-      const child = spawn("sh", ["-c", command], {
-        cwd: context.cwd,
-        signal: context.signal,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-      const out: Buffer[] = [];
-      const err: Buffer[] = [];
-      child.stdout?.on("data", (c: Buffer) => out.push(c));
-      child.stderr?.on("data", (c: Buffer) => err.push(c));
-      child.on("close", (code) => {
-        resolve({
-          stdout: Buffer.concat(out).toString("utf8"),
-          stderr: Buffer.concat(err).toString("utf8"),
-          exitCode: code ?? 1,
-          isError: code !== 0,
-        });
-      });
-      child.on("error", (err) => {
-        resolve({
-          stdout: "",
-          stderr: err.message,
-          exitCode: 1,
-          isError: true,
-        });
-      });
+    return spawnCapture({
+      file: "sh",
+      args: ["-c", command],
+      cwd: context.cwd,
+      signal: context.signal,
+      ...(context.maxOutputBytes !== undefined
+        ? { maxOutputBytes: context.maxOutputBytes }
+        : {}),
     });
   }
 }

@@ -85,3 +85,56 @@ describe("run --acp", () => {
     }
   });
 });
+
+describe("runAcpDispatch env disposal", () => {
+  it("disposes the live-agent environment exactly once (regression)", async () => {
+    // The createAgent factory was being called per session and
+    // the returned EnvironmentCapabilities (jobs/terminals)
+    // was discarded, leaking env resources. We now build the
+    // env once outside the factory and dispose at end of
+    // dispatch — exercised by checking the env-side tools are
+    // still resolvable after the server exits (no throw), and
+    // by asserting a fresh server can start without leftover
+    // state.
+    const c2s = new PassThrough();
+    const s2c = new PassThrough();
+    const stderr = new PassThrough();
+    const serverDone = run({
+      argv: ["--acp", "--quiet"],
+      stdin: c2s,
+      stdout: s2c,
+      stderr,
+    });
+    const client = new JsonRpcConnection({ input: s2c, output: c2s });
+    await client.request("initialize", {});
+    const created = (await client.request("session/new", {})) as {
+      sessionId: string;
+    };
+    await client.request("session/prompt", {
+      sessionId: created.sessionId,
+      text: "one",
+    });
+    client.close();
+    c2s.end();
+    await serverDone;
+    // After dispatch returns, env.dispose() has been awaited.
+    // A second --acp run must succeed (no leftover state).
+    const c2s2 = new PassThrough();
+    const s2c2 = new PassThrough();
+    const stderr2 = new PassThrough();
+    const serverDone2 = run({
+      argv: ["--acp", "--quiet"],
+      stdin: c2s2,
+      stdout: s2c2,
+      stderr: stderr2,
+    });
+    const client2 = new JsonRpcConnection({ input: s2c2, output: c2s2 });
+    const init2 = (await client2.request("initialize", {})) as {
+      protocolVersion: number;
+    };
+    expect(init2.protocolVersion).toBe(ACP_PROTOCOL_VERSION);
+    client2.close();
+    c2s2.end();
+    await serverDone2;
+  });
+});

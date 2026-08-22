@@ -2,7 +2,7 @@
  * Phase D / Item 17 — telemetry sink + invariants (hermetic).
  */
 
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 
@@ -66,6 +66,40 @@ describe("telemetry", () => {
     const raw = await readFile(filePath, "utf8");
     expect(raw).toContain('"kind":"tool_result"');
     expect(raw).toContain('"callId":"c1"');
+  });
+
+  it("jsonl sink bumps `dropped` and invokes onDropped when writes fail (regression)", async () => {
+    // Before the fix, every write error was swallowed in
+    // `.catch(() => undefined)` and there was no way to
+    // know events were being lost. The sink now counts
+    // drops and surfaces them via the callback.
+    //
+    // To force a write failure, we point the sink at a
+    // path where the parent component is a regular FILE
+    // (not a directory). `mkdir(parent, recursive)` will
+    // happily no-op (the parent already exists), and
+    // `writeFile` will fail with ENOTDIR / EISDIR.
+    const dir = await mkdtemp(path.join(tmpdir(), "tel-"));
+    // Create a regular file that we'll use as a "parent
+    // directory" for the bad path.
+    const blocker = path.join(dir, "blocker");
+    await writeFile(blocker, "I am a file, not a dir");
+    const badPath = path.join(blocker, "fail.jsonl");
+
+    const seen: unknown[] = [];
+    const sink = createJsonlTelemetrySink({
+      filePath: badPath,
+      onDropped: (err) => {
+        seen.push(err);
+      },
+    });
+    sink.emit(toolCall);
+    await sink.flush?.();
+    expect(sink.counters().dropped).toBeGreaterThanOrEqual(1);
+    expect(seen.length).toBeGreaterThanOrEqual(1);
+    // Event was still counted as a tool (the inner bump runs
+    // before the file write, so counters reflect intent).
+    expect(sink.counters().tools).toBe(1);
   });
 });
 

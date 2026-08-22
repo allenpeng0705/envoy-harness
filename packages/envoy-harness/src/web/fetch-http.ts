@@ -1,5 +1,15 @@
 /**
  * Phase C / Item 8 — keyless HTTP fetch provider (Node 22+ `fetch`).
+ *
+ * **Why streaming:** `await response.arrayBuffer()` reads the
+ * FULL body into memory before `maxBytes` is checked, so a
+ * malicious or chatty server returning GB of data would OOM
+ * the process. We read the body chunk-by-chunk via
+ * `response.body` and stop at `maxBytes`.
+ *
+ * **Why a built-in timeout:** the caller is expected to pass
+ * a signal, but if they don't, a hung TCP socket hangs
+ * forever. Default 30s matches the Brave provider.
  */
 
 import type { WebFetchBody, WebFetchProvider, WebFetchResult } from "./types.js";
@@ -8,11 +18,14 @@ import { WebError } from "./types.js";
 export interface HttpFetchProviderOptions {
   /** Soft cap on decoded body bytes (default 512 KiB). */
   maxBytes?: number;
+  /** Built-in timeout for the whole fetch (default 30s). */
+  timeoutMs?: number;
   /** Override fetch (tests). */
   fetchImpl?: typeof fetch;
 }
 
 const DEFAULT_MAX_BYTES = 512 * 1024;
+const DEFAULT_TIMEOUT_MS = 30_000;
 
 function classifyBody(contentType: string | null, text: string): WebFetchBody {
   const ct = (contentType ?? "").toLowerCase();
@@ -22,11 +35,45 @@ function classifyBody(contentType: string | null, text: string): WebFetchBody {
   return { kind: "text", content: text };
 }
 
+/** Read `body` chunk-by-chunk until `maxBytes` is reached. */
+async function readBodyCapped(
+  body: ReadableStream<Uint8Array>,
+  maxBytes: number,
+): Promise<{ buf: Buffer; truncated: boolean }> {
+  const reader = body.getReader();
+  const chunks: Buffer[] = [];
+  let total = 0;
+  let truncated = false;
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (value === undefined) continue;
+      const chunk = Buffer.from(value);
+      const remaining = maxBytes - total;
+      if (chunk.byteLength > remaining) {
+        chunks.push(chunk.subarray(0, Math.max(0, remaining)));
+        total = maxBytes;
+        truncated = true;
+        // Cancel the underlying stream so the server stops sending.
+        await reader.cancel().catch(() => undefined);
+        break;
+      }
+      chunks.push(chunk);
+      total += chunk.byteLength;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return { buf: Buffer.concat(chunks), truncated };
+}
+
 /** Built-in keyless fetch provider. Always `available()`. */
 export function createHttpFetchProvider(
   options: HttpFetchProviderOptions = {},
 ): WebFetchProvider {
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
 
   return {
@@ -46,27 +93,61 @@ export function createHttpFetchProvider(
         );
       }
 
+      // Caller's signal short-circuits the 30s default; if no
+      // signal, the timeout applies. We do not require the
+      // caller to pass one.
+      const userSignal = signal;
+      const ownAc = new AbortController();
+      const timer = setTimeout(() => ownAc.abort(), timeoutMs);
+      const onUserAbort = (): void => ownAc.abort();
+      if (userSignal !== undefined) {
+        if (userSignal.aborted) {
+          clearTimeout(timer);
+          throw new WebError("fetch aborted", "FETCH_FAILED");
+        }
+        userSignal.addEventListener("abort", onUserAbort, { once: true });
+      }
+      const composedSignal = ownAc.signal;
+
       let response: Response;
       try {
         // exactOptionalPropertyTypes: omit `signal` when
         // undefined (RequestInit.signal is AbortSignal | null).
         response = await fetchImpl(url, {
-          ...(signal !== undefined ? { signal } : {}),
+          signal: composedSignal,
           redirect: "follow",
           headers: { accept: "text/html,text/plain,*/*;q=0.8" },
         });
       } catch (err) {
-        if (signal?.aborted) throw err;
+        clearTimeout(timer);
+        userSignal?.removeEventListener("abort", onUserAbort);
+        const aborted = composedSignal.aborted;
         throw new WebError(
-          err instanceof Error ? err.message : String(err),
+          aborted
+            ? "fetch aborted (timeout or cancel)"
+            : err instanceof Error
+              ? err.message
+              : String(err),
           "FETCH_FAILED",
         );
       }
 
-      const buf = Buffer.from(await response.arrayBuffer());
-      const truncated = buf.byteLength > maxBytes;
-      const slice = truncated ? buf.subarray(0, maxBytes) : buf;
-      const text = slice.toString("utf8");
+      if (response.body === null) {
+        // No body — return empty content but keep status.
+        clearTimeout(timer);
+        userSignal?.removeEventListener("abort", onUserAbort);
+        return {
+          url: response.url || url.toString(),
+          statusCode: response.status,
+          body: { kind: "text", content: "" },
+          truncated: false,
+        };
+      }
+
+      const { buf, truncated } = await readBodyCapped(response.body, maxBytes);
+      clearTimeout(timer);
+      userSignal?.removeEventListener("abort", onUserAbort);
+      const text = buf.toString("utf8");
 
       return {
         url: response.url || url.toString(),

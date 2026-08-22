@@ -282,6 +282,26 @@ export class ToolExecutor {
       const decision = askHandler
         ? await askHandler(askReq)
         : { kind: "deny" as const, reason: "no ask handler configured" };
+      // Host may have cancelled while the permission dialog was open.
+      if (this.ctx.abortSignal.aborted) {
+        this.ctx.emit({
+          kind: "tool_call",
+          ts: new Date().toISOString(),
+          iteration,
+          call,
+        });
+        const denial = "denied: cancelled while awaiting approval";
+        this.appendToolResult(call.id, denial, true);
+        this.ctx.emit({
+          kind: "tool_result",
+          ts: new Date().toISOString(),
+          iteration,
+          callId: call.id,
+          result: { content: denial, isError: true },
+          durationMs: 0,
+        });
+        return;
+      }
       if (decision.kind === "deny") {
         this.ctx.emit({
           kind: "tool_call",

@@ -52,7 +52,11 @@ export async function runAcpDispatch(
   // RunOptions uses NodeJS.WritableStream; JsonRpcConnection wants stream.Writable.
   const output = stdout as Writable;
 
-  const backend = resolveAcpBackend(parsed, options, stderr);
+  const { backend, dispose: disposeBackend } = resolveAcpBackend(
+    parsed,
+    options,
+    stderr,
+  );
   const connection = new JsonRpcConnection({ input, output });
   const dispose = attachAcpServer({
     connection,
@@ -71,6 +75,7 @@ export async function runAcpDispatch(
   } finally {
     dispose();
     connection.close();
+    await disposeBackend().catch(() => undefined);
   }
 
   return makeEmptyRunResult();
@@ -94,40 +99,63 @@ function resolveAcpBackend(
   parsed: Extract<ParsedArgs, { subcommand: "run" }>,
   options: RunOptions,
   stderr: NodeJS.WritableStream,
-): ProtocolSessionBackend {
+): {
+  backend: ProtocolSessionBackend;
+  /**
+   * Dispose the backend's environment (jobs / terminals / credentials).
+   * Always a no-op for the demo backend and for an injected
+   * `options.protocolBackend` (caller owns disposal).
+   */
+  dispose: () => Promise<void>;
+} {
   if (options.protocolBackend !== undefined) {
-    return options.protocolBackend;
+    return {
+      backend: options.protocolBackend,
+      dispose: async () => undefined,
+    };
   }
 
   const model = resolveLiveModel(parsed, options);
   if (model !== undefined) {
     const defaultCwd = parsed.cwd ?? options.cwd ?? process.cwd();
-    return createAgentSessionBackend({
-      defaultCwd,
-      createAgent: ({ sessionId, cwd, askHandler }) => {
-        const tools = new ToolRegistry();
-        for (const t of BUILTIN_TOOLS) tools.register(t);
-        wireEnvironmentTools(tools);
-        const hooks = options.hooks ?? new HookRegistry();
-        return new Agent({
-          model,
-          tools,
-          hooks,
-          session: new InMemorySession(sessionId, {
+    // Build the tool registry + environment ONCE for the whole
+    // ACP server. Building them inside the createAgent factory
+    // (one call per session) leaks jobs / terminals / web
+    // providers across sessions, because the env's `dispose()`
+    // is never reached. The shared registry is safe to reuse:
+    // jobs and terminals are owner-fenced by `session.id`, so
+    // two sessions can never see each other's resources.
+    const tools = new ToolRegistry();
+    for (const t of BUILTIN_TOOLS) tools.register(t);
+    const env = wireEnvironmentTools(tools);
+    return {
+      backend: createAgentSessionBackend({
+        defaultCwd,
+        createAgent: ({ sessionId, cwd, askHandler }) => {
+          const hooks = new HookRegistry();
+          return new Agent({
+            model,
+            tools,
+            hooks,
+            session: new InMemorySession(sessionId, {
+              cwd: cwd ?? defaultCwd,
+              startedAt: new Date().toISOString(),
+            }),
             cwd: cwd ?? defaultCwd,
-            startedAt: new Date().toISOString(),
-          }),
-          cwd: cwd ?? defaultCwd,
-          askHandler,
-          ...(parsed.maxTurns !== undefined
-            ? { maxIterations: parsed.maxTurns }
-            : {}),
-          ...(parsed.maxCostUsd !== undefined
-            ? { maxCostUsd: parsed.maxCostUsd }
-            : {}),
-        });
+            askHandler,
+            ...(parsed.maxTurns !== undefined
+              ? { maxIterations: parsed.maxTurns }
+              : {}),
+            ...(parsed.maxCostUsd !== undefined
+              ? { maxCostUsd: parsed.maxCostUsd }
+              : {}),
+          });
+        },
+      }),
+      async dispose() {
+        await env.dispose().catch(() => undefined);
       },
-    });
+    };
   }
 
   if (!parsed.quiet) {
@@ -135,5 +163,8 @@ function resolveAcpBackend(
       "envoy-harness: --acp using demo backend (pass --provider <name> or inject RunOptions.model for a live Agent)\n",
     );
   }
-  return createFakeSessionBackend();
+  return {
+    backend: createFakeSessionBackend(),
+    dispose: async () => undefined,
+  };
 }

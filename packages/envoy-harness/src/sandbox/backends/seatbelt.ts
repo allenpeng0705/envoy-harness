@@ -2,9 +2,10 @@
  * Phase F / C2 — SeatbeltSandboxExecutor (`sandbox-exec` on macOS).
  */
 
-import { spawn } from "node:child_process";
+import { accessSync, constants as fsConstants } from "node:fs";
 
 import { policyToSeatbeltProfile } from "../policy.js";
+import { spawnCapture } from "./spawn-capture.js";
 import type {
   SandboxContext,
   SandboxExecutor,
@@ -29,77 +30,63 @@ export class SeatbeltSandboxExecutor implements SandboxExecutor {
     command: string,
     context: SandboxContext,
   ): Promise<SandboxResult> {
+    const captureOpts = {
+      cwd: context.cwd,
+      signal: context.signal,
+      ...(context.maxOutputBytes !== undefined
+        ? { maxOutputBytes: context.maxOutputBytes }
+        : {}),
+    };
     if (context.policy.backend === "none") {
-      return spawnSh(command, context);
+      return spawnCapture({
+        file: "sh",
+        args: ["-c", command],
+        ...captureOpts,
+      });
+    }
+    // Pre-flight existence check. If the binary is missing
+    // (typical on Linux / CI), honor `onUnusable` instead of
+    // letting the spawn fail with a generic ENOENT.
+    if (!SeatbeltSandboxExecutor.#binaryAvailable(this.#binary)) {
+      if (this.#onUnusable === "noop") {
+        return spawnCapture({
+          file: "sh",
+          args: ["-c", command],
+          ...captureOpts,
+        });
+      }
+      return {
+        stdout: "",
+        stderr: `sandbox unavailable: ${this.#binary} not found`,
+        exitCode: 125,
+        isError: true,
+        stdoutTruncated: false,
+        stderrTruncated: false,
+      };
     }
     const profile = policyToSeatbeltProfile(context.policy, context.cwd);
-    return new Promise((resolve) => {
-      const child = spawn(
-        this.#binary,
-        ["-p", profile, "sh", "-c", command],
-        {
-          cwd: context.cwd,
-          signal: context.signal,
-          stdio: ["ignore", "pipe", "pipe"],
-        },
-      );
-      const out: Buffer[] = [];
-      const err: Buffer[] = [];
-      child.stdout?.on("data", (c: Buffer) => out.push(c));
-      child.stderr?.on("data", (c: Buffer) => err.push(c));
-      child.on("close", (code) => {
-        resolve({
-          stdout: Buffer.concat(out).toString("utf8"),
-          stderr: Buffer.concat(err).toString("utf8"),
-          exitCode: code ?? 1,
-          isError: code !== 0,
-        });
-      });
-      child.on("error", (e) => {
-        if (this.#onUnusable === "noop") {
-          void spawnSh(command, context).then(resolve);
-          return;
-        }
-        resolve({
-          stdout: "",
-          stderr: `sandbox unavailable: ${e.message}`,
-          exitCode: 125,
-          isError: true,
-        });
-      });
+    return spawnCapture({
+      file: this.#binary,
+      args: ["-p", profile, "sh", "-c", command],
+      ...captureOpts,
     });
+  }
+
+  /** Sync check; cheap. `sandbox-exec` is a system binary. */
+  static #binaryAvailable(binary: string): boolean {
+    if (binary.includes("/")) {
+      // Absolute or relative path: must exist + be executable.
+      try {
+        accessSync(binary, fsConstants.X_OK);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    // Bare name: rely on PATH resolution at spawn time. We do
+    // a soft check that doesn't hit $PATH; the spawn will
+    // surface ENOENT if it's actually missing.
+    return true;
   }
 }
 
-function spawnSh(
-  command: string,
-  context: SandboxContext,
-): Promise<SandboxResult> {
-  return new Promise((resolve) => {
-    const child = spawn("sh", ["-c", command], {
-      cwd: context.cwd,
-      signal: context.signal,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    const out: Buffer[] = [];
-    const err: Buffer[] = [];
-    child.stdout?.on("data", (c: Buffer) => out.push(c));
-    child.stderr?.on("data", (c: Buffer) => err.push(c));
-    child.on("close", (code) => {
-      resolve({
-        stdout: Buffer.concat(out).toString("utf8"),
-        stderr: Buffer.concat(err).toString("utf8"),
-        exitCode: code ?? 1,
-        isError: code !== 0,
-      });
-    });
-    child.on("error", (e) => {
-      resolve({
-        stdout: "",
-        stderr: e.message,
-        exitCode: 1,
-        isError: true,
-      });
-    });
-  });
-}

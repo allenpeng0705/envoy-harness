@@ -6,9 +6,8 @@
  * run the command unconfined (unless `onUnusable: "noop"`).
  */
 
-import { spawn } from "node:child_process";
-
 import { policyToLandlockGrants } from "../policy.js";
+import { spawnCapture } from "./spawn-capture.js";
 import type {
   SandboxContext,
   SandboxExecutor,
@@ -17,12 +16,23 @@ import type {
 
 /** Injectable subset of the landlock-run entry package. */
 export interface LandlockLauncherApi {
+  /**
+   * Returns the absolute path to the launcher binary.
+   * May throw if the package is broken / not installed
+   * (we treat any throw as "unavailable" and fail-closed).
+   */
   launcherPath(): string;
   probe(launcher?: string): "full" | "partial" | "unusable";
   grantArgs(grants: {
     readOnly?: readonly string[];
     readWrite?: readonly string[];
   }): string[];
+  /**
+   * Exit code the launcher emits when it cannot apply the
+   * requested restrictions. Documented on the API surface
+   * so callers / tests can recognize a launcher-side
+   * failure vs. a command-side failure.
+   */
   readonly LAUNCHER_FAILURE_EXIT: number;
 }
 
@@ -67,7 +77,23 @@ export class LandlockSandboxExecutor implements SandboxExecutor {
         context,
       );
     }
-    const launcher = api.launcherPath();
+
+    // `launcherPath()` may throw if the launcher binary is
+    // missing or the package is broken. The previous version
+    // propagated the raw throw, which meant a broken install
+    // surfaced as a non-sandbox-shaped error. Treat it as
+    // "unavailable" and let `onUnusable` decide.
+    let launcher: string;
+    try {
+      launcher = api.launcherPath();
+    } catch (err) {
+      return this.#unavailable(
+        `landlock-run launcher path unavailable: ${err instanceof Error ? err.message : String(err)}`,
+        command,
+        context,
+      );
+    }
+
     if (api.probe(launcher) === "unusable") {
       return this.#unavailable(
         "landlock-run probe reported unusable",
@@ -87,56 +113,39 @@ export class LandlockSandboxExecutor implements SandboxExecutor {
       "-c",
       command,
     ];
-    return spawnCapture(launcher, args, context);
+    return spawnCapture({
+      file: launcher,
+      args,
+      cwd: context.cwd,
+      signal: context.signal,
+      ...(context.maxOutputBytes !== undefined
+        ? { maxOutputBytes: context.maxOutputBytes }
+        : {}),
+    });
   }
 
-  async #unavailable(
+  #unavailable(
     reason: string,
     command: string,
     context: SandboxContext,
   ): Promise<SandboxResult> {
     if (this.#onUnusable === "noop") {
-      return spawnCapture("sh", ["-c", command], context);
+      return spawnCapture({
+        file: "sh",
+        args: ["-c", command],
+        cwd: context.cwd,
+        signal: context.signal,
+        ...(context.maxOutputBytes !== undefined
+          ? { maxOutputBytes: context.maxOutputBytes }
+          : {}),
+      });
     }
-    return {
+    return Promise.resolve({
       stdout: "",
       stderr: `sandbox unavailable: ${reason}`,
       exitCode: 125,
       isError: true,
-    };
+    });
   }
 }
 
-function spawnCapture(
-  file: string,
-  args: readonly string[],
-  context: SandboxContext,
-): Promise<SandboxResult> {
-  return new Promise((resolve) => {
-    const child = spawn(file, [...args], {
-      cwd: context.cwd,
-      signal: context.signal,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    const out: Buffer[] = [];
-    const err: Buffer[] = [];
-    child.stdout?.on("data", (c: Buffer) => out.push(c));
-    child.stderr?.on("data", (c: Buffer) => err.push(c));
-    child.on("close", (code) => {
-      resolve({
-        stdout: Buffer.concat(out).toString("utf8"),
-        stderr: Buffer.concat(err).toString("utf8"),
-        exitCode: code ?? 1,
-        isError: code !== 0,
-      });
-    });
-    child.on("error", (e) => {
-      resolve({
-        stdout: "",
-        stderr: e.message,
-        exitCode: 1,
-        isError: true,
-      });
-    });
-  });
-}

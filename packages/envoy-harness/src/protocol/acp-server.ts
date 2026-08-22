@@ -85,7 +85,16 @@ export function attachAcpServer(options: AcpServerOptions): () => void {
             text: p.text,
             signal: ac.signal,
             requestPermission: async (req) => {
-              const decision = (await connection.request(
+              // Defensive parse: the host's `onPermissionRequest`
+              // may return any shape (the typed contract is
+              // `Promise<"allow" | "deny">`, but a misbehaving
+              // client could return null or an object without
+              // `decision`). Treat anything other than a literal
+              // `"allow"` as deny.
+              // 5-minute ceiling for permission waits — humans
+              // might walk away, but the host should still
+              // answer eventually.
+              const raw = await connection.request(
                 "session/request_permission",
                 {
                   sessionId: req.sessionId,
@@ -93,8 +102,16 @@ export function attachAcpServer(options: AcpServerOptions): () => void {
                   description: req.description,
                   args: req.args,
                 },
-              )) as { decision?: string };
-              return decision.decision === "allow" ? "allow" : "deny";
+                5 * 60_000,
+              );
+              const decision =
+                typeof raw === "object" &&
+                raw !== null &&
+                "decision" in raw &&
+                typeof (raw as { decision: unknown }).decision === "string"
+                  ? (raw as { decision: string }).decision
+                  : undefined;
+              return decision === "allow" ? "allow" : "deny";
             },
             onUpdate: (msg) => {
               connection.notify("session/update", {
