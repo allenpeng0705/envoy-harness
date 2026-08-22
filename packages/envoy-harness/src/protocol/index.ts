@@ -34,6 +34,13 @@ export {
 
 export {
   createFakeSessionBackend,
+  type ProtocolClusterStatus,
+  type ProtocolDiscoveryEvent,
+  type ProtocolPeerHealth,
+  type ProtocolScoreboardEntry,
+  type ProtocolTeamAgentStatus,
+  type ProtocolTeamJob,
+  type ProtocolPeerInfo,
   type ProtocolCommittedMessage,
   type ProtocolPermissionDecision,
   type ProtocolPermissionRequest,

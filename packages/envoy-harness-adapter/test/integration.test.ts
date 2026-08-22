@@ -271,7 +271,8 @@ describe("EnvoyHarnessAdapter satisfies AgentAdapter at the type level", () => {
     });
     expect(m.runtime).toBe("envoy-harness");
     expect(m.peerId).toBe("peer-1");
-    // Phase 8 / Step 3 commit 2 — 5 + 3 B-class = 8 skills.
-    expect(m.skills).toHaveLength(8);
+    // Phase 8 / Step 3 commit 2 — 5 + 3 B-class = 8 skills;
+    // the distributed-collaboration round added `peer-cluster` (9).
+    expect(m.skills).toHaveLength(9);
   });
 });

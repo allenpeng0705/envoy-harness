@@ -87,6 +87,13 @@ export {
   type RemoteSubmitterTransport,
 } from "./remote-mesh-submitter.js";
 
+// D6 — the peer-backed transport: a `RemoteMeshSubmitter` over the
+// standalone peer protocol (peer cluster as a mesh node's execution
+// pool). The same seam hosts the v2.2 libp2p fabric transport.
+export {
+  createPeerRemoteSubmitterTransport,
+} from "./peer-transport.js";
+
 // Phase 8 Step 2 — cross-runtime (same-node) `MeshSubmitter`
 // for sub-agents that should run on a different local runtime
 // (Built-in OpenClaw today; future runtimes slot into

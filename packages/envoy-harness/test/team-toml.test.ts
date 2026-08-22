@@ -27,6 +27,37 @@ import {
 // ---------------------------------------------------------------------------
 
 describe("parseTeamToml — minimal valid config", () => {
+  it("parses an optional host field (D4 distributed team)", () => {
+    const toml = `
+name = "distributed"
+
+[[agents]]
+id = "a"
+role = "worker"
+objective = "do it"
+host = "peer://p1"
+depends_on = []
+`;
+    const config = parseTeamToml(toml);
+    expect(config.agents[0]?.host).toBe("peer://p1");
+  });
+
+  it("rejects a non-string host field", () => {
+    const toml = `
+name = "broken"
+
+[[agents]]
+id = "a"
+role = "worker"
+objective = "x"
+host = 42
+depends_on = []
+`;
+    // The TOML layer may reject the non-string value before our check;
+    // either way it must not produce a config with a numeric host.
+    expect(() => parseTeamToml(toml)).toThrow();
+  });
+
   it("parses a single agent with no dependencies", () => {
     const toml = `
 name = "code-review"

@@ -55,6 +55,9 @@ importers:
       '@envoymesh/envoy-harness':
         specifier: link:../envoy-harness
         version: link:../envoy-harness
+      '@envoymesh/envoy-harness-peer':
+        specifier: link:../envoy-harness-peer
+        version: link:../envoy-harness-peer
       '@envoymesh/identity':
         specifier: link:../../../EnvoyMesh/packages/identity
         version: link:../../../EnvoyMesh/packages/identity
@@ -150,6 +153,34 @@ importers:
       '@envoymesh/envoy-harness':
         specifier: link:../envoy-harness
         version: link:../envoy-harness
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.1
+      typescript:
+        specifier: ^5.6.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@22.20.1)
+
+  packages/envoy-harness-peer:
+    dependencies:
+      '@envoymesh/agent-adapter':
+        specifier: link:../../../EnvoyMesh/packages/agent-adapter
+        version: link:../../../EnvoyMesh/packages/agent-adapter
+      '@envoymesh/envoy-harness':
+        specifier: link:../envoy-harness
+        version: link:../envoy-harness
+      '@envoymesh/envoy-harness-tui':
+        specifier: link:../envoy-harness-tui
+        version: link:../envoy-harness-tui
+      '@envoymesh/protocol':
+        specifier: link:../../../EnvoyMesh/packages/protocol
+        version: link:../../../EnvoyMesh/packages/protocol
+      zod:
+        specifier: ^3.23.8
+        version: 3.25.76
     devDependencies:
       '@types/node':
         specifier: ^22.10.0

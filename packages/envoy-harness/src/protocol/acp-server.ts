@@ -27,6 +27,7 @@ export function attachAcpServer(options: AcpServerOptions): () => void {
     version: "0.0.0",
   };
   const sessions = new Map<string, SessionState>();
+  let discoveryUnsubscribe: (() => void) | undefined;
   let initialized = false;
 
   connection.setRequestHandler(async (method, params) => {
@@ -141,6 +142,54 @@ export function attachAcpServer(options: AcpServerOptions): () => void {
         return { cancelled: true };
       }
 
+      case "peers/list": {
+        assertInitialized(initialized);
+        return { peers: backend.listPeers?.() ?? [] };
+      }
+
+      case "cluster/status": {
+        assertInitialized(initialized);
+        return {
+          cluster: (await backend.clusterStatus?.()) ?? {
+            peers: [],
+            connected: 0,
+            failed: 0,
+          },
+        };
+      }
+
+      case "team/jobs": {
+        assertInitialized(initialized);
+        return { jobs: backend.teamJobs?.() ?? [] };
+      }
+
+      case "scoreboard/summary": {
+        assertInitialized(initialized);
+        return { entries: backend.scoreboardSummary?.() ?? [] };
+      }
+
+      case "discovery/subscribe": {
+        assertInitialized(initialized);
+        if (backend.subscribeDiscovery === undefined) {
+          return { subscribed: false };
+        }
+        discoveryUnsubscribe?.();
+        const unsub = backend.subscribeDiscovery((event) => {
+          connection.notify("discovery/event", { event });
+        });
+        discoveryUnsubscribe =
+          typeof unsub === "function" ? unsub : undefined;
+        return { subscribed: true };
+      }
+
+      case "cluster/route": {
+        assertInitialized(initialized);
+        const input = parseRouteInput(params);
+        return {
+          peer: backend.routePeer?.(input) ?? null,
+        };
+      }
+
       default:
         throw new JsonRpcError(
           `method not found: ${method}`,
@@ -152,6 +201,31 @@ export function attachAcpServer(options: AcpServerOptions): () => void {
   return () => {
     for (const [, state] of sessions) state.abort?.abort();
     sessions.clear();
+    discoveryUnsubscribe?.();
+    discoveryUnsubscribe = undefined;
+  };
+}
+
+function parseRouteInput(params: unknown): {
+  capabilityTag: string;
+  preferredPeerId?: string;
+} {
+  if (
+    params === null ||
+    typeof params !== "object" ||
+    typeof (params as { capabilityTag?: unknown }).capabilityTag !== "string" ||
+    (params as { capabilityTag: string }).capabilityTag.length === 0
+  ) {
+    throw new JsonRpcError(
+      "capabilityTag required",
+      JsonRpcErrorCode.INVALID_PARAMS,
+    );
+  }
+  const preferred =
+    (params as { preferredPeerId?: unknown }).preferredPeerId;
+  return {
+    capabilityTag: (params as { capabilityTag: string }).capabilityTag,
+    ...(typeof preferred === "string" ? { preferredPeerId: preferred } : {}),
   };
 }
 

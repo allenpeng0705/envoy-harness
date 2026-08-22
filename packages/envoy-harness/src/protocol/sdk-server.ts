@@ -20,6 +20,7 @@ interface SessionState {
 export function attachSdkServer(options: SdkServerOptions): () => void {
   const { connection, backend } = options;
   const sessions = new Map<string, SessionState>();
+  let discoveryUnsubscribe: (() => void) | undefined;
 
   connection.setRequestHandler(async (method, params) => {
     switch (method) {
@@ -118,6 +119,41 @@ export function attachSdkServer(options: SdkServerOptions): () => void {
       case "tools/list":
         return { tools: backend.listTools?.() ?? [] };
 
+      case "peers/list":
+        return { peers: backend.listPeers?.() ?? [] };
+
+      case "cluster/status":
+        return {
+          cluster: (await backend.clusterStatus?.()) ?? {
+            peers: [],
+            connected: 0,
+            failed: 0,
+          },
+        };
+
+      case "team/jobs":
+        return { jobs: backend.teamJobs?.() ?? [] };
+
+      case "scoreboard/summary":
+        return { entries: backend.scoreboardSummary?.() ?? [] };
+
+      case "discovery/subscribe":
+        if (backend.subscribeDiscovery === undefined) {
+          return { subscribed: false };
+        }
+        discoveryUnsubscribe?.();
+        const unsub = backend.subscribeDiscovery((event) => {
+          connection.notify("discovery/event", { event });
+        });
+        discoveryUnsubscribe =
+          typeof unsub === "function" ? unsub : undefined;
+        return { subscribed: true };
+
+      case "cluster/route":
+        return {
+          peer: backend.routePeer?.(parseSdkRouteInput(params)) ?? null,
+        };
+
       default:
         throw new JsonRpcError(
           `method not found: ${method}`,
@@ -129,6 +165,31 @@ export function attachSdkServer(options: SdkServerOptions): () => void {
   return () => {
     for (const [, state] of sessions) state.abort?.abort();
     sessions.clear();
+    discoveryUnsubscribe?.();
+    discoveryUnsubscribe = undefined;
+  };
+}
+
+function parseSdkRouteInput(params: unknown): {
+  capabilityTag: string;
+  preferredPeerId?: string;
+} {
+  if (
+    params === null ||
+    typeof params !== "object" ||
+    typeof (params as { capabilityTag?: unknown }).capabilityTag !== "string" ||
+    (params as { capabilityTag: string }).capabilityTag.length === 0
+  ) {
+    throw new JsonRpcError(
+      "capabilityTag required",
+      JsonRpcErrorCode.INVALID_PARAMS,
+    );
+  }
+  const preferred =
+    (params as { preferredPeerId?: unknown }).preferredPeerId;
+  return {
+    capabilityTag: (params as { capabilityTag: string }).capabilityTag,
+    ...(typeof preferred === "string" ? { preferredPeerId: preferred } : {}),
   };
 }
 

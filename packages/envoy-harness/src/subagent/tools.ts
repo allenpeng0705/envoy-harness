@@ -78,9 +78,10 @@ export const TaskInputSchema = z.object({
     .string()
     .optional()
     .describe(
-      "Optional: prefer a specific peer (mesh routing hint). v0's " +
-        "LocalMeshSubmitter ignores this; a future RemoteMeshSubmitter " +
-        "uses it.",
+      "Optional: prefer a specific peer (mesh routing hint). " +
+        "LocalMeshSubmitter ignores it; a peer-backed submitter " +
+        "(standalone peer cluster) routes by it. Read the `peers` tool " +
+        "to discover peer ids/models.",
     ),
   preferred_runtime: z
     .string()

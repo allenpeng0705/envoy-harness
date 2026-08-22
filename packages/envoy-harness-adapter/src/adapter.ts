@@ -449,7 +449,7 @@ export function defaultBuildAgentFactory(opts: {
     // see `list_peers` (not `sponsor_friend`).
     if (opts.bClassTools) {
       for (const t of opts.bClassTools) {
-        if (toolNames.has(t.name as "read_file" | "bash" | "sponsor_friend" | "list_peers" | "relay_status")) {
+        if (toolNames.has(t.name as "read_file" | "bash" | "sponsor_friend" | "list_peers" | "relay_status" | "peers")) {
           tools.register(t);
         }
       }

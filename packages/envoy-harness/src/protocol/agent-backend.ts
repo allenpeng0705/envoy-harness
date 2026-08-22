@@ -8,6 +8,10 @@ import { newSessionId } from "../session.js";
 import type { AskHandler } from "../types.js";
 import { installToolPermissionAskHook } from "./permission-hook.js";
 import type {
+  ProtocolClusterStatus,
+  ProtocolScoreboardEntry,
+  ProtocolTeamJob,
+  ProtocolPeerInfo,
   ProtocolCommittedMessage,
   ProtocolSessionBackend,
 } from "./session-backend.js";
@@ -26,6 +30,20 @@ export interface AgentSessionBackendOptions {
   shouldAskTool?: (toolName: string) => boolean;
   /** Cap live sessions; oldest are dropped. Default 32. */
   maxSessions?: number;
+  /**
+   * R3 — the host's connected peer cluster, exposed over `peers/list`
+   * (ACP + SDK). Hosts with a peer registry (e.g. EnvoyMesh's in-process
+   * ACP host) pass a snapshot function here.
+   */
+  listPeers?: () => ReadonlyArray<ProtocolPeerInfo>;
+  /** U1 — cluster status (peers + health) for the dedicated UI. */
+  clusterStatus?: () => ProtocolClusterStatus;
+  /** U1 — team jobs (running/finished) for the dedicated UI. */
+  teamJobs?: () => ReadonlyArray<ProtocolTeamJob>;
+  /** U1 — peer reputation scoreboard for the dedicated UI. */
+  scoreboardSummary?: () => ReadonlyArray<ProtocolScoreboardEntry>;
+  /** U2 — host config for the status bar (e.g. `{ model }`). */
+  getConfig?: () => Record<string, unknown>;
 }
 
 interface LiveSession {
@@ -222,5 +240,18 @@ export function createAgentSessionBackend(
       live.permissionWait = undefined;
       live.agent.abort("session cancelled");
     },
+    ...(options.listPeers !== undefined
+      ? { listPeers: options.listPeers }
+      : {}),
+    ...(options.clusterStatus !== undefined
+      ? { clusterStatus: options.clusterStatus }
+      : {}),
+    ...(options.teamJobs !== undefined
+      ? { teamJobs: options.teamJobs }
+      : {}),
+    ...(options.scoreboardSummary !== undefined
+      ? { scoreboardSummary: options.scoreboardSummary }
+      : {}),
+    ...(options.getConfig !== undefined ? { getConfig: options.getConfig } : {}),
   };
 }

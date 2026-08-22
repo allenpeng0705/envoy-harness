@@ -80,6 +80,59 @@ function teamConfig(agents: ReadonlyArray<AgentSpec>, name = "t"): TeamConfig {
 // ---------------------------------------------------------------------------
 
 describe("Team.runOnce — single agent", () => {
+  it("dispatches peer://-hosted agents through peerExecutor (D4)", async () => {
+    const { model } = scriptedModel(["local result"]);
+    const calls: Array<{ id: string; host: string | undefined; prompt: string }> = [];
+    const team = new Team({
+      model,
+      config: teamConfig([
+        { id: "local", role: "explore", objective: "local task", dependsOn: [] },
+        {
+          id: "peer",
+          role: "worker",
+          objective: "peer task",
+          dependsOn: [],
+          host: "peer://p1",
+        },
+      ]),
+      peerExecutor: async (spec, prompt) => {
+        calls.push({ id: spec.id, host: spec.host, prompt });
+        return "peer result";
+      },
+    });
+    const result = await team.runOnce();
+    expect(result.status).toBe("completed");
+    // The peer agent never touched the local model; the local one did.
+    expect(calls).toEqual([
+      { id: "peer", host: "peer://p1", prompt: "peer task" },
+    ]);
+    expect(result.agents.find((a) => a.id === "peer")?.finalText).toBe(
+      "peer result",
+    );
+    expect(result.agents.find((a) => a.id === "local")?.finalText).toBe(
+      "local result",
+    );
+  });
+
+  it("fails clearly when a peer host has no peerExecutor (D4)", async () => {
+    const { model } = scriptedModel(["unused"]);
+    const team = new Team({
+      model,
+      config: teamConfig([
+        {
+          id: "a",
+          role: "worker",
+          objective: "x",
+          dependsOn: [],
+          host: "peer://p1",
+        },
+      ]),
+    });
+    const result = await team.runOnce();
+    expect(result.status).toBe("failed");
+    expect(result.error).toContain("requires TeamOptions.peerExecutor");
+  });
+
   it("defaults the system prompt to the assembled AGENTS.md + guidance (Phase G)", async () => {
     const { model, captured } = scriptedModel(["ok"]);
     const team = new Team({

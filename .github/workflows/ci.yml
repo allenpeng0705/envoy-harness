@@ -26,7 +26,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Module-size lint (Codex LOC rule)
-        run: node scripts/check-module-size.mjs packages/envoy-harness/src packages/envoy-harness-adapter/src packages/envoy-harness-tui/src packages/envoy-harness-client/src packages/envoy-harness-cordis/src
+        run: node scripts/check-module-size.mjs packages/envoy-harness/src packages/envoy-harness-adapter/src packages/envoy-harness-tui/src packages/envoy-harness-client/src packages/envoy-harness-cordis/src packages/envoy-harness-peer/src
 
       - name: Typecheck
         run: pnpm -r run typecheck

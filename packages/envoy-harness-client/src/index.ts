@@ -8,6 +8,61 @@ import type { Readable, Writable } from "node:stream";
 
 import { JsonRpcConnection } from "@envoymesh/envoy-harness";
 
+export interface ClientPeerInfo {
+  id: string;
+  model?: string;
+  capabilities?: readonly string[];
+}
+
+/** U1 — cluster status (peers + health) for the dedicated UI. */
+export interface ClientClusterStatus {
+  peers: Array<{
+    id: string;
+    model?: string;
+    capabilities?: readonly string[];
+    health: { ok: boolean; rttMs?: number; lastPingAt?: string; error?: string };
+  }>;
+  connected: number;
+  failed: number;
+}
+
+/** U1 — one team job (agents + status) for the dedicated UI. */
+export interface ClientTeamJob {
+  jobId: string;
+  status: "running" | "completed" | "failed";
+  createdAt: string;
+  costUsd?: number;
+  agents: Array<{
+    id: string;
+    host: string;
+    model?: string;
+    status: "pending" | "running" | "completed" | "failed";
+    costUsd?: number;
+    startedAt?: string;
+    completedAt?: string;
+  }>;
+}
+
+/** U1 — one scoreboard entry (reputation per peer+skill). */
+export interface ClientScoreboardEntry {
+  workerPeerId: string;
+  skillId: string;
+  score: number;
+  passCount: number;
+  failCount: number;
+  partialCount: number;
+}
+
+/** U3 — one discovery/lifecycle event (`discovery/event`). */
+export interface ClientDiscoveryEvent {
+  type: "peer.connected" | "peer.disconnected" | "peer.failed" | "peer.health";
+  peerId: string;
+  model?: string;
+  rttMs?: number;
+  error?: string;
+  at: string;
+}
+
 export interface EnvoyHarnessClientOptions {
   input: Readable;
   output: Writable;
@@ -22,9 +77,15 @@ export interface EnvoyHarnessClientOptions {
 
 export class EnvoyHarnessClient {
   readonly #conn: JsonRpcConnection;
+  readonly #onEvent: EnvoyHarnessClientOptions["onEvent"];
+  readonly #notificationHandlers = new Map<
+    string,
+    Set<(params: unknown) => void>
+  >();
   #dialect: "acp" | "sdk" | undefined;
 
   constructor(options: EnvoyHarnessClientOptions) {
+    this.#onEvent = options.onEvent;
     this.#conn = new JsonRpcConnection({
       input: options.input,
       output: options.output,
@@ -43,13 +104,34 @@ export class EnvoyHarnessClient {
         throw new Error(`unexpected server request: ${method}`);
       },
       onNotification: (method, params) => {
+        const handlers = this.#notificationHandlers.get(method);
+        if (handlers !== undefined) {
+          for (const handler of [...handlers]) handler(params);
+        }
         if (method === "session/update") {
-          options.onEvent?.({ dialect: "acp", params });
+          this.#onEvent?.({ dialect: "acp", params });
         } else if (method === "session/event") {
-          options.onEvent?.({ dialect: "sdk", params });
+          this.#onEvent?.({ dialect: "sdk", params });
         }
       },
     });
+  }
+
+  /** Register a notification handler; returns an unsubscribe fn. */
+  onNotification(
+    method: string,
+    handler: (params: unknown) => void,
+  ): () => void {
+    let set = this.#notificationHandlers.get(method);
+    if (set === undefined) {
+      set = new Set();
+      this.#notificationHandlers.set(method, set);
+    }
+    set.add(handler);
+    return () => {
+      set.delete(handler);
+      if (set.size === 0) this.#notificationHandlers.delete(method);
+    };
   }
 
   async initialize(): Promise<{ protocolVersion: number }> {
@@ -103,6 +185,82 @@ export class EnvoyHarnessClient {
       string,
       unknown
     >;
+  }
+
+  /** R3 — the host's connected peer cluster (`peers/list`, both dialects). */
+  async listPeers(): Promise<ClientPeerInfo[]> {
+    const res = (await this.#conn.request("peers/list", {})) as {
+      peers: ClientPeerInfo[];
+    };
+    return res.peers;
+  }
+
+  /** U1 — the host's cluster status (`cluster/status`, both dialects). */
+  async clusterStatus(): Promise<ClientClusterStatus> {
+    const res = (await this.#conn.request("cluster/status", {})) as {
+      cluster: ClientClusterStatus;
+    };
+    return res.cluster;
+  }
+
+  /** U1 — the host's team jobs (`team/jobs`, both dialects). */
+  async teamJobs(): Promise<ClientTeamJob[]> {
+    const res = (await this.#conn.request("team/jobs", {})) as {
+      jobs: ClientTeamJob[];
+    };
+    return res.jobs;
+  }
+
+  /** U1 — the host's peer reputation scoreboard (`scoreboard/summary`). */
+  async scoreboardSummary(): Promise<ClientScoreboardEntry[]> {
+    const res = (await this.#conn.request("scoreboard/summary", {})) as {
+      entries: ClientScoreboardEntry[];
+    };
+    return res.entries;
+  }
+
+  /**
+   * U3 — subscribe to discovery/lifecycle events. Returns an
+   * unsubscribe function. The server forwards `discovery/event`
+   * notifications to `listener`.
+   */
+  async subscribeDiscovery(
+    listener: (event: ClientDiscoveryEvent) => void,
+  ): Promise<() => void> {
+    // Register the notification handler BEFORE the request so events
+    // emitted during subscription (initial replay) are not missed.
+    const remove = this.onNotification("discovery/event", (params) => {
+      const { event } = (params ?? {}) as { event?: ClientDiscoveryEvent };
+      if (event !== undefined) listener(event);
+    });
+    try {
+      const res = (await this.#conn.request("discovery/subscribe", {})) as {
+        subscribed: boolean;
+      };
+      if (!res.subscribed) {
+        throw new Error("discovery/subscribe not supported by this host");
+      }
+      return remove;
+    } catch (err) {
+      remove();
+      throw err;
+    }
+  }
+
+  /**
+   * U3 — routing preview: which peer would run a task with this
+   * capability tag (`cluster/route`). Returns undefined when the host
+   * has no peer for the tag.
+   */
+  async routePeer(
+    capabilityTag: string,
+    preferredPeerId?: string,
+  ): Promise<ClientPeerInfo | undefined> {
+    const res = (await this.#conn.request("cluster/route", {
+      capabilityTag,
+      ...(preferredPeerId !== undefined ? { preferredPeerId } : {}),
+    })) as { peer: ClientPeerInfo | null };
+    return res.peer ?? undefined;
   }
 
   get dialect(): "acp" | "sdk" | undefined {

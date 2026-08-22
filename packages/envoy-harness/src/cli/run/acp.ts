@@ -131,6 +131,15 @@ function resolveAcpBackend(
     return {
       backend: createAgentSessionBackend({
         defaultCwd,
+        // U2 — the status bar reads the model label from config/get.
+        getConfig: () => ({
+          version: "0.0.0",
+          ...(parsed.model !== undefined
+            ? { model: parsed.model }
+            : parsed.provider !== undefined
+              ? { model: parsed.provider }
+              : {}),
+        }),
         createAgent: ({ sessionId, cwd, askHandler }) => {
           const hooks = new HookRegistry();
           return new Agent({

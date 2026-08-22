@@ -40,3 +40,4 @@ desktop.ini
 .next/
 out/
 *.tsbuildinfo
+/.pnpm-store

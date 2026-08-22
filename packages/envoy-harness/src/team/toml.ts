@@ -262,6 +262,7 @@ function toAgentSpec(raw: unknown, index: number): AgentSpec {
   const role = r["role"];
   const systemPrompt = r["system_prompt"];
   const objective = r["objective"];
+  const host = r["host"];
   if (typeof id !== "string") {
     throw new TomlParseError(0, "", `agents[${index}].id must be a string`);
   }
@@ -275,6 +276,13 @@ function toAgentSpec(raw: unknown, index: number): AgentSpec {
       0,
       "",
       `agents[${index}].system_prompt must be a string`,
+    );
+  }
+  if (host !== undefined && typeof host !== "string") {
+    throw new TomlParseError(
+      0,
+      "",
+      `agents[${index}].host must be a string`,
     );
   }
   if (typeof objective !== "string") {
@@ -309,6 +317,7 @@ function toAgentSpec(raw: unknown, index: number): AgentSpec {
     role,
     objective,
     dependsOn,
+    ...(host !== undefined ? { host } : {}),
     ...(systemPrompt !== undefined ? { systemPrompt } : {}),
   };
 }
