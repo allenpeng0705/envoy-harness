@@ -199,12 +199,39 @@ export async function runAgent(
   const environment = wireEnvironmentTools(tools);
   const hooks = options.hooks ?? new HookRegistry();
 
+  // Build the sandbox executor from CLI flags (opt-in).
+  // `--sandbox-executor landlock` / `seatbelt` activates a
+  // kernel-level executor; absence (or `none`) keeps the
+  // default noop — the 6 bash validators are the v1
+  // enforcement layer and the default test path stays
+  // hermetic. The agent's `sandboxExecutor` option takes
+  // priority if the caller also passed one via RunOptions.
+  let sandboxExecutor: import("../../index.js").SandboxExecutor | undefined =
+    options.sandboxExecutor;
+  if (sandboxExecutor === undefined && parsed.sandboxExecutor !== undefined) {
+    const { resolveSandboxExecutor } = await import(
+      "../../sandbox/resolve.js"
+    );
+    sandboxExecutor = resolveSandboxExecutor({
+      policy: policyFromMode(
+        parsed.sandbox ?? "read-only",
+        cwd,
+        // policyFromMode now defaults to backend: "none" but
+        // the resolver still needs a valid SandboxPolicy
+        // shape; pass-through to honor any explicit backend
+        // the user wired elsewhere.
+      ),
+      force: parsed.sandboxExecutor,
+    });
+  }
+
   const agentOptions: ConstructorParameters<typeof Agent>[0] = {
     model,
     tools,
     session,
     hooks,
     cwd,
+    ...(sandboxExecutor !== undefined ? { sandboxExecutor } : {}),
   };
   if (parsed.maxTurns !== undefined) {
     agentOptions.maxIterations = parsed.maxTurns;

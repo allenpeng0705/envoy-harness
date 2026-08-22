@@ -109,7 +109,31 @@ export interface HypothesisProvider {
   proposeHypothesis(input: {
     currentRules: ReadonlyArray<VerifierRule>;
     recentFailures: ReadonlyArray<ScoreboardEntry>;
+    /**
+     * Optional user feedback signals (from `feedback/record.ts`'s
+     * `toSelfEvolveSignals`). Wired in by `SelfEvolve` so the
+     * model can see thumbs-up / thumbs-down events when
+     * proposing rule changes. The hypothesis provider MAY
+     * ignore this when present (e.g. for headless CI runs);
+     * a missing field means "no feedback store wired."
+     */
+    feedbackSignals?: ReadonlyArray<SelfEvolveFeedbackSignal>;
   }): Promise<Hypothesis | null>;
+}
+
+/**
+ * One user feedback signal (mirrors the shape produced by
+ * `feedback/record.ts:toSelfEvolveSignals`). Duplicated here
+ * as a structural type so the scoreboard module doesn't pull
+ * in the feedback package; the constructor accepts signals of
+ * the same shape from any source.
+ */
+export interface SelfEvolveFeedbackSignal {
+  readonly polarity: "up" | "down" | "neutral";
+  readonly score: number;
+  readonly sessionId: string;
+  readonly ts: string;
+  readonly messageIndex?: number;
 }
 
 /** A hypothesis is a full new ruleset (not a patch). */
@@ -422,6 +446,33 @@ export interface SelfEvolveOptions {
   /** The benchmark runner. v0: `new DefaultBenchmarkRunner()`. */
   benchmarkRunner: BenchmarkRunner;
   /**
+   * Optional user-feedback provider. When set, the cycle
+   * loads recent signals via `toSelfEvolveSignals(feedback.list())`
+   * and passes them to the hypothesis provider as a scored
+   * input. This is the wiring for the F16.2 "feedback → self-
+   * evolution" half of the plan. When absent (e.g. headless
+   * CI runs), the cycle falls back to recent-failures only.
+   */
+  feedbackProvider?: FeedbackSignalProvider;
+}
+
+/**
+ * Minimal contract for the feedback store. Matches the
+ * relevant surface of `feedback/record.ts:createFeedbackStore`
+ * so callers can wire it directly without a hard import.
+ */
+export interface FeedbackSignalProvider {
+  list(opts?: { limit?: number }): Promise<
+    ReadonlyArray<{
+      readonly polarity: "up" | "down" | "neutral";
+      readonly score?: number;
+      readonly sessionId: string;
+      readonly messageIndex?: number;
+      readonly ts: string;
+      readonly note?: string;
+    }>
+  >;
+  /**
    * Shadow mode: never commit, always record. v0 ships in
    * shadow mode by default; production turns this off once
    * the scoreboard history is clean.
@@ -450,16 +501,54 @@ export class SelfEvolve {
   private currentRules: ReadonlyArray<VerifierRule>;
   private hypothesisProvider: HypothesisProvider;
   private benchmarkRunner: BenchmarkRunner;
+  private feedbackProvider: FeedbackSignalProvider | undefined;
   private shadowMode: boolean;
   private recentFailureWindow: number;
+  /** Cap on feedback signals loaded per cycle. */
+  private feedbackLimit: number;
 
   constructor(options: SelfEvolveOptions) {
     this.paths = options.paths;
     this.currentRules = options.currentRules;
     this.hypothesisProvider = options.hypothesisProvider;
     this.benchmarkRunner = options.benchmarkRunner;
+    this.feedbackProvider = options.feedbackProvider;
     this.shadowMode = options.shadowMode ?? true; // default: shadow mode
     this.recentFailureWindow = options.recentFailureWindow ?? 20;
+    this.feedbackLimit = 50;
+  }
+
+  /**
+   * Load recent feedback signals and map them to the
+   * contamination-guarded shape. Returns an empty array
+   * if no provider is wired or the load fails — feedback is
+   * a soft signal; never fail a cycle because of it.
+   *
+   * The mapping is intentionally inline (vs. importing
+   * `toSelfEvolveSignals`) to keep the scoreboard module
+   * independent of the feedback package. The shape matches
+   * `feedback/record.ts:toSelfEvolveSignals` output.
+   */
+  async loadFeedbackSignals(): Promise<ReadonlyArray<SelfEvolveFeedbackSignal>> {
+    if (this.feedbackProvider === undefined) return [];
+    try {
+      const events = await this.feedbackProvider.list({ limit: this.feedbackLimit });
+      return events.map((e) => {
+        const score =
+          e.score ??
+          (e.polarity === "up" ? 1 : e.polarity === "down" ? -1 : 0);
+        const sig: SelfEvolveFeedbackSignal = {
+          polarity: e.polarity,
+          score,
+          sessionId: e.sessionId,
+          ts: e.ts,
+        };
+        if (e.messageIndex !== undefined) sig.messageIndex = e.messageIndex;
+        return sig;
+      });
+    } catch {
+      return [];
+    }
   }
 
   /**
@@ -516,9 +605,16 @@ export class SelfEvolve {
     let hypothesis: Hypothesis | null = input.externalHypothesis;
     if (hypothesis === null) {
       const recent = await this.recentFailures(this.recentFailureWindow);
+      // F16.2: feed user feedback signals as a scored input to
+      // the proposal. The provider MAY ignore them; for
+      // headless CI runs (no feedback wired) this is an empty
+      // array and the proposal falls back to recent-failures
+      // only, which preserves the pre-feedback behavior.
+      const feedbackSignals = await this.loadFeedbackSignals();
       hypothesis = await this.hypothesisProvider.proposeHypothesis({
         currentRules: this.currentRules,
         recentFailures: recent,
+        feedbackSignals,
       });
       if (!hypothesis) {
         const entry = await this.recordNoOp(version, recent);

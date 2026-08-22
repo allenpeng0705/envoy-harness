@@ -84,6 +84,7 @@ const SELF_EVOLVE_FLAGS = new Set([
 /** A flag that takes a value (--flag value) for the run subcommand. */
 const RUN_VALUED_FLAGS = new Set([
   "--sandbox",
+  "--sandbox-executor",
   "--approval",
   "--model",
   "--provider",
@@ -133,6 +134,14 @@ export interface RunParsedArgs {
   json: boolean;
   /** `--sandbox <mode>`: permission mode. */
   sandbox: PermissionMode | undefined;
+  /**
+   * `--sandbox-executor <name>`: opt into a kernel-level
+   * sandbox backend. `none` is the default (validators only,
+   * hermetic tests). Supported: `landlock` (Linux only),
+   * `seatbelt` (macOS only). On a non-matching platform the
+   * resolver falls back to noop rather than fail-closed.
+   */
+  sandboxExecutor: "landlock" | "seatbelt" | "none" | undefined;
   /** `--approval <mode>`: ask-for-approval policy. */
   approval: string | undefined;
   /** `--model <id>`: model identifier (passed to the adapter). */
@@ -347,6 +356,7 @@ function parseRunArgs(argv: ReadonlyArray<string>): RunParsedArgs {
     version: false,
     json: false,
     sandbox: undefined,
+    sandboxExecutor: undefined,
     approval: undefined,
     model: undefined,
     provider: undefined,
@@ -414,6 +424,14 @@ function parseRunArgs(argv: ReadonlyArray<string>): RunParsedArgs {
               );
             }
             out.sandbox = value;
+            break;
+          case "--sandbox-executor":
+            if (value !== "landlock" && value !== "seatbelt" && value !== "none") {
+              throw new ArgvError(
+                `invalid --sandbox-executor: ${value} (expected landlock | seatbelt | none)`,
+              );
+            }
+            out.sandboxExecutor = value;
             break;
           case "--approval":
             if (
@@ -660,6 +678,7 @@ export function formatHelp(version: string): string {
     "",
     "Flags (run):",
     "  --sandbox <mode>       read-only | workspace-write | danger-full-access",
+    "  --sandbox-executor <b> landlock | seatbelt | none  (opt-in kernel sandbox; default none)",
     "  --approval <mode>      unless-trusted | on-request | granular | never",
     "  --model <id>           LLM model identifier",
     "  --provider <name>      LLM provider (openai, anthropic, deepseek, ollama)",

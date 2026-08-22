@@ -594,6 +594,92 @@ describe("loadRulesetFromFile", () => {
     // operator error, not a silent empty run.
     await expect(evolve.runOneCycle()).rejects.toThrow(/ENOENT/);
   });
+
+  it("passes feedback signals to the hypothesis provider (F16.2 wiring)", async () => {
+    // Regression: `toSelfEvolveSignals` shipped in feedback/record.ts
+    // but nothing in self-evolve consumed it. This test asserts
+    // the SelfEvolve→HypothesisProvider path carries the signals.
+    const paths = makePaths();
+    await writeBenchmark(
+      paths.benchmark,
+      makeBenchmark([{ id: "t1", objective: "noop", stubKind: "ok" }]),
+    );
+    const seen: HypothesisProvider[] = [];
+    const feedback = {
+      async list() {
+        return [
+          {
+            polarity: "down" as const,
+            score: -1,
+            sessionId: "s1",
+            ts: "2026-08-22T00:00:00.000Z",
+            messageIndex: 3,
+          },
+          {
+            polarity: "up" as const,
+            sessionId: "s2",
+            ts: "2026-08-22T00:00:01.000Z",
+          },
+        ];
+      },
+    };
+    const evolve = new SelfEvolve({
+      paths,
+      currentRules: SAMPLE_RULES,
+      feedbackProvider: feedback,
+      hypothesisProvider: {
+        async proposeHypothesis(input) {
+          seen.push(input);
+          return { text: "x", ruleChanges: [] };
+        },
+      },
+      benchmarkRunner: {
+        async run() {
+          return { passRate: 0, meanScore: 0, nRuns: 0, tasks: [] };
+        },
+      },
+    });
+    await evolve.runOneCycle();
+    expect(seen.length).toBeGreaterThanOrEqual(1);
+    const last = seen[seen.length - 1]!;
+    expect(last.feedbackSignals).toBeDefined();
+    expect(last.feedbackSignals?.length).toBe(2);
+    // Score inferred from polarity when not explicit.
+    const down = last.feedbackSignals?.find((s) => s.polarity === "down");
+    expect(down?.score).toBe(-1);
+    const up = last.feedbackSignals?.find((s) => s.polarity === "up");
+    expect(up?.score).toBe(1);
+  });
+
+  it("omits feedbackSignals when no feedbackProvider is wired (back-compat)", async () => {
+    const paths = makePaths();
+    await writeBenchmark(
+      paths.benchmark,
+      makeBenchmark([{ id: "t1", objective: "noop", stubKind: "ok" }]),
+    );
+    const seen: HypothesisProvider[] = [];
+    const evolve = new SelfEvolve({
+      paths,
+      currentRules: SAMPLE_RULES,
+      hypothesisProvider: {
+        async proposeHypothesis(input) {
+          seen.push(input);
+          return { text: "x", ruleChanges: [] };
+        },
+      },
+      benchmarkRunner: {
+        async run() {
+          return { passRate: 0, meanScore: 0, nRuns: 0, tasks: [] };
+        },
+      },
+    });
+    await evolve.runOneCycle();
+    const last = seen[seen.length - 1]!;
+    // Field may be present (empty array) or absent — both are
+    // valid signals that no feedback is wired. The contract
+    // is "empty", not "undefined".
+    expect(last.feedbackSignals?.length ?? 0).toBe(0);
+  });
 });
 
 // ---------------------------------------------------------------------------

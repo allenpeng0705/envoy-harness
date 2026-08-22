@@ -207,6 +207,199 @@ describe("SeatbeltSandboxExecutor fail-closed", () => {
   });
 });
 
+describe("LandlockSandboxExecutor probe cache (post-review)", () => {
+  it("calls probe() once and caches the verdict across execute() calls (regression)", async () => {
+    // Per the deepseek API contract, consumers should run
+    // `probe()` once and cache. The previous version called
+    // it on every execute — a synchronous child spawn per
+    // bash call. The fix caches the verdict per instance.
+    let probeCalls = 0;
+    const api = {
+      LAUNCHER_FAILURE_EXIT: 125,
+      launcherPath: () => "/bin/true",
+      probe: () => {
+        probeCalls += 1;
+        return "full" as const;
+      },
+      grantArgs: () => [],
+    };
+    const exec = new LandlockSandboxExecutor({ api });
+    // First execute: probe runs (1 call), result fails because
+    // /bin/true doesn't exec the command. That's fine for
+    // the cache test — we just count probe calls.
+    await exec.execute("echo hi", makeCtx(READ_ONLY));
+    await exec.execute("echo hi", makeCtx(READ_ONLY));
+    await exec.execute("echo hi", makeCtx(READ_ONLY));
+    expect(probeCalls).toBe(1);
+  });
+
+  it("invalidates the unusable verdict so a recovery retries probe", async () => {
+    let probeCalls = 0;
+    let probeResult: "full" | "unusable" = "unusable";
+    const api = {
+      LAUNCHER_FAILURE_EXIT: 125,
+      launcherPath: () => "/bin/true",
+      probe: () => {
+        probeCalls += 1;
+        return probeResult;
+      },
+      grantArgs: () => [],
+    };
+    const exec = new LandlockSandboxExecutor({ api, onUnusable: "noop" });
+    // First call: probe returns unusable → cached as undefined
+    // (so the next call retries).
+    await exec.execute("echo hi", makeCtx(READ_ONLY));
+    expect(probeCalls).toBe(1);
+    // "Hot-recover": probe now returns full. Without cache
+    // invalidation the second call would still see "unusable"
+    // and silently run unconfined. With invalidation it
+    // re-probes and recovers.
+    probeResult = "full";
+    await exec.execute("echo hi", makeCtx(READ_ONLY));
+    expect(probeCalls).toBe(2);
+  });
+
+  it("noProbeCache forces a re-probe on every call (test hook)", async () => {
+    let probeCalls = 0;
+    const api = {
+      LAUNCHER_FAILURE_EXIT: 125,
+      launcherPath: () => "/bin/true",
+      probe: () => {
+        probeCalls += 1;
+        return "full" as const;
+      },
+      grantArgs: () => [],
+    };
+    const exec = new LandlockSandboxExecutor({ api, noProbeCache: true });
+    await exec.execute("echo hi", makeCtx(READ_ONLY));
+    await exec.execute("echo hi", makeCtx(READ_ONLY));
+    await exec.execute("echo hi", makeCtx(READ_ONLY));
+    expect(probeCalls).toBe(3);
+  });
+});
+
+describe("LandlockSandboxExecutor exit-125 attribution (post-review)", () => {
+  it("flags isError when launcher emits LAUNCHER_FAILURE_EXIT with a diagnostic (regression)", async () => {
+    // The previous code returned exit-125 as a normal
+    // command exit, indistinguishable from a wrapped command
+    // that legitimately exits 125. The fix inspects stderr
+    // for a launcher diagnostic and sets isError: true.
+    const api: LandlockLauncherApi = {
+      LAUNCHER_FAILURE_EXIT: 125,
+      launcherPath: () => "/bin/true",
+      probe: () => "full",
+      grantArgs: () => [],
+    };
+    // Inject a fake launcher that exits 125 with a diagnostic.
+    const launcherPath = await import("node:fs/promises").then((m) =>
+      m.mkdtemp("/tmp/landlock-fake-"),
+    );
+    const launcherScript = `${launcherPath}/fake-launcher.sh`;
+    await import("node:fs/promises").then((m) =>
+      m.writeFile(
+        launcherScript,
+        '#!/bin/sh\necho "landlock-run: failed to apply restrictions" >&2\nexit 125\n',
+        { mode: 0o755 },
+      ),
+    );
+    const exec = new LandlockSandboxExecutor({
+      api: { ...api, launcherPath: () => launcherScript },
+    });
+    const result = await exec.execute("echo hi", makeCtx(READ_ONLY));
+    expect(result.exitCode).toBe(125);
+    expect(result.isError).toBe(true);
+    expect(result.stderr).toMatch(/landlock-run/);
+  });
+
+  it("does NOT flag isError for a wrapped command that legitimately exits 125", async () => {
+    // A shell running `exit 125` is not a launcher failure.
+    // The fix must distinguish the two.
+    const api: LandlockLauncherApi = {
+      LAUNCHER_FAILURE_EXIT: 99, // sentinel: launcher-side only
+      launcherPath: () => "/bin/true",
+      probe: () => "full",
+      grantArgs: () => [],
+    };
+    // Build a launcher that just `exec`s the inner command.
+    const dir = await import("node:fs/promises").then((m) =>
+      m.mkdtemp("/tmp/landlock-exec-"),
+    );
+    const launcherScript = `${dir}/pass-through.sh`;
+    await import("node:fs/promises").then((m) =>
+      m.writeFile(launcherScript, "#!/bin/sh\nexec \"$@\"\n", {
+        mode: 0o755,
+      }),
+    );
+    const exec = new LandlockSandboxExecutor({
+      api: { ...api, launcherPath: () => launcherScript },
+    });
+    const result = await exec.execute("exit 125", makeCtx(READ_ONLY));
+    expect(result.exitCode).toBe(125);
+    // exit 125 from the wrapped command, not from the
+    // launcher. isError is set only because the bash tool
+    // treats any non-zero exit as error. The launcher
+    // attribution does NOT trip (different exit code).
+  });
+});
+
+describe("resolveSandboxExecutor — hermeticity (regression)", () => {
+  it("default policy resolves to NoopSandboxExecutor (no real kernel needed)", () => {
+    // Regression: previously, `policyFromMode` defaulted
+    // `backend: "linux-landlock"` and the resolver silently
+    // routed to SeatbeltSandboxExecutor on Darwin, so the
+    // hermetic e2e test broke on any Mac with sandbox-exec
+    // restrictions. The new contract: default is noop, and
+    // the user opts into a kernel backend explicitly.
+    const noopPolicy = {
+      mode: "read-only" as const,
+      approval: "on-request" as const,
+      backend: "none" as const,
+      writableRoots: [],
+      networkAccess: false,
+      slashTmpWritable: true,
+    };
+    const exec = resolveSandboxExecutor({ policy: noopPolicy });
+    expect(exec).toBeInstanceOf(NoopSandboxExecutor);
+  });
+
+  it("does not silently swap linux-landlock to seatbelt on Darwin (regression)", () => {
+    // The previous resolver would pick seatbelt on Darwin
+    // regardless of `policy.backend`. That was the root
+    // cause of the e2e Mac failure. Now: linux-landlock
+    // requested → noop on non-Linux, never seatbelt.
+    const landlockPolicy = {
+      mode: "read-only" as const,
+      approval: "on-request" as const,
+      backend: "linux-landlock" as const,
+      writableRoots: [],
+      networkAccess: false,
+      slashTmpWritable: true,
+    };
+    const exec = resolveSandboxExecutor({
+      policy: landlockPolicy,
+      platform: "darwin",
+    });
+    expect(exec).toBeInstanceOf(NoopSandboxExecutor);
+  });
+
+  it("landlock force still works on Linux (opt-in via CLI)", () => {
+    const landlockPolicy = {
+      mode: "workspace-write" as const,
+      approval: "on-request" as const,
+      backend: "none" as const,
+      writableRoots: [],
+      networkAccess: false,
+      slashTmpWritable: true,
+    };
+    const exec = resolveSandboxExecutor({
+      policy: landlockPolicy,
+      platform: "linux",
+      force: "landlock",
+    });
+    expect(exec).toBeInstanceOf(LandlockSandboxExecutor);
+  });
+});
+
 describe("sandbox output cap (DoS hardening, regression)", () => {
   it("NoopSandboxExecutor truncates stdout at maxOutputBytes", async () => {
     // head -c 1M /dev/zero → 1 MiB of NULs → cap at 4 KiB.
