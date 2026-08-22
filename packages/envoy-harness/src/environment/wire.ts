@@ -37,6 +37,12 @@ import {
   isPtyAvailable,
 } from "../terminal/pty-backend.js";
 import {
+  createFilesystemSkillProvider,
+  createSkillRegistry,
+  registerSkillTools,
+  type SkillRegistry,
+} from "../skills/index.js";
+import {
   createHttpFetchProvider,
   createWebRuntime,
   registerWebTools,
@@ -64,12 +70,22 @@ export interface WireEnvironmentOptions {
   preferPty?: boolean;
   /** Override default credentials file path (tests). */
   credentialsFilePath?: string;
+  /**
+   * Register the SKILL.md model-facing tools (`skill`,
+   * `skill_list`) on the supplied tool registry. Default
+   * `true`. Set `false` for hosts that want to manage their
+   * own skill surface (or for hermetic tests that should
+   * not see filesystem-backed skills).
+   */
+  enableSkills?: boolean;
 }
 
 export interface EnvironmentCapabilities {
   jobs: JobRegistry;
   web: WebRuntime;
   terminals: TerminalSessionService;
+  /** SKILL.md registry (filesystem provider wired). */
+  skills: SkillRegistry;
   credentials: CredentialsProvider & {
     resolveByName?(
       name: string,
@@ -179,12 +195,24 @@ export function wireEnvironmentTools(
   }
   registerTerminalTools(tools, terminals);
 
+  // SKILL.md loader (L0 reuse): project + user roots, codex /
+  // deepseek / universal. Hosts can disable by passing
+  // `enableSkills: false` in WireEnvironmentOptions.
+  const skills: SkillRegistry = createSkillRegistry();
+  skills.registerProvider(
+    createFilesystemSkillProvider({ homeDir: os.homedir() }),
+  );
+  if (options.enableSkills !== false) {
+    registerSkillTools(tools, skills);
+  }
+
   let disposed = false;
   return {
     jobs,
     web,
     terminals,
     credentials,
+    skills,
     async dispose() {
       if (disposed) return;
       disposed = true;

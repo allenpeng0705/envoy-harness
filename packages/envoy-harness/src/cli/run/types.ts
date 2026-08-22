@@ -17,6 +17,7 @@ import type {
   HookRegistry,
   ModelAdapter,
   ProtocolSessionBackend,
+  SandboxExecutor,
   Tracer,
 } from "../../index.js";
 import type { LineReader } from "../repl/index.js";
@@ -75,6 +76,16 @@ export interface RunOptions {
    * opens stdin).
    */
   lineReader?: LineReader;
+  /**
+   * Phase F / CLI bridge: a pre-built `SandboxExecutor`.
+   * When set, takes priority over `parsed.sandboxExecutor`
+   * (the `--sandbox-executor` CLI flag). Both ultimately
+   * flow into the `Agent` constructor's `sandboxExecutor`
+   * option — the programmatic path is for tests + library
+   * users that want a custom executor (e.g. an instrumented
+   * mock for hermeticity).
+   */
+  sandboxExecutor?: SandboxExecutor;
 }
 
 /** Result of a successful `run` invocation. */

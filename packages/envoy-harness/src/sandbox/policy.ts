@@ -37,6 +37,17 @@ export function policyToLandlockGrants(
 
 /**
  * Build a macOS seatbelt (`sandbox-exec -p`) profile from policy.
+ *
+ * **Profile breadth (intentional, defense-in-depth):** the
+ * default rules grant `(allow process*)`, `(allow mach*)`,
+ * `(allow file-read*)` and `(allow signal)` so common CLI
+ * binaries (Node, sh, git) work inside the sandbox. The 6
+ * bash validators (parse-time command rejection in
+ * `permissions/`) are the v1 *enforcement* layer; the
+ * seatbelt profile is the *containment* layer that prevents
+ * the wrapped command from touching the host filesystem
+ * outside the policy's writable roots. A user who wants a
+ * tighter profile can supply a custom `SandboxExecutor`.
  */
 export function policyToSeatbeltProfile(
   policy: SandboxPolicy,
@@ -89,6 +100,21 @@ function dedupe(paths: readonly string[]): string[] {
   return out;
 }
 
+/**
+ * Escape a path for safe interpolation into a seatbelt
+ * profile line (`(allow file-write* (subpath "<path>"))`).
+ *
+ * Seatbelt's profile parser is line-oriented and treats
+ * `\\` and `"` as significant inside a literal. A path
+ * containing a newline could break out of the surrounding
+ * line and inject a new rule. Strip the three dangerous
+ * characters (backslash, double-quote, newline) and any
+ * carriage return for defense-in-depth.
+ */
 function escapeSeatbeltPath(p: string): string {
-  return p.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  return p
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, "")
+    .replace(/\r/g, "");
 }

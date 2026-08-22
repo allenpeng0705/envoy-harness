@@ -75,6 +75,30 @@ describe("policyToSeatbeltProfile", () => {
     );
     expect(profile).toContain("(allow default)");
   });
+
+  it("escapes backslash, double-quote, and strips newlines in writable root paths (regression)", () => {
+    // Without newline stripping, a path containing `\n` could
+    // break out of the surrounding `(allow file-write* (subpath
+    // "..."))` line and inject a new rule. The fix strips
+    // backslash, double-quote, and all CR/LF characters from
+    // interpolated paths.
+    const nasty: SandboxPolicy = {
+      ...WORKSPACE,
+      writableRoots: ['/proj/has"quote\n(allow network*)'],
+    };
+    const profile = policyToSeatbeltProfile(nasty, "/proj");
+    // The injected newline + "(allow network*)" must NOT
+    // appear as a separate rule on its own line.
+    const lines = profile.split("\n").filter((l) => l.length > 0);
+    for (const line of lines) {
+      // Each rule must start with `(` — no injected content.
+      expect(line).toMatch(/^\(/);
+    }
+    // The escape must still produce a single subpath rule.
+    expect(profile).toContain("(allow file-write* (subpath");
+    // The dangerous raw substring (the quote) is escaped.
+    expect(profile).toContain('\\"');
+  });
 });
 
 describe("resolveSandboxExecutor", () => {

@@ -693,6 +693,31 @@ export {
   type SelfEvolveFeedbackSignal,
 } from "./feedback/index.js";
 
+// Phase G / Item 3 — SKILL.md loader (L0 reuse).
+// Both codex and deepseek ship a SKILL.md format; one loader
+// makes envoy-harness compatible with all three roots
+// (`~/.codex/skills/`, `~/.dsh/skills/`, `~/.agents/skills/`,
+// project `.envoy/skills/`). The `skill` + `skill_list` tools
+// expose skills to the model.
+export {
+  type FilesystemSkillProviderOptions,
+  type SkillDefinition,
+  type SkillFrontmatter,
+  type SkillProvider,
+  type SkillRegistry,
+  type SkillRoot,
+  type SkillSummary,
+  SkillError,
+  createFilesystemSkillProvider,
+  createSkillRegistry,
+  defaultSkillRoots,
+  makeSkillListTool,
+  makeSkillTool,
+  parseFrontmatter,
+  registerSkillTools,
+  renderSkillContent,
+} from "./skills/index.js";
+
 // Phase E / Items 10–11 — ACP + SDK protocol
 export {
   ACP_PROTOCOL_VERSION,

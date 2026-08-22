@@ -35,6 +35,7 @@ import {
   type SessionMetadata,
 } from "../../index.js";
 import { wireEnvironmentTools } from "../../environment/index.js";
+import { policyFromMode } from "../../permissions/policy.js";
 import { resolveSession } from "../../session/resolve.js";
 import type { ParsedArgs } from "../argv.js";
 import { CliError } from "./errors.js";
@@ -212,16 +213,17 @@ export async function runAgent(
     const { resolveSandboxExecutor } = await import(
       "../../sandbox/resolve.js"
     );
+    // The CLI's `--sandbox-executor none` is a user-facing
+    // synonym for "no override" (same as omitting the flag),
+    // but the resolver's `force` enum is `"noop"` for
+    // explicit noop. Map at the boundary.
+    const force: "landlock" | "seatbelt" | "noop" | undefined =
+      parsed.sandboxExecutor === "none"
+        ? "noop"
+        : parsed.sandboxExecutor;
     sandboxExecutor = resolveSandboxExecutor({
-      policy: policyFromMode(
-        parsed.sandbox ?? "read-only",
-        cwd,
-        // policyFromMode now defaults to backend: "none" but
-        // the resolver still needs a valid SandboxPolicy
-        // shape; pass-through to honor any explicit backend
-        // the user wired elsewhere.
-      ),
-      force: parsed.sandboxExecutor,
+      policy: policyFromMode(parsed.sandbox ?? "read-only", cwd),
+      force,
     });
   }
 

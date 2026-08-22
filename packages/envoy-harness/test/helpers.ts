@@ -224,6 +224,7 @@ export function makeArgs(
     version: false,
     json: false,
     sandbox: undefined,
+    sandboxExecutor: undefined,
     approval: undefined,
     model: undefined,
     provider: undefined,

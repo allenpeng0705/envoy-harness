@@ -604,7 +604,7 @@ describe("loadRulesetFromFile", () => {
       paths.benchmark,
       makeBenchmark([{ id: "t1", objective: "noop", stubKind: "ok" }]),
     );
-    const seen: HypothesisProvider[] = [];
+    const seen: Array<Parameters<HypothesisProvider["proposeHypothesis"]>[0]> = [];
     const feedback = {
       async list() {
         return [
@@ -657,7 +657,7 @@ describe("loadRulesetFromFile", () => {
       paths.benchmark,
       makeBenchmark([{ id: "t1", objective: "noop", stubKind: "ok" }]),
     );
-    const seen: HypothesisProvider[] = [];
+    const seen: Array<Parameters<HypothesisProvider["proposeHypothesis"]>[0]> = [];
     const evolve = new SelfEvolve({
       paths,
       currentRules: SAMPLE_RULES,

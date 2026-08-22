@@ -454,6 +454,17 @@ export interface SelfEvolveOptions {
    * CI runs), the cycle falls back to recent-failures only.
    */
   feedbackProvider?: FeedbackSignalProvider;
+  /**
+   * Shadow mode: never commit, always record. v0 ships in
+   * shadow mode by default; production turns this off once
+   * the scoreboard history is clean.
+   */
+  shadowMode?: boolean;
+  /**
+   * Number of recent failures to feed the hypothesis prompt.
+   * Default: 20 (per design §13.1).
+   */
+  recentFailureWindow?: number;
 }
 
 /**
@@ -537,14 +548,15 @@ export class SelfEvolve {
         const score =
           e.score ??
           (e.polarity === "up" ? 1 : e.polarity === "down" ? -1 : 0);
-        const sig: SelfEvolveFeedbackSignal = {
+        const base = {
           polarity: e.polarity,
           score,
           sessionId: e.sessionId,
           ts: e.ts,
         };
-        if (e.messageIndex !== undefined) sig.messageIndex = e.messageIndex;
-        return sig;
+        return e.messageIndex !== undefined
+          ? { ...base, messageIndex: e.messageIndex }
+          : base;
       });
     } catch {
       return [];
