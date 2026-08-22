@@ -96,6 +96,14 @@ export type BuildAgentFn = (input: {
   objective: string;
   costCeilingUsd: number;
   signal: AbortSignal;
+  /**
+   * v1.16 — per-call model override hint (the wire
+   * `ExecuteInput.verifierModel`). Runtimes that support per-call
+   * model overrides (envoy-harness's host factory) use this to
+   * build an agent with a different model than the runtime default.
+   * Runtimes that don't support overrides ignore it.
+   */
+  providerHint?: string;
 }) => Agent;
 
 /** Sign an unsigned wire `AgentResult` with the node's owner key. */
@@ -222,6 +230,12 @@ export class EnvoyHarnessAdapter implements AgentAdapter {
       objective: prompt,
       costCeilingUsd: input.costCeilingUsd,
       signal: input.signal,
+      // v1.16 — forward the cross-model hint so the host's
+      // buildAgent factory can honor it (cross-verify on the same
+      // runtime with a different model).
+      ...(input.verifierModel !== undefined
+        ? { providerHint: input.verifierModel }
+        : {}),
     });
     const localResult = await agent.run(prompt);
     if (input.signal.aborted) {
@@ -533,6 +547,15 @@ export interface BuildEnvoyHarnessAdapterWithCrossVerifyInput
    * on the cross adapter.
    */
   openClawAdapter: AgentAdapter;
+  /**
+   * v1.16 — optional per-call model override hint for the cross
+   * adapter (cross-model-on-same-runtime). When set, the factory's
+   * `defaultCrossVerify` forwards it as `ExecuteInput.verifierModel`
+   * so a same-runtime verifier (e.g. envoy-harness + claude-instant)
+   * can honor it. Optional and additive; omit for the v1.8
+   * cross-runtime behavior.
+   */
+  verifierProviderHint?: string;
 }
 
 export function buildEnvoyHarnessAdapterWithCrossVerify(
@@ -540,6 +563,10 @@ export function buildEnvoyHarnessAdapterWithCrossVerify(
 ): EnvoyHarnessAdapter {
   return new EnvoyHarnessAdapter({
     ...input,
-    crossVerifyWith: defaultCrossVerify(input.openClawAdapter),
+    crossVerifyWith: defaultCrossVerify(input.openClawAdapter, {
+      ...(input.verifierProviderHint !== undefined
+        ? { providerHint: input.verifierProviderHint }
+        : {}),
+    }),
   });
 }

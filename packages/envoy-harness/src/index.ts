@@ -489,6 +489,9 @@ export {
   type McpClientRegistry,
   type McpCallToolResult,
   type McpTool,
+  formatMcpResult,
+  registerMcpTools,
+  type McpToolBridgeResult,
 } from "./mcp/index.js";
 
 // T3.4: re-export the OS sandbox executor interface
@@ -654,6 +657,18 @@ export {
 } from "./terminal/index.js";
 
 export {
+  createSystemPromptRegistry,
+  agentsMdSection,
+  planModeSection,
+  terminalGuidanceSection,
+  buildAgentSystemPrompt,
+  type BuildAgentSystemPromptOptions,
+  type PromptAssemblyContext,
+  type PromptSection,
+  type SystemPromptRegistry,
+} from "./system-prompt/index.js";
+
+export {
   createDefaultCredentials,
   wireEnvironmentTools,
   type EnvironmentCapabilities,
@@ -720,6 +735,11 @@ export {
   parseFrontmatter,
   registerSkillTools,
   renderSkillContent,
+  renderSkillCatalog,
+  skillCatalogDigest,
+  nextCatalogMessage,
+  createSkillCatalogFragment,
+  type SkillCatalogOptions,
 } from "./skills/index.js";
 
 // Phase E / Items 10–11 — ACP + SDK protocol

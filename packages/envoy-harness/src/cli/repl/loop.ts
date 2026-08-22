@@ -38,6 +38,7 @@ import {
   ToolRegistry,
   type Session,
   type SessionMetadata,
+  buildAgentSystemPrompt,
 } from "../../index.js";
 import { wireEnvironmentTools } from "../../environment/index.js";
 import {
@@ -140,6 +141,9 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
     hooks,
     cwd,
   };
+  // Phase G — the REPL's system prompt: AGENTS.md discovery + terminal
+  // guidance (the REPL wires terminal tools via wireEnvironmentTools).
+  agentOptions.systemPrompt = await buildAgentSystemPrompt({ cwd });
   if (opts.args.maxTurns !== undefined) {
     agentOptions.maxIterations = opts.args.maxTurns;
   }

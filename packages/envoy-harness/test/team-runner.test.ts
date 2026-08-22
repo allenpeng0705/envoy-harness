@@ -28,7 +28,7 @@ import {
   type ModelAdapter,
   type ModelResponse,
   type TeamConfig,
-} from "@envoymesh/envoy-harness";
+} from "../src/index.js";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -80,6 +80,23 @@ function teamConfig(agents: ReadonlyArray<AgentSpec>, name = "t"): TeamConfig {
 // ---------------------------------------------------------------------------
 
 describe("Team.runOnce — single agent", () => {
+  it("defaults the system prompt to the assembled AGENTS.md + guidance (Phase G)", async () => {
+    const { model, captured } = scriptedModel(["ok"]);
+    const team = new Team({
+      model,
+      config: teamConfig([
+        { id: "a", role: "explore", objective: "do it", dependsOn: [] },
+      ]),
+    });
+    const result = await team.runOnce();
+    expect(result.status).toBe("completed");
+    // No spec.systemPrompt → the runner wires the default assembly,
+    // which includes the repo's own AGENTS.md (discovery) + terminal
+    // guidance.
+    expect(captured[0]?.systemPrompt).toContain("AGENTS.md");
+    expect(captured[0]?.systemPrompt).toContain("inferred_idle");
+  });
+
   it("runs the agent and returns its final text", async () => {
     const { model, captured } = scriptedModel(["hello world"]);
     const team = new Team({

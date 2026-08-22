@@ -252,7 +252,14 @@ describe("DefaultMcpClientRegistry: callTool routing", () => {
 // + the T3.12 constant-import fix work end-to-end.
 // ---------------------------------------------------------------------------
 
-import { Agent, HookRegistry, InMemorySession, newSessionId, ToolRegistry } from "../src/index.js";
+import {
+  Agent,
+  HookRegistry,
+  InMemorySession,
+  newSessionId,
+  registerMcpTools,
+  ToolRegistry,
+} from "../src/index.js";
 import type { ModelAdapter, ModelResponse } from "../src/index.js";
 
 function scriptedModel(
@@ -374,5 +381,118 @@ describe("end-to-end MCP routing through Agent.run()", () => {
       .map((b) => (b as { type: "text"; text: string }).text)
       .join("\n");
     expect(finalText).toContain("got the pong");
+  });
+
+  it("routes a registry-registered mcp__ tool through the normal path (hooks + governance)", async () => {
+    // When the same MCP tool is registered in the ToolRegistry via the
+    // `registerMcpTools` bridge, the executor must NOT take the direct
+    // client route: envoy's hooks/validation/permissions apply instead.
+    const pingedCalls: Array<{ name: string; args: unknown }> = [];
+    const registry = new DefaultMcpClientRegistry();
+    registry.register(
+      makeFakeClient({
+        serverName: "fake",
+        tools: [
+          {
+            name: "ping",
+            description: "Reply with pong.",
+            inputSchema: z.object({ message: z.string() }),
+          },
+        ],
+        onCall: async (name, args) => {
+          pingedCalls.push({ name, args });
+          return { content: [{ type: "text", text: "pong-from-fake" }] };
+        },
+      }),
+    );
+
+    const tools = new ToolRegistry();
+    await registerMcpTools(tools, registry);
+    const hooks = new HookRegistry();
+    const pretoolNames: string[] = [];
+    hooks.on("PreToolUse", async (event) => {
+      const payload = (event as { payload?: { tool?: string } }).payload;
+      pretoolNames.push(payload?.tool ?? "");
+      return { kind: "continue" as const };
+    });
+
+    const model = scriptedModel([
+      {
+        content: [
+          toolCallBlock("call-1", mcpToolName("fake", "ping"), {
+            message: "hello",
+          }),
+        ],
+      },
+      { content: [textBlock("got the pong")] },
+    ]);
+    const session = new InMemorySession(newSessionId(), {
+      cwd: "/",
+      permissionMode: "read-only",
+      startedAt: new Date().toISOString(),
+    });
+    const agent = new Agent({
+      model,
+      tools,
+      session,
+      hooks,
+      cwd: "/",
+      mcpClients: registry,
+    });
+
+    const result = await agent.run("ping the fake server");
+    expect(result.stopReason).toBe("end_turn");
+    // The call reached the client (via the registered tool's execute)…
+    expect(pingedCalls).toEqual([{ name: "ping", args: { message: "hello" } }]);
+    // …and the PreToolUse hook fired — the normal path governed it.
+    expect(pretoolNames).toContain(mcpToolName("fake", "ping"));
+  });
+
+  it("does not duplicate mcp__ tools already registered in the ToolRegistry", async () => {
+    const registry = new DefaultMcpClientRegistry();
+    registry.register(
+      makeFakeClient({
+        serverName: "fake",
+        tools: [
+          {
+            name: "ping",
+            description: "Reply with pong.",
+            inputSchema: z.object({ message: z.string() }),
+          },
+        ],
+        onCall: async () => ({ content: [{ type: "text", text: "pong" }] }),
+      }),
+    );
+    const tools = new ToolRegistry();
+    await registerMcpTools(tools, registry);
+
+    let toolNames: string[] = [];
+    const model: ModelAdapter = {
+      async complete(input) {
+        toolNames = input.tools.map((t) => t.name);
+        return {
+          content: [textBlock("done")],
+          stopReason: "end_turn",
+        };
+      },
+    };
+    const session = new InMemorySession(newSessionId(), {
+      cwd: "/",
+      permissionMode: "read-only",
+      startedAt: new Date().toISOString(),
+    });
+    const agent = new Agent({
+      model,
+      tools,
+      session,
+      hooks: new HookRegistry(),
+      cwd: "/",
+      mcpClients: registry,
+    });
+    await agent.run("go");
+    const mcpCount = toolNames.filter(
+      (n) => n === mcpToolName("fake", "ping"),
+    ).length;
+    expect(mcpCount).toBe(1);
   });
 });

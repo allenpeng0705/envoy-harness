@@ -7,6 +7,9 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { promises as fs } from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 
 import {
   ArgvError,
@@ -415,8 +418,12 @@ describe("run: with a fake model", () => {
     let captured: string | undefined;
     const fakeModel: ModelAdapter = {
       async complete(input) {
-        const first = input.messages[0];
-        const firstBlock = first?.content[0] as Extract<ContentBlock, { type: "text" }> | undefined;
+        // Phase G: the system message (AGENTS.md) is prepended; the user
+        // prompt is the first user message.
+        const firstUser = input.messages.find((m) => m.role === "user");
+        const firstBlock = firstUser?.content[0] as
+          | Extract<ContentBlock, { type: "text" }>
+          | undefined;
         captured = firstBlock?.text;
         return {
           content: [{ type: "text", text: "ok" }],
@@ -431,6 +438,47 @@ describe("run: with a fake model", () => {
       stderr: err,
     });
     expect(captured).toBe("a b c");
+  });
+
+  it("wires discovered AGENTS.md into the system prompt (Phase G)", async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "cli-agentsmd-"));
+    try {
+      await fs.mkdir(path.join(tmp, ".git"), { recursive: true });
+      await fs.writeFile(path.join(tmp, "AGENTS.md"), "Team conventions.");
+      const out = new StringWritable();
+      const err = new StringWritable();
+      let systemText = "";
+      const fakeModel: ModelAdapter = {
+        async complete(input) {
+          systemText = input.messages
+            .filter((m) => m.role === "system")
+            .flatMap((m) => m.content)
+            .filter(
+              (b): b is Extract<typeof b, { type: "text" }> =>
+                b.type === "text",
+            )
+            .map((b) => b.text)
+            .join("");
+          return {
+            content: [{ type: "text", text: "ok" }],
+            stopReason: "end_turn",
+          };
+        },
+      };
+      await run({
+        argv: ["hi"],
+        model: fakeModel,
+        stdout: out,
+        stderr: err,
+        cwd: tmp,
+      });
+      // The previously-disconnected AGENTS.md discovery now reaches the
+      // model as the system message through the one-shot runner.
+      expect(systemText).toContain("Team conventions.");
+      expect(systemText).toContain("inferred_idle"); // terminal guidance
+    } finally {
+      await fs.rm(tmp, { recursive: true, force: true });
+    }
   });
 
   it("respects --quiet (no stdout)", async () => {

@@ -24,3 +24,8 @@ export {
   type McpStdioProcess,
   type StdioMcpClientOptions,
 } from "./stdio-client.js";
+export {
+  formatMcpResult,
+  registerMcpTools,
+  type McpToolBridgeResult,
+} from "./bridge.js";

@@ -136,7 +136,7 @@ describe("skill tool", () => {
 });
 
 describe("skill_list tool", () => {
-  it("returns a one-line-per-skill summary", async () => {
+  it("returns the catalog projection (<available_skills>)", async () => {
     const r = createSkillRegistry();
     r.registerProvider(fakeProvider(skill));
     r.registerProvider(
@@ -148,10 +148,10 @@ describe("skill_list tool", () => {
     );
     const tool = makeSkillListTool(r);
     const result = await tool.execute({}, fakeContext());
-    const lines = (result.content as string).split("\n");
-    expect(lines).toHaveLength(2);
-    expect(lines[0]).toContain("deploy");
-    expect(lines[0]).toContain("test");
-    expect(lines[1]).toContain("other");
+    const text = result.content as string;
+    expect(text).toContain("<available_skills>");
+    expect(text).toContain('name="deploy"');
+    expect(text).toContain('name="other"');
+    expect(text).toContain("</available_skills>");
   });
 });

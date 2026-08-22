@@ -19,6 +19,7 @@
 import { z } from "zod";
 
 import type { Tool, ToolResult } from "../tools/types.js";
+import { renderSkillCatalog } from "./catalog.js";
 import { renderSkillContent } from "./render.js";
 import type { SkillRegistry } from "./registry.js";
 
@@ -71,10 +72,10 @@ export function makeSkillListTool(registry: SkillRegistry): Tool {
         cwd: ctx.cwd,
         signal: ctx.abortSignal,
       });
-      const lines = summaries.map(
-        (s) => `- ${s.name} [${s.provider}]: ${s.description}`,
-      );
-      return { content: lines.join("\n") };
+      // The catalog projection (deepseek's `<available_skills>` block) is
+      // the canonical discovery surface; the model reads it before calling
+      // `skill` with a chosen name.
+      return { content: renderSkillCatalog(summaries) };
     },
   };
 }

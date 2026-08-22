@@ -111,6 +111,12 @@ export async function runAgentLoop(
   const mcpTools = agent.mcpClients
     ? await agent.mcpClients.collectTools()
     : [];
+  // Dedup: a tool registered in the ToolRegistry via the
+  // `registerMcpTools` bridge is already in the model's tool list
+  // (and governed by hooks/permissions); don't expose it twice.
+  const registryToolNames = new Set(
+    agent.tools.list().map((t) => t.name),
+  );
   const mcpToolDefinitions = mcpTools.map((t) => ({
     name: `${MCP_TOOL_PREFIX}${t.serverName}__${t.name}`,
     description: t.description,
@@ -120,7 +126,9 @@ export async function runAgentLoop(
         `MCP tool ${t.serverName}/${t.name}: execute() was called directly; the ToolExecutor should have routed this call.`,
       );
     },
-  }));
+  })).filter(
+    (def) => !registryToolNames.has(def.name),
+  );
 
   let iterations = 0;
   while (iterations < agent.maxIterations) {

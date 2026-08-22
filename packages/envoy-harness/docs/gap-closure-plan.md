@@ -20,6 +20,20 @@
 > - ✅ **Phase G** — Dual-host UI + adapter seams — **DONE** for scheduled
 >   scope: **12a** TUI, **12b** Pi-surface + per-tool `pi:proposal`, **13/14b**
 >   adapter transport seams. Optional future work only — see Intentional deferrals.
+> - ✅ **Core audit** — envoy has its own core for every deepseek core module
+>   (loop, tools, bash, skill, jobs, terminal, hooks, session, llm,
+>   subagents) + mesh-native additions. The two system-prompt gaps found
+>   are fixed: `discoverAgentsMd` is now wired into one-shot/REPL/team
+>   (was exported but disconnected), and `src/system-prompt/` assembles
+>   ordered sections (`{ name, order, text }`, deepseek's shape) with
+>   AGENTS.md at -100, plan mode at -50, terminal guidance at 100 — so
+>   future deepseek prompt contributions copy in cleanly.
+> - ✅ **Ecosystem reuse (tools + skills)** — skills: envoy reads deepseek's
+>   roots + a deepseek-style catalog projection (`src/skills/catalog.ts`,
+>   digest-based, bounded fragment). Tools: `registerMcpTools` bridges any
+>   MCP server into envoy as `mcp__server__tool` (the universal path), and
+>   the Cordis container continues to host deepseek capability providers.
+>   Guide: `docs/reuse-deepseek-tools-skills.md`.
 >
 > **Scenario contract:** envoy-harness runs either (a) locally and independently,
 > or (b) as one node in EnvoyMesh collaborating with other nodes. Every item is
@@ -52,7 +66,7 @@
 |---|---|---|---|---|---|
 | 1 | Compaction variants | Follow codex (algorithm family) | M (2 chunks) | A | ✅ done (`15ad4b4`) |
 | 2 | Memories | Hybrid: codex format + deepseek retrieval discipline | M (2–3 chunks) | A | ✅ done (`798f757`) |
-| 3 | Plugins at runtime | **Invent** a capability-module seam; adopt deepseek contract shapes; curated Cordis-compat container later | L (3–4 chunks) | B | ✅ done (chunks 3.1–3.4; Cordis-compat optional) |
+| 3 | Plugins at runtime | **Invent** a capability-module seam; adopt deepseek contract shapes; curated Cordis-compat container later | L (3–4 chunks) | B | ✅ done (chunks 3.1–3.4); Cordis-compat **planned** (`docs/cordis-compat-plan.md`, C0 spike gates) |
 | 4 | OS sandbox kernels | Reuse deepseek's published landlock-run npm family (Linux) + seatbelt (macOS) | M (2 chunks) | F | ✅ done (Linux/macOS) |
 | 5 | Ask-user / elicitation | Follow deepseek interaction/user-questions | S–M (1–2 chunks) | A | ✅ done (`8404c8f` + `97c7a7e` + self-review `28c7aae`) |
 | 6 | Plan | Follow deepseek plan-mode (logged collaboration state) | S (1 chunk) | A | ✅ done |
@@ -162,6 +176,24 @@ Verified against the actual repo (`packages/*`):
 | TUI, app-server, cloud | No (product layer) | Do not copy |
 
 ## The Cordis-compat container (L4) — design
+
+> **Status (2026-08-22):** committed build — **C0 spike passed; C1 container
+> core + C3 skill-filesystem hosted** (9 cordis tests green). See
+> `docs/cordis-compat-plan.md`. Key architecture change: use the **real
+> published `@deepseek-ai/cordis` runtime + published dsh contracts** (all on
+> npm with types) instead of re-implementing a Cordis facade. The container
+> then only writes envoy-native service adapters (tools/fs/shell/session/
+> llm/logger) and hosts an audited whitelist of deepseek plugins. C0 spike
+> (host `dsh-jobs-local` with parity vs `src/jobs`) **passed** — the
+> `@envoymesh/envoy-harness-cordis` package boots the real Cordis runtime,
+> drives a full job lifecycle, and matches envoy's native jobs behavior.
+> C1 generalized the boot into `createCordisContainer` (whitelist, dependency
+> order, isolation, status, dispose); `skill-filesystem` is hosted with
+> parity against envoy's SKILL.md loader. C2 shipped the sandbox-gated
+> `EnvoyFileSystem` adapter (writes outside writable roots denied); C3 added
+> `credentials-local` + `web-search-exa` (terminal-bash blocked on stale npm
+> publication); C4 added envoy-native bridges (hosted skills → `SkillProvider`,
+> hosted jobs → `JobRegistry`) + `capabilities()`.
 
 **Goal (optional, future):** host a *curated whitelist* of deepseek Cordis
 plugins inside envoy-harness so "reuse deepseek extensions" is literally true
@@ -788,16 +820,27 @@ Two commits on `fix_gaps` after Pass 2:
 
 ### Pre-existing items still open
 
-- **Cordis-compat container** — deferred to Phase G
-  per chunk 3.1 plan; not in gap-closure scope.
-- **Pre-existing multiformats TS errors** in EnvoyMesh
-  `packages/network/src/index.ts` (3× TS2345,
-  `CID<unknown, number, number, ...>` type
-  incompatibility between multiformats@13.4.2 and
-  14.0.5) — separate workstream.
-- **v1.16 implementation** — BLOCKED on EH runtime
-  per-call model override support (envoy-harness team
-  effort).
+- **Cordis-compat container** — **planned** (committed build):
+  `docs/cordis-compat-plan.md`. C0 spike first (2–3 days), then container
+  core (C1), envoy service adapters (C2), whitelist expansion (C3), mesh
+  exposure (C4).
+- **Pre-existing multiformats TS errors** — ✅ **fixed**
+  (2026-08-22): `packages/network` aligned to
+  `multiformats@^14.0.0` (the rest of the graph already
+  used 14.0.5) + the phantom `uint8arraylist` dep
+  declared; `.npmrc` `shamefully-hoist` + pnpm
+  `onlyBuiltDependencies` (hnswlib-node, node-pty)
+  restore the flat layout + native builds pnpm 10
+  removes/blocked. Full `tsc -b` clean; 443 node tests
+  green.
+- **v1.16 implementation** — ✅ **DONE** (2026-08-22):
+  `ExecuteInput.verifierModel` +
+  `EnvoyHarnessAdapter.execute` → `buildAgent`
+  `providerHint` + EH runtime per-call model override
+  (`parseProviderHint` + `modelFactory`) +
+  `chainVerify.verifierProviderHint` → second adapter +
+  audit + `buildEnvoyHarnessAdapterWithCrossVerify`
+  `verifierProviderHint?`.
 - **Tauri team** to ship the v1.12 (chain report) +
   v1.15 (per-runtime tag map) actual UI.
 

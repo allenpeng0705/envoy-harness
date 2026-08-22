@@ -29,6 +29,13 @@ export {
 } from "./registry.js";
 export { renderSkillContent } from "./render.js";
 export {
+  renderSkillCatalog,
+  skillCatalogDigest,
+  nextCatalogMessage,
+  createSkillCatalogFragment,
+  type SkillCatalogOptions,
+} from "./catalog.js";
+export {
   type SkillDefinition,
   type SkillProvider,
   type SkillSummary,

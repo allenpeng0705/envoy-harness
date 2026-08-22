@@ -33,6 +33,7 @@ import {
   type ConfigLayer,
   type Session,
   type SessionMetadata,
+  buildAgentSystemPrompt,
 } from "../../index.js";
 import { wireEnvironmentTools } from "../../environment/index.js";
 import { policyFromMode } from "../../permissions/policy.js";
@@ -252,11 +253,12 @@ export async function runAgent(
       | "granular"
       | "never";
   }
-  if (parsed.plan) {
-    agentOptions.systemPrompt =
-      "You are in PLAN MODE. Investigate and produce a plan only — " +
-      "do not make any changes to the workspace. Your session is read-only.";
-  }
+  // Phase G — wire the system-prompt assembly (AGENTS.md discovery +
+  // optional plan mode + terminal guidance) instead of a flat string.
+  agentOptions.systemPrompt = await buildAgentSystemPrompt({
+    cwd,
+    plan: parsed.plan === true,
+  });
   if (options.askHandler) {
     agentOptions.askHandler = options.askHandler;
   } else {

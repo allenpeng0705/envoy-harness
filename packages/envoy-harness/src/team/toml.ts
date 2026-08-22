@@ -268,7 +268,9 @@ function toAgentSpec(raw: unknown, index: number): AgentSpec {
   if (typeof role !== "string") {
     throw new TomlParseError(0, "", `agents[${index}].role must be a string`);
   }
-  if (typeof systemPrompt !== "string") {
+  // Phase G: `system_prompt` is optional — when absent, the runner
+  // defaults to the assembled AGENTS.md + guidance prompt.
+  if (systemPrompt !== undefined && typeof systemPrompt !== "string") {
     throw new TomlParseError(
       0,
       "",
@@ -302,5 +304,11 @@ function toAgentSpec(raw: unknown, index: number): AgentSpec {
       return d;
     });
   }
-  return { id, role, systemPrompt, objective, dependsOn };
+  return {
+    id,
+    role,
+    objective,
+    dependsOn,
+    ...(systemPrompt !== undefined ? { systemPrompt } : {}),
+  };
 }

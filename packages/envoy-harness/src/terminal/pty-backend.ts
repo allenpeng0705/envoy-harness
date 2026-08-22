@@ -21,6 +21,9 @@ import type {
 } from "./types.js";
 
 const DEFAULT_READ_COUNT = 500;
+const DEFAULT_QUIET_MS = 100;
+const DEFAULT_QUIESCENCE_TIMEOUT_MS = 5_000;
+const DEFAULT_POLL_MS = 25;
 const require = createRequire(import.meta.url);
 
 /** Minimal subset of the `node-pty` IPty surface we use. */
@@ -98,6 +101,74 @@ function pageLines(
   };
 }
 
+/**
+ * Wait for terminal output to go quiet (deepseek "readiness detection" /
+ * `inferred_idle` parity). Resolves when the retained line buffer stops
+ * growing for `quietMs`, the session exits, or `timeoutMs` elapses.
+ * Polling-based so it is hermetic and deterministic in tests.
+ */
+export function waitForQuiescence(opts: {
+  lines: string[];
+  getStatus: () => TerminalSessionStatus;
+  signal?: AbortSignal;
+  quietMs?: number;
+  timeoutMs?: number;
+  pollMs?: number;
+}): Promise<"inferred_idle" | "timeout" | "session_exit"> {
+  const quietMs = opts.quietMs ?? DEFAULT_QUIET_MS;
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_QUIESCENCE_TIMEOUT_MS;
+  const pollMs = opts.pollMs ?? DEFAULT_POLL_MS;
+  const started = Date.now();
+  return new Promise((resolve) => {
+    if (opts.signal?.aborted) {
+      resolve("timeout");
+      return;
+    }
+    let last = totalChars(opts.lines);
+    let lastChangedAt = started;
+    const timer = setInterval(() => {
+      if (opts.signal?.aborted) {
+        clearInterval(timer);
+        resolve("timeout");
+        return;
+      }
+      if (opts.getStatus().kind === "exited") {
+        clearInterval(timer);
+        resolve("session_exit");
+        return;
+      }
+      const now = Date.now();
+      const current = totalChars(opts.lines);
+      if (current !== last) {
+        last = current;
+        lastChangedAt = now;
+      }
+      if (now - lastChangedAt >= quietMs) {
+        clearInterval(timer);
+        resolve("inferred_idle");
+        return;
+      }
+      if (now - started >= timeoutMs) {
+        clearInterval(timer);
+        resolve("timeout");
+        return;
+      }
+    }, pollMs);
+  });
+}
+
+/** Total retained characters (lines + newline separators). */
+function totalChars(lines: string[]): number {
+  let n = lines.length > 0 ? lines.length - 1 : 0;
+  for (const line of lines) n += line.length;
+  return n;
+}
+
+/** The full retained terminal text (the delta basis for send viewports). */
+function retainedText(lines: string[]): string {
+  return lines.join("\n");
+}
+
 function mapSignal(signal: TerminalSignal): string {
   switch (signal) {
     case "SIGINT":
@@ -125,18 +196,29 @@ function createPtySession(
     startSend(request: TerminalSendRequest): TerminalSendOperation {
       const chunk =
         request.submit === true ? `${request.text}\n` : request.text;
+      const before = retainedText(lines);
+      let latestViewport = chunk;
       handle.write(chunk);
-      const viewport = chunk;
-      const done = Promise.resolve({
-        viewport,
-        waitReason: "inferred_idle" as const,
-        sessionStatus: getStatus(),
-        truncated: false,
+      const done = waitForQuiescence({
+        lines,
+        getStatus,
+        ...(request.signal !== undefined ? { signal: request.signal } : {}),
+      }).then((waitReason) => {
+        const after = retainedText(lines);
+        const viewport =
+          after.length > before.length ? after.slice(before.length) : chunk;
+        latestViewport = viewport;
+        return {
+          viewport,
+          waitReason,
+          sessionStatus: getStatus(),
+          truncated: false,
+        };
       });
       return {
         done,
         readOutput() {
-          return { delta: viewport, truncated: false };
+          return { delta: latestViewport, truncated: false };
         },
         cancel() {
           return false;

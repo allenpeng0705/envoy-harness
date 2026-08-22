@@ -43,7 +43,15 @@
  * constructor are additive.
  */
 
-import { Agent, HookRegistry, InMemorySession, newSessionId, ToolRegistry, type ModelAdapter } from "../index.js";
+import {
+  Agent,
+  buildAgentSystemPrompt,
+  HookRegistry,
+  InMemorySession,
+  newSessionId,
+  ToolRegistry,
+  type ModelAdapter,
+} from "../index.js";
 import type { AgentRunResult, AgentSpec, TeamConfig, TeamResult } from "./types.js";
 
 /** Options for `Team`. */
@@ -177,7 +185,11 @@ export class Team {
       session,
       hooks,
       cwd: this.cwd,
-      systemPrompt: spec.systemPrompt,
+      // Phase G — when the team spec doesn't pin a system prompt, fall
+      // back to the default assembly (AGENTS.md discovery + guidance).
+      systemPrompt:
+        spec.systemPrompt ??
+        (await buildAgentSystemPrompt({ cwd: this.cwd })),
       ...partial,
     });
     const result = await agent.run(prompt);

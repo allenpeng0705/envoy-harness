@@ -337,14 +337,13 @@ export class ToolExecutor {
     }
 
     // T3.3 + T3.12: MCP routing. When the call name
-    // starts with MCP_TOOL_PREFIX, route to the
-    // matching client. Skips the built-in tool
-    // lookup (the registry IS the authority for MCP
-    // tools). Uses the constant (not the literal
-    // "mcp__") so name-construction in
-    // `run-loop.ts:115` + routing here stay in sync
-    // if the prefix ever changes.
-    if (call.name.startsWith(MCP_TOOL_PREFIX)) {
+    // starts with MCP_TOOL_PREFIX AND the tool is not
+    // registered in the ToolRegistry (the
+    // `registerMcpTools` bridge), route to the matching
+    // client directly. A registry-registered MCP tool
+    // flows through the normal path so envoy's hooks,
+    // arg validation, and permissions govern it.
+    if (call.name.startsWith(MCP_TOOL_PREFIX) && tool === undefined) {
       await this.executeMcpCall(call, iteration);
       return;
     }

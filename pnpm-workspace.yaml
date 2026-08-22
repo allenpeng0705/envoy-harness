@@ -1,2 +1,8 @@
 packages:
   - "packages/*"
+
+# Native addons whose build scripts pnpm must run (pnpm 10 blocks them by
+# default). koffi is the FFI backend of @deepseek-ai/dsh-fs-local; without
+# its binding the hosted fs service fails to load.
+onlyBuiltDependencies:
+  - koffi

@@ -228,6 +228,44 @@ describe("EnvoyHarnessAdapter.buildManifest", () => {
 // ---------------------------------------------------------------------------
 
 describe("EnvoyHarnessAdapter.execute — text-only response", () => {
+  it("forwards input.verifierModel to buildAgent as providerHint (v1.16)", async () => {
+    let receivedHint: string | undefined = undefined;
+    const model = scriptedModel([
+      { content: [{ type: "text", text: "verifier output" }] },
+    ]);
+    const a = new EnvoyHarnessAdapter({
+      buildAgent: (args) => {
+        receivedHint = args.providerHint;
+        return buildAgentWith(model)(args);
+      },
+      signResult: fakeSign("peer-1"),
+      workerPeerId: "peer-1",
+    });
+    const signed = await a.execute({
+      ...baseExecuteInput,
+      verifierModel: "anthropic:claude-instant",
+    });
+    expect(receivedHint).toBe("anthropic:claude-instant");
+    expect(signed.content).toEqual([{ kind: "text", text: "verifier output" }]);
+  });
+
+  it("omits providerHint when input.verifierModel is absent (v1.16)", async () => {
+    let receivedHint: unknown = "sentinel";
+    const model = scriptedModel([
+      { content: [{ type: "text", text: "ok" }] },
+    ]);
+    const a = new EnvoyHarnessAdapter({
+      buildAgent: (args) => {
+        receivedHint = args.providerHint;
+        return buildAgentWith(model)(args);
+      },
+      signResult: fakeSign("peer-1"),
+      workerPeerId: "peer-1",
+    });
+    await a.execute({ ...baseExecuteInput });
+    expect(receivedHint).toBeUndefined();
+  });
+
   it("builds an Agent, runs the skill, signs the result", async () => {
     const model = scriptedModel([
       {

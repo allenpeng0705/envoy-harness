@@ -197,8 +197,10 @@ describe("/compact", () => {
     // The /context call happens before /compact. Find the
     // messages count, then verify /compact reports a
     // drop to 20.
-    expect(out.data).toMatch(/^messages: 24\b/m);
-    expect(out.data).toMatch(/^compacted: 24 → 20 messages \(kept last 20\)$/m);
+    // Phase G: the REPL prepends the assembled system prompt (AGENTS.md),
+    // so the transcript is 12 turns + 1 system message = 25.
+    expect(out.data).toMatch(/^messages: 25\b/m);
+    expect(out.data).toMatch(/^compacted: 25 → 21 messages \(kept last 20\)$/m);
     expect(err.data).toBe("");
   });
 
@@ -222,7 +224,7 @@ describe("/compact", () => {
       stderr: new StringWritable(),
       historyPath: "",
     });
-    expect(out.data).toMatch(/^compacted: 12 → 3 messages \(kept last 3\)$/m);
+    expect(out.data).toMatch(/^compacted: 13 → 4 messages \(kept last 3\)$/m);
   });
 
   it("rejects a non-numeric <keep> arg", async () => {
@@ -305,7 +307,7 @@ describe("/compact", () => {
     });
     // 2 messages (1 user + 1 assistant); 2 < 100, so it's
     // a no-op. The command still prints the summary.
-    expect(out.data).toMatch(/^compacted: 2 → 2 messages \(kept last 100\)$/m);
+    expect(out.data).toMatch(/^compacted: 3 → 3 messages \(kept last 100\)$/m);
   });
 });
 
@@ -341,7 +343,7 @@ describe("/compact flags (Phase A item 1)", () => {
       stderr: new StringWritable(),
       historyPath: "",
     });
-    expect(out.data).toMatch(/^compacted: 12 → 3 messages \(kept last 3\)$/m);
+    expect(out.data).toMatch(/^compacted: 13 → 4 messages \(kept last 3\)$/m);
   });
 
   it("/compact --budget 100 uses the budget strategy", async () => {
@@ -360,7 +362,7 @@ describe("/compact flags (Phase A item 1)", () => {
     });
     // The budget strategy adds a strategy label.
     expect(out.data).toMatch(
-      /^compacted \(budget\): 12 → \d+ messages \(\d+ tokens, dropped \d+\)$/m,
+      /^compacted \(budget\): 13 → \d+ messages \(\d+ tokens, dropped \d+\)( \(over budget — consider --summarize\))?$/m,
     );
   });
 

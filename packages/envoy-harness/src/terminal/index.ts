@@ -11,11 +11,16 @@ export { createFakeTerminalBackend } from "./fake-backend.js";
 export {
   createPtyTerminalBackend,
   isPtyAvailable,
+  waitForQuiescence,
 } from "./pty-backend.js";
 
 export { createTerminalSessionService } from "./service.js";
 
-export { makeTerminalTools, registerTerminalTools } from "./tools.js";
+export {
+  capTextUtf8,
+  makeTerminalTools,
+  registerTerminalTools,
+} from "./tools.js";
 
 export type {
   TerminalBackend,

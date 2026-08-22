@@ -39,7 +39,9 @@ export interface AgentSpec {
   /** Free-form role label (e.g. "explore", "review"). */
   role: string;
   /** The system prompt for this agent. */
-  systemPrompt: string;
+  /** System prompt; omitted → the runner defaults to the assembled
+   *  AGENTS.md + guidance prompt (Phase G). */
+  systemPrompt?: string;
   /** The objective (the user task; can include
    *  `${input}` placeholders that get substituted
    *  with the team-level input). */

@@ -4,8 +4,16 @@
 
 import { z } from "zod";
 
+import type {
+  JobHooks,
+  JobOutcome,
+  JobRegistry,
+} from "../jobs/types.js";
 import type { Tool, ToolResult } from "../tools/types.js";
-import type { TerminalSessionService } from "./types.js";
+import type {
+  TerminalSendOperation,
+  TerminalSessionService,
+} from "./types.js";
 import { TerminalError } from "./types.js";
 
 const SIGNAL_SCHEMA = z.enum([
@@ -15,6 +23,32 @@ const SIGNAL_SCHEMA = z.enum([
   "SIGTSTP",
   "SIGHUP",
 ]);
+
+/** Default UTF-8 cap for a complete terminal result (deepseek parity). */
+const DEFAULT_MAX_RESULT_BYTES = 262144;
+
+/**
+ * Cap a string to `maxBytes` UTF-8 bytes, cutting on a character boundary.
+ * Deepseek parity: every complete terminal result is bounded so a chatty
+ * PTY cannot blow up the context window.
+ */
+export function capTextUtf8(
+  text: string,
+  maxBytes = DEFAULT_MAX_RESULT_BYTES,
+): { text: string; truncated: boolean } {
+  if (Buffer.byteLength(text, "utf8") <= maxBytes) {
+    return { text, truncated: false };
+  }
+  const encoder = new TextEncoder();
+  const bytes = encoder.encode(text);
+  let end = maxBytes;
+  // Back off to a UTF-8 boundary: continuation bytes start with 10xxxxxx.
+  while (end > 0 && (bytes[end]! & 0xc0) === 0x80) end--;
+  return {
+    text: new TextDecoder().decode(bytes.subarray(0, end)),
+    truncated: true,
+  };
+}
 
 function errResult(err: unknown): ToolResult {
   if (err instanceof TerminalError) {
@@ -30,7 +64,10 @@ function errResult(err: unknown): ToolResult {
 }
 
 /** Build the six terminal tools bound to a session service. */
-export function makeTerminalTools(service: TerminalSessionService): Tool[] {
+export function makeTerminalTools(
+  service: TerminalSessionService,
+  jobs?: JobRegistry,
+): Tool[] {
   const terminalOpen: Tool = {
     name: "terminal_open",
     description:
@@ -83,6 +120,14 @@ export function makeTerminalTools(service: TerminalSessionService): Tool[] {
         .boolean()
         .optional()
         .describe("Submit Enter after text (default true)"),
+      run_in_background: z
+        .boolean()
+        .optional()
+        .describe(
+          "Return immediately with a job id instead of waiting for " +
+            "idle/timeout/exit; collect the result via job_output / " +
+            "job_wait, and cancel via job_kill (SIGINT)",
+        ),
     }),
     async execute(args, ctx): Promise<ToolResult> {
       try {
@@ -91,11 +136,46 @@ export function makeTerminalTools(service: TerminalSessionService): Tool[] {
           submit: args.submit ?? true,
           signal: ctx.abortSignal,
         });
+        if (args.run_in_background === true) {
+          if (jobs === undefined) {
+            return {
+              content:
+                "terminal_send background: true requires a job registry " +
+                "(wireEnvironmentTools)",
+              isError: true,
+            };
+          }
+          // Deepseek parity: the PTY service's exclusive per-session send
+          // reservation happens BEFORE the job id is returned (preflight),
+          // so a second concurrent send on the same session fails fast.
+          const jobId = jobs.start({
+            kind: "terminal",
+            label: `terminal_send ${args.sessionId}`,
+            owner: ctx.session.id,
+            run: () =>
+              terminalSendJobHooks({
+                service,
+                owner: ctx.session.id,
+                sessionId: args.sessionId,
+                operation,
+              }),
+          });
+          return { content: JSON.stringify({ kind: "background", jobId }) };
+        }
         const result = await operation.done;
         if (ctx.abortSignal.aborted) {
           return { content: "terminal send aborted", isError: true };
         }
-        return { content: JSON.stringify({ kind: "foreground", ...result }) };
+        const viewport = capTextUtf8(result.viewport);
+        return {
+          content: JSON.stringify({
+            kind: "foreground",
+            viewport: viewport.text,
+            waitReason: result.waitReason,
+            sessionStatus: result.sessionStatus,
+            truncated: viewport.truncated,
+          }),
+        };
       } catch (err) {
         return errResult(err);
       }
@@ -128,7 +208,16 @@ export function makeTerminalTools(service: TerminalSessionService): Tool[] {
           ...(args.offset !== undefined ? { offset: args.offset } : {}),
           ...(args.count !== undefined ? { count: args.count } : {}),
         });
-        return { content: JSON.stringify(result) };
+        const capped = capTextUtf8(result.text);
+        return {
+          content: JSON.stringify({
+            text: capped.text,
+            totalLines: result.totalLines,
+            lineBegin: result.lineBegin,
+            lineEnd: result.lineEnd,
+            truncated: result.truncated || capped.truncated,
+          }),
+        };
       } catch (err) {
         return errResult(err);
       }
@@ -212,8 +301,39 @@ export function makeTerminalTools(service: TerminalSessionService): Tool[] {
 export function registerTerminalTools(
   tools: { register(tool: Tool): unknown },
   service: TerminalSessionService,
+  jobs?: JobRegistry,
 ): void {
-  for (const tool of makeTerminalTools(service)) {
+  for (const tool of makeTerminalTools(service, jobs)) {
     tools.register(tool);
   }
+}
+
+/** Job hooks for a background terminal send (deepseek parity). */
+function terminalSendJobHooks(opts: {
+  service: TerminalSessionService;
+  owner: string;
+  sessionId: string;
+  operation: TerminalSendOperation;
+}): JobHooks {
+  let cancelled = false;
+  return {
+    cancel(_reason?: string) {
+      if (cancelled) return;
+      cancelled = true;
+      opts.operation.cancel();
+      // Deepseek parity: job_kill delivers SIGINT to the foreground
+      // process group (best-effort — the send may already have settled).
+      void opts.service
+        .signal(opts.owner, opts.sessionId, "SIGINT")
+        .catch(() => {});
+    },
+    done: opts.operation.done.then(
+      (result): JobOutcome => ({
+        status: cancelled ? "killed" : "completed",
+        detail: `waitReason=${result.waitReason}`,
+        ...(result.viewport !== "" ? { output: result.viewport } : {}),
+      }),
+    ),
+    readOutput: () => opts.operation.readOutput().delta,
+  };
 }

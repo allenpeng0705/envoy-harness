@@ -193,7 +193,7 @@ export function wireEnvironmentTools(
   } else {
     terminals.registerBackend(createFakeTerminalBackend());
   }
-  registerTerminalTools(tools, terminals);
+  registerTerminalTools(tools, terminals, jobs);
 
   // SKILL.md loader (L0 reuse): project + user roots, codex /
   // deepseek / universal. Hosts can disable by passing
