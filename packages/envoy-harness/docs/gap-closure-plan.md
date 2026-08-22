@@ -697,6 +697,112 @@ is optional future work — not unfinished Package-1 gaps.
 
 ---
 
+## Review pass status
+
+Three review passes have landed since the gap-closure work
+finished. Each pass found real bugs in the prior work; the
+fixes are committed as discrete commits on the `fix_gaps`
+branch.
+
+### Pass 1 — internal self-review (`d7d46b0`)
+
+23 files, +1365 / −217. 12 bugs across the Phase C–G
+batch: `permission-hook` handler signature mismatch,
+`FrameDecoder` DoS, `fetch-http` `arrayBuffer()` DoS,
+fetch-http missing timeout, sandbox backend code
+duplication, sandbox backends no output cap, landlock
+`api.launcherPath()` not in try/catch, ACP / SDK
+`decision.decision` cast, connection.request no timeout,
+`run --acp` env leak, telemetry silent write failures,
+`session/query` dead code. Tests: 1404 → 1481 (+77).
+
+### Pass 2 — external review by Allen (`0072a50`)
+
+9 files, +576 / −37. Closed:
+
+- **Blocker 1** (e2e hermeticity): `policyFromMode` now
+  defaults `backend: "none"` (validators only);
+  `resolveSandboxExecutor` respects `policy.backend` (no
+  silent platform swap); new `--sandbox-executor
+  landlock|seatbelt|none` CLI flag; `darwin-sandbox`
+  added to `SandboxBackendSchema`. E2E is hermetic on
+  any platform.
+- **Blocker 2** (EnvoyMesh typecheck): `pnpm install`
+  materialized the `@envoymesh/envoy-harness-client`
+  link; `acp-host.ts` TS2307 errors gone.
+- **Medium 5** (feedback → self-evolve): `feedbackProvider?`
+  injection on `SelfEvolveOptions`; `loadFeedbackSignals()`
+  maps to `SelfEvolveFeedbackSignal[]`; empty-array
+  back-compat when no provider.
+- **Medium 6** (landlock probe caching): verdict cached
+  per executor instance, invalidates on api change +
+  on "unusable" verdict.
+- **Medium 7** (exit-125 attribution): inspect
+  `result.exitCode === api.LAUNCHER_FAILURE_EXIT` + stderr
+  diagnostic to distinguish launcher failure from a
+  wrapped command that legitimately exits 125.
+
+Tests: 1484 → 1491 (+7: 3 sandbox hermeticity, 2 landlock
+probe, 2 self-evolve feedback).
+
+### Pass 3 — SKILL.md loader + runtime plugin loading
+
+Two commits on `fix_gaps` after Pass 2:
+
+- **`193f2d8` — SKILL.md loader (L0 reuse, Medium 3).**
+  One loader for codex / deepseek / universal roots
+  (`~/.codex/skills/`, `~/.dsh/skills/`,
+  `~/.agents/skills/`, project `.envoy/skills/`).
+  Project-local wins. Hand-written YAML-subset
+  frontmatter parser (no YAML dep). Per-file isolation:
+  malformed SKILL.md is skipped, never crashes the
+  catalog. `<skill_content>` block in deepseek shape
+  with XML escaping. `skill` + `skill_list` tools wire
+  into `ToolRegistry` via `environment/wire.ts`; opt
+  out via `WireEnvironmentOptions.enableSkills`.
+  Plus 3 low-priority review fixups (seatbelt
+  path-escape newline hardening, seatbelt profile
+  breadth documentation, module-size gate extended to
+  tui / client / adapter packages).
+  Tests: 1491 → 1522 (+31: 30 skills + 1 seatbelt
+  escape regression).
+
+- **`4fa60d8` — runtime plugin loading (Medium 4).**
+  Before: the only way to add a plugin to the
+  allow-list was to edit `src/plugins/whitelist.ts`
+  and recompile. Now: a `plugins.allow: string[]`
+  field on the user config; the runner builds a merged
+  allow-list at startup (built-in samples ∪
+  user-configured entries). Every `--plugin <name>`
+  is checked against that set. The error message names
+  the user's `plugins.allow` field so the fix is one
+  config edit. The security boundary is preserved:
+  `await import(name)` is still gated by the
+  allow-list, and the loaded module is still validated
+  against the `CapabilityModule` shape.
+  New: `src/plugins/allowlist.ts` with
+  `resolvePluginAllowList({ builtin?, configured? })`.
+  Refactored `loadPlugin` to take the resolved
+  allow-list as a required parameter. Tests:
+  1522 → 1530 (+8 allowlist tests).
+
+### Pre-existing items still open
+
+- **Cordis-compat container** — deferred to Phase G
+  per chunk 3.1 plan; not in gap-closure scope.
+- **Pre-existing multiformats TS errors** in EnvoyMesh
+  `packages/network/src/index.ts` (3× TS2345,
+  `CID<unknown, number, number, ...>` type
+  incompatibility between multiformats@13.4.2 and
+  14.0.5) — separate workstream.
+- **v1.16 implementation** — BLOCKED on EH runtime
+  per-call model override support (envoy-harness team
+  effort).
+- **Tauri team** to ship the v1.12 (chain report) +
+  v1.15 (per-runtime tag map) actual UI.
+
+---
+
 ## Explicit "do not" list
 
 - Do **not** adopt Cordis as a platform (deepseek) — the plugin system is the
