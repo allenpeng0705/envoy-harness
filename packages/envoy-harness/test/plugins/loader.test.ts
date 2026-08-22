@@ -2,13 +2,10 @@
  * Phase B / Item 3.1 — plugin loader tests.
  *
  * **Hermetic:** every test creates a temp JS file
- * representing a `CapabilityModule`, adds the path
- * to the whitelist (mutating the production
- * `Set` via the documented cast), loads it via
- * `loadPlugin`, then removes the entry + deletes
- * the temp file in `afterEach`. The production
- * whitelist is restored to its original state
- * between tests.
+ * representing a `CapabilityModule`, builds a custom
+ * allow-list including the temp file's path, loads it
+ * via `loadPlugin`, then deletes the temp file in
+ * `afterEach`.
  *
  * **Coverage:**
  * 1. A module that exports a valid `CapabilityModule`
@@ -18,7 +15,7 @@
  *    `PluginLoadError`.
  * 4. A module with a default export missing `apply` →
  *    `PluginLoadError`.
- * 5. A name NOT in the whitelist → `PluginLoadError`
+ * 5. A name NOT in the allow-list → `PluginLoadError`
  *    (security boundary).
  * 6. A module path that throws on import → `PluginLoadError`.
  * 7. The built-in plugin samples load via the
@@ -36,42 +33,45 @@ import * as path from "node:path";
 import {
   PluginLoadError,
   loadPlugin,
+  resolvePluginAllowList,
+  type ResolvedPluginAllowList,
 } from "../../src/index.js";
-import { PLUGIN_WHITELIST } from "../../src/plugins/index.js";
 
 let tmpDir: string;
-const ORIGINAL_WHITELIST = new Set(PLUGIN_WHITELIST);
+let allowList: ResolvedPluginAllowList;
+let extraNames: Set<string>;
 
 beforeEach(async () => {
   tmpDir = await mkdtemp(path.join(os.tmpdir(), "envoy-plugin-loader-"));
-  // Reset the whitelist to the production state (in
-  // case a previous test added a temp entry that the
-  // afterEach didn't clean up).
-  (PLUGIN_WHITELIST as Set<string>).clear();
-  for (const v of ORIGINAL_WHITELIST) (PLUGIN_WHITELIST as Set<string>).add(v);
+  // Each test starts with a fresh, empty allow-list
+  // (no built-ins, no extras) and grows it as
+  // `writePlugin` adds temp file paths. This isolates
+  // tests from each other and from the production
+  // whitelist.
+  extraNames = new Set<string>();
+  allowList = resolvePluginAllowList({
+    builtin: new Set<string>(),
+    configured: [],
+  });
 });
 
 afterEach(async () => {
-  // Restore the production whitelist.
-  (PLUGIN_WHITELIST as Set<string>).clear();
-  for (const v of ORIGINAL_WHITELIST) (PLUGIN_WHITELIST as Set<string>).add(v);
   await rm(tmpDir, { recursive: true, force: true });
 });
 
 /**
  * Write a JS file at `<tmpDir>/<name>.js` with the
  * given source, and add the absolute path to the
- * whitelist. Returns the absolute path.
- *
- * The whitelist expects module SPECIFIERS, not
- * paths — so we use the FILE PATH directly (Node's
- * `import()` accepts absolute paths starting with
- * `/`).
+ * per-test allow-list. Returns the absolute path.
  */
 async function writePlugin(name: string, source: string): Promise<string> {
   const file = path.join(tmpDir, `${name}.js`);
   await writeFile(file, source, "utf8");
-  (PLUGIN_WHITELIST as Set<string>).add(file);
+  extraNames.add(file);
+  allowList = resolvePluginAllowList({
+    builtin: new Set<string>(),
+    configured: [...extraNames],
+  });
   return file;
 }
 
@@ -91,7 +91,7 @@ const module = {
 export default module;
 `,
     );
-    const loaded = await loadPlugin({ modulePath: file });
+    const loaded = await loadPlugin({ modulePath: file, allowList });
     expect(loaded.module.name).toBe("valid-plugin");
     expect(typeof loaded.module.apply).toBe("function");
   });
@@ -107,10 +107,10 @@ describe("loadPlugin: invalid modules", () => {
       "no-default",
       `export const x = 1;`,
     );
-    await expect(loadPlugin({ modulePath: file })).rejects.toThrow(
+    await expect(loadPlugin({ modulePath: file, allowList })).rejects.toThrow(
       PluginLoadError,
     );
-    await expect(loadPlugin({ modulePath: file })).rejects.toThrow(
+    await expect(loadPlugin({ modulePath: file, allowList })).rejects.toThrow(
       /no default export/,
     );
   });
@@ -120,7 +120,7 @@ describe("loadPlugin: invalid modules", () => {
       "no-name",
       `export default { apply() {} };`,
     );
-    await expect(loadPlugin({ modulePath: file })).rejects.toThrow(
+    await expect(loadPlugin({ modulePath: file, allowList })).rejects.toThrow(
       /missing 'name'/,
     );
   });
@@ -130,46 +130,55 @@ describe("loadPlugin: invalid modules", () => {
       "no-apply",
       `export default { name: "x" };`,
     );
-    await expect(loadPlugin({ modulePath: file })).rejects.toThrow(
+    await expect(loadPlugin({ modulePath: file, allowList })).rejects.toThrow(
       /missing 'apply'/,
     );
   });
 
   it("throws when the module path fails to import", async () => {
+    // The path is a temp file (so the allow-list check
+    // passes), but the file does not exist on disk.
+    const ghost = path.join(tmpDir, "does-not-exist.js");
+    extraNames.add(ghost);
+    allowList = resolvePluginAllowList({
+      builtin: new Set<string>(),
+      configured: [...extraNames],
+    });
     await expect(
-      loadPlugin({ modulePath: "/this/path/does/not/exist.js" }),
-    ).rejects.toThrow(/not in whitelist/);
+      loadPlugin({ modulePath: ghost, allowList }),
+    ).rejects.toThrow(/failed to import plugin module/);
   });
 });
 
 // ---------------------------------------------------------------------------
-// 3. Whitelist (security boundary)
+// 3. Allow-list (security boundary)
 // ---------------------------------------------------------------------------
 
-describe("loadPlugin: whitelist", () => {
-  it("rejects a name NOT in the whitelist", async () => {
+describe("loadPlugin: allow-list", () => {
+  it("rejects a name NOT in the allow-list", async () => {
     // The path is real (the file exists), but the
-    // name isn't in the whitelist. The whitelist
+    // name isn't in the allow-list. The allow-list
     // check fires BEFORE the import.
     const file = await writePlugin(
       "real-file",
       `export default { name: "x", apply() {} };`,
     );
-    // Remove the path from the whitelist (the
-    // helper added it; we want the test to assert
-    // the "not whitelisted" path).
-    (PLUGIN_WHITELIST as Set<string>).delete(file);
-    await expect(loadPlugin({ modulePath: file })).rejects.toThrow(
-      /not in whitelist/,
-    );
+    // Build a NEW allow-list that excludes the temp path.
+    const strictList = resolvePluginAllowList({
+      builtin: new Set<string>(),
+      configured: [],
+    });
+    await expect(
+      loadPlugin({ modulePath: file, allowList: strictList }),
+    ).rejects.toThrow(/not in allow-list/);
   });
 
-  it("accepts a name in the whitelist", async () => {
+  it("accepts a name in the allow-list", async () => {
     const file = await writePlugin(
-      "in-whitelist",
+      "in-allow-list",
       `export default { name: "x", apply() {} };`,
     );
-    const loaded = await loadPlugin({ modulePath: file });
+    const loaded = await loadPlugin({ modulePath: file, allowList });
     expect(loaded.module.name).toBe("x");
   });
 });

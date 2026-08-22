@@ -2,10 +2,10 @@
  * Phase B / Item 3.1 — plugin loader.
  *
  * **What this is:** a one-shot factory that takes a
- * module path, validates it against the whitelist,
- * dynamically imports the module, validates the default
- * export against `CapabilityModule`, and returns the
- * module + a `Disposable`.
+ * module path, validates it against the resolved
+ * allow-list, dynamically imports the module, validates
+ * the default export against `CapabilityModule`, and
+ * returns the module + a `Disposable`.
  *
  * **Why dynamic `import()`:** the module path is
  * host-supplied (from `--plugin <module>` on the CLI,
@@ -13,15 +13,16 @@
  * imports are resolved at compile time and don't
  * support user-supplied paths.
  *
- * **Why a whitelist:** `await import(modulePath)` is a
- * code-execution vector. A whitelist is the security
- * boundary. The user controls the whitelist (via the
- * built-in list + future opt-in paths).
+ * **Why an allow-list:** `await import(modulePath)` is a
+ * code-execution vector. The allow-list is the security
+ * boundary: the user controls which plugin names are
+ * loadable by enumerating them in `config.plugins.allow`
+ * (or by relying on the in-binary built-in samples).
  *
  * **Why a factory, not a static constructor:** the
  * loader is the one-shot factory; the `PluginRegistry`
  * is the long-lived store. The factory validates the
- * module shape + the whitelist match; the registry
+ * module shape + the allow-list match; the registry
  * owns the lifecycle (apply + dispose).
  */
 
@@ -30,9 +31,12 @@ import {
   type CapabilityModule,
 } from "./types.js";
 import {
+  type ResolvedPluginAllowList,
+  isAllowedPlugin,
+} from "./allowlist.js";
+import {
   getBuiltinPlugin,
   isBuiltinPlugin,
-  isWhitelistedPlugin,
 } from "./whitelist.js";
 
 /** The result of `loadPlugin`. The caller registers
@@ -48,9 +52,19 @@ export interface LoadedPlugin<Config = unknown> {
 /** Options for `loadPlugin`. */
 export interface LoadPluginOptions {
   /** The module path to import. The path MUST be in the
-   *  whitelist (see `whitelist.ts`); an unwhitelisted
+   *  resolved allow-list (built-in samples + the
+   *  user's `config.plugins.allow`); an unallowed
    *  path throws `PluginLoadError`. */
   modulePath: string;
+  /**
+   * The resolved allow-list (built-in ∪ configured).
+   * The runner builds this once at startup via
+   * `resolvePluginAllowList` and passes the same
+   * instance to every `loadPlugin` call so all
+   * plugins on a single run are gated by the same
+   * set.
+   */
+  allowList: ResolvedPluginAllowList;
 }
 
 /**
@@ -61,7 +75,9 @@ export interface LoadPluginOptions {
  * resolved by Node's module loader).
  *
  * **Errors:**
- * - Module path not in the whitelist → `PluginLoadError`.
+ * - Module path not in the allow-list → `PluginLoadError`
+ *   (the message names the user's `plugins.allow` field
+ *   so the fix is one config edit).
  * - Module has no default export → `PluginLoadError`.
  * - Default export is missing `name` or `apply` →
  *   `PluginLoadError` (with the specific field name).
@@ -77,11 +93,12 @@ export interface LoadPluginOptions {
 export async function loadPlugin<Config = unknown>(
   options: LoadPluginOptions,
 ): Promise<LoadedPlugin<Config>> {
-  const { modulePath } = options;
-  if (!isWhitelistedPlugin(modulePath)) {
+  const { modulePath, allowList } = options;
+  if (!isAllowedPlugin(modulePath, allowList)) {
     throw new PluginLoadError(
-      `plugin not in whitelist: ${modulePath} ` +
-        `(add it to src/plugins/whitelist.ts to load)`,
+      `plugin not in allow-list: ${modulePath} ` +
+        `(add it to config.plugins.allow in your TOML config, ` +
+        `or use one of the built-in samples: ${[...allowList.builtin].join(", ")})`,
       modulePath,
     );
   }

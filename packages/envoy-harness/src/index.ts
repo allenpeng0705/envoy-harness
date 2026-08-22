@@ -460,6 +460,8 @@ export {
   PluginConfigParseError,
   PluginLoadError,
   PluginRegistry,
+  resolvePluginAllowList,
+  isAllowedPlugin,
   validatePluginConfig,
   type AuditLogConfig,
   type CalculatorConfig,
@@ -470,6 +472,8 @@ export {
   type LoadPluginOptions,
   type PluginConfigEntry,
   type PluginLogger,
+  type ResolvedPluginAllowList,
+  type ResolvePluginAllowListOptions,
   type ZodIssueLike,
 } from "./plugins/index.js";
 

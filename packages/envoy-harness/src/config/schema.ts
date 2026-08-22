@@ -119,6 +119,37 @@ export const ConfigLayerSchema = z
      * config (native + imported) is consistent.
      */
     hooks: z.array(HookHandlerSpecSchema).optional(),
+    /**
+     * Phase G / Item 3 (Review 3 / Medium 4): additional
+     * plugin names the user explicitly trusts. Combined
+     * with the in-binary built-in whitelist (the
+     * `envoy-harness-plugin-*` samples that ship in this
+     * package) to form the runtime allow-list. A name
+     * not in either is rejected by the loader with a
+     * `PluginLoadError`.
+     *
+     * **Security boundary:** the allow-list is the gate.
+     * `await import(name)` is a code-execution vector;
+     * the user controls which plugin names are loadable
+     * by enumerating them here. The loader still validates
+     * the loaded module's `CapabilityModule` shape
+     * (`name` + `apply`); this field is the human
+     * curation step, that validation is the structural
+     * safety net.
+     *
+     * **Format:** each entry is a Node module specifier
+     * (`@scope/pkg`, `my-pkg`, `./relative/path`,
+     * `file:///abs/path`). Built-in names
+     * (`envoy-harness-plugin-audit-log` etc.) are
+     * already in the in-binary allow-list and don't
+     * need to be repeated.
+     */
+    plugins: z
+      .object({
+        allow: z.array(z.string().min(1)).optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 export type ConfigLayer = z.infer<typeof ConfigLayerSchema>;

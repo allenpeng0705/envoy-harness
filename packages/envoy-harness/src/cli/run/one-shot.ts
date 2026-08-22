@@ -325,12 +325,24 @@ export async function runAgent(
     const {
       PluginRegistry,
       loadPlugin,
-      isWhitelistedPlugin,
       mergePluginConfigs,
       PluginConfigError,
       PluginLoadError,
+      resolvePluginAllowList,
+      isAllowedPlugin,
       validatePluginConfig,
     } = await import("../../plugins/index.js");
+    // Build the resolved allow-list (built-in samples ∪
+    // `config.plugins.allow`). This is the security gate
+    // for the loader: every `--plugin` entry is checked
+    // against this set. The runner builds it once per
+    // invocation and threads it through every loadPlugin
+    // call.
+    const allowList = resolvePluginAllowList({
+      ...(configLayer.plugins?.allow !== undefined
+        ? { configured: configLayer.plugins.allow }
+        : {}),
+    });
     const registry = new PluginRegistry();
     const pluginLogger = {
       info: (msg: string) => stderr.write(`[plugin] ${msg}\n`),
@@ -358,18 +370,19 @@ export async function runAgent(
     // the default).
     const configByPlugin = mergePluginConfigs(parsed.pluginConfigs);
     for (const modulePath of parsed.plugins) {
-      // Quick whitelist check (the loader also
+      // Quick allow-list check (the loader also
       // checks; this just gives the user a friendlier
       // error before the async import kicks in).
-      if (!isWhitelistedPlugin(modulePath)) {
+      if (!isAllowedPlugin(modulePath, allowList)) {
         throw new CliError(
-          `plugin not in whitelist: ${modulePath}`,
+          `plugin not in allow-list: ${modulePath} ` +
+            `(add it to config.plugins.allow in your TOML config)`,
           EXIT_USAGE,
         );
       }
       let loaded;
       try {
-        loaded = await loadPlugin({ modulePath });
+        loaded = await loadPlugin({ modulePath, allowList });
       } catch (err) {
         if (err instanceof PluginLoadError) {
           throw new CliError(err.message, EXIT_USAGE);

@@ -26,6 +26,13 @@ export {
   PLUGIN_WHITELIST,
 } from "./whitelist.js";
 export {
+  isAllowedPlugin,
+  isBuiltinPluginName,
+  resolvePluginAllowList,
+  type ResolvedPluginAllowList,
+  type ResolvePluginAllowListOptions,
+} from "./allowlist.js";
+export {
   mergePluginConfigs,
   parsePluginConfigEntry,
   PluginConfigParseError,

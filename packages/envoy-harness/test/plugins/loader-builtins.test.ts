@@ -10,23 +10,34 @@ import {
   calculatorPlugin,
   confirmToolPlugin,
   loadPlugin,
+  resolvePluginAllowList,
 } from "../../src/index.js";
 
 describe("loadPlugin: built-in samples", () => {
+  const allowList = resolvePluginAllowList();
   it("loads envoy-harness-plugin-audit-log via the production path", async () => {
-    const loaded = await loadPlugin({ modulePath: "envoy-harness-plugin-audit-log" });
+    const loaded = await loadPlugin({
+      modulePath: "envoy-harness-plugin-audit-log",
+      allowList,
+    });
     expect(loaded.module.name).toBe("envoy-harness-plugin-audit-log");
     expect(loaded.module).toBe(auditLogPlugin);
   });
 
   it("loads envoy-harness-plugin-confirm-tool", async () => {
-    const loaded = await loadPlugin({ modulePath: "envoy-harness-plugin-confirm-tool" });
+    const loaded = await loadPlugin({
+      modulePath: "envoy-harness-plugin-confirm-tool",
+      allowList,
+    });
     expect(loaded.module.name).toBe("envoy-harness-plugin-confirm-tool");
     expect(loaded.module).toBe(confirmToolPlugin);
   });
 
   it("loads envoy-harness-plugin-calculator", async () => {
-    const loaded = await loadPlugin({ modulePath: "envoy-harness-plugin-calculator" });
+    const loaded = await loadPlugin({
+      modulePath: "envoy-harness-plugin-calculator",
+      allowList,
+    });
     expect(loaded.module.name).toBe("envoy-harness-plugin-calculator");
     expect(loaded.module).toBe(calculatorPlugin);
   });
