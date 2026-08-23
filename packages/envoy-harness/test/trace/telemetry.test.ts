@@ -29,6 +29,7 @@ const toolResult: TraceEvent = {
   ts: new Date().toISOString(),
   iteration: 1,
   callId: "c1",
+  toolName: "job_start",
   result: { content: "ok" },
   durationMs: 12,
 };

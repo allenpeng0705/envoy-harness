@@ -17,6 +17,8 @@ export interface SpawnedTuiOptions {
   cwd?: string;
   command?: string;
   args?: string[];
+  /** Extra argv appended to the harness's `--acp` invocation (e.g. provider/model). */
+  harnessArgs?: string[];
   env?: NodeJS.ProcessEnv;
   onPermission?: (req: PermissionRequest) => Promise<"allow" | "deny">;
   stderr?: SpawnAcpOptions["stderr"];
@@ -28,12 +30,13 @@ export interface SpawnedTui {
 }
 
 /** Resolve `envoy-harness --acp` for monorepo + installed layouts. */
-export function resolveHarnessAcpCommand(): {
+export function resolveHarnessAcpCommand(extraArgs: string[] = []): {
   command: string;
   args: string[];
 } {
+  const harnessArgs = ["--acp", ...extraArgs];
   if (process.env.ENVOY_HARNESS_BIN) {
-    return { command: process.env.ENVOY_HARNESS_BIN, args: ["--acp"] };
+    return { command: process.env.ENVOY_HARNESS_BIN, args: harnessArgs };
   }
 
   const here = path.dirname(fileURLToPath(import.meta.url));
@@ -44,11 +47,11 @@ export function resolveHarnessAcpCommand(): {
   if (existsSync(siblingTs)) {
     return {
       command: process.execPath,
-      args: ["--import", "tsx", siblingTs, "--acp"],
+      args: ["--import", "tsx", siblingTs, ...harnessArgs],
     };
   }
 
-  return { command: "envoy-harness", args: ["--acp"] };
+  return { command: "envoy-harness", args: harnessArgs };
 }
 
 /** Spawn harness `--acp` and return an attached TuiSession. */
@@ -58,7 +61,7 @@ export function createSpawnedTui(
   const resolved =
     options.command !== undefined
       ? { command: options.command, args: options.args ?? ["--acp"] }
-      : resolveHarnessAcpCommand();
+      : resolveHarnessAcpCommand(options.harnessArgs);
 
   let sessionRef: TuiSession | undefined;
   const spawned = spawnAcpServer({

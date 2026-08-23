@@ -255,14 +255,22 @@ export function createPeerUiBackend(
       return { sessionId: "peer-ui" };
     },
     async prompt(params) {
+      const userText =
+        "text" in params.prompt
+          ? params.prompt.text
+          : params.prompt.content
+              .map((block) =>
+                block.type === "text" ? block.text : `[${block.type}]`,
+              )
+              .join("");
       return {
         stopReason: "end_turn",
         messages: [
-          { role: "user", text: params.text },
+          { role: "user", text: userText },
           {
             role: "assistant",
             text:
-              "peer ui is the cluster console — slash commands: /peers /cluster " +
+              "peer ui is the cluster console — slash commands: /mesh /peers /cluster " +
               "/team /scoreboard /route <tag>. Chat requires attaching a harness.",
           },
         ],

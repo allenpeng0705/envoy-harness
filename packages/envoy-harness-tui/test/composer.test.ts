@@ -80,6 +80,35 @@ describe("Composer", () => {
     expect(c.buffer).toBe("/r");
   });
 
+  it("Shift+Enter inserts a newline; plain Enter submits", () => {
+    const c = new Composer();
+    for (const ch of "hello") c.handleKey(ch, key(""));
+    const newline = c.handleKey(undefined, key("return", { shift: true }));
+    expect(newline).toEqual({ type: "change" });
+    expect(c.buffer).toBe("hello\n");
+    for (const ch of "world") c.handleKey(ch, key(""));
+    const submit = c.handleKey(undefined, key("return"));
+    expect(submit).toEqual({ type: "submit", line: "hello\nworld" });
+  });
+
+  it("Alt+Enter also inserts a newline", () => {
+    const c = new Composer();
+    c.handleKey("a", key(""));
+    expect(
+      c.handleKey(undefined, { name: "return", meta: true }),
+    ).toEqual({ type: "change" });
+    expect(c.buffer).toBe("a\n");
+  });
+
+  it("accepts the kitty Shift+Enter sequence as a newline", () => {
+    const c = new Composer();
+    c.handleKey("a", key(""));
+    expect(
+      c.handleKey(undefined, { sequence: "\x1b[13;2u" }),
+    ).toEqual({ type: "change" });
+    expect(c.buffer).toBe("a\n");
+  });
+
   it("ignores empty submits and does not duplicate consecutive history", () => {
     const c = new Composer();
     expect(c.handleKey(undefined, key("return"))).toEqual({ type: "change" });

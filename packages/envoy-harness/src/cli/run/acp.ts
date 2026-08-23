@@ -7,6 +7,7 @@
  */
 
 import type { Readable, Writable } from "node:stream";
+import * as path from "node:path";
 
 import {
   Agent,
@@ -17,15 +18,20 @@ import {
   HookRegistry,
   InMemorySession,
   JsonRpcConnection,
+  LocalMemoryStore,
+  SessionStore,
   ToolRegistry,
   wireEnvironmentTools,
+  wireMcpClientsFromConfig,
   type ModelAdapter,
+  loadConfig,
   type ProtocolSessionBackend,
 } from "../../index.js";
 import type { ParsedArgs } from "../argv.js";
 import { CliError } from "./errors.js";
-import { makeEmptyRunResult, resolveModel } from "./helpers.js";
+import { makeEmptyRunResult, resolveModel, defaultSessionDir } from "./helpers.js";
 import { EXIT_USAGE, type RunOptions, type RunResult } from "./types.js";
+import { mergeClusterSeams, wirePeerCluster } from "../../peers/wire-cluster.js";
 
 /**
  * Run until the JSON-RPC input stream ends (or the connection
@@ -52,7 +58,7 @@ export async function runAcpDispatch(
   // RunOptions uses NodeJS.WritableStream; JsonRpcConnection wants stream.Writable.
   const output = stdout as Writable;
 
-  const { backend, dispose: disposeBackend } = resolveAcpBackend(
+  const { backend, dispose: disposeBackend } = await resolveAcpBackend(
     parsed,
     options,
     stderr,
@@ -95,11 +101,11 @@ function resolveLiveModel(
   return undefined;
 }
 
-function resolveAcpBackend(
+async function resolveAcpBackend(
   parsed: Extract<ParsedArgs, { subcommand: "run" }>,
   options: RunOptions,
   stderr: NodeJS.WritableStream,
-): {
+): Promise<{
   backend: ProtocolSessionBackend;
   /**
    * Dispose the backend's environment (jobs / terminals / credentials).
@@ -107,13 +113,46 @@ function resolveAcpBackend(
    * `options.protocolBackend` (caller owns disposal).
    */
   dispose: () => Promise<void>;
-} {
+}> {
   if (options.protocolBackend !== undefined) {
     return {
       backend: options.protocolBackend,
       dispose: async () => undefined,
     };
   }
+
+  const { layer: configLayer } = await loadConfig(
+    parsed.config !== undefined ? { filePath: parsed.config } : {},
+  );
+  const { resolvePeerEndpoints } = await import("../../peers/resolve.js");
+  const peerEndpoints = resolvePeerEndpoints({
+    configLayer,
+    cliPeers: parsed.peers,
+  });
+
+  let clusterDispose: (() => Promise<void>) | undefined;
+  const wireCluster = async (backend: ProtocolSessionBackend): Promise<ProtocolSessionBackend> => {
+    if (peerEndpoints.length === 0) return backend;
+    try {
+      const wired = await wirePeerCluster({
+        peers: peerEndpoints,
+        ...(parsed.peerConnectTimeoutMs !== undefined
+          ? { connectTimeoutMs: parsed.peerConnectTimeoutMs }
+          : {}),
+        onFailure: (id, err) => {
+          if (!parsed.quiet) {
+            stderr.write(`envoy-harness: peer ${id} failed: ${err.message}\n`);
+          }
+        },
+      });
+      if (wired === undefined) return backend;
+      clusterDispose = wired.dispose;
+      return mergeClusterSeams(backend, wired.seams);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new CliError(message, EXIT_USAGE);
+    }
+  };
 
   const model = resolveLiveModel(parsed, options);
   if (model !== undefined) {
@@ -127,42 +166,73 @@ function resolveAcpBackend(
     // two sessions can never see each other's resources.
     const tools = new ToolRegistry();
     for (const t of BUILTIN_TOOLS) tools.register(t);
+    const mcpWire = await wireMcpClientsFromConfig(
+      configLayer.mcpServers,
+      tools,
+    );
     const env = wireEnvironmentTools(tools);
+    const memoryStore = new LocalMemoryStore({
+      memoryRoot:
+        process.env["ENVOY_MEMORY_DIR"] ??
+        path.join(defaultCwd, "memories"),
+    });
     return {
-      backend: createAgentSessionBackend({
-        defaultCwd,
-        // U2 — the status bar reads the model label from config/get.
-        getConfig: () => ({
-          version: "0.0.0",
-          ...(parsed.model !== undefined
-            ? { model: parsed.model }
-            : parsed.provider !== undefined
-              ? { model: parsed.provider }
-              : {}),
-        }),
-        createAgent: ({ sessionId, cwd, askHandler }) => {
-          const hooks = new HookRegistry();
-          return new Agent({
-            model,
-            tools,
-            hooks,
-            session: new InMemorySession(sessionId, {
+      backend: await wireCluster(
+        createAgentSessionBackend({
+          defaultCwd,
+          memoryStore,
+          // U2 — the status bar reads the model label from config/get.
+          getConfig: () => ({
+            version: "0.0.0",
+            ...(parsed.model !== undefined
+              ? { model: parsed.model }
+              : parsed.provider !== undefined
+                ? { model: parsed.provider }
+                : {}),
+          }),
+          listTools: () =>
+            tools.list().map((t) => ({
+              name: t.name,
+              description: t.description,
+            })),
+          createAgent: ({ sessionId, cwd, askHandler, session }) => {
+            const hooks = new HookRegistry();
+            return new Agent({
+              model,
+              tools,
+              hooks,
+              session:
+                session ??
+                new InMemorySession(sessionId, {
+                  cwd: cwd ?? defaultCwd,
+                  startedAt: new Date().toISOString(),
+                }),
               cwd: cwd ?? defaultCwd,
-              startedAt: new Date().toISOString(),
-            }),
-            cwd: cwd ?? defaultCwd,
-            askHandler,
-            ...(parsed.maxTurns !== undefined
-              ? { maxIterations: parsed.maxTurns }
-              : {}),
-            ...(parsed.maxCostUsd !== undefined
-              ? { maxCostUsd: parsed.maxCostUsd }
-              : {}),
-          });
-        },
-      }),
+              askHandler,
+              jobRegistry: env.jobs,
+              terminalService: env.terminals,
+              ...(mcpWire !== undefined ? { mcpClients: mcpWire.registry } : {}),
+              ...(parsed.maxTurns !== undefined
+                ? { maxIterations: parsed.maxTurns }
+                : {}),
+              ...(parsed.maxCostUsd !== undefined
+                ? { maxCostUsd: parsed.maxCostUsd }
+                : {}),
+            });
+          },
+          sessionStore: new SessionStore({
+            dir: parsed.sessionDir ?? defaultSessionDir(parsed),
+          }),
+        }),
+      ),
       async dispose() {
+        if (mcpWire !== undefined) {
+          await mcpWire.dispose().catch(() => undefined);
+        }
         await env.dispose().catch(() => undefined);
+        if (clusterDispose !== undefined) {
+          await clusterDispose().catch(() => undefined);
+        }
       },
     };
   }
@@ -173,7 +243,11 @@ function resolveAcpBackend(
     );
   }
   return {
-    backend: createFakeSessionBackend(),
-    dispose: async () => undefined,
+    backend: await wireCluster(createFakeSessionBackend()),
+    dispose: async () => {
+      if (clusterDispose !== undefined) {
+        await clusterDispose().catch(() => undefined);
+      }
+    },
   };
 }

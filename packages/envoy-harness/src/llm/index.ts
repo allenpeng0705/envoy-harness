@@ -137,23 +137,29 @@ export function createProviderAdapter(config: ProviderConfig): ModelAdapter {
   switch (provider) {
     case "openai": {
       const apiKey = requireEnv(env, "OPENAI_API_KEY");
+      const baseUrl = env["OPENAI_BASE_URL"];
       return new OpenAIAdapter({
         apiKey,
         model: config.model ?? DEFAULT_PROVIDER_MODELS["openai"]!,
+        ...(baseUrl && baseUrl.length > 0 ? { baseUrl } : {}),
       });
     }
     case "anthropic": {
       const apiKey = requireEnv(env, "ANTHROPIC_API_KEY");
+      const baseUrl = env["ANTHROPIC_BASE_URL"];
       return new AnthropicAdapter({
         apiKey,
         model: config.model ?? DEFAULT_PROVIDER_MODELS["anthropic"]!,
+        ...(baseUrl && baseUrl.length > 0 ? { baseUrl } : {}),
       });
     }
     case "deepseek": {
       const apiKey = requireEnv(env, "DEEPSEEK_API_KEY");
+      const baseUrl = env["DEEPSEEK_BASE_URL"];
       return new DeepSeekAdapter({
         apiKey,
         ...(config.model !== undefined ? { model: config.model } : {}),
+        ...(baseUrl && baseUrl.length > 0 ? { baseUrl } : {}),
       });
     }
     case "ollama": {

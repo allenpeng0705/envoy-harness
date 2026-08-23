@@ -154,20 +154,12 @@ const hooksCommand: ReplCommand = {
 
 const mcpCommand: ReplCommand = {
   name: "/mcp",
-  description: "list MCP servers (the client registry + tool routing are wired; the stdio JSON-RPC transport lands in a follow-up chunk)",
+  description: "list MCP servers wired from config or AgentOptions",
   handler(_args, ctx) {
-    // T3.3: the type seam is in place
-    // (`McpClientRegistry`, `mcp__<server>__<tool>`
-    // routing in the ToolExecutor). The host injects a
-    // pre-populated registry via
-    // `AgentOptions.mcpClients`; the stdio transport
-    // (which would populate it from the TOML
-    // `[mcp_servers]` config block) lands in a
-    // follow-up sub-chunk.
     const registry = ctx.agent.mcpClients;
     if (registry === undefined) {
       ctx.stdout.write(
-        "no MCP servers (pass one via AgentOptions.mcpClients; the stdio transport lands in a follow-up chunk)\n",
+        "no MCP servers (add [[mcp_servers]] to config.toml or inject mcpClients)\n",
       );
       return;
     }
@@ -201,13 +193,44 @@ export interface ReplProfile {
 
 const profileCommand: ReplCommand = {
   name: "/profile",
-  description: "list profiles or show a specific profile",
+  description: "list profiles, show one, or apply: /profile apply <name>",
   handler(args, ctx) {
     if (!ctx.profileLoader) {
       ctx.stdout.write(
         "no profile loader configured " +
           "(host injects a profileLoader via ReplOptions)\n",
       );
+      return;
+    }
+    if (args[0] === "apply") {
+      const name = args[1];
+      if (name === undefined) {
+        ctx.stdout.write("usage: /profile apply <name>\n");
+        return;
+      }
+      const profile = ctx.profileLoader.get(name);
+      if (!profile) {
+        ctx.stderr.write(`unknown profile: ${name}\n`);
+        return;
+      }
+      if (typeof profile.sandbox === "string") {
+        ctx.agent.setPermissionMode(
+          profile.sandbox as NonNullable<
+            import("../../session.js").SessionMetadata["permissionMode"]
+          >,
+        );
+      }
+      if (typeof profile.approval === "string") {
+        ctx.agent.setApprovalPolicy(
+          profile.approval as import("../../types.js").AskForApproval,
+        );
+      }
+      if (typeof profile.model === "string") {
+        ctx.stdout.write(
+          `note: profile model "${profile.model}" not applied (use /model)\n`,
+        );
+      }
+      ctx.stdout.write(`applied profile: ${name}\n`);
       return;
     }
     if (args.length === 0) {

@@ -98,6 +98,18 @@ export interface ToolContext {
    * `sh -c` directly (v0 behavior).
    */
   sandboxExecutor?: import("../sandbox/types.js").SandboxExecutor;
+  /**
+   * Live stdout chunks during long-running tools (e.g. bash).
+   * Protocol hosts forward these as `tool_progress` activity.
+   */
+  onToolOutput?: (stdout: string) => void;
+  /**
+   * Record a file change for `/undo` (write / edit tools).
+   */
+  recordUndo?: (entry: {
+    path: string;
+    previousContent: string | null;
+  }) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -161,6 +173,7 @@ export type Role = "system" | "user" | "assistant" | "tool";
  */
 export type ContentBlock =
   | { type: "text"; text: string }
+  | { type: "image"; mimeType: string; data: string }
   | { type: "tool_call"; id: string; name: string; args: unknown }
   | { type: "tool_result"; toolCallId: string; content: unknown; isError: boolean };
 

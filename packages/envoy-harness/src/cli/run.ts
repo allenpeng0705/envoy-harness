@@ -31,6 +31,8 @@ import { CliError } from "./run/errors.js";
 import { EXIT_USAGE } from "./run/types.js";
 import { formatHelpText, makeEmptyRunResult } from "./run/helpers.js";
 import { runAcpDispatch } from "./run/acp.js";
+import { runDoctorDispatch } from "./run/doctor.js";
+import { runMcpServerDispatch } from "./run/mcp.js";
 import { runAgent } from "./run/one-shot.js";
 import { runReplDispatch } from "./run/repl.js";
 import { runSelfEvolve } from "./run/self-evolve.js";
@@ -103,6 +105,12 @@ export async function run(
   }
   if (parsed.subcommand === "team") {
     return runTeam(parsed, options, stdout, stderr);
+  }
+  if (parsed.subcommand === "doctor") {
+    return runDoctorDispatch(parsed, options, stdout);
+  }
+  if (parsed.subcommand === "mcp") {
+    return runMcpServerDispatch(parsed, stdout);
   }
   // 3a. Phase E / G: --acp serves ACP JSON-RPC on stdio.
   if (parsed.subcommand === "run" && parsed.acp) {

@@ -47,7 +47,13 @@ export {
   type ProtocolPromptResult,
   type ProtocolSessionBackend,
   type ProtocolToolInfo,
+  type ProtocolActivityEvent,
+  type ProtocolCompactResult,
 } from "./session-backend.js";
+
+export { traceEventToActivity } from "./activity-format.js";
+export { traceEventToCommittedMessage, messageTextFromContent } from "./message-format.js";
+export { formatGitOutput, runGitDiff, runGitStatus } from "./git-runner.js";
 
 export {
   ACP_PROTOCOL_VERSION,

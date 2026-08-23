@@ -13,9 +13,16 @@ export interface ScreenLayoutModel {
   railLine?: string;
   /** Full transcript; the renderer keeps the bottom window. */
   transcript: readonly string[];
-  inputLine: string;
-  /** 0-based cursor column within the input line. Default: end. */
+  /** The composer buffer split into lines (last line is the bottom row). */
+  inputLines: readonly string[];
+  /** 0-based line within `inputLines` the cursor is on. Default: last. */
+  inputCursorLine?: number;
+  /** 0-based cursor column within that line. Default: end of the line. */
   inputCursor?: number;
+  /** Optional slash-command palette rows (drawn above the composer). */
+  palette?: readonly string[];
+  /** Index of the highlighted palette row. */
+  paletteSelected?: number;
 }
 
 export interface ScreenOptions {
@@ -51,16 +58,26 @@ export function layoutRows(
   if (model.railLine !== undefined) {
     rows.push(fitLine(model.railLine, width));
   }
-  const used = rows.length; // 1 (status) or 2 (status + rail)
-  const transcriptHeight = Math.max(0, height - used - 1);
+  const inputLines = model.inputLines.length > 0 ? model.inputLines : [""];
+  const palette = model.palette ?? [];
+  const bottom = palette.length + inputLines.length;
+  const usedTop = rows.length; // 1 (status) or 2 (status + rail)
+  const transcriptHeight = Math.max(0, height - usedTop - bottom);
   const tail = model.transcript.slice(-transcriptHeight);
   for (const line of tail) {
     rows.push(fitLine(line, width));
   }
-  while (rows.length < height - 1) {
+  while (rows.length < height - bottom) {
     rows.push("");
   }
-  rows.push(fitLine(model.inputLine, width));
+  palette.forEach((item, i) => {
+    rows.push(
+      fitLine(`${i === model.paletteSelected ? ">" : " "} ${item}`, width),
+    );
+  });
+  for (const line of inputLines) {
+    rows.push(fitLine(line, width));
+  }
   return rows;
 }
 
@@ -69,6 +86,8 @@ export interface StatusBarInfo {
   model?: string;
   clusterConnected?: number;
   clusterTotal?: number;
+  /** When true, show `mesh · /mesh` instead of cluster counts (no peers yet). */
+  meshHint?: boolean;
   busy?: boolean;
 }
 
@@ -77,7 +96,9 @@ export function buildStatusLine(info: StatusBarInfo): string {
   const parts = ["envoy-harness"];
   if (info.sessionId !== undefined) parts.push(`session ${info.sessionId}`);
   parts.push(`model ${info.model ?? "—"}`);
-  if (info.clusterTotal !== undefined) {
+  if (info.meshHint === true || (info.clusterTotal ?? 0) === 0) {
+    parts.push("mesh · /mesh");
+  } else if (info.clusterTotal !== undefined) {
     parts.push(`cluster ${info.clusterConnected ?? 0}/${info.clusterTotal}`);
   }
   parts.push(info.busy === true ? "busy" : "ready");
@@ -91,9 +112,17 @@ export interface RailPeer {
   health: { ok: boolean; rttMs?: number };
 }
 
-/** Build the one-line cluster rail, or undefined when no peers exist. */
-export function buildRailLine(peers: readonly RailPeer[] | undefined): string | undefined {
-  if (peers === undefined || peers.length === 0) return undefined;
+/** Build the one-line cluster rail (always shown — hints when empty). */
+export function buildRailLine(
+  peers: readonly RailPeer[] | undefined,
+  options?: { emptyHint?: string },
+): string {
+  const emptyHint =
+    options?.emptyHint ??
+    "no peers — /mesh for setup · envoy-peer serve + --peers id@host:port";
+  if (peers === undefined || peers.length === 0) {
+    return `mesh: ${emptyHint}`;
+  }
   const rendered = peers.map((p) => {
     const model = p.model !== undefined ? `(${p.model})` : "";
     const health = p.health.ok
@@ -153,9 +182,14 @@ export class Screen {
     for (let i = rows.length; i < this.#last.length; i++) {
       out += `\x1b[${i + 1};1H\x1b[K`;
     }
+    const inputLines = model.inputLines.length > 0 ? model.inputLines : [""];
+    const cursorLine =
+      model.inputCursorLine ?? Math.max(0, inputLines.length - 1);
+    const activeLine = inputLines[Math.min(cursorLine, inputLines.length - 1)] ?? "";
     const cursorCol =
-      Math.min(model.inputCursor ?? model.inputLine.length, this.#width - 1) + 1;
-    out += `\x1b[${rows.length};${cursorCol}H`;
+      Math.min(model.inputCursor ?? activeLine.length, this.#width - 1) + 1;
+    const cursorRow = rows.length - inputLines.length + cursorLine + 1;
+    out += `\x1b[${Math.min(cursorRow, rows.length)};${cursorCol}H`;
     this.#last = rows;
     this.#output.write(out);
   }

@@ -12,7 +12,10 @@ import type {
 } from "@envoymesh/envoy-harness-client";
 
 import { parseSlash } from "./slash.js";
+import { formatActivityLine, type ActivityLike } from "./activity.js";
+import { buildPermissionPreview } from "./permission-preview.js";
 import {
+  formatPermissionBlock,
   formatTranscriptLine,
   type TranscriptLine,
   type TranscriptRole,
@@ -35,17 +38,29 @@ export interface TuiSessionOptions {
 export class TuiSession {
   readonly #client: EnvoyHarnessClient;
   readonly #cwd: string | undefined;
-  readonly #onTranscript:
-    | ((lines: readonly TranscriptLine[]) => void)
-    | undefined;
+  #onTranscript: ((lines: readonly TranscriptLine[]) => void) | undefined;
   readonly #onPermission:
     | ((req: PermissionRequest) => Promise<"allow" | "deny">)
     | undefined;
   readonly #lines: TranscriptLine[] = [];
   #sessionId: string | undefined;
   #busy = false;
+  /** Dedupe live `session/update` vs final `session/prompt` messages. */
+  readonly #turnSeen = new Set<string>();
+  /** Tool lines shown via activity this turn — skip duplicate tool transcript. */
+  #turnToolActivityLines = 0;
+  /** Status line indices to collapse when the turn ends. */
+  readonly #turnActivityLineIndices: number[] = [];
+  #streamingAssistantText = "";
+  #streamingAssistantLineIndex: number | undefined;
+  readonly #removeSessionToken: () => void;
+  readonly #removeSessionUpdate: () => void;
+  readonly #removeSessionActivity: () => void;
+  #lastTurnCostUsd: number | undefined;
   #clusterSnapshot: ClientClusterStatus | undefined;
   readonly #discoveryEvents: ClientDiscoveryEvent[] = [];
+  #gitDiffStaged = false;
+  #gitDiffStat = false;
   #permissionWaiter:
     | {
         req: PermissionRequest;
@@ -58,6 +73,44 @@ export class TuiSession {
     this.#cwd = options.cwd;
     this.#onTranscript = options.onTranscript;
     this.#onPermission = options.onPermission;
+    this.#removeSessionUpdate = this.#client.onNotification(
+      "session/update",
+      (params) => this.#handleSessionUpdate(params),
+    );
+    this.#removeSessionToken = this.#client.onNotification(
+      "session/token",
+      (params) => this.#handleSessionToken(params),
+    );
+    const unsubActivity = this.#client.onNotification(
+      "session/activity",
+      (params) => this.#handleSessionActivity(params),
+    );
+    const unsubSdkEvent = this.#client.onNotification(
+      "session/event",
+      (params) => {
+        const p = params as {
+          type?: string;
+          activity?: ActivityLike;
+          token?: { role?: string; delta?: string };
+        };
+        if (p.type === "activity" && p.activity !== undefined) {
+          this.#pushActivity(p.activity);
+        } else if (p.type === "token" && p.token !== undefined) {
+          this.#handleSessionToken({ token: p.token });
+        }
+      },
+    );
+    this.#removeSessionActivity = () => {
+      unsubActivity();
+      unsubSdkEvent();
+    };
+  }
+
+  /** Wire live transcript refresh (screen / plain mode). */
+  setOnTranscript(
+    cb: (lines: readonly TranscriptLine[]) => void,
+  ): void {
+    this.#onTranscript = cb;
   }
 
   get sessionId(): string | undefined {
@@ -86,6 +139,14 @@ export class TuiSession {
     return [...this.#discoveryEvents];
   }
 
+  get gitDiffStaged(): boolean {
+    return this.#gitDiffStaged;
+  }
+
+  get gitDiffStat(): boolean {
+    return this.#gitDiffStat;
+  }
+
   /** Used by EnvoyHarnessClient.onPermissionRequest. */
   handlePermissionRequest(
     req: PermissionRequest,
@@ -95,10 +156,12 @@ export class TuiSession {
     }
     return new Promise<"allow" | "deny">((resolve) => {
       this.#permissionWaiter = { req, resolve };
-      this.#push(
-        "status",
-        `permission: allow ${req.toolName}? (${req.description}) — type allow/deny`,
-      );
+      this.#push("status", formatPermissionBlock(req));
+      void buildPermissionPreview(req, this.#cwd).then((preview) => {
+        if (preview !== undefined && preview.trim().length > 0) {
+          this.#push("status", formatPermissionBlock(req, preview));
+        }
+      });
     });
   }
 
@@ -136,6 +199,11 @@ export class TuiSession {
         case "cancel":
           await this.cancel();
           return "ok";
+        case "mesh":
+          if (slash.action === "connect" && slash.endpoint !== undefined) {
+            await this.connectMeshPeer(slash.endpoint);
+          }
+          return "ok";
         case "peers":
           await this.listPeers();
           return "ok";
@@ -156,6 +224,75 @@ export class TuiSession {
           return "ok";
         case "trace":
           this.showTrace();
+          return "ok";
+        case "tools":
+          await this.showTools();
+          return "ok";
+        case "config":
+          await this.showConfig();
+          return "ok";
+        case "session":
+          this.showSessionInfo();
+          return "ok";
+        case "status":
+          await this.showStatus();
+          return "ok";
+        case "cost":
+          this.showCost();
+          return "ok";
+        case "clear":
+          this.clearTranscript();
+          return "ok";
+        case "new":
+          await this.newSession();
+          return "ok";
+        case "context":
+          this.showContext();
+          return "ok";
+        case "compact":
+          await this.runCompact(slash.keep, slash.budget, slash.summarize);
+          return "ok";
+        case "provider":
+          await this.runSetProvider(slash.name, slash.model);
+          return "ok";
+        case "model":
+          this.showModelUsage();
+          return "ok";
+        case "sandbox":
+          await this.runSetSandbox(slash.mode);
+          return "ok";
+        case "approval":
+          await this.runSetApproval(slash.mode);
+          return "ok";
+        case "diff":
+          await this.showGitDiff(slash.staged, slash.stat);
+          return "ok";
+        case "git-status":
+          await this.showGitStatus();
+          return "ok";
+        case "hooks":
+          await this.showHooks();
+          return "ok";
+        case "mcp":
+          await this.showMcp();
+          return "ok";
+        case "agents":
+          await this.showAgents();
+          return "ok";
+        case "memory":
+          await this.runMemory(slash.op, slash.name, slash.body);
+          return "ok";
+        case "plan":
+          await this.runPlan(slash.action, slash.text, slash.reason);
+          return "ok";
+        case "review":
+          await this.runReview(slash.staged);
+          return "ok";
+        case "init":
+          await this.runInit();
+          return "ok";
+        case "resume":
+          await this.resumeSession(slash.id);
           return "ok";
         case "quit":
           return "quit";
@@ -179,32 +316,57 @@ export class TuiSession {
 
     this.#push("user", trimmed);
     this.#busy = true;
+    this.#turnSeen.clear();
+    this.#turnToolActivityLines = 0;
+    this.#turnActivityLineIndices.length = 0;
+    this.#streamingAssistantText = "";
+    this.#streamingAssistantLineIndex = undefined;
     try {
       const result = await this.#client.prompt(this.#sessionId, trimmed);
       for (const msg of result.messages) {
-        const m = msg as { role?: string; text?: string };
-        if (typeof m.text !== "string" || m.text.length === 0) continue;
-        const role = (m.role as TranscriptRole | undefined) ?? "assistant";
-        if (role === "user") continue;
-        this.#push(role === "assistant" ? "assistant" : role, m.text);
+        this.#consumeProtocolMessage(msg);
       }
       this.#push("status", `stop: ${result.stopReason}`);
     } catch (err) {
       this.#push("status", `error: ${(err as Error).message}`);
     } finally {
       this.#busy = false;
+      this.#turnToolActivityLines = 0;
+      this.#turnActivityLineIndices.length = 0;
+      this.#streamingAssistantText = "";
+      this.#streamingAssistantLineIndex = undefined;
     }
     return "ok";
   }
 
   async cancel(): Promise<void> {
     if (this.#sessionId === undefined) return;
+    this.#clearStreamingAssistant();
     try {
       await this.#client.cancel(this.#sessionId);
       this.#push("status", "cancelled");
     } catch (err) {
       this.#push("status", `cancel failed: ${(err as Error).message}`);
     }
+  }
+
+  /** Drop or finalize the in-flight assistant stream line on cancel. */
+  #clearStreamingAssistant(): void {
+    if (this.#streamingAssistantLineIndex === undefined) {
+      this.#streamingAssistantText = "";
+      return;
+    }
+    const line = this.#lines[this.#streamingAssistantLineIndex];
+    if (line === undefined) {
+      this.#streamingAssistantText = "";
+      this.#streamingAssistantLineIndex = undefined;
+      return;
+    }
+    line.text =
+      line.text.length > 0 ? `${line.text} [cancelled]` : "(cancelled)";
+    this.#streamingAssistantText = "";
+    this.#streamingAssistantLineIndex = undefined;
+    this.#onTranscript?.(this.#lines);
   }
 
   /** R3 — render the host's connected peer cluster (`peers/list`). */
@@ -418,7 +580,596 @@ export class TuiSession {
   }
 
   close(): void {
+    this.#removeSessionUpdate();
+    this.#removeSessionToken();
+    this.#removeSessionActivity();
     this.#client.close();
+  }
+
+  /** R3 — list tools (`tools/list`). */
+  async showTools(): Promise<void> {
+    let tools;
+    try {
+      tools = await this.#client.listTools();
+    } catch (err) {
+      this.#push("status", `tools unavailable: ${(err as Error).message}`);
+      return;
+    }
+    if (tools.length === 0) {
+      this.#push("status", "Tools (0)");
+      return;
+    }
+    const lines = tools.map((t) => `- ${t.name}: ${t.description}`);
+    this.#push("status", `Tools (${tools.length})\n${lines.join("\n")}`);
+  }
+
+  /** Show harness config (`config/get`). */
+  async showConfig(): Promise<void> {
+    try {
+      const config = await this.#client.getConfig();
+      const lines = Object.entries(config).map(([k, v]) => `- ${k}: ${String(v)}`);
+      this.#push(
+        "status",
+        lines.length > 0 ? `Config\n${lines.join("\n")}` : "Config (empty)",
+      );
+    } catch (err) {
+      this.#push("status", `config unavailable: ${(err as Error).message}`);
+    }
+  }
+
+  showSessionInfo(): void {
+    if (this.#sessionId === undefined) {
+      this.#push("status", "no active session");
+      return;
+    }
+    this.#push(
+      "status",
+      `Session ${this.#sessionId}\n  messages: ${this.#lines.length}\n  busy: ${this.#busy}`,
+    );
+  }
+
+  async showStatus(): Promise<void> {
+    const model = await this.getModelLabel();
+    const parts = [
+      `session: ${this.#sessionId ?? "—"}`,
+      `busy: ${this.#busy}`,
+      `transcript lines: ${this.#lines.length}`,
+      ...(model !== undefined ? [`model: ${model}`] : []),
+      ...(this.#lastTurnCostUsd !== undefined
+        ? [`last turn cost: $${this.#lastTurnCostUsd.toFixed(4)}`]
+        : []),
+    ];
+    this.#push("status", `Status\n  ${parts.join("\n  ")}`);
+  }
+
+  showCost(): void {
+    if (this.#lastTurnCostUsd === undefined) {
+      this.#push("status", "Cost — no completed turn yet (run a prompt first)");
+      return;
+    }
+    this.#push("status", `Last turn cost: $${this.#lastTurnCostUsd.toFixed(4)}`);
+  }
+
+  clearTranscript(): void {
+    this.#lines.length = 0;
+    this.#onTranscript?.(this.#lines);
+    this.#push("status", "transcript cleared (agent session unchanged)");
+  }
+
+  /** New ACP session — fresh agent context on the host. */
+  async newSession(): Promise<void> {
+    if (this.#busy) {
+      this.#push("status", "busy — /cancel first, then /new");
+      return;
+    }
+    try {
+      const created = await this.#client.acpNewSession(
+        this.#cwd !== undefined ? { cwd: this.#cwd } : undefined,
+      );
+      this.#sessionId = created.sessionId;
+      this.#lines.length = 0;
+      this.#turnSeen.clear();
+      this.#lastTurnCostUsd = undefined;
+      this.#onTranscript?.(this.#lines);
+      this.#push("system", `new session ${created.sessionId}`);
+    } catch (err) {
+      this.#push("status", `new session failed: ${(err as Error).message}`);
+    }
+  }
+
+  /** Transcript footprint (display only — agent memory unchanged). */
+  showContext(): void {
+    const byRole = new Map<string, number>();
+    for (const line of this.#lines) {
+      byRole.set(line.role, (byRole.get(line.role) ?? 0) + 1);
+    }
+    const parts = [
+      `session: ${this.#sessionId ?? "—"}`,
+      `transcript lines: ${this.#lines.length}`,
+      ...[...byRole.entries()].map(([role, n]) => `${role}: ${n}`),
+      ...(this.#lastTurnCostUsd !== undefined
+        ? [`last turn cost: $${this.#lastTurnCostUsd.toFixed(4)}`]
+        : []),
+    ];
+    this.#push("status", `Context\n  ${parts.join("\n  ")}`);
+  }
+
+  showModelUsage(): void {
+    this.#push(
+      "status",
+      "Model swap: use /provider <openai|anthropic|deepseek|ollama> [model-id]\n" +
+        "Example: /provider deepseek deepseek-chat",
+    );
+  }
+
+  async runCompact(
+    keep?: number,
+    budget?: number,
+    summarize?: boolean,
+  ): Promise<void> {
+    if (this.#sessionId === undefined) {
+      this.#push("status", "no active session");
+      return;
+    }
+    if (this.#busy) {
+      this.#push("status", "busy — /cancel first");
+      return;
+    }
+    if (summarize === true) {
+      this.#push("status", "summarizing transcript…");
+    }
+    try {
+      const r = await this.#client.compactSession(this.#sessionId, {
+        ...(keep !== undefined ? { keep } : {}),
+        ...(budget !== undefined ? { budget } : {}),
+        ...(summarize === true ? { summarize: true } : {}),
+      });
+      const note =
+        r.overBudget === true
+          ? " (over budget)"
+          : r.summarized === false && summarize === true
+            ? " (summarize failed — drop-oldest fallback)"
+            : r.summarized === true
+              ? " (with LLM summary)"
+              : "";
+      const tokens =
+        r.totalTokensAfter !== undefined
+          ? `, ${r.totalTokensAfter} tokens`
+          : "";
+      this.#push(
+        "status",
+        `Compacted: ${r.messageCountBefore} → ${r.messageCountAfter} messages (dropped ${r.droppedCount}${tokens})${note}`,
+      );
+    } catch (err) {
+      this.#push("status", `compact failed: ${(err as Error).message}`);
+    }
+  }
+
+  async runSetProvider(name: string, model?: string): Promise<void> {
+    if (this.#sessionId === undefined) {
+      this.#push("status", "no active session");
+      return;
+    }
+    if (this.#busy) {
+      this.#push("status", "busy — /cancel first");
+      return;
+    }
+    try {
+      const r = await this.#client.setSessionModel(
+        this.#sessionId,
+        name,
+        model,
+      );
+      this.#push(
+        "status",
+        `provider: ${r.provider}${r.model !== undefined ? ` model=${r.model}` : ""}`,
+      );
+    } catch (err) {
+      this.#push("status", `provider swap failed: ${(err as Error).message}`);
+    }
+  }
+
+  async runSetSandbox(mode: string): Promise<void> {
+    const valid = new Set([
+      "read-only",
+      "workspace-write",
+      "danger-full-access",
+    ]);
+    if (!valid.has(mode)) {
+      this.#push("status", `invalid sandbox: ${mode}`);
+      return;
+    }
+    if (this.#sessionId === undefined) {
+      this.#push("status", "no active session");
+      return;
+    }
+    if (this.#busy) {
+      this.#push("status", "busy — /cancel first");
+      return;
+    }
+    try {
+      await this.#client.setSessionPolicy(this.#sessionId, {
+        sandbox: mode as "read-only" | "workspace-write" | "danger-full-access",
+      });
+      this.#push("status", `sandbox: ${mode}`);
+    } catch (err) {
+      this.#push("status", `sandbox failed: ${(err as Error).message}`);
+    }
+  }
+
+  async runSetApproval(mode: string): Promise<void> {
+    const valid = new Set([
+      "unless-trusted",
+      "on-request",
+      "granular",
+      "never",
+    ]);
+    if (!valid.has(mode)) {
+      this.#push("status", `invalid approval: ${mode}`);
+      return;
+    }
+    if (this.#sessionId === undefined) {
+      this.#push("status", "no active session");
+      return;
+    }
+    if (this.#busy) {
+      this.#push("status", "busy — /cancel first");
+      return;
+    }
+    try {
+      await this.#client.setSessionPolicy(this.#sessionId, {
+        approval: mode as "unless-trusted" | "on-request" | "granular" | "never",
+      });
+      this.#push("status", `approval: ${mode}`);
+    } catch (err) {
+      this.#push("status", `approval failed: ${(err as Error).message}`);
+    }
+  }
+
+  async showGitDiff(staged?: boolean, stat?: boolean): Promise<void> {
+    if (this.#sessionId === undefined) {
+      this.#push("status", "no active session");
+      return;
+    }
+    try {
+      const out = await this.#client.gitDiff(this.#sessionId, {
+        ...(staged === true ? { staged: true } : {}),
+        ...(stat === true ? { stat: true } : {}),
+      });
+      this.#push("status", `Git diff\n${out}`);
+    } catch (err) {
+      this.#push("status", `git diff failed: ${(err as Error).message}`);
+    }
+  }
+
+  async showGitStatus(): Promise<void> {
+    if (this.#sessionId === undefined) {
+      this.#push("status", "no active session");
+      return;
+    }
+    try {
+      const out = await this.#client.gitStatus(this.#sessionId);
+      this.#push("status", `Git status\n${out}`);
+    } catch (err) {
+      this.#push("status", `git status failed: ${(err as Error).message}`);
+    }
+  }
+
+  async showHooks(): Promise<void> {
+    if (this.#sessionId === undefined) {
+      this.#push("status", "no active session");
+      return;
+    }
+    try {
+      const hooks = await this.#client.listSessionHooks(this.#sessionId);
+      if (hooks.length === 0) {
+        this.#push("status", "Hooks (0)");
+        return;
+      }
+      const lines = hooks.map(
+        (h) => `  ${h.event.padEnd(20)}  ${h.handlerCount} handler(s)`,
+      );
+      this.#push("status", `Hooks (${hooks.length})\n${lines.join("\n")}`);
+    } catch (err) {
+      this.#push("status", `hooks failed: ${(err as Error).message}`);
+    }
+  }
+
+  async showMcp(): Promise<void> {
+    if (this.#sessionId === undefined) {
+      this.#push("status", "no active session");
+      return;
+    }
+    try {
+      const servers = await this.#client.listSessionMcp(this.#sessionId);
+      if (servers.length === 0) {
+        this.#push("status", "MCP (0 servers)");
+        return;
+      }
+      this.#push(
+        "status",
+        `MCP (${servers.length})\n${servers.map((s) => `  - ${s}`).join("\n")}`,
+      );
+    } catch (err) {
+      this.#push("status", `mcp failed: ${(err as Error).message}`);
+    }
+  }
+
+  async showAgents(): Promise<void> {
+    if (this.#sessionId === undefined) {
+      this.#push("status", "no active session");
+      return;
+    }
+    try {
+      const out = await this.#client.listSessionAgents(this.#sessionId);
+      this.#push("status", out);
+    } catch (err) {
+      this.#push("status", `agents failed: ${(err as Error).message}`);
+    }
+  }
+
+  async runMemory(
+    op: "list" | "read" | "add",
+    name?: string,
+    body?: string,
+  ): Promise<void> {
+    if (this.#sessionId === undefined) {
+      this.#push("status", "no active session");
+      return;
+    }
+    try {
+      const out = await this.#client.sessionMemory(this.#sessionId, op, {
+        ...(name !== undefined ? { name } : {}),
+        ...(body !== undefined ? { body } : {}),
+      });
+      this.#push("status", out);
+    } catch (err) {
+      this.#push("status", `memory failed: ${(err as Error).message}`);
+    }
+  }
+
+  async runPlan(
+    action: string,
+    text?: string,
+    reason?: string,
+  ): Promise<void> {
+    if (this.#sessionId === undefined) {
+      this.#push("status", "no active session");
+      return;
+    }
+    if (this.#busy && action !== "show") {
+      this.#push("status", "busy — /cancel first");
+      return;
+    }
+    try {
+      const out = await this.#client.sessionPlan(this.#sessionId, action, {
+        ...(text !== undefined ? { text } : {}),
+        ...(reason !== undefined ? { reason } : {}),
+      });
+      this.#push("status", out);
+    } catch (err) {
+      this.#push("status", `plan failed: ${(err as Error).message}`);
+    }
+  }
+
+  async runReview(staged?: boolean): Promise<void> {
+    if (this.#sessionId === undefined) {
+      this.#push("status", "no active session");
+      return;
+    }
+    if (this.#busy) {
+      this.#push("status", "busy — /cancel first");
+      return;
+    }
+    this.#push("status", "reviewing…");
+    try {
+      const out = await this.#client.sessionReview(
+        this.#sessionId,
+        staged === true,
+      );
+      this.#push("status", `Review\n${out}`);
+    } catch (err) {
+      this.#push("status", `review failed: ${(err as Error).message}`);
+    }
+  }
+
+  async runInit(): Promise<void> {
+    if (this.#sessionId === undefined) {
+      this.#push("status", "no active session");
+      return;
+    }
+    if (this.#busy) {
+      this.#push("status", "busy — /cancel first");
+      return;
+    }
+    this.#push("status", "generating AGENTS.md…");
+    try {
+      const out = await this.#client.sessionInit(this.#sessionId);
+      this.#push("status", out);
+    } catch (err) {
+      this.#push("status", `init failed: ${(err as Error).message}`);
+    }
+  }
+
+  /** U6 — resume a persisted session (`session/load`). */
+  async resumeSession(sessionId: string): Promise<void> {
+    if (this.#busy) {
+      this.#push("status", "busy — /cancel first");
+      return;
+    }
+    try {
+      const loaded = await this.#client.loadSession(
+        sessionId,
+        this.#cwd,
+      );
+      this.#sessionId = loaded.sessionId;
+      this.#lines.length = 0;
+      this.#turnSeen.clear();
+      this.#lastTurnCostUsd = undefined;
+      this.#onTranscript?.(this.#lines);
+      this.#push("system", `resumed session ${loaded.sessionId}`);
+    } catch (err) {
+      this.#push("status", `resume failed: ${(err as Error).message}`);
+    }
+  }
+
+  /** U6 — plan tab body. */
+  async fetchPlanView(): Promise<string> {
+    if (this.#sessionId === undefined) return "";
+    return await this.#client.sessionPlan(this.#sessionId, "show");
+  }
+
+  /** U6 — memory tab body. */
+  async fetchMemoryView(): Promise<string> {
+    if (this.#sessionId === undefined) return "";
+    return await this.#client.sessionMemory(this.#sessionId, "list");
+  }
+
+  /** U6 — git diff tab body. */
+  async fetchGitDiffView(staged?: boolean, stat?: boolean): Promise<string> {
+    if (this.#sessionId === undefined) return "";
+    return await this.#client.gitDiff(this.#sessionId, {
+      ...(staged === true ? { staged: true } : {}),
+      ...(stat === true ? { stat: true } : {}),
+    });
+  }
+
+  setGitDiffFlags(staged?: boolean, stat?: boolean): void {
+    this.#gitDiffStaged = staged === true;
+    this.#gitDiffStat = stat === true;
+  }
+
+  #handleSessionActivity(params: unknown): void {
+    if (!this.#busy || this.#sessionId === undefined) return;
+    const p = params as {
+      sessionId?: string;
+      activity?: ActivityLike;
+    };
+    if (p.sessionId !== undefined && p.sessionId !== this.#sessionId) return;
+    if (p.activity !== undefined) {
+      this.#pushActivity(p.activity);
+    }
+  }
+
+  #pushActivity(activity: ActivityLike): void {
+    if (activity.kind === "agent_end") {
+      this.#collapseTurnActivityLines();
+    }
+    const key =
+      activity.kind === "tool_progress"
+        ? `${activity.kind}\0${activity.ts ?? ""}\0${activity.summary}`
+        : `${activity.kind}\0${activity.summary}\0${activity.ts ?? ""}`;
+    if (this.#turnSeen.has(key)) return;
+    this.#turnSeen.add(key);
+    if (
+      activity.kind === "tool_call" ||
+      activity.kind === "tool_result" ||
+      activity.kind === "tool_progress"
+    ) {
+      this.#turnToolActivityLines++;
+      this.#turnActivityLineIndices.push(this.#lines.length);
+    }
+    if (activity.kind === "agent_end" && activity.costUsd !== undefined) {
+      this.#lastTurnCostUsd = activity.costUsd;
+    }
+    this.#push("status", formatActivityLine(activity));
+  }
+
+  #collapseTurnActivityLines(): void {
+    if (this.#turnActivityLineIndices.length === 0) return;
+    const sorted = [...this.#turnActivityLineIndices].sort((a, b) => b - a);
+    for (const idx of sorted) {
+      this.#lines.splice(idx, 1);
+      if (
+        this.#streamingAssistantLineIndex !== undefined &&
+        idx < this.#streamingAssistantLineIndex
+      ) {
+        this.#streamingAssistantLineIndex -= 1;
+      }
+    }
+    this.#turnActivityLineIndices.length = 0;
+    this.#turnToolActivityLines = 0;
+    this.#onTranscript?.(this.#lines);
+  }
+
+  #handleSessionToken(params: unknown): void {
+    if (!this.#busy || this.#sessionId === undefined) return;
+    const p = params as {
+      sessionId?: string;
+      token?: { role?: string; delta?: string };
+    };
+    if (p.sessionId !== undefined && p.sessionId !== this.#sessionId) return;
+    const token = p.token;
+    if (token === undefined) return;
+    if (
+      token.role !== "assistant" ||
+      typeof token.delta !== "string" ||
+      token.delta.length === 0
+    ) {
+      return;
+    }
+    this.#streamingAssistantText += token.delta;
+    if (this.#streamingAssistantLineIndex === undefined) {
+      this.#lines.push({
+        role: "assistant",
+        text: this.#streamingAssistantText,
+        at: new Date().toISOString(),
+      });
+      this.#streamingAssistantLineIndex = this.#lines.length - 1;
+    } else {
+      const streamLine = this.#lines[this.#streamingAssistantLineIndex];
+      if (streamLine !== undefined) {
+        streamLine.text = this.#streamingAssistantText;
+      }
+    }
+    this.#onTranscript?.(this.#lines);
+  }
+
+  #handleSessionUpdate(params: unknown): void {
+    if (!this.#busy || this.#sessionId === undefined) return;
+    const p = params as {
+      sessionId?: string;
+      message?: { role?: string; text?: string };
+    };
+    if (p.sessionId !== undefined && p.sessionId !== this.#sessionId) return;
+    this.#consumeProtocolMessage(p.message);
+  }
+
+  #consumeProtocolMessage(msg: unknown): void {
+    if (msg === undefined || msg === null) return;
+    const m = msg as { role?: string; text?: string };
+    if (typeof m.text !== "string" || m.text.length === 0) return;
+    const rawRole = (m.role as TranscriptRole | undefined) ?? "assistant";
+    if (rawRole === "user" || rawRole === "system" || rawRole === "status") {
+      return;
+    }
+    const role: TranscriptRole =
+      rawRole === "assistant" || rawRole === "tool" ? rawRole : "assistant";
+    if (
+      role === "assistant" &&
+      this.#streamingAssistantLineIndex !== undefined
+    ) {
+      const streamLine = this.#lines[this.#streamingAssistantLineIndex];
+      if (streamLine !== undefined) {
+        streamLine.text = m.text;
+      }
+      this.#turnSeen.add(`${role}\0${m.text}`);
+      this.#streamingAssistantLineIndex = undefined;
+      this.#streamingAssistantText = "";
+      this.#onTranscript?.(this.#lines);
+      return;
+    }
+    if (
+      role === "tool" &&
+      this.#busy &&
+      this.#turnToolActivityLines > 0
+    ) {
+      return;
+    }
+    const key = `${role}\0${m.text}`;
+    if (this.#turnSeen.has(key)) return;
+    this.#turnSeen.add(key);
+    this.#push(role, m.text);
   }
 
   renderTranscript(): string {

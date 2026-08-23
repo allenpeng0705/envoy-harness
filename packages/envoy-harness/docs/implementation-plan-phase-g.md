@@ -68,6 +68,6 @@ Reuse the same client; do not fork protocol.
 
 ## Out of scope for 12a
 
-- Token streaming in the transcript (committed messages only)
+- ~~Token streaming in the transcript~~ — shipped (`session/token` + `tool_progress`)
 - Embedding EnvoyMesh or Tauri in Package 1
 - Replacing the REPL (REPL remains the zero-dep fallback)

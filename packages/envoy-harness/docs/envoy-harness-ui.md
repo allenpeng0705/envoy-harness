@@ -27,12 +27,19 @@ round by round.
 ## 2. Current state
 
 - **Protocol (ACP/SDK, Package 1):** `session/new|create`, `session/prompt`,
-  `session/cancel`, `tools/list`, `config/get`, `peers/list`; notifications
-  `session/update` (ACP) / `session/event` (SDK); permissions via
-  `session/request_permission`. `ProtocolSessionBackend` is the injectable
-  seam (hosts provide `listPeers`/`getConfig`/`listTools`).
-- **TUI (`envoy-harness-tui`, ~700 LoC):** readline loop, transcript,
-  `/help /peers /cancel /quit`, permission allow/deny, in-process +
+  `session/cancel`, `session/compact`, `session/set_model`, `session/set_policy`,
+  `git/diff`, `git/status`, `tools/list`, `config/get`, `peers/list`;
+  notifications `session/update` (mid-run messages), `session/token` (assistant
+  text deltas), `session/activity` (live tool/sub-agent progress incl.
+  `tool_progress` bash stdout, terminal send/read, MCP progress), `session/event`
+  (SDK); permissions via `session/request_permission`. Session ops:
+  `session/compact` (incl. `--summarize`), `session/plan`, `session/memory`,
+  `session/review`,
+  `session/init`, `session/hooks`, `session/mcp`, `session/agents`,
+  `session/context`, `git/diff`, `git/status`.
+- **TUI (`envoy-harness-tui`):** composer, transcript with live tool lines,
+  slash palette (compact, provider, sandbox, approval, diff, git-status, mesh),
+  permission allow/deny with edit/write diff preview, in-process +
   attached + spawned modes.
 - **Distributed surfaces that already exist:** peer cluster
   (`connectPeerClients`, `PeerRegistry`), `envoy-peer serve` CLI, `peers`
@@ -129,11 +136,11 @@ in the UI but `peers/list` remains the compatibility surface.
 
 | # | Chunk | Scope | Status |
 |---|---|---|---|
-| U1 | Protocol surface | `cluster/status`, `team/jobs`, `scoreboard/summary`, `discovery/events` on ACP+SDK + backend seams + client methods + fake-backend support; tests | planned |
-| U2 | TUI renderer v2 | ANSI screen module (buffer + diff + regions), composer upgrade, status bar, cluster rail reading `cluster/status`; keymaps; hermetic render tests | planned |
-| U3 | Distributed detail views | `/cluster`, `/team`, `/scoreboard` panels + discovery event stream; `envoy-peer ui` standalone wiring (peer registry + ACP server + TUI in one process) | planned |
-| U4 | EnvoyMesh panels | desktop/EnvoyGo consume `cluster/status` + scoreboard via the existing ACP host; coordinates with the Tauri team (earlier deferred v1.12/v1.15 UI) | planned |
-| U5 | Polish | theming, search, diff view, images, session resume, trace/observability panel, memory/plan tabs | planned |
+| U1 | Protocol surface | `cluster/status`, `team/jobs`, `scoreboard/summary`, `discovery/events` on ACP+SDK + backend seams + client methods + fake-backend support; tests | ✅ |
+| U2 | TUI renderer v2 | ANSI screen module (buffer + diff + regions), composer upgrade, status bar, cluster rail reading `cluster/status`; keymaps; hermetic render tests | ✅ |
+| U3 | Distributed detail views | `/cluster`, `/team`, `/scoreboard` panels + discovery event stream; `envoy-peer ui` standalone wiring | ✅ |
+| U4 | EnvoyMesh panels | desktop/EnvoyGo consume cluster/scoreboard via ACP host | ✅ |
+| U5 | Polish | theming, search, diff view, images, session resume, trace/observability panel, memory/plan tabs | partial (search/trace/accent shipped; diff/images/resume tabs deferred) |
 
 **Success criteria (v1):** a user on one machine can open the dedicated
 TUI, see the cluster rail (peers + models + health), watch a team job

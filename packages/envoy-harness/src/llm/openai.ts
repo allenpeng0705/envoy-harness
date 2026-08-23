@@ -114,6 +114,9 @@ export class OpenAIAdapter implements ModelAdapter {
   }
 
   async complete(input: CompleteInput): Promise<ModelResponse> {
+    if (input.onTextDelta !== undefined) {
+      return this.completeStreaming(input);
+    }
     const url = `${this.baseUrl}/chat/completions`;
     const body = {
       model: this.model,
@@ -138,6 +141,175 @@ export class OpenAIAdapter implements ModelAdapter {
     }
     const parsed = JSON.parse(response.body) as OpenAIChatResponse;
     return parseChatResponse(parsed);
+  }
+
+  /** Stream assistant text (and tool calls) via SSE when `onTextDelta` is set. */
+  private async completeStreaming(input: CompleteInput): Promise<ModelResponse> {
+    const onDelta = input.onTextDelta;
+    if (onDelta === undefined) {
+      throw new Error("completeStreaming requires onTextDelta");
+    }
+    const url = `${this.baseUrl}/chat/completions`;
+    const body = {
+      model: this.model,
+      stream: true,
+      messages: messagesToOpenAI(input.messages),
+      ...(input.tools.length > 0 ? { tools: toolsToOpenAI(input.tools) } : {}),
+      ...(input.temperature !== undefined ? { temperature: input.temperature } : {}),
+      ...(input.maxTokens !== undefined ? { max_tokens: input.maxTokens } : {}),
+    };
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${this.apiKey}`,
+        ...(this.organization ? { "OpenAI-Organization": this.organization } : {}),
+      },
+      body: JSON.stringify(body),
+      ...(input.signal ? { signal: input.signal } : {}),
+    });
+    if (!response.ok) {
+      const errBody = await response.text();
+      throw new Error(
+        parseError({
+          status: response.status,
+          headers: {},
+          body: errBody,
+        }),
+      );
+    }
+    const reader = response.body?.getReader();
+    if (reader === undefined) {
+      throw new Error("OpenAI streaming: empty response body");
+    }
+    const decoder = new TextDecoder();
+    let sseBuffer = "";
+    let fullText = "";
+    let finishReason: ModelResponse["stopReason"] = "end_turn";
+    let responseModel = this.model;
+    let usage: ModelResponse["usage"] | undefined;
+    const toolParts = new Map<
+      number,
+      { id: string; name: string; args: string }
+    >();
+
+    const processSseLine = (line: string): void => {
+      const trimmed = line.trim();
+      if (trimmed.length === 0 || trimmed === "data: [DONE]") return;
+      if (!trimmed.startsWith("data:")) return;
+      const payload = trimmed.slice("data:".length).trim();
+      if (payload.length === 0) return;
+      const parsed = JSON.parse(payload) as {
+        model?: string;
+        usage?: {
+          prompt_tokens: number;
+          completion_tokens: number;
+        };
+        choices?: Array<{
+          finish_reason?:
+            | "stop"
+            | "tool_calls"
+            | "length"
+            | "content_filter"
+            | "function_call"
+            | null;
+          delta?: {
+            content?: string | null;
+            tool_calls?: Array<{
+              index: number;
+              id?: string;
+              function?: { name?: string; arguments?: string };
+            }>;
+          };
+        }>;
+      };
+      if (parsed.model !== undefined) responseModel = parsed.model;
+      if (parsed.usage !== undefined) {
+        usage = {
+          inputTokens: parsed.usage.prompt_tokens,
+          outputTokens: parsed.usage.completion_tokens,
+        };
+      }
+      const choice = parsed.choices?.[0];
+      if (choice === undefined) return;
+      if (
+        choice.finish_reason !== undefined &&
+        choice.finish_reason !== null
+      ) {
+        finishReason = mapStopReason(choice.finish_reason);
+      }
+      const delta = choice.delta;
+      if (delta === undefined) return;
+      if (typeof delta.content === "string" && delta.content.length > 0) {
+        fullText += delta.content;
+        onDelta(delta.content);
+      }
+      if (delta.tool_calls !== undefined) {
+        for (const tc of delta.tool_calls) {
+          let acc = toolParts.get(tc.index);
+          if (acc === undefined) {
+            acc = { id: tc.id ?? "", name: "", args: "" };
+            toolParts.set(tc.index, acc);
+          }
+          if (tc.id !== undefined) acc.id = tc.id;
+          if (tc.function?.name !== undefined) acc.name = tc.function.name;
+          if (tc.function?.arguments !== undefined) {
+            acc.args += tc.function.arguments;
+          }
+        }
+      }
+    };
+
+    while (true) {
+      if (input.signal?.aborted) {
+        try {
+          await reader.cancel();
+        } catch {
+          // ignore cancel errors
+        }
+        break;
+      }
+      const { done, value } = await reader.read();
+      if (done) break;
+      sseBuffer += decoder.decode(value, { stream: true });
+      const lines = sseBuffer.split("\n");
+      sseBuffer = lines.pop() ?? "";
+      for (const line of lines) {
+        processSseLine(line);
+      }
+    }
+    if (sseBuffer.trim().length > 0) {
+      processSseLine(sseBuffer);
+    }
+
+    const content: ModelResponse["content"] = [];
+    if (fullText.length > 0) {
+      content.push({ type: "text", text: fullText });
+    }
+    for (const part of [...toolParts.entries()].sort(([a], [b]) => a - b)) {
+      const [, tc] = part;
+      let args: unknown = {};
+      try {
+        args = JSON.parse(tc.args);
+      } catch {
+        // zod validation surfaces malformed args to the model.
+      }
+      content.push({
+        type: "tool_call",
+        id: tc.id,
+        name: tc.name,
+        args,
+      });
+    }
+    if (content.some((b) => b.type === "tool_call")) {
+      finishReason = "tool_use";
+    }
+    return {
+      content,
+      stopReason: finishReason,
+      model: responseModel,
+      ...(usage !== undefined ? { usage } : {}),
+    };
   }
 }
 

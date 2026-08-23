@@ -50,8 +50,12 @@ export async function connectPeerClient(
     throw err;
   }
   clearTimeout(timer);
+  const connection = new JsonRpcConnection({ input: socket, output: socket });
+  // A server reset (ECONNRESET) must not surface as an unhandled error
+  // event on the connection; hosts observe disconnects via socket close.
+  connection.on("error", () => undefined);
   const client = new PeerClient({
-    connection: new JsonRpcConnection({ input: socket, output: socket }),
+    connection,
     ...(options.signer !== undefined ? { signer: options.signer } : {}),
     ...(options.onEvent !== undefined ? { onEvent: options.onEvent } : {}),
     ...(options.requestTimeoutMs !== undefined

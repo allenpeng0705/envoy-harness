@@ -27,7 +27,23 @@ export {
   type TuiSessionOptions,
 } from "./session.js";
 
-export { parseSlash, type SlashResult } from "./slash.js";
+export {
+  createClusterTui,
+  wireClusterBackend,
+  type ClusterTui,
+  type ClusterTuiOptions,
+  type WiredClusterBackend,
+  type WireClusterBackendOptions,
+} from "./cluster-wiring.js";
+
+export {
+  formatPeersForEnv,
+  parseTuiPeerFlags,
+  type ParsedTuiPeers,
+  type PeerEndpointSpec,
+} from "./peers-config.js";
+
+export { parseSlash, type SlashResult, MESH_SLASH_COMMANDS, SLASH_COMMANDS } from "./slash.js";
 
 export {
   formatTranscriptLine,

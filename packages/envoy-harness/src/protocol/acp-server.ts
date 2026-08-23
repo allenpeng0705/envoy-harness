@@ -38,9 +38,9 @@ export function attachAcpServer(options: AcpServerOptions): () => void {
           protocolVersion: ACP_PROTOCOL_VERSION,
           serverInfo,
           capabilities: {
-            loadSession: false,
+            loadSession: true,
             promptCapabilities: {
-              image: false,
+              image: true,
               audio: false,
               embeddedContext: false,
             },
@@ -59,6 +59,24 @@ export function attachAcpServer(options: AcpServerOptions): () => void {
         );
         sessions.set(sessionId, { busy: false, abort: undefined });
         return { sessionId };
+      }
+
+      case "session/load": {
+        assertInitialized(initialized);
+        if (backend.loadSession === undefined) {
+          throw new JsonRpcError(
+            "session/load not supported",
+            JsonRpcErrorCode.METHOD_NOT_FOUND,
+          );
+        }
+        const sessionId = readSessionId(params);
+        const cwd = readOptionalCwd(params);
+        const loaded = await backend.loadSession({
+          sessionId,
+          ...(cwd !== undefined ? { cwd } : {}),
+        });
+        sessions.set(loaded.sessionId, { busy: false, abort: undefined });
+        return { sessionId: loaded.sessionId };
       }
 
       case "session/prompt": {
@@ -83,7 +101,7 @@ export function attachAcpServer(options: AcpServerOptions): () => void {
         try {
           return await backend.prompt({
             sessionId: p.sessionId,
-            text: p.text,
+            prompt: p.prompt,
             signal: ac.signal,
             requestPermission: async (req) => {
               // Defensive parse: the host's `onPermissionRequest`
@@ -118,6 +136,18 @@ export function attachAcpServer(options: AcpServerOptions): () => void {
               connection.notify("session/update", {
                 sessionId: p.sessionId,
                 message: msg,
+              });
+            },
+            onActivity: (activity) => {
+              connection.notify("session/activity", {
+                sessionId: p.sessionId,
+                activity,
+              });
+            },
+            onToken: (token) => {
+              connection.notify("session/token", {
+                sessionId: p.sessionId,
+                token,
               });
             },
           });
@@ -190,6 +220,188 @@ export function attachAcpServer(options: AcpServerOptions): () => void {
         };
       }
 
+      case "cluster/connect": {
+        assertInitialized(initialized);
+        if (backend.connectPeer === undefined) {
+          throw new JsonRpcError(
+            "cluster/connect not supported",
+            JsonRpcErrorCode.METHOD_NOT_FOUND,
+          );
+        }
+        const input = parseConnectPeerInput(params);
+        return await backend.connectPeer(input);
+      }
+
+      case "config/get": {
+        assertInitialized(initialized);
+        return backend.getConfig?.() ?? {};
+      }
+
+      case "tools/list": {
+        assertInitialized(initialized);
+        return { tools: backend.listTools?.() ?? [] };
+      }
+
+      case "session/compact": {
+        assertInitialized(initialized);
+        if (backend.compact === undefined) {
+          throw new JsonRpcError(
+            "session/compact not supported",
+            JsonRpcErrorCode.METHOD_NOT_FOUND,
+          );
+        }
+        const p = parseSessionCompactParams(params);
+        return { result: await backend.compact(p) };
+      }
+
+      case "session/set_model": {
+        assertInitialized(initialized);
+        if (backend.setModel === undefined) {
+          throw new JsonRpcError(
+            "session/set_model not supported",
+            JsonRpcErrorCode.METHOD_NOT_FOUND,
+          );
+        }
+        const p = parseSetModelParams(params);
+        return { result: await backend.setModel(p) };
+      }
+
+      case "session/set_policy": {
+        assertInitialized(initialized);
+        if (backend.setPolicy === undefined) {
+          throw new JsonRpcError(
+            "session/set_policy not supported",
+            JsonRpcErrorCode.METHOD_NOT_FOUND,
+          );
+        }
+        const p = parseSetPolicyParams(params);
+        return { result: await backend.setPolicy(p) };
+      }
+
+      case "git/diff": {
+        assertInitialized(initialized);
+        if (backend.gitDiff === undefined) {
+          throw new JsonRpcError(
+            "git/diff not supported",
+            JsonRpcErrorCode.METHOD_NOT_FOUND,
+          );
+        }
+        const p = parseGitDiffParams(params);
+        return await backend.gitDiff(p);
+      }
+
+      case "git/status": {
+        assertInitialized(initialized);
+        if (backend.gitStatus === undefined) {
+          throw new JsonRpcError(
+            "git/status not supported",
+            JsonRpcErrorCode.METHOD_NOT_FOUND,
+          );
+        }
+        const sessionId = readSessionId(params);
+        return await backend.gitStatus({ sessionId });
+      }
+
+      case "session/context": {
+        assertInitialized(initialized);
+        if (backend.getSessionContext === undefined) {
+          throw new JsonRpcError(
+            "session/context not supported",
+            JsonRpcErrorCode.METHOD_NOT_FOUND,
+          );
+        }
+        return await backend.getSessionContext({
+          sessionId: readSessionId(params),
+        });
+      }
+
+      case "session/hooks": {
+        assertInitialized(initialized);
+        if (backend.listSessionHooks === undefined) {
+          throw new JsonRpcError(
+            "session/hooks not supported",
+            JsonRpcErrorCode.METHOD_NOT_FOUND,
+          );
+        }
+        const res = await backend.listSessionHooks({
+          sessionId: readSessionId(params),
+        });
+        return res;
+      }
+
+      case "session/mcp": {
+        assertInitialized(initialized);
+        if (backend.listSessionMcp === undefined) {
+          throw new JsonRpcError(
+            "session/mcp not supported",
+            JsonRpcErrorCode.METHOD_NOT_FOUND,
+          );
+        }
+        return await backend.listSessionMcp({
+          sessionId: readSessionId(params),
+        });
+      }
+
+      case "session/agents": {
+        assertInitialized(initialized);
+        if (backend.listSessionAgents === undefined) {
+          throw new JsonRpcError(
+            "session/agents not supported",
+            JsonRpcErrorCode.METHOD_NOT_FOUND,
+          );
+        }
+        return await backend.listSessionAgents({
+          sessionId: readSessionId(params),
+        });
+      }
+
+      case "session/plan": {
+        assertInitialized(initialized);
+        if (backend.sessionPlan === undefined) {
+          throw new JsonRpcError(
+            "session/plan not supported",
+            JsonRpcErrorCode.METHOD_NOT_FOUND,
+          );
+        }
+        return await backend.sessionPlan(parseSessionPlanParams(params));
+      }
+
+      case "session/memory": {
+        assertInitialized(initialized);
+        if (backend.sessionMemory === undefined) {
+          throw new JsonRpcError(
+            "session/memory not supported",
+            JsonRpcErrorCode.METHOD_NOT_FOUND,
+          );
+        }
+        return await backend.sessionMemory(parseSessionMemoryParams(params));
+      }
+
+      case "session/review": {
+        assertInitialized(initialized);
+        if (backend.sessionReview === undefined) {
+          throw new JsonRpcError(
+            "session/review not supported",
+            JsonRpcErrorCode.METHOD_NOT_FOUND,
+          );
+        }
+        const p = parseSessionReviewParams(params);
+        return await backend.sessionReview(p);
+      }
+
+      case "session/init": {
+        assertInitialized(initialized);
+        if (backend.sessionInit === undefined) {
+          throw new JsonRpcError(
+            "session/init not supported",
+            JsonRpcErrorCode.METHOD_NOT_FOUND,
+          );
+        }
+        return await backend.sessionInit({
+          sessionId: readSessionId(params),
+        });
+      }
+
       default:
         throw new JsonRpcError(
           `method not found: ${method}`,
@@ -229,6 +441,39 @@ function parseRouteInput(params: unknown): {
   };
 }
 
+function parseConnectPeerInput(params: unknown): {
+  id: string;
+  endpoint: string;
+  model?: string;
+  capabilities?: readonly string[];
+} {
+  if (params === null || typeof params !== "object") {
+    throw new JsonRpcError("id and endpoint required", JsonRpcErrorCode.INVALID_PARAMS);
+  }
+  const id = (params as { id?: unknown }).id;
+  const endpoint = (params as { endpoint?: unknown }).endpoint;
+  if (typeof id !== "string" || id.length === 0) {
+    throw new JsonRpcError("id required", JsonRpcErrorCode.INVALID_PARAMS);
+  }
+  if (typeof endpoint !== "string" || endpoint.length === 0) {
+    throw new JsonRpcError("endpoint required", JsonRpcErrorCode.INVALID_PARAMS);
+  }
+  const model = (params as { model?: unknown }).model;
+  const capabilities = (params as { capabilities?: unknown }).capabilities;
+  return {
+    id,
+    endpoint,
+    ...(typeof model === "string" && model.length > 0 ? { model } : {}),
+    ...(Array.isArray(capabilities)
+      ? {
+          capabilities: capabilities.filter(
+            (c): c is string => typeof c === "string" && c.length > 0,
+          ),
+        }
+      : {}),
+  };
+}
+
 function assertInitialized(initialized: boolean): void {
   if (!initialized) {
     throw new JsonRpcError(
@@ -262,7 +507,7 @@ function readSessionId(params: unknown): string {
 
 function parsePromptParams(params: unknown): {
   sessionId: string;
-  text: string;
+  prompt: import("./session-backend.js").ProtocolPromptInput;
 } {
   if (params === null || typeof params !== "object") {
     throw new JsonRpcError("invalid params", JsonRpcErrorCode.INVALID_PARAMS);
@@ -271,6 +516,7 @@ function parsePromptParams(params: unknown): {
     sessionId?: unknown;
     text?: unknown;
     prompt?: unknown;
+    content?: unknown;
   };
   if (typeof obj.sessionId !== "string") {
     throw new JsonRpcError(
@@ -278,14 +524,259 @@ function parsePromptParams(params: unknown): {
       JsonRpcErrorCode.INVALID_PARAMS,
     );
   }
+  if (Array.isArray(obj.content)) {
+    const blocks = parsePromptContentBlocks(obj.content);
+    if (blocks.length === 0) {
+      throw new JsonRpcError("content required", JsonRpcErrorCode.INVALID_PARAMS);
+    }
+    return { sessionId: obj.sessionId, prompt: { content: blocks } };
+  }
   const text =
     typeof obj.text === "string"
       ? obj.text
       : typeof obj.prompt === "string"
         ? obj.prompt
+        : typeof obj.prompt === "object" &&
+            obj.prompt !== null &&
+            typeof (obj.prompt as { text?: unknown }).text === "string"
+          ? (obj.prompt as { text: string }).text
         : undefined;
   if (text === undefined) {
     throw new JsonRpcError("text required", JsonRpcErrorCode.INVALID_PARAMS);
   }
-  return { sessionId: obj.sessionId, text };
+  return { sessionId: obj.sessionId, prompt: { text } };
+}
+
+function parsePromptContentBlocks(
+  content: unknown[],
+): Array<{ type: "text"; text: string } | { type: "image"; mimeType: string; data: string }> {
+  const out: Array<
+    { type: "text"; text: string } | { type: "image"; mimeType: string; data: string }
+  > = [];
+  for (const block of content) {
+    if (block === null || typeof block !== "object") continue;
+    const b = block as { type?: unknown; text?: unknown; mimeType?: unknown; data?: unknown };
+    if (b.type === "text" && typeof b.text === "string" && b.text.length > 0) {
+      out.push({ type: "text", text: b.text });
+      continue;
+    }
+    if (
+      b.type === "image" &&
+      typeof b.mimeType === "string" &&
+      typeof b.data === "string" &&
+      b.data.length > 0
+    ) {
+      out.push({ type: "image", mimeType: b.mimeType, data: b.data });
+    }
+  }
+  return out;
+}
+
+function parseSessionCompactParams(params: unknown): {
+  sessionId: string;
+  keep?: number;
+  budget?: number;
+} {
+  if (params === null || typeof params !== "object") {
+    throw new JsonRpcError("invalid params", JsonRpcErrorCode.INVALID_PARAMS);
+  }
+  const obj = params as {
+    sessionId?: unknown;
+    keep?: unknown;
+    budget?: unknown;
+  };
+  const sessionId = readSessionId(params);
+  const keep =
+    typeof obj.keep === "number" && Number.isFinite(obj.keep)
+      ? obj.keep
+      : undefined;
+  const budget =
+    typeof obj.budget === "number" && Number.isFinite(obj.budget)
+      ? obj.budget
+      : undefined;
+  const summarize = (obj as { summarize?: unknown }).summarize === true;
+  return {
+    sessionId,
+    ...(keep !== undefined ? { keep } : {}),
+    ...(budget !== undefined ? { budget } : {}),
+    ...(summarize ? { summarize: true } : {}),
+  };
+}
+
+function parseSetModelParams(params: unknown): {
+  sessionId: string;
+  provider: string;
+  model?: string;
+} {
+  if (params === null || typeof params !== "object") {
+    throw new JsonRpcError("invalid params", JsonRpcErrorCode.INVALID_PARAMS);
+  }
+  const obj = params as {
+    sessionId?: unknown;
+    provider?: unknown;
+    model?: unknown;
+  };
+  const sessionId = readSessionId(params);
+  if (typeof obj.provider !== "string" || obj.provider.length === 0) {
+    throw new JsonRpcError("provider required", JsonRpcErrorCode.INVALID_PARAMS);
+  }
+  const model =
+    typeof obj.model === "string" && obj.model.length > 0 ? obj.model : undefined;
+  return {
+    sessionId,
+    provider: obj.provider,
+    ...(model !== undefined ? { model } : {}),
+  };
+}
+
+const SANDBOX_MODES = new Set([
+  "read-only",
+  "workspace-write",
+  "danger-full-access",
+]);
+const APPROVAL_MODES = new Set([
+  "unless-trusted",
+  "on-request",
+  "granular",
+  "never",
+]);
+
+function parseSetPolicyParams(params: unknown): {
+  sessionId: string;
+  sandbox?: "read-only" | "workspace-write" | "danger-full-access";
+  approval?: "unless-trusted" | "on-request" | "granular" | "never";
+} {
+  if (params === null || typeof params !== "object") {
+    throw new JsonRpcError("invalid params", JsonRpcErrorCode.INVALID_PARAMS);
+  }
+  const obj = params as {
+    sessionId?: unknown;
+    sandbox?: unknown;
+    approval?: unknown;
+  };
+  const sessionId = readSessionId(params);
+  const sandbox =
+    typeof obj.sandbox === "string" && SANDBOX_MODES.has(obj.sandbox)
+      ? (obj.sandbox as "read-only" | "workspace-write" | "danger-full-access")
+      : undefined;
+  const approval =
+    typeof obj.approval === "string" && APPROVAL_MODES.has(obj.approval)
+      ? (obj.approval as "unless-trusted" | "on-request" | "granular" | "never")
+      : undefined;
+  if (sandbox === undefined && approval === undefined) {
+    throw new JsonRpcError(
+      "sandbox or approval required",
+      JsonRpcErrorCode.INVALID_PARAMS,
+    );
+  }
+  return {
+    sessionId,
+    ...(sandbox !== undefined ? { sandbox } : {}),
+    ...(approval !== undefined ? { approval } : {}),
+  };
+}
+
+function parseGitDiffParams(params: unknown): {
+  sessionId: string;
+  staged?: boolean;
+  stat?: boolean;
+} {
+  if (params === null || typeof params !== "object") {
+    throw new JsonRpcError("invalid params", JsonRpcErrorCode.INVALID_PARAMS);
+  }
+  const obj = params as {
+    sessionId?: unknown;
+    staged?: unknown;
+    stat?: unknown;
+  };
+  const sessionId = readSessionId(params);
+  const staged = obj.staged === true ? true : undefined;
+  const stat = obj.stat === true ? true : undefined;
+  return {
+    sessionId,
+    ...(staged !== undefined ? { staged } : {}),
+    ...(stat !== undefined ? { stat } : {}),
+  };
+}
+
+function parseSessionPlanParams(params: unknown): {
+  sessionId: string;
+  action: string;
+  text?: string;
+  reason?: string;
+} {
+  if (params === null || typeof params !== "object") {
+    throw new JsonRpcError("invalid params", JsonRpcErrorCode.INVALID_PARAMS);
+  }
+  const obj = params as {
+    action?: unknown;
+    text?: unknown;
+    reason?: unknown;
+  };
+  const sessionId = readSessionId(params);
+  if (typeof obj.action !== "string" || obj.action.length === 0) {
+    throw new JsonRpcError("action required", JsonRpcErrorCode.INVALID_PARAMS);
+  }
+  const text =
+    typeof obj.text === "string" && obj.text.length > 0 ? obj.text : undefined;
+  const reason =
+    typeof obj.reason === "string" && obj.reason.length > 0
+      ? obj.reason
+      : undefined;
+  return {
+    sessionId,
+    action: obj.action,
+    ...(text !== undefined ? { text } : {}),
+    ...(reason !== undefined ? { reason } : {}),
+  };
+}
+
+function parseSessionMemoryParams(params: unknown): {
+  sessionId: string;
+  op: "list" | "read" | "add";
+  name?: string;
+  body?: string;
+} {
+  if (params === null || typeof params !== "object") {
+    throw new JsonRpcError("invalid params", JsonRpcErrorCode.INVALID_PARAMS);
+  }
+  const obj = params as {
+    op?: unknown;
+    name?: unknown;
+    body?: unknown;
+  };
+  const sessionId = readSessionId(params);
+  const op = obj.op;
+  if (op !== "list" && op !== "read" && op !== "add") {
+    throw new JsonRpcError(
+      "op must be list|read|add",
+      JsonRpcErrorCode.INVALID_PARAMS,
+    );
+  }
+  const name =
+    typeof obj.name === "string" && obj.name.length > 0 ? obj.name : undefined;
+  const body =
+    typeof obj.body === "string" && obj.body.length > 0 ? obj.body : undefined;
+  return {
+    sessionId,
+    op,
+    ...(name !== undefined ? { name } : {}),
+    ...(body !== undefined ? { body } : {}),
+  };
+}
+
+function parseSessionReviewParams(params: unknown): {
+  sessionId: string;
+  staged?: boolean;
+} {
+  if (params === null || typeof params !== "object") {
+    throw new JsonRpcError("invalid params", JsonRpcErrorCode.INVALID_PARAMS);
+  }
+  const sessionId = readSessionId(params);
+  const staged =
+    (params as { staged?: unknown }).staged === true ? true : undefined;
+  return {
+    sessionId,
+    ...(staged !== undefined ? { staged } : {}),
+  };
 }

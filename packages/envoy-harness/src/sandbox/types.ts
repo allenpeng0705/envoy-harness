@@ -70,6 +70,11 @@ export interface SandboxContext {
    * on the {@link SandboxResult}.
    */
   readonly maxOutputBytes?: number;
+  /**
+   * Live stdout chunks during command execution. Bash forwards
+   * these to protocol hosts as `tool_progress` activity.
+   */
+  readonly onStdout?: (chunk: string) => void;
 }
 
 /**
@@ -175,6 +180,9 @@ export class NoopSandboxExecutor implements SandboxExecutor {
       signal: context.signal,
       ...(context.maxOutputBytes !== undefined
         ? { maxOutputBytes: context.maxOutputBytes }
+        : {}),
+      ...(context.onStdout !== undefined
+        ? { onStdout: context.onStdout }
         : {}),
     });
   }

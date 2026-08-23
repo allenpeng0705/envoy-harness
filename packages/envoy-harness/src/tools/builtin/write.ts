@@ -110,11 +110,27 @@ export const writeTool: Tool<
     }
     // danger-full-access: no check.
 
+    let previousContent: string | null = null;
+    try {
+      previousContent = await fs.readFile(resolved, "utf8");
+    } catch (err) {
+      const e = err as NodeJS.ErrnoException;
+      if (e.code !== "ENOENT") {
+        return {
+          content: `write error: cannot read ${resolved}: ${e.code ?? "UNKNOWN"}: ${e.message}`,
+          isError: true,
+        };
+      }
+    }
+
     try {
       if (createDirectories) {
         await fs.mkdir(path.dirname(resolved), { recursive: true });
       }
       await fs.writeFile(resolved, content, "utf8");
+      if (ctx.recordUndo !== undefined) {
+        ctx.recordUndo({ path: resolved, previousContent });
+      }
       const bytes = Buffer.byteLength(content, "utf8");
       return {
         content: `wrote ${bytes} bytes to ${resolved}`,

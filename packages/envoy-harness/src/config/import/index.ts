@@ -27,6 +27,11 @@ export {
   type SkippedCcHook,
 } from "./claude-code.js";
 
+export {
+  importCursorRules,
+  type CursorRulesImportResult,
+} from "./cursor.js";
+
 /**
  * The set of `--from <format>` values supported by
  * `loadConfigWithImport` (in `src/config/loader.ts`).

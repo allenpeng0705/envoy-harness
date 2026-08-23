@@ -11,6 +11,7 @@
  * shape — copy them in (MIT) or bridge them from a hosted plugin.
  */
 
+import { importCursorRules } from "../config/import/cursor.js";
 import { createSystemPromptRegistry } from "./registry.js";
 import { agentsMdSection, planModeSection, terminalGuidanceSection } from "./builtin.js";
 import type { PromptSection } from "./types.js";
@@ -30,6 +31,14 @@ export async function buildAgentSystemPrompt(
 ): Promise<string> {
   const registry = createSystemPromptRegistry();
   registry.register(agentsMdSection(options.cwd));
+  const cursor = await importCursorRules(options.cwd);
+  if (cursor.rulesText.length > 0) {
+    registry.register({
+      name: "cursor-rules",
+      order: -90,
+      text: `# Cursor rules\n\n${cursor.rulesText}`,
+    });
+  }
   if (options.plan === true) {
     registry.register(
       planModeSection(

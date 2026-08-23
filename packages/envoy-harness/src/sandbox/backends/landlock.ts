@@ -178,6 +178,9 @@ export class LandlockSandboxExecutor implements SandboxExecutor {
       ...(context.maxOutputBytes !== undefined
         ? { maxOutputBytes: context.maxOutputBytes }
         : {}),
+      ...(context.onStdout !== undefined
+        ? { onStdout: context.onStdout }
+        : {}),
     });
     // Exit-125 attribution: if the launcher reports it
     // couldn't apply the requested restrictions, surface
@@ -217,6 +220,9 @@ export class LandlockSandboxExecutor implements SandboxExecutor {
         signal: context.signal,
         ...(context.maxOutputBytes !== undefined
           ? { maxOutputBytes: context.maxOutputBytes }
+          : {}),
+        ...(context.onStdout !== undefined
+          ? { onStdout: context.onStdout }
           : {}),
       });
     }

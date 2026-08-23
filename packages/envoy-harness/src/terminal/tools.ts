@@ -63,6 +63,48 @@ function errResult(err: unknown): ToolResult {
   };
 }
 
+/** Poll cumulative `readOutput().delta` and emit only new suffixes. */
+async function streamTerminalOutput(
+  operation: TerminalSendOperation,
+  onOutput: (chunk: string) => void,
+): Promise<void> {
+  let lastEmitted = 0;
+  const poll = (): void => {
+    const { delta } = operation.readOutput();
+    if (delta.length > lastEmitted) {
+      onOutput(delta.slice(lastEmitted));
+      lastEmitted = delta.length;
+    }
+  };
+  const interval = setInterval(poll, 50);
+  try {
+    await operation.done;
+    poll();
+  } finally {
+    clearInterval(interval);
+  }
+}
+
+function startTerminalOutputPoll(
+  operation: TerminalSendOperation,
+  onOutput: (chunk: string) => void,
+): () => void {
+  let lastEmitted = 0;
+  const poll = (): void => {
+    const { delta } = operation.readOutput();
+    if (delta.length > lastEmitted) {
+      onOutput(delta.slice(lastEmitted));
+      lastEmitted = delta.length;
+    }
+  };
+  const interval = setInterval(poll, 50);
+  poll();
+  return () => {
+    clearInterval(interval);
+    poll();
+  };
+}
+
 /** Build the six terminal tools bound to a session service. */
 export function makeTerminalTools(
   service: TerminalSessionService,
@@ -158,9 +200,31 @@ export function makeTerminalTools(
                 owner: ctx.session.id,
                 sessionId: args.sessionId,
                 operation,
+                ...(ctx.onToolOutput !== undefined
+                  ? { onOutput: ctx.onToolOutput }
+                  : {}),
               }),
           });
           return { content: JSON.stringify({ kind: "background", jobId }) };
+        }
+        if (ctx.onToolOutput !== undefined) {
+          const [, result] = await Promise.all([
+            streamTerminalOutput(operation, ctx.onToolOutput),
+            operation.done,
+          ]);
+          if (ctx.abortSignal.aborted) {
+            return { content: "terminal send aborted", isError: true };
+          }
+          const viewport = capTextUtf8(result.viewport);
+          return {
+            content: JSON.stringify({
+              kind: "foreground",
+              viewport: viewport.text,
+              waitReason: result.waitReason,
+              sessionStatus: result.sessionStatus,
+              truncated: viewport.truncated,
+            }),
+          };
         }
         const result = await operation.done;
         if (ctx.abortSignal.aborted) {
@@ -209,6 +273,9 @@ export function makeTerminalTools(
           ...(args.count !== undefined ? { count: args.count } : {}),
         });
         const capped = capTextUtf8(result.text);
+        if (ctx.onToolOutput !== undefined && capped.text.length > 0) {
+          ctx.onToolOutput(capped.text);
+        }
         return {
           content: JSON.stringify({
             text: capped.text,
@@ -314,8 +381,13 @@ function terminalSendJobHooks(opts: {
   owner: string;
   sessionId: string;
   operation: TerminalSendOperation;
+  onOutput?: (chunk: string) => void;
 }): JobHooks {
   let cancelled = false;
+  const stopPoll =
+    opts.onOutput !== undefined
+      ? startTerminalOutputPoll(opts.operation, opts.onOutput)
+      : undefined;
   return {
     cancel(_reason?: string) {
       if (cancelled) return;
@@ -328,11 +400,14 @@ function terminalSendJobHooks(opts: {
         .catch(() => {});
     },
     done: opts.operation.done.then(
-      (result): JobOutcome => ({
-        status: cancelled ? "killed" : "completed",
-        detail: `waitReason=${result.waitReason}`,
-        ...(result.viewport !== "" ? { output: result.viewport } : {}),
-      }),
+      (result): JobOutcome => {
+        stopPoll?.();
+        return {
+          status: cancelled ? "killed" : "completed",
+          detail: `waitReason=${result.waitReason}`,
+          ...(result.viewport !== "" ? { output: result.viewport } : {}),
+        };
+      },
     ),
     readOutput: () => opts.operation.readOutput().delta,
   };

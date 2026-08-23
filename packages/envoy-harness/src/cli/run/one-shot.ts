@@ -36,6 +36,7 @@ import {
   buildAgentSystemPrompt,
 } from "../../index.js";
 import { wireEnvironmentTools } from "../../environment/index.js";
+import { wireMcpClientsFromConfig } from "../../mcp/index.js";
 import { policyFromMode } from "../../permissions/policy.js";
 import { resolveSession } from "../../session/resolve.js";
 import type { ParsedArgs } from "../argv.js";
@@ -197,6 +198,10 @@ export async function runAgent(
 
   const tools = new ToolRegistry();
   for (const t of BUILTIN_TOOLS) tools.register(t);
+  const mcpWire = await wireMcpClientsFromConfig(
+    configLayer.mcpServers,
+    tools,
+  );
   // Phase C: jobs / web / terminal (Cordis-free L3 ports).
   const environment = wireEnvironmentTools(tools);
   const hooks = options.hooks ?? new HookRegistry();
@@ -234,6 +239,9 @@ export async function runAgent(
     session,
     hooks,
     cwd,
+    jobRegistry: environment.jobs,
+    terminalService: environment.terminals,
+    ...(mcpWire !== undefined ? { mcpClients: mcpWire.registry } : {}),
     ...(sandboxExecutor !== undefined ? { sandboxExecutor } : {}),
   };
   if (parsed.maxTurns !== undefined) {
@@ -434,6 +442,9 @@ export async function runAgent(
   }
 
   await environment.dispose().catch(() => undefined);
+  if (mcpWire !== undefined) {
+    await mcpWire.dispose().catch(() => undefined);
+  }
 
   return {
     subcommand: "run",

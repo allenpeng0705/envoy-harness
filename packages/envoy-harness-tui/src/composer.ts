@@ -18,6 +18,7 @@ export interface ComposerKey {
   name?: string;
   ctrl?: boolean;
   meta?: boolean;
+  shift?: boolean;
   sequence?: string;
 }
 
@@ -67,7 +68,31 @@ export class Composer {
 
   /** Handle one keypress; mutates the buffer and returns an action. */
   handleKey(ch: string | undefined, key: ComposerKey): ComposerAction {
+    // Kitty-style Shift+Enter ("\x1b[13;2u") — some terminals send this
+    // instead of marking the return keypress with `shift`.
+    if (key.sequence === "\x1b[13;2u") {
+      this.#buffer =
+        this.#buffer.slice(0, this.#cursor) +
+        "\n" +
+        this.#buffer.slice(this.#cursor);
+      this.#cursor++;
+      return { type: "change" };
+    }
     if (key.name === "return" || key.name === "enter") {
+      // Shift+Enter / Alt+Enter inserts a newline (Claude Code style);
+      // plain Enter submits.
+      const isNewline =
+        key.shift === true ||
+        key.meta === true ||
+        key.sequence === "\x1b[13;2u";
+      if (isNewline) {
+        this.#buffer =
+          this.#buffer.slice(0, this.#cursor) +
+          "\n" +
+          this.#buffer.slice(this.#cursor);
+        this.#cursor++;
+        return { type: "change" };
+      }
       const line = this.#buffer;
       if (line.trim().length === 0) return { type: "change" };
       this.commit(line);

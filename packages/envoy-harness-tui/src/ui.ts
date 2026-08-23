@@ -12,11 +12,6 @@
 
 import * as readline from "node:readline";
 
-import type {
-  ClientClusterStatus,
-  ClientPeerInfo,
-} from "@envoymesh/envoy-harness-client";
-
 import { Composer, type ComposerKey } from "./composer.js";
 import {
   buildRailLine,
@@ -24,18 +19,15 @@ import {
   Screen,
 } from "./screen.js";
 import type { TuiSession } from "./session.js";
-import { parseSlash } from "./slash.js";
+import { matchingSlashCommands, parseSlash } from "./slash.js";
 import { formatTranscriptLine } from "./transcript.js";
+import { renderDiscoveryTicker } from "./views.js";
 import {
-  renderClusterView,
-  renderDiscoveryTicker,
-  renderPeersView,
-  renderRouteView,
-  renderScoreboardView,
-  renderSearchView,
-  renderTeamView,
-  renderTraceView,
-} from "./views.js";
+  resolveClusterRoutePreviews,
+  resolveViewBody,
+  type ClusterRoutePreviews,
+  type UiView,
+} from "./view-resolver.js";
 
 export interface RunInteractiveOptions {
   session: TuiSession;
@@ -51,6 +43,8 @@ export interface RunInteractiveOptions {
   refreshCluster?: boolean;
   /** U5 — ANSI SGR prefix for the status bar (e.g. `"\x1b[36m"`). */
   accent?: string;
+  /** Peer endpoints configured at launch (shown in `/mesh`). */
+  configuredPeers?: ReadonlyArray<{ id: string; endpoint: string }>;
 }
 
 /** Run until `/quit`, Ctrl-D, or input ends. */
@@ -92,6 +86,8 @@ async function runPlain(options: RunInteractiveOptions): Promise<void> {
       printed++;
     }
   };
+
+  session.setOnTranscript(() => flush());
 
   flush();
 
@@ -141,126 +137,6 @@ async function runPlain(options: RunInteractiveOptions): Promise<void> {
   });
 }
 
-/** Fetch a view body, falling back to an "unavailable" line on error. */
-async function tryView(
-  fn: () => Promise<string[]> | string[],
-  label: string,
-): Promise<string[]> {
-  try {
-    return await fn();
-  } catch (err) {
-    return [
-      `${label} unavailable: ${err instanceof Error ? err.message : String(err)}`,
-    ];
-  }
-}
-
-/** Resolve the screen's content area for the active view. */
-async function resolveViewBody(
-  view:
-    | "chat"
-    | "peers"
-    | "cluster"
-    | "team"
-    | "scoreboard"
-    | "route"
-    | "search"
-    | "trace",
-  routeTag: string | undefined,
-  session: TuiSession,
-  cluster: ClientClusterStatus | undefined,
-  clusterRoutePreviews?:
-    | ReadonlyArray<{ tag: string; peer: ClientPeerInfo | undefined }>
-    | undefined,
-  searchTerm?: string,
-): Promise<string[]> {
-  if (view === "chat") {
-    return session.transcript.map(formatTranscriptLine);
-  }
-  if (view === "peers") {
-    return tryView(async () => renderPeersView(await session.peers()), "peers");
-  }
-  if (view === "cluster") {
-    return renderClusterView(
-      cluster ?? { peers: [], connected: 0, failed: 0 },
-      clusterRoutePreviews,
-    );
-  }
-  if (view === "team") {
-    return tryView(
-      async () => renderTeamView(await session.teamJobs()),
-      "team",
-    );
-  }
-  if (view === "scoreboard") {
-    return tryView(
-      async () => renderScoreboardView(await session.scoreboard()),
-      "scoreboard",
-    );
-  }
-  if (view === "search") {
-    return searchTerm !== undefined
-      ? renderSearchView(
-          session.transcript.map(formatTranscriptLine),
-          searchTerm,
-        )
-      : ["/search <term> — search the transcript"];
-  }
-  if (view === "trace") {
-    return renderTraceView(session.discoveryEvents);
-  }
-  return routeTag !== undefined
-    ? tryView(
-        async () =>
-          renderRouteView({
-            tag: routeTag,
-            peer: await session.route(routeTag),
-          }),
-        "route",
-      )
-    : ["/route <tag> — preview routing"];
-}
-
-/**
- * U3 follow-up — routing previews for the cluster view: derive candidate
- * tags from the peers' capabilities and ask the host which peer would
- * run each. Cached (10s TTL) so typing in the view doesn't re-route
- * every keystroke.
- */
-async function resolveClusterRoutePreviews(
-  session: TuiSession,
-  cluster: ClientClusterStatus | undefined,
-  cached:
-    | {
-        at: number;
-        previews: Array<{ tag: string; peer: ClientPeerInfo | undefined }>;
-      }
-    | undefined,
-): Promise<{
-  at: number;
-  previews: Array<{ tag: string; peer: ClientPeerInfo | undefined }>;
-}> {
-  const now = Date.now();
-  if (cached !== undefined && now - cached.at < 10_000) return cached;
-  const tags = [
-    ...new Set(
-      (cluster?.peers ?? [])
-        .filter((p) => p.health.ok)
-        .flatMap((p) => p.capabilities ?? []),
-    ),
-  ].slice(0, 5);
-  const previews =
-    tags.length === 0
-      ? []
-      : await Promise.all(
-          tags.map(async (tag) => ({
-            tag,
-            peer: await session.route(tag),
-          })),
-        );
-  return { at: now, previews };
-}
-
 // ---------------------------------------------------------------------------
 // Screen mode — ANSI regions + composer.
 // ---------------------------------------------------------------------------
@@ -280,28 +156,16 @@ async function runInteractiveScreen(
   const refreshCluster = options.refreshCluster !== false;
   let modelLabel: string | undefined;
   let quitting = false;
-  let view:
-    | "chat"
-    | "peers"
-    | "cluster"
-    | "team"
-    | "scoreboard"
-    | "route"
-    | "search"
-    | "trace" = "chat";
+  let view: UiView = "chat";
   let routeTag: string | undefined;
   let searchTerm: string | undefined;
   let discoveryUnsubscribe: (() => void) | undefined;
-  let clusterRoutePreviews:
-    | {
-        at: number;
-        previews: Array<{ tag: string; peer: ClientPeerInfo | undefined }>;
-      }
-    | undefined;
+  let clusterRoutePreviews: ClusterRoutePreviews | undefined;
+  let paletteIndex = 0;
 
   const inputPrefix = (): string => {
     if (session.pendingPermission !== undefined) {
-      return "permission: type allow or deny — ";
+      return "permission — allow/deny — ";
     }
     return session.busy ? "… " : "> ";
   };
@@ -323,6 +187,7 @@ async function runInteractiveScreen(
           ? { sessionId: session.sessionId }
           : {}),
         ...(modelLabel !== undefined ? { model: modelLabel } : {}),
+        meshHint: clusterTotal === 0,
         ...(clusterTotal > 0
           ? {
               clusterConnected: cluster?.connected ?? 0,
@@ -355,18 +220,37 @@ async function runInteractiveScreen(
         cluster,
         clusterRoutePreviews?.previews,
         searchTerm,
+        options.configuredPeers !== undefined
+          ? { configuredPeers: options.configuredPeers }
+          : undefined,
       );
       const ticker =
         session.discoveryEvents.length > 0
           ? renderDiscoveryTicker(session.discoveryEvents)
           : [];
+      if (quitting) return; // a queued render may have started pre-quit
       const prefix = inputPrefix();
+      const paletteItems = matchingSlashCommands(composer.buffer);
+      if (paletteItems.length === 0) paletteIndex = 0;
+      const bufferLines = composer.buffer.split("\n");
+      const before = composer.buffer.slice(0, composer.cursor);
+      const cursorLine = before.split("\n").length - 1;
+      const lastNl = before.lastIndexOf("\n");
       screen.render({
         statusLine,
-        ...(railLine !== undefined ? { railLine } : {}),
+        railLine,
         transcript: [...ticker, ...viewBody],
-        inputLine: `${prefix}${composer.buffer}`,
-        inputCursor: prefix.length + composer.cursor,
+        inputLines: bufferLines.map((line, i) =>
+          i === 0 ? `${prefix}${line}` : line,
+        ),
+        inputCursorLine: cursorLine,
+        inputCursor: prefix.length + (composer.cursor - (lastNl + 1)),
+        ...(paletteItems.length > 0
+          ? {
+              palette: paletteItems,
+              paletteSelected: Math.min(paletteIndex, paletteItems.length - 1),
+            }
+          : {}),
       });
     });
     return renderChain;
@@ -381,7 +265,13 @@ async function runInteractiveScreen(
     const raw = input as NodeJS.ReadStream;
     if (typeof raw.setRawMode === "function") raw.setRawMode(false);
     input.removeAllListeners("keypress");
+    // Detach emitKeypressEvents' data consumer so an open stdin (TTY)
+    // doesn't keep the process alive after the UI exits.
+    input.removeAllListeners("data");
+    if (typeof raw.pause === "function") raw.pause();
   };
+
+  session.setOnTranscript(() => void render());
 
   await render();
   // U3 — subscribe to the host's discovery stream (best-effort).
@@ -397,78 +287,136 @@ async function runInteractiveScreen(
   readline.emitKeypressEvents(input);
 
   await new Promise<void>((resolve) => {
+    const handleSubmit = (rawLine: string): void => {
+      void (async () => {
+        const line = rawLine.trim();
+        // U3 — detail-view commands switch the screen; Esc returns.
+        const slash = parseSlash(line);
+        if (slash !== null) {
+          switch (slash.kind) {
+            case "mesh":
+              view = "mesh";
+              await render();
+              return;
+            case "peers":
+              view = "peers";
+              await render();
+              return;
+            case "cluster":
+              view = "cluster";
+              await render();
+              return;
+            case "team":
+              view = "team";
+              await render();
+              return;
+            case "scoreboard":
+              view = "scoreboard";
+              await render();
+              return;
+            case "route":
+              view = "route";
+              routeTag = slash.tag;
+              await render();
+              return;
+            case "search":
+              view = "search";
+              searchTerm = slash.term;
+              await render();
+              return;
+            case "trace":
+              view = "trace";
+              await render();
+              return;
+            case "plan":
+              if (slash.action === "show" || slash.action === "enter") {
+                view = "plan";
+                await render();
+                return;
+              }
+              break;
+            case "memory":
+              if (slash.op === "list") {
+                view = "memory";
+                await render();
+                return;
+              }
+              break;
+            case "diff":
+              session.setGitDiffFlags(slash.staged, slash.stat);
+              view = "git-diff";
+              await render();
+              return;
+            default:
+              break; // help/cancel/quit/unknown → session.submit
+          }
+        }
+        if (view !== "chat") {
+          // A plain message while in a detail view returns to chat.
+          view = "chat";
+        }
+        if (session.pendingPermission !== undefined) {
+          const d = line.toLowerCase();
+          if (d === "allow" || d === "a" || d === "y") {
+            session.answerPermission("allow");
+          } else if (d === "deny" || d === "d" || d === "n") {
+            session.answerPermission("deny");
+          }
+          await render();
+          return;
+        }
+        const result = await session.submit(rawLine);
+        if (result === "quit") {
+          finish();
+          resolve();
+          return;
+        }
+        await render();
+      })().catch((err: unknown) => {
+        output.write(
+          `\nerror: ${err instanceof Error ? err.message : String(err)}\n`,
+        );
+        void render();
+      });
+    };
+
     input.on("keypress", (ch: string | undefined, key: ComposerKey) => {
       if (quitting) return;
+      // U5+ — slash palette: while the composer holds a `/prefix`, arrows
+      // navigate the palette, Enter selects, Esc closes, Tab completes.
+      const paletteItems = matchingSlashCommands(composer.buffer);
+      if (paletteItems.length > 0) {
+        if (key.name === "up" || key.name === "down") {
+          const delta = key.name === "up" ? -1 : 1;
+          paletteIndex =
+            (paletteIndex + delta + paletteItems.length) % paletteItems.length;
+          void render();
+          return;
+        }
+        if (key.name === "return" || key.name === "enter") {
+          const item =
+            paletteItems[Math.min(paletteIndex, paletteItems.length - 1)];
+          if (item !== undefined) {
+            composer.setLine(item);
+            const action = composer.handleKey(undefined, key);
+            if (action.type === "submit") {
+              // Reuse the submit path below.
+              handleSubmit(action.line);
+            }
+          }
+          return;
+        }
+        if (key.name === "escape") {
+          composer.setLine("");
+          paletteIndex = 0;
+          void render();
+          return;
+        }
+      }
       const action = composer.handleKey(ch, key);
       switch (action.type) {
         case "submit": {
-          void (async () => {
-            const line = action.line.trim();
-            // U3 — detail-view commands switch the screen; Esc returns.
-            const slash = parseSlash(line);
-            if (slash !== null) {
-              switch (slash.kind) {
-                case "peers":
-                  view = "peers";
-                  await render();
-                  return;
-                case "cluster":
-                  view = "cluster";
-                  await render();
-                  return;
-                case "team":
-                  view = "team";
-                  await render();
-                  return;
-                case "scoreboard":
-                  view = "scoreboard";
-                  await render();
-                  return;
-                case "route":
-                  view = "route";
-                  routeTag = slash.tag;
-                  await render();
-                  return;
-                case "search":
-                  view = "search";
-                  searchTerm = slash.term;
-                  await render();
-                  return;
-                case "trace":
-                  view = "trace";
-                  await render();
-                  return;
-                default:
-                  break; // help/cancel/quit/unknown → session.submit
-              }
-            }
-            if (view !== "chat") {
-              // A plain message while in a detail view returns to chat.
-              view = "chat";
-            }
-            if (session.pendingPermission !== undefined) {
-              const d = line.toLowerCase();
-              if (d === "allow" || d === "a" || d === "y") {
-                session.answerPermission("allow");
-              } else if (d === "deny" || d === "d" || d === "n") {
-                session.answerPermission("deny");
-              }
-              await render();
-              return;
-            }
-            const result = await session.submit(action.line);
-            if (result === "quit") {
-              finish();
-              resolve();
-              return;
-            }
-            await render();
-          })().catch((err: unknown) => {
-            output.write(
-              `\nerror: ${err instanceof Error ? err.message : String(err)}\n`,
-            );
-            void render();
-          });
+          handleSubmit(action.line);
           break;
         }
         case "cancel": {

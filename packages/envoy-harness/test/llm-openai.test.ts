@@ -28,6 +28,7 @@ import {
   type HttpRequest,
   type HttpResponse,
 } from "../src/llm/http.js";
+import { createProviderAdapter } from "../src/llm/index.js";
 import {
   is2xx,
   OpenAIAdapter,
@@ -35,6 +36,28 @@ import {
   parseError,
 } from "../src/llm/openai.js";
 import type { Message, Tool } from "../src/tools/types.js";
+
+describe("createProviderAdapter — OpenAI-compatible endpoints", () => {
+  it("honors OPENAI_BASE_URL for openai providers (MiniMax / Envoy Local / LiteLLM)", () => {
+    const adapter = createProviderAdapter({
+      provider: "openai",
+      model: "MiniMax-M3",
+      env: {
+        OPENAI_API_KEY: "sk-test",
+        OPENAI_BASE_URL: "https://api.minimaxi.com/v1",
+      } as NodeJS.ProcessEnv,
+    }) as unknown as { baseUrl: string };
+    expect(adapter.baseUrl).toBe("https://api.minimaxi.com/v1");
+  });
+
+  it("defaults to the OpenAI endpoint when OPENAI_BASE_URL is unset", () => {
+    const adapter = createProviderAdapter({
+      provider: "openai",
+      env: { OPENAI_API_KEY: "sk-test" } as NodeJS.ProcessEnv,
+    }) as unknown as { baseUrl: string };
+    expect(adapter.baseUrl).toMatch(/api\.openai\.com/);
+  });
+});
 
 /** Build a minimal Tool for tests. */
 function makeTool(overrides: Partial<Tool> & Pick<Tool, "name" | "parameters">): Tool {

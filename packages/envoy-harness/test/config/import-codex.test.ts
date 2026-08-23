@@ -213,29 +213,58 @@ describe("importCodexConfig: edge cases", () => {
     expect(result.warnings[0]!.reason).toMatch(/unknown/);
   });
 
-  it("a known-but-ignored top-level key surfaces a warning with the reason", async () => {
+  it("imports [[mcp_servers]] array tables into mcpServers", async () => {
     const file = await writeCodexConfig(
       [
-        `model = "gpt-5.1"`,
-        `[mcp_servers]`,
-        `something = "x"`,
+        `[[mcp_servers]]`,
+        `name = "demo"`,
+        `command = "echo"`,
+        `args = ["mcp-stub"]`,
         ``,
       ].join("\n"),
     );
     const result = await importCodexConfig({ filePath: file });
-    // `model` warning.
+    expect(result.layer.mcpServers).toEqual([
+      { name: "demo", command: "echo", args: ["mcp-stub"] },
+    ]);
+    expect(result.warnings.filter((w) => w.key === "mcp_servers")).toHaveLength(
+      0,
+    );
+  });
+
+  it("imports [[hook.PreToolUse]] into hooks", async () => {
+    const file = await writeCodexConfig(
+      [
+        `[[hook.PreToolUse]]`,
+        `match = { tool = "bash" }`,
+        `command = "echo pre"`,
+        ``,
+      ].join("\n"),
+    );
+    const result = await importCodexConfig({ filePath: file });
+    expect(result.layer.hooks).toEqual([
+      {
+        event: "PreToolUse",
+        command: "echo pre",
+        match: { tool: "bash" },
+      },
+    ]);
+  });
+
+  it("a known-but-ignored top-level key surfaces a warning with the reason", async () => {
+    const file = await writeCodexConfig(
+      [
+        `model = "gpt-5.1"`,
+        `web_search = "ignored"`,
+        ``,
+      ].join("\n"),
+    );
+    const result = await importCodexConfig({ filePath: file });
     const modelWarn = result.warnings.find((w) => w.key === "model");
     expect(modelWarn).toBeDefined();
     expect(modelWarn!.reason).toMatch(/not yet supported/);
-    // `mcp_servers` warning (ONE warning for the whole table;
-    // we don't re-warn for `mcp_servers.something`).
-    const mcpWarnings = result.warnings.filter((w) =>
-      w.key.startsWith("mcp_servers"),
-    );
-    expect(mcpWarnings).toHaveLength(1);
-    expect(mcpWarnings[0]!.key).toBe("mcp_servers");
-    expect(mcpWarnings[0]!.reason).toMatch(/MCP/);
-    // Neither field is in the layer.
+    const webWarn = result.warnings.find((w) => w.key === "web_search");
+    expect(webWarn).toBeDefined();
     expect(result.layer).toEqual({});
   });
 

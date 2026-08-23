@@ -140,6 +140,16 @@ describe("Agent: single-turn", () => {
       text: "you are envoy-harness",
     });
   });
+
+  it("wires assistantStreamSink to model onTextDelta", async () => {
+    const model = new FakeModel([textResponse("streamed")]);
+    const { agent } = makeAgent(model);
+    const deltas: string[] = [];
+    agent.assistantStreamSink = (delta) => deltas.push(delta);
+    await agent.run("hi");
+    expect(deltas.join("")).toBe("streamed");
+    agent.assistantStreamSink = undefined;
+  });
 });
 
 describe("Agent: tool call flow", () => {

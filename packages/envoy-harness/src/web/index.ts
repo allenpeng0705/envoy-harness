@@ -34,4 +34,14 @@ export {
   type BraveSearchProviderOptions,
 } from "./search-brave.js";
 
+export {
+  createExaSearchProvider,
+  type ExaSearchProviderOptions,
+} from "./search-exa.js";
+
+export {
+  createPerplexitySearchProvider,
+  type PerplexitySearchProviderOptions,
+} from "./search-perplexity.js";
+
 export { makeWebTools, registerWebTools } from "./tools.js";

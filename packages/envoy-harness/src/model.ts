@@ -97,6 +97,12 @@ export interface CompleteInput {
    * model calls instead of hanging until they return.
    */
   signal?: AbortSignal;
+  /**
+   * Optional streaming callback. When set, adapters that support
+   * streaming emit assistant text deltas as they arrive. The agent
+   * loop wires this from protocol hosts (`session/token`).
+   */
+  onTextDelta?: (delta: string) => void;
 }
 
 /**

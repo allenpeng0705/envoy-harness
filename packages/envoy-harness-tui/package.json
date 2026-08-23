@@ -28,7 +28,8 @@
   "license": "Apache-2.0",
   "dependencies": {
     "@envoymesh/envoy-harness": "file:../envoy-harness",
-    "@envoymesh/envoy-harness-client": "file:../envoy-harness-client"
+    "@envoymesh/envoy-harness-client": "file:../envoy-harness-client",
+    "@envoymesh/envoy-harness-peer": "file:../envoy-harness-peer"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

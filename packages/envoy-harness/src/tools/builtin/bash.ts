@@ -163,6 +163,9 @@ async function executeBash(
           ...(maxOutputBytes !== undefined
             ? { outputLimitBytes: maxOutputBytes }
             : {}),
+          ...(ctx.onToolOutput !== undefined
+            ? { onOutput: ctx.onToolOutput }
+            : {}),
         }),
     });
     const snap = jobs.get(id, ctx.session.id);
@@ -237,11 +240,15 @@ async function runBash(
     }
 
     child.stdout?.on("data", (d: Buffer) => {
-      if (stdout.length + d.length > cap) {
+      const chunk = d.toString("utf8");
+      if (ctx.onToolOutput !== undefined && chunk.length > 0) {
+        ctx.onToolOutput(chunk);
+      }
+      if (stdout.length + chunk.length > cap) {
         stdoutTruncated = true;
-        stdout += d.toString("utf8", 0, Math.max(0, cap - stdout.length));
+        stdout += chunk.slice(0, Math.max(0, cap - stdout.length));
       } else {
-        stdout += d.toString("utf8");
+        stdout += chunk;
       }
     });
     child.stderr?.on("data", (d: Buffer) => {
@@ -303,11 +310,10 @@ async function runBashViaExecutor(
       policy,
       cwd: ctx.cwd,
       signal: ac.signal,
-      // Let the executor stream-cap too. We still slice
-      // here for the final cap (in case the executor didn't
-      // honor it or used a higher cap), but with this
-      // passthrough we avoid buffering huge outputs.
       maxOutputBytes: cap,
+      ...(ctx.onToolOutput !== undefined
+        ? { onStdout: ctx.onToolOutput }
+        : {}),
     });
     const stdout =
       result.stdout.length > cap ? result.stdout.slice(0, cap) : result.stdout;

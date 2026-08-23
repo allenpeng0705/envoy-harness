@@ -305,11 +305,32 @@ export function messagesToAnthropic(
       continue;
     }
     if (m.role === "user") {
-      // A user message can be plain text OR tool results.
-      // Emit one wire message per kind (one for text, one for
-      // tool_results). Empty user messages are skipped.
+      const images = m.content.filter(
+        (b): b is Extract<ContentBlock, { type: "image" }> => b.type === "image",
+      );
       const text = blocksToText(m.content.filter((b) => b.type === "text"));
-      if (text.length > 0) {
+      if (images.length > 0) {
+        const blocks: Array<
+          | { type: "text"; text: string }
+          | { type: "image"; source: { type: "base64"; media_type: string; data: string } }
+        > = [];
+        if (text.length > 0) {
+          blocks.push({ type: "text", text });
+        }
+        for (const img of images) {
+          blocks.push({
+            type: "image",
+            source: {
+              type: "base64",
+              media_type: img.mimeType,
+              data: img.data,
+            },
+          });
+        }
+        if (blocks.length > 0) {
+          out.push({ role: "user", content: blocks as never });
+        }
+      } else if (text.length > 0) {
         out.push({ role: "user", content: text });
       }
       const toolResults = collectToolResults(m.content);

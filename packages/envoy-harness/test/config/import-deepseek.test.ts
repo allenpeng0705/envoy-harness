@@ -155,7 +155,7 @@ describe("importDeepseekConfig: disabled plugins", () => {
 // ---------------------------------------------------------------------------
 
 describe("importDeepseekConfig: future bridges", () => {
-  it("warns and skips a dsh-hooks-codex entry (v0 only knows claude-code)", async () => {
+  it("warns when dsh-hooks-codex config file is missing", async () => {
     const file = await writeCordis(
       [
         `- id: codex-bridge`,
@@ -166,11 +166,8 @@ describe("importDeepseekConfig: future bridges", () => {
       ].join("\n"),
     );
     const r = await importDeepseekConfig({ filePath: file });
-    // The plugin is not in the result (no bridge matches).
-    // No warning either — the importer silently skips
-    // unknown bridge names (they're treated like any
-    // other non-hook plugin).
-    expect(r.warnings).toEqual([]);
+    expect(r.warnings).toHaveLength(1);
+    expect(r.warnings[0]?.plugin).toBe("codex-bridge");
     expect(r.layer.hooks).toBeUndefined();
   });
 });

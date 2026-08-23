@@ -41,6 +41,8 @@ import {
   buildAgentSystemPrompt,
 } from "../../index.js";
 import { wireEnvironmentTools } from "../../environment/index.js";
+import { wireMcpClientsFromConfig } from "../../mcp/index.js";
+import { loadConfig } from "../../index.js";
 import {
   createReplStdinProvider,
   createUserQuestionService,
@@ -130,6 +132,13 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
   }
   const tools = new ToolRegistry();
   for (const t of BUILTIN_TOOLS) tools.register(t);
+  const { layer: configLayer } = await loadConfig(
+    opts.args.config !== undefined ? { filePath: opts.args.config } : {},
+  );
+  const mcpWire = await wireMcpClientsFromConfig(
+    configLayer.mcpServers,
+    tools,
+  );
   // Phase C: jobs / web / terminal (Cordis-free L3 ports).
   const environment = wireEnvironmentTools(tools);
   const hooks = opts.hooks ?? new HookRegistry();
@@ -140,6 +149,9 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
     session,
     hooks,
     cwd,
+    jobRegistry: environment.jobs,
+    terminalService: environment.terminals,
+    ...(mcpWire !== undefined ? { mcpClients: mcpWire.registry } : {}),
   };
   // Phase G — the REPL's system prompt: AGENTS.md discovery + terminal
   // guidance (the REPL wires terminal tools via wireEnvironmentTools).
@@ -380,6 +392,9 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
     // a provider-disposal failure is not actionable).
     disposeUserQuestionsProvider();
     await environment.dispose().catch(() => undefined);
+    if (mcpWire !== undefined) {
+      await mcpWire.dispose().catch(() => undefined);
+    }
   }
 
   return { exitCode: 0, turns, totalCostUsd, sessionId: agent.getSessionId() };

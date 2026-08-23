@@ -150,6 +150,17 @@ export class EnvoyHarnessClient {
     };
   }
 
+  async loadSession(
+    sessionId: string,
+    cwd?: string,
+  ): Promise<{ sessionId: string }> {
+    this.#dialect = "acp";
+    return (await this.#conn.request("session/load", {
+      sessionId,
+      ...(cwd !== undefined ? { cwd } : {}),
+    })) as { sessionId: string };
+  }
+
   async createSession(params?: {
     cwd?: string;
   }): Promise<{ sessionId: string }> {
@@ -162,10 +173,13 @@ export class EnvoyHarnessClient {
   async prompt(
     sessionId: string,
     text: string,
+    content?: ReadonlyArray<
+      { type: "text"; text: string } | { type: "image"; mimeType: string; data: string }
+    >,
   ): Promise<{ stopReason: string; messages: unknown[] }> {
     return (await this.#conn.request("session/prompt", {
       sessionId,
-      text,
+      ...(content !== undefined && content.length > 0 ? { content } : { text }),
     })) as { stopReason: string; messages: unknown[] };
   }
 
@@ -261,6 +275,184 @@ export class EnvoyHarnessClient {
       ...(preferredPeerId !== undefined ? { preferredPeerId } : {}),
     })) as { peer: ClientPeerInfo | null };
     return res.peer ?? undefined;
+  }
+
+  /** Runtime mesh wiring (`cluster/connect`). */
+  async connectClusterPeer(params: {
+    id: string;
+    endpoint: string;
+    model?: string;
+    capabilities?: readonly string[];
+  }): Promise<{ ok: boolean; error?: string }> {
+    return (await this.#conn.request("cluster/connect", {
+      id: params.id,
+      endpoint: params.endpoint,
+      ...(params.model !== undefined ? { model: params.model } : {}),
+      ...(params.capabilities !== undefined
+        ? { capabilities: [...params.capabilities] }
+        : {}),
+    })) as { ok: boolean; error?: string };
+  }
+
+  async compactSession(
+    sessionId: string,
+    options?: { keep?: number; budget?: number; summarize?: boolean },
+  ): Promise<{
+    messageCountBefore: number;
+    messageCountAfter: number;
+    droppedCount: number;
+    totalTokensAfter?: number;
+    overBudget?: boolean;
+    summarized?: boolean;
+  }> {
+    const res = (await this.#conn.request("session/compact", {
+      sessionId,
+      ...(options?.keep !== undefined ? { keep: options.keep } : {}),
+      ...(options?.budget !== undefined ? { budget: options.budget } : {}),
+      ...(options?.summarize === true ? { summarize: true } : {}),
+    })) as {
+      result: {
+        messageCountBefore: number;
+        messageCountAfter: number;
+        droppedCount: number;
+        totalTokensAfter?: number;
+        overBudget?: boolean;
+        summarized?: boolean;
+      };
+    };
+    return res.result;
+  }
+
+  async setSessionModel(
+    sessionId: string,
+    provider: string,
+    model?: string,
+  ): Promise<{ provider: string; model?: string }> {
+    const res = (await this.#conn.request("session/set_model", {
+      sessionId,
+      provider,
+      ...(model !== undefined ? { model } : {}),
+    })) as { result: { provider: string; model?: string } };
+    return res.result;
+  }
+
+  async setSessionPolicy(
+    sessionId: string,
+    policy: {
+      sandbox?: "read-only" | "workspace-write" | "danger-full-access";
+      approval?: "unless-trusted" | "on-request" | "granular" | "never";
+    },
+  ): Promise<{ sandbox?: string; approval?: string }> {
+    const res = (await this.#conn.request("session/set_policy", {
+      sessionId,
+      ...(policy.sandbox !== undefined ? { sandbox: policy.sandbox } : {}),
+      ...(policy.approval !== undefined ? { approval: policy.approval } : {}),
+    })) as { result: { sandbox?: string; approval?: string } };
+    return res.result;
+  }
+
+  async gitDiff(
+    sessionId: string,
+    options?: { staged?: boolean; stat?: boolean },
+  ): Promise<string> {
+    const res = (await this.#conn.request("git/diff", {
+      sessionId,
+      ...(options?.staged === true ? { staged: true } : {}),
+      ...(options?.stat === true ? { stat: true } : {}),
+    })) as { output: string };
+    return res.output;
+  }
+
+  async gitStatus(sessionId: string): Promise<string> {
+    const res = (await this.#conn.request("git/status", {
+      sessionId,
+    })) as { output: string };
+    return res.output;
+  }
+
+  async getSessionContext(sessionId: string): Promise<{
+    messageCount: number;
+    inputTokens: number;
+    outputTokens: number;
+    costUsd: number;
+  }> {
+    return (await this.#conn.request("session/context", {
+      sessionId,
+    })) as {
+      messageCount: number;
+      inputTokens: number;
+      outputTokens: number;
+      costUsd: number;
+    };
+  }
+
+  async listSessionHooks(sessionId: string): Promise<
+    Array<{ event: string; handlerCount: number }>
+  > {
+    const res = (await this.#conn.request("session/hooks", {
+      sessionId,
+    })) as { hooks: Array<{ event: string; handlerCount: number }> };
+    return res.hooks;
+  }
+
+  async listSessionMcp(sessionId: string): Promise<string[]> {
+    const res = (await this.#conn.request("session/mcp", {
+      sessionId,
+    })) as { servers: string[] };
+    return res.servers;
+  }
+
+  async listSessionAgents(sessionId: string): Promise<string> {
+    const res = (await this.#conn.request("session/agents", {
+      sessionId,
+    })) as { output: string };
+    return res.output;
+  }
+
+  async sessionPlan(
+    sessionId: string,
+    action: string,
+    options?: { text?: string; reason?: string },
+  ): Promise<string> {
+    const res = (await this.#conn.request("session/plan", {
+      sessionId,
+      action,
+      ...(options?.text !== undefined ? { text: options.text } : {}),
+      ...(options?.reason !== undefined ? { reason: options.reason } : {}),
+    })) as { output: string };
+    return res.output;
+  }
+
+  async sessionMemory(
+    sessionId: string,
+    op: "list" | "read" | "add",
+    options?: { name?: string; body?: string },
+  ): Promise<string> {
+    const res = (await this.#conn.request("session/memory", {
+      sessionId,
+      op,
+      ...(options?.name !== undefined ? { name: options.name } : {}),
+      ...(options?.body !== undefined ? { body: options.body } : {}),
+    })) as { output: string };
+    return res.output;
+  }
+
+  async sessionReview(
+    sessionId: string,
+    staged?: boolean,
+  ): Promise<string> {
+    const res = (await this.#conn.request("session/review", {
+      sessionId,
+      ...(staged === true ? { staged: true } : {}),
+    })) as { output: string };
+    return res.output;
+  }
+
+  async sessionInit(sessionId: string): Promise<string> {
+    const res = (await this.#conn.request("session/init", {
+      sessionId,
+    })) as { output: string };
+    return res.output;
   }
 
   get dialect(): "acp" | "sdk" | undefined {

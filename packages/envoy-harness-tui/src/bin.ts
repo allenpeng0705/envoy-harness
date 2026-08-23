@@ -5,45 +5,185 @@
  * Modes:
  * - `--demo` (default): in-process fake backend
  * - `--spawn`: child `envoy-harness --acp` over stdio
+ * - `--cluster-only`: mesh cluster console (no local agent chat)
+ * - `--peers <id>@<host:port>`: wire static peer discovery (repeatable)
  */
 
 import { createFakeSessionBackend } from "@envoymesh/envoy-harness";
 
+import { createClusterTui } from "./cluster-wiring.js";
 import { createInProcessTui } from "./in-process.js";
+import {
+  formatPeersForEnv,
+  parseTuiPeerFlags,
+  type PeerEndpointSpec,
+} from "./peers-config.js";
 import { createSpawnedTui } from "./spawn.js";
 import { runInteractive } from "./ui.js";
 
-async function main(): Promise<void> {
-  const args = process.argv.slice(2);
-  if (args.includes("--help") || args.includes("-h")) {
-    process.stdout.write(`envoy-harness-tui — terminal host for envoy-harness (ACP)
+const TUI_HELP = `envoy-harness-tui — terminal host for envoy-harness (ACP)
 
 Usage:
-  envoy-harness-tui [--demo | --spawn] [--ask-permission]
+  envoy-harness-tui [--demo | --spawn | --cluster-only]
+                    [--peers <id>@<host:port>] [--connect-timeout-ms <n>]
+                    [--provider <name>] [--model <model>] [--ask-permission]
 
+Modes:
   --demo            in-process fake backend (default)
-  --spawn           spawn \`envoy-harness --acp\` and attach over stdio
-  --ask-permission  demo backend asks allow/deny once (demo mode only)
-  --help            show this help
+  --spawn           spawn \`envoy-harness --acp\` and attach over stdio;
+                    pass --provider/--model for a live model
+  --cluster-only    mesh cluster console (distributed ops; chat echoes hint)
+
+Mesh / collaboration:
+  --peers <id>@<host:port>   static peer endpoint (repeatable)
+  --connect-timeout-ms <n>   per-peer TCP connect timeout (default 10000)
+  ENVOY_PEERS                same as --peers (comma or space separated)
 
 Env:
   ENVOY_HARNESS_BIN  override harness executable for --spawn
 
-Inside the TUI: /help /cancel /quit
+Inside the TUI: /mesh /help /cluster /peers /route /scoreboard /team /trace
 Permission prompts: type allow or deny
-`);
+`;
+
+function buildHarnessArgs(
+  argv: readonly string[],
+  peers: ReadonlyArray<PeerEndpointSpec>,
+): string[] {
+  const harnessArgs: string[] = [];
+  const providerIndex = argv.indexOf("--provider");
+  if (providerIndex !== -1 && argv[providerIndex + 1]) {
+    harnessArgs.push("--provider", argv[providerIndex + 1]!);
+  }
+  const modelIndex = argv.indexOf("--model");
+  if (modelIndex !== -1 && argv[modelIndex + 1]) {
+    harnessArgs.push("--model", argv[modelIndex + 1]!);
+  }
+  const timeoutIndex = argv.indexOf("--connect-timeout-ms");
+  if (timeoutIndex !== -1 && argv[timeoutIndex + 1]) {
+    harnessArgs.push("--connect-timeout-ms", argv[timeoutIndex + 1]!);
+  }
+  for (const peer of peers) {
+    harnessArgs.push("--peers", `${peer.id}@${peer.endpoint}`);
+  }
+  return harnessArgs;
+}
+
+async function main(): Promise<void> {
+  const argv = process.argv.slice(2);
+  if (argv.includes("--help") || argv.includes("-h")) {
+    process.stdout.write(TUI_HELP);
     return;
   }
 
-  if (args.includes("--spawn")) {
-    const tui = createSpawnedTui({ cwd: process.cwd(), stderr: "inherit" });
+  let peerFlags: ReturnType<typeof parseTuiPeerFlags>;
+  try {
+    peerFlags = parseTuiPeerFlags(argv);
+  } catch (err) {
+    process.stderr.write(
+      `envoy-harness-tui: ${(err as Error).message}\n`,
+    );
+    process.exitCode = 2;
+    return;
+  }
+
+  const spawn = argv.includes("--spawn");
+  const clusterOnly = peerFlags.clusterOnly;
+  const demo = !spawn && !clusterOnly;
+  const configuredPeers = peerFlags.peers;
+
+  if (clusterOnly) {
+    if (configuredPeers.length === 0) {
+      process.stderr.write(
+        "envoy-harness-tui: --cluster-only requires at least one --peers <id>@<host:port> or ENVOY_PEERS\n",
+      );
+      process.exitCode = 2;
+      return;
+    }
+    const tui = await createClusterTui({
+      peers: configuredPeers,
+      cwd: process.cwd(),
+      ...(peerFlags.connectTimeoutMs !== undefined
+        ? { connectTimeoutMs: peerFlags.connectTimeoutMs }
+        : {}),
+      onFailure: (id, err) => {
+        process.stderr.write(`[mesh] peer ${id} failed: ${err.message}\n`);
+      },
+    });
     try {
       process.stdout.write(
-        "envoy-harness-tui (spawned --acp) — /help for commands\n",
+        "envoy-harness-tui (cluster console) — /mesh /help for mesh commands\n",
       );
-      await runInteractive({ session: tui.session });
+      await runInteractive({
+        session: tui.session,
+        configuredPeers,
+      });
     } finally {
       tui.close();
+    }
+    return;
+  }
+
+  if (spawn) {
+    const harnessArgs = buildHarnessArgs(argv, configuredPeers);
+    const spawnEnv =
+      configuredPeers.length > 0
+        ? {
+            ...process.env,
+            ENVOY_PEERS: formatPeersForEnv(configuredPeers),
+          }
+        : process.env;
+    const tui = createSpawnedTui({
+      cwd: process.cwd(),
+      stderr: "inherit",
+      harnessArgs,
+      env: spawnEnv,
+    });
+    try {
+      const meshNote =
+        configuredPeers.length > 0
+          ? ` (${configuredPeers.length} peer(s) wired — /mesh /cluster)`
+          : " — /mesh to discover collaboration";
+      process.stdout.write(
+        `envoy-harness-tui (spawned --acp)${meshNote}\n`,
+      );
+      await runInteractive({
+        session: tui.session,
+        configuredPeers,
+      });
+    } finally {
+      tui.close();
+    }
+    return;
+  }
+
+  if (demo && configuredPeers.length > 0) {
+    const wired = await import("./cluster-wiring.js");
+    const clusterTui = await wired.createClusterTui({
+      peers: configuredPeers,
+      cwd: process.cwd(),
+      base: createFakeSessionBackend({
+        ...(argv.includes("--ask-permission")
+          ? { permissionTool: "bash" }
+          : {}),
+      }),
+      ...(peerFlags.connectTimeoutMs !== undefined
+        ? { connectTimeoutMs: peerFlags.connectTimeoutMs }
+        : {}),
+      onFailure: (id, err) => {
+        process.stderr.write(`[mesh] peer ${id} failed: ${err.message}\n`);
+      },
+    });
+    try {
+      process.stdout.write(
+        "envoy-harness-tui (demo + mesh) — /mesh /help for commands\n",
+      );
+      await runInteractive({
+        session: clusterTui.session,
+        configuredPeers,
+      });
+    } finally {
+      clusterTui.close();
     }
     return;
   }
@@ -51,7 +191,7 @@ Permission prompts: type allow or deny
   const tui = createInProcessTui({
     cwd: process.cwd(),
     backend: createFakeSessionBackend({
-      ...(args.includes("--ask-permission")
+      ...(argv.includes("--ask-permission")
         ? { permissionTool: "bash" }
         : {}),
     }),
@@ -59,9 +199,12 @@ Permission prompts: type allow or deny
 
   try {
     process.stdout.write(
-      "envoy-harness-tui (demo backend) — /help for commands\n",
+      "envoy-harness-tui (demo) — /mesh for collaboration · /help for commands\n",
     );
-    await runInteractive({ session: tui.session });
+    await runInteractive({
+      session: tui.session,
+      configuredPeers,
+    });
   } finally {
     tui.close();
   }

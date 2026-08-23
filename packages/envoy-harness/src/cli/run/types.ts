@@ -151,7 +151,20 @@ export interface TeamRunResult {
 }
 
 /** Union of the subcommand results. */
-export type CliRunResult = RunResult | SelfEvolveRunResult | TeamRunResult;
+export interface DoctorRunResult {
+  subcommand: "doctor";
+  checks: ReadonlyArray<{
+    name: string;
+    ok: boolean;
+    detail: string;
+  }>;
+}
+
+export type CliRunResult =
+  | RunResult
+  | SelfEvolveRunResult
+  | TeamRunResult
+  | DoctorRunResult;
 
 /** The process exit code. */
 export type ExitCode = 0 | 1 | 2 | 64 | 65 | 66;

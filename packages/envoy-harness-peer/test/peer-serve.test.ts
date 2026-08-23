@@ -160,4 +160,36 @@ describe.skipIf(!canBind)("startPeerServer over TCP", () => {
       await started.close();
     }
   });
+
+  it("survives a hard client disconnect (no unhandled ECONNRESET)", async () => {
+    const started = await startPeerServer({
+      adapter: createDemoAdapter({ peerId: "p-reset" }),
+      identity: { peerId: "p-reset" },
+      host: "127.0.0.1",
+      port: 0,
+    });
+    try {
+      // First client connects then is destroyed abruptly (like a killed
+      // TUI / Ctrl-C) — the server must keep serving.
+      const first = await connectPeerClient({
+        host: "127.0.0.1",
+        port: started.port,
+      });
+      first.socket.destroy();
+
+      // A second client must still get ping + submit answers.
+      const { client, close } = await connectPeerClient({
+        host: "127.0.0.1",
+        port: started.port,
+      });
+      try {
+        const ping = await client.ping();
+        expect(ping.ok).toBe(true);
+      } finally {
+        close();
+      }
+    } finally {
+      await started.close();
+    }
+  });
 });

@@ -36,6 +36,9 @@ export class SeatbeltSandboxExecutor implements SandboxExecutor {
       ...(context.maxOutputBytes !== undefined
         ? { maxOutputBytes: context.maxOutputBytes }
         : {}),
+      ...(context.onStdout !== undefined
+        ? { onStdout: context.onStdout }
+        : {}),
     };
     if (context.policy.backend === "none") {
       return spawnCapture({

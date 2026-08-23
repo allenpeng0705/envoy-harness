@@ -144,6 +144,19 @@ export interface ToolExecutorContext {
    * `AgentResult.toolCalls`.
    */
   noteToolCall(): void;
+  /**
+   * Forward live tool stdout to the protocol host (bash streaming).
+   */
+  emitToolOutput?: (info: {
+    toolName: string;
+    callId: string;
+    stdout: string;
+  }) => void;
+  /** Record write/edit changes for `/undo`. */
+  recordUndo?: (entry: {
+    path: string;
+    previousContent: string | null;
+  }) => void;
 }
 
 export class ToolExecutor {
@@ -237,6 +250,7 @@ export class ToolExecutor {
         ts: new Date().toISOString(),
         iteration,
         callId: call.id,
+        toolName: call.name,
         result: {
           content: `blocked by PreToolUse: ${preDecision.reason}`,
           isError: true,
@@ -266,6 +280,7 @@ export class ToolExecutor {
           ts: new Date().toISOString(),
           iteration,
           callId: call.id,
+        toolName: call.name,
           result: { content: denial, isError: true },
           durationMs: 0,
         });
@@ -297,6 +312,7 @@ export class ToolExecutor {
           ts: new Date().toISOString(),
           iteration,
           callId: call.id,
+        toolName: call.name,
           result: { content: denial, isError: true },
           durationMs: 0,
         });
@@ -316,6 +332,7 @@ export class ToolExecutor {
           ts: new Date().toISOString(),
           iteration,
           callId: call.id,
+        toolName: call.name,
           result: { content: denial, isError: true },
           durationMs: 0,
         });
@@ -365,6 +382,7 @@ export class ToolExecutor {
         ts: new Date().toISOString(),
         iteration,
         callId: call.id,
+        toolName: call.name,
         result: { content: `unknown tool: ${call.name}`, isError: true },
         durationMs: 0,
       });
@@ -397,6 +415,7 @@ export class ToolExecutor {
         ts: new Date().toISOString(),
         iteration,
         callId: call.id,
+        toolName: call.name,
         result: {
           content: `invalid arguments: ${parsed.error.message}`,
           isError: true,
@@ -426,6 +445,19 @@ export class ToolExecutor {
         // current mode, not the session-start mode.
         sandboxPolicy: this.ctx.getSandboxPolicy(),
         ...(sandboxExecutor !== undefined ? { sandboxExecutor } : {}),
+        ...(this.ctx.emitToolOutput !== undefined
+          ? {
+              onToolOutput: (stdout: string) =>
+                this.ctx.emitToolOutput!({
+                  toolName: call.name,
+                  callId: call.id,
+                  stdout,
+                }),
+            }
+          : {}),
+        ...(this.ctx.recordUndo !== undefined
+          ? { recordUndo: this.ctx.recordUndo }
+          : {}),
       });
       resultContent = result.content;
       isError = result.isError ?? false;
@@ -443,6 +475,7 @@ export class ToolExecutor {
       ts: new Date().toISOString(),
       iteration,
       callId: call.id,
+      toolName: call.name,
       result: { content: resultContent, ...(isError ? { isError } : {}) },
       durationMs: toolDurationMs,
     });
@@ -557,7 +590,20 @@ export class ToolExecutor {
     let resultContent: unknown;
     let isError = false;
     try {
-      const mcpResult = await client.callTool(parsed.toolName, call.args);
+      const mcpResult = await client.callTool(
+        parsed.toolName,
+        call.args,
+        this.ctx.emitToolOutput !== undefined
+          ? {
+              onProgress: (text) =>
+                this.ctx.emitToolOutput!({
+                  toolName: call.name,
+                  callId: call.id,
+                  stdout: text,
+                }),
+            }
+          : undefined,
+      );
       resultContent = mcpResult.content;
       isError = mcpResult.isError ?? false;
     } catch (err) {
@@ -571,6 +617,7 @@ export class ToolExecutor {
       ts: new Date().toISOString(),
       iteration,
       callId: call.id,
+      toolName: call.name,
       result: { content: resultContent, ...(isError ? { isError } : {}) },
       durationMs: toolDurationMs,
     });

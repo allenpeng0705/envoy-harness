@@ -14,6 +14,8 @@ export interface ProcessJobOptions {
   outputLimitBytes?: number;
   /** Grace period before SIGKILL after cancel (default 2s). */
   killGraceMs?: number;
+  /** Live combined stdout/stderr chunks (UTF-8). */
+  onOutput?: (chunk: string) => void;
 }
 
 const DEFAULT_OUTPUT_LIMIT = 256 * 1024;
@@ -33,6 +35,9 @@ export function createProcessJobHooks(options: ProcessJobOptions): JobHooks {
 
   const append = (chunk: Buffer): void => {
     if (settled) return;
+    if (options.onOutput !== undefined && chunk.byteLength > 0) {
+      options.onOutput(chunk.toString("utf8"));
+    }
     const next = Buffer.concat([buffer, chunk]);
     if (next.byteLength <= limit) {
       buffer = next;

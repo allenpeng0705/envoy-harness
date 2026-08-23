@@ -1,10 +1,11 @@
 /**
- * Slash palette stub — local commands, not sent to the agent.
+ * Slash palette — local + protocol-backed commands (Claude Code / Codex parity).
  */
 
 export type SlashResult =
   | { kind: "help"; text: string }
   | { kind: "cancel" }
+  | { kind: "mesh"; action?: "show" | "connect"; endpoint?: string }
   | { kind: "peers" }
   | { kind: "cluster" }
   | { kind: "team" }
@@ -12,41 +13,160 @@ export type SlashResult =
   | { kind: "route"; tag: string }
   | { kind: "search"; term: string }
   | { kind: "trace" }
+  | { kind: "tools" }
+  | { kind: "config" }
+  | { kind: "session" }
+  | { kind: "status" }
+  | { kind: "cost" }
+  | { kind: "clear" }
+  | { kind: "new" }
+  | { kind: "context" }
+  | { kind: "compact"; keep?: number; budget?: number; summarize?: boolean }
+  | { kind: "provider"; name: string; model?: string }
+  | { kind: "model" }
+  | { kind: "sandbox"; mode: string }
+  | { kind: "approval"; mode: string }
+  | { kind: "diff"; staged?: boolean; stat?: boolean }
+  | { kind: "git-status" }
+  | { kind: "hooks" }
+  | { kind: "mcp" }
+  | { kind: "agents" }
+  | { kind: "memory"; op: "list" | "read" | "add"; name?: string; body?: string }
+  | { kind: "plan"; action: string; text?: string; reason?: string }
+  | { kind: "review"; staged?: boolean }
+  | { kind: "init" }
+  | { kind: "resume"; id: string }
   | { kind: "quit" }
   | { kind: "unknown"; command: string };
 
+/** Distributed mesh slash commands (cluster collaboration). */
+export const MESH_SLASH_COMMANDS: ReadonlyArray<{ name: string; description: string }> = [
+  { name: "mesh", description: "mesh setup guide — discover peers & config" },
+  { name: "cluster", description: "cluster health + routing previews" },
+  { name: "peers", description: "list connected peers" },
+  { name: "route", description: "routing preview: /route <capability tag>" },
+  { name: "team", description: "running/finished team jobs" },
+  { name: "scoreboard", description: "peer reputation per skill" },
+  { name: "trace", description: "recent discovery / peer events" },
+];
+
 /** The slash-command palette (for help + tab completion). */
 export const SLASH_COMMANDS: ReadonlyArray<{ name: string; description: string }> = [
-  { name: "help", description: "show this help" },
-  { name: "peers", description: "list connected peers (R3 peer surface)" },
-  {
-    name: "cluster",
-    description: "cluster status: peer health + routing (U1)",
-  },
-  { name: "team", description: "running/finished team jobs (U1)" },
-  { name: "scoreboard", description: "peer reputation per skill (U1)" },
-  { name: "route", description: "preview routing: /route <capability tag>" },
-  { name: "search", description: "search the transcript: /search <term>" },
-  { name: "trace", description: "recent discovery/peer events" },
-  { name: "cancel", description: "cancel the in-flight prompt" },
+  ...MESH_SLASH_COMMANDS,
+  { name: "help", description: "list slash commands" },
+  { name: "status", description: "session id, busy state, last turn cost" },
+  { name: "session", description: "show active session id" },
+  { name: "config", description: "show harness config (model, version)" },
+  { name: "tools", description: "list tools available to the agent" },
+  { name: "cost", description: "last turn token cost (when available)" },
+  { name: "context", description: "transcript size + last turn cost" },
+  { name: "compact", description: "compact session (keep, --budget, --summarize)" },
+  { name: "hooks", description: "list registered hooks" },
+  { name: "mcp", description: "list MCP servers" },
+  { name: "agents", description: "list spawned sub-agents" },
+  { name: "memory", description: "memory: list | read <name> | add <name> <body>" },
+  { name: "plan", description: "plan mode: enter | show | edit | propose | approve | reject | exit" },
+  { name: "review", description: "model code review of git diff (optional staged)" },
+  { name: "init", description: "generate AGENTS.md via the model" },
+  { name: "resume", description: "resume session: /resume <session-id>" },
+  { name: "search", description: "search transcript: /search <term>" },
+  { name: "provider", description: "swap provider: /provider <name> [model]" },
+  { name: "model", description: "show model swap usage" },
+  { name: "sandbox", description: "permission mode: read-only | workspace-write | …" },
+  { name: "approval", description: "approval policy: on-request | never | …" },
+  { name: "diff", description: "git diff (optional --staged --stat)" },
+  { name: "git-status", description: "git status --porcelain" },
+  { name: "clear", description: "clear the transcript display" },
+  { name: "new", description: "new ACP session (fresh agent context)" },
+  { name: "cancel", description: "abort the in-flight prompt" },
   { name: "quit", description: "exit the TUI" },
 ];
 
-const HELP = `Slash commands:
-${SLASH_COMMANDS.map((c) => `  /${c.name}  ${c.description}`).join("\n")}
+const REPL_ONLY = `
+Additional REPL-only commands (envoy-harness --repl):
+  /export /rules /lsp /profile /rename /copy
 `;
+
+const HELP = `Slash commands (envoy-harness TUI):
+
+Mesh / collaboration:
+${MESH_SLASH_COMMANDS.map((c) => `  /${c.name.padEnd(11)} ${c.description}`).join("\n")}
+
+Session / agent:
+${SLASH_COMMANDS.filter((c) => !MESH_SLASH_COMMANDS.some((m) => m.name === c.name))
+  .map((c) => `  /${c.name.padEnd(11)} ${c.description}`)
+  .join("\n")}
+${REPL_ONLY.trim()}
+`;
+
+function parseCompactArgs(rest: string): SlashResult {
+  const tokens = rest.trim().split(/\s+/).filter((t) => t.length > 0);
+  let budget: number | undefined;
+  let keep: number | undefined;
+  let summarize = false;
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i];
+    if (t === "--summarize") {
+      summarize = true;
+      continue;
+    }
+    if (t === "--budget" && tokens[i + 1] !== undefined) {
+      const n = Number(tokens[i + 1]);
+      if (!Number.isFinite(n)) {
+        return { kind: "unknown", command: "compact --budget <number>" };
+      }
+      budget = n;
+      i++;
+      continue;
+    }
+    if (t === "--keep" && tokens[i + 1] !== undefined) {
+      const n = Number(tokens[i + 1]);
+      if (!Number.isFinite(n)) {
+        return { kind: "unknown", command: "compact --keep <number>" };
+      }
+      keep = n;
+      i++;
+      continue;
+    }
+    const n = Number(t);
+    if (Number.isFinite(n)) {
+      keep = n;
+    }
+  }
+  return {
+    kind: "compact",
+    ...(keep !== undefined ? { keep } : {}),
+    ...(budget !== undefined ? { budget } : {}),
+    ...(summarize ? { summarize: true } : {}),
+  };
+}
+
+function parseDiffFlags(rest: string): SlashResult {
+  const tokens = rest.trim().split(/\s+/);
+  const staged = tokens.includes("--staged");
+  const stat = tokens.includes("--stat");
+  return {
+    kind: "diff",
+    ...(staged ? { staged: true } : {}),
+    ...(stat ? { stat: true } : {}),
+  };
+}
 
 /** Parse a line that starts with `/`. Non-slash input returns null. */
 export function parseSlash(line: string): SlashResult | null {
   const trimmed = line.trim();
   if (!trimmed.startsWith("/")) return null;
-  const [cmd] = trimmed.slice(1).split(/\s+/);
-  switch (cmd?.toLowerCase()) {
+  const parts = trimmed.slice(1).split(/\s+/);
+  const cmd = parts[0]?.toLowerCase();
+  const rest = trimmed.slice(cmd !== undefined ? cmd.length + 1 : 1);
+  switch (cmd) {
     case "help":
     case "?":
       return { kind: "help", text: HELP };
     case "cancel":
       return { kind: "cancel" };
+    case "mesh":
+      return { kind: "mesh" };
     case "peers":
       return { kind: "peers" };
     case "cluster":
@@ -56,14 +176,14 @@ export function parseSlash(line: string): SlashResult | null {
     case "scoreboard":
       return { kind: "scoreboard" };
     case "route": {
-      const tag = trimmed.slice(cmd.length + 1).trim();
+      const tag = rest.trim();
       if (tag.length === 0) {
         return { kind: "unknown", command: "route (usage: /route <tag>)" };
       }
       return { kind: "route", tag };
     }
     case "search": {
-      const term = trimmed.slice(cmd.length + 1).trim();
+      const term = rest.trim();
       if (term.length === 0) {
         return { kind: "unknown", command: "search (usage: /search <term>)" };
       }
@@ -71,6 +191,116 @@ export function parseSlash(line: string): SlashResult | null {
     }
     case "trace":
       return { kind: "trace" };
+    case "tools":
+      return { kind: "tools" };
+    case "config":
+      return { kind: "config" };
+    case "session":
+      return { kind: "session" };
+    case "status":
+      return { kind: "status" };
+    case "cost":
+      return { kind: "cost" };
+    case "clear":
+      return { kind: "clear" };
+    case "new":
+      return { kind: "new" };
+    case "context":
+      return { kind: "context" };
+    case "compact":
+      return parseCompactArgs(rest);
+    case "provider": {
+      const name = parts[1];
+      if (name === undefined || name.length === 0) {
+        return { kind: "unknown", command: "provider (usage: /provider <name> [model])" };
+      }
+      const model = parts[2];
+      return {
+        kind: "provider",
+        name,
+        ...(model !== undefined && model.length > 0 ? { model } : {}),
+      };
+    }
+    case "model":
+      return { kind: "model" };
+    case "sandbox": {
+      const mode = parts[1];
+      if (mode === undefined || mode.length === 0) {
+        return {
+          kind: "unknown",
+          command: "sandbox (usage: /sandbox read-only|workspace-write|danger-full-access)",
+        };
+      }
+      return { kind: "sandbox", mode };
+    }
+    case "approval": {
+      const mode = parts[1];
+      if (mode === undefined || mode.length === 0) {
+        return {
+          kind: "unknown",
+          command: "approval (usage: /approval on-request|never|…)",
+        };
+      }
+      return { kind: "approval", mode };
+    }
+    case "diff":
+      return parseDiffFlags(rest);
+    case "git-status":
+      return { kind: "git-status" };
+    case "hooks":
+      return { kind: "hooks" };
+    case "mcp":
+      return { kind: "mcp" };
+    case "agents":
+      return { kind: "agents" };
+    case "memory": {
+      const sub = parts[1]?.toLowerCase() ?? "list";
+      if (sub === "list") return { kind: "memory", op: "list" };
+      if (sub === "read") {
+        const name = parts[2];
+        if (name === undefined || name.length === 0) {
+          return { kind: "unknown", command: "memory read <name>" };
+        }
+        return { kind: "memory", op: "read", name };
+      }
+      if (sub === "add") {
+        const name = parts[2];
+        const body = parts.slice(3).join(" ");
+        if (name === undefined || body.length === 0) {
+          return { kind: "unknown", command: "memory add <name> <body>" };
+        }
+        return { kind: "memory", op: "add", name, body };
+      }
+      return { kind: "unknown", command: `memory ${sub}` };
+    }
+    case "plan": {
+      const action = parts[1]?.toLowerCase() ?? "show";
+      const text = parts.slice(2).join(" ");
+      if (action === "edit" && text.length === 0) {
+        return { kind: "unknown", command: "plan edit <text>" };
+      }
+      if (action === "reject" && text.length > 0) {
+        return { kind: "plan", action, reason: text };
+      }
+      return {
+        kind: "plan",
+        action,
+        ...(action === "edit" ? { text } : {}),
+      };
+    }
+    case "review": {
+      const staged = parts.includes("staged");
+      return { kind: "review", ...(staged ? { staged: true } : {}) };
+    }
+    case "init":
+      return { kind: "init" };
+    case "resume": {
+      const id = rest.trim();
+      if (id.length === 0) {
+        return { kind: "unknown", command: "resume (usage: /resume <session-id>)" };
+      }
+      return { kind: "resume", id };
+    }
     case "quit":
     case "exit":
     case "q":
@@ -78,4 +308,19 @@ export function parseSlash(line: string): SlashResult | null {
     default:
       return { kind: "unknown", command: cmd ?? "" };
   }
+}
+
+/**
+ * Slash-palette items for the current buffer: commands matching an
+ * in-progress `/prefix` token (no space yet). Empty for non-slash input.
+ */
+export function matchingSlashCommands(buffer: string): string[] {
+  const trimmed = buffer.trimStart();
+  if (!trimmed.startsWith("/")) return [];
+  const token = trimmed.slice(1);
+  if (/\s/.test(token)) return [];
+  const prefix = token.toLowerCase();
+  return SLASH_COMMANDS.map((c) => c.name)
+    .filter((name) => name.startsWith(prefix))
+    .map((name) => `/${name}`);
 }

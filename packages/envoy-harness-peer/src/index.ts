@@ -79,6 +79,11 @@ export {
   type PeerEndpointConfig,
 } from "./cluster.js";
 export {
+  ManagedPeerCluster,
+  type ConnectPeerResult,
+  type ManagedPeerClusterOptions,
+} from "./managed-cluster.js";
+export {
   parseServeArgs,
   startPeerServer,
   createDemoAdapter,

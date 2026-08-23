@@ -49,6 +49,8 @@ import {
   type WebRuntime,
 } from "../web/index.js";
 import { createBraveSearchProvider } from "../web/search-brave.js";
+import { createExaSearchProvider } from "../web/search-exa.js";
+import { createPerplexitySearchProvider } from "../web/search-perplexity.js";
 
 const DEFAULT_CREDENTIAL_NAMES = ["BRAVE_SEARCH_API_KEY"] as const;
 
@@ -178,11 +180,16 @@ export function wireEnvironmentTools(
   const web = createWebRuntime();
   web.registerFetchProvider(createHttpFetchProvider());
   const brave = createBraveSearchProvider({ credentials });
-  // Cheap gate: only register when env advertises the key
-  // (matches available()'s primary check). Tests can pass
-  // credentials that already list the name to force registration.
   if (brave.available()) {
     web.registerSearchProvider(brave);
+  }
+  const exa = createExaSearchProvider({ credentials });
+  if (exa.available()) {
+    web.registerSearchProvider(exa);
+  }
+  const perplexity = createPerplexitySearchProvider({ credentials });
+  if (perplexity.available()) {
+    web.registerSearchProvider(perplexity);
   }
   registerWebTools(tools, web);
 

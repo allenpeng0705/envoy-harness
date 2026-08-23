@@ -246,6 +246,7 @@ describe("runInteractive screen mode (raw keypress input)", () => {
     input.write("\r");
     await vi.waitFor(() => {
       expect(tui.session.renderTranscript()).toContain("echo:hello");
+      expect(chunks.join("")).toContain("echo:hello");
     });
     for (const ch of "/quit") input.write(ch);
     input.write("\r");
@@ -339,6 +340,126 @@ describe("runInteractive screen mode (raw keypress input)", () => {
 
     await type("/quit");
     await done;
+    tui.close();
+  });
+
+  it("opens the slash palette and selects a command with arrows + Enter", async () => {
+    const { PassThrough } = await import("node:stream");
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const chunks: string[] = [];
+    output.on("data", (c: Buffer) => chunks.push(c.toString("utf8")));
+
+    const tui = createInProcessTui({
+      backend: createFakeSessionBackend({
+        clusterStatus: {
+          peers: [
+            {
+              id: "p1",
+              model: "deepseek-chat",
+              health: { ok: true, rttMs: 12 },
+            },
+          ],
+          connected: 1,
+          failed: 0,
+        },
+      }),
+    });
+    const done = runInteractive({
+      session: tui.session,
+      input,
+      output,
+      interactive: true,
+      width: 70,
+      height: 10,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    for (const ch of "/cluster") input.write(ch);
+    await vi.waitFor(() => {
+      const text = chunks.join("");
+      expect(text).toContain("> /cluster");
+    });
+    input.write("\r"); // Enter selects /cluster
+    await vi.waitFor(() => {
+      expect(chunks.join("")).toContain("Cluster · connected 1 / failed 0");
+    });
+
+    for (const ch of "/quit") input.write(ch);
+    input.write("\r");
+    await done;
+    tui.close();
+  });
+});
+
+describe("live session/update", () => {
+  it("appends committed messages during an in-flight prompt", async () => {
+    const backend = {
+      async createSession() {
+        return { sessionId: "sess-live" };
+      },
+      async prompt(params: {
+        text: string;
+        onUpdate?: (msg: { role: string; text: string }) => void;
+      }) {
+        params.onUpdate?.({ role: "assistant", text: "live partial" });
+        await new Promise((r) => setTimeout(r, 20));
+        return {
+          stopReason: "end_turn",
+          messages: [
+            { role: "user", text: params.text },
+            { role: "assistant", text: "live partial" },
+            { role: "assistant", text: "final line" },
+          ],
+        };
+      },
+      cancel() {},
+    };
+    const tui = createInProcessTui({ backend });
+    await tui.session.start();
+    const submitPromise = tui.session.submit("go");
+    await vi.waitFor(() => {
+      expect(tui.session.renderTranscript()).toContain("[agent] live partial");
+    });
+    await submitPromise;
+    const text = tui.session.renderTranscript();
+    expect(text).toContain("[agent] final line");
+    expect(text.match(/live partial/g)?.length).toBe(1);
+    tui.close();
+  });
+
+  it("streams assistant tokens into one live transcript line", async () => {
+    const backend = {
+      async createSession() {
+        return { sessionId: "sess-token" };
+      },
+      async prompt(params: {
+        text: string;
+        onToken?: (token: { role: string; delta: string }) => void;
+      }) {
+        for (const ch of "hello") {
+          params.onToken?.({ role: "assistant", delta: ch });
+        }
+        return {
+          stopReason: "end_turn",
+          messages: [
+            { role: "user", text: params.text },
+            { role: "assistant", text: "hello" },
+          ],
+        };
+      },
+      cancel() {},
+    };
+    const tui = createInProcessTui({ backend });
+    await tui.session.start();
+    const submitPromise = tui.session.submit("go");
+    await vi.waitFor(() => {
+      expect(tui.session.renderTranscript()).toContain("[agent] hel");
+    });
+    await submitPromise;
+    const text = tui.session.renderTranscript();
+    expect(text).toContain("[agent] hello");
+    expect(text.match(/\[agent\] hello/g)?.length).toBe(1);
     tui.close();
   });
 });

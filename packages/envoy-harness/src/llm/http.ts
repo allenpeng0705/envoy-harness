@@ -20,8 +20,7 @@
  * version bump; new fields are additive.
  */
 
-import type { Tool } from "../tools/index.js";
-import type { Message } from "../tools/index.js";
+import type { ContentBlock, Message, Tool } from "../tools/index.js";
 
 // ---------------------------------------------------------------------------
 // HttpRequest / HttpResponse / HttpClient
@@ -335,10 +334,15 @@ export function toolsToOpenAI(tools: ReadonlyArray<Tool>): OpenAIToolDefinition[
 // OpenAI-style message shapes
 // ---------------------------------------------------------------------------
 
+/** Multimodal user content (OpenAI vision). */
+export type OpenAIUserContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
+
 /** A message in OpenAI's wire format. */
 export type OpenAIMessage =
   | { role: "system"; content: string }
-  | { role: "user"; content: string }
+  | { role: "user"; content: string | OpenAIUserContentPart[] }
   | { role: "assistant"; content: string | null; tool_calls?: OpenAIToolCall[] }
   | { role: "tool"; tool_call_id: string; content: string };
 
@@ -364,6 +368,32 @@ export function messagesToOpenAI(messages: ReadonlyArray<Message>): OpenAIMessag
       continue;
     }
     if (m.role === "user") {
+      const images = m.content.filter(
+        (b): b is Extract<ContentBlock, { type: "image" }> => b.type === "image",
+      );
+      if (images.length > 0) {
+        const parts: Array<
+          | { type: "text"; text: string }
+          | { type: "image_url"; image_url: { url: string } }
+        > = [];
+        for (const b of m.content) {
+          if (b.type === "text" && b.text.length > 0) {
+            parts.push({ type: "text", text: b.text });
+          }
+          if (b.type === "image") {
+            parts.push({
+              type: "image_url",
+              image_url: {
+                url: `data:${b.mimeType};base64,${b.data}`,
+              },
+            });
+          }
+        }
+        if (parts.length > 0) {
+          out.push({ role: "user", content: parts });
+        }
+        continue;
+      }
       const text = blocksToText(m.content);
       if (text.length > 0) out.push({ role: "user", content: text });
       continue;

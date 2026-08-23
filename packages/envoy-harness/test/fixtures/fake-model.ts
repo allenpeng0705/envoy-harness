@@ -69,6 +69,16 @@ export class FakeModel implements ModelAdapter {
     if ("error" in entry) {
       throw entry.error;
     }
+    if (input.onTextDelta !== undefined) {
+      for (const block of entry.content) {
+        if (block.type === "text" && block.text.length > 0) {
+          const step = 4;
+          for (let i = 0; i < block.text.length; i += step) {
+            input.onTextDelta(block.text.slice(i, i + step));
+          }
+        }
+      }
+    }
     // Default stop reason: end_turn if no tool calls, else tool_use.
     const hasToolCall = entry.content.some((b) => b.type === "tool_call");
     const stopReason =

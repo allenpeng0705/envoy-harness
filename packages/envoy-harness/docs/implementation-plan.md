@@ -134,7 +134,7 @@ and gets better round by round.
 | U2 | TUI renderer v2 | ANSI screen module, composer upgrade, status bar, cluster rail, keymaps | ✅ done (2026-08-23; `implementation-plan-chunk-u2.md`) |
 | U3 | Distributed detail views | `/cluster` `/team` `/scoreboard` `/route` views + discovery stream (`discovery/subscribe`) + `envoy-peer ui` standalone console + EnvoyMesh pool-status wiring | ✅ done (2026-08-23; `implementation-plan-chunk-u3.md`) |
 | U3f | Follow-ups | peer lifecycle events (`peer.connected/failed/disconnected/health`) → discovery stream; routing previews inside `/cluster` | ✅ done (2026-08-23; `implementation-plan-chunk-u3-followups.md`) |
-| U4 | EnvoyMesh host wiring | in-process ACP host serves `teamJobs` (chain worker subtasks) + `scoreboardSummary` (arbitration verdicts); desktop panels remain Tauri-team | ✅ done (2026-08-23; `implementation-plan-chunk-u4.md`) |
+| U4 | EnvoyMesh host wiring + dedicated UI panel | in-process ACP host serves `teamJobs` + `scoreboardSummary`; new `EnvoyHarnessPanel` in the desktop terminal view (status badge, model, peer-cluster strip, chat via `askEnvoyHarness`) | ✅ done (2026-08-23; `implementation-plan-chunk-u4.md`) |
 | U5 | TUI polish | `/search` view, `/trace` event log, accent theme, composer Alt+char fix | ✅ done (2026-08-23; `implementation-plan-chunk-u5.md`) |
 
 The first chunk (U1) is the contract: every UI surface is backed by an

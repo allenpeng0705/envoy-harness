@@ -34,6 +34,8 @@ export interface SpawnCaptureOptions {
   signal: AbortSignal | undefined;
   /** Per-stream cap. Default 1 MiB. */
   maxOutputBytes?: number;
+  /** Live stdout chunks (UTF-8). Used for protocol `tool_progress`. */
+  onStdout?: (chunk: string) => void;
 }
 
 export interface SpawnCaptureResult extends SandboxResult {
@@ -95,6 +97,9 @@ export function spawnCapture(options: SpawnCaptureOptions): Promise<SpawnCapture
     };
 
     child.stdout?.on("data", (chunk: Buffer) => {
+      if (options.onStdout !== undefined && chunk.byteLength > 0) {
+        options.onStdout(chunk.toString("utf8"));
+      }
       if (outTruncated) return; // drain but drop
       const remaining = cap - outTotal;
       if (chunk.byteLength > remaining) {

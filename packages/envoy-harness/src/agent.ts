@@ -40,6 +40,7 @@
 import {
   HookRegistry,
 } from "./hooks/index.js";
+import { ActionJournal } from "./action-journal.js";
 import { InMemorySession, newSessionId } from "./session.js";
 import type { ModelAdapter } from "./model.js";
 import type { Session } from "./session.js";
@@ -274,6 +275,17 @@ export interface AgentOptions {
    */
   mcpClients?: import("./mcp/index.js").McpClientRegistry;
   /**
+   * Phase C: background job registry. When set, `abort()` calls
+   * `disposeOwner(session.id)` so background bash / terminal
+   * sends are cancelled with the session.
+   */
+  jobRegistry?: import("./jobs/types.js").JobRegistry;
+  /**
+   * Phase C: terminal session service. When set, `abort()` closes
+   * every terminal owned by `session.id`.
+   */
+  terminalService?: import("./terminal/types.js").TerminalSessionService;
+  /**
    * Phase F: optional explicit OS sandbox executor.
    * When omitted, the agent resolves one from the
    * live sandbox policy + host platform (landlock
@@ -437,6 +449,12 @@ export class Agent {
    * lands in a follow-up sub-chunk.
    */
   mcpClients: import("./mcp/index.js").McpClientRegistry | undefined;
+  /** @internal Phase C: dispose background jobs on abort. */
+  jobRegistry: import("./jobs/types.js").JobRegistry | undefined;
+  /** @internal Phase C: close owned terminals on abort. */
+  terminalService:
+    | import("./terminal/types.js").TerminalSessionService
+    | undefined;
   /** @internal F10.2: max sub-agents per turn. */
   maxSubagents: number;
   /** @internal F10.6: parent session id (when this is a
@@ -466,6 +484,22 @@ export class Agent {
    * registered / unregistered on the tool registry.
    */
   userQuestions: UserQuestionService | undefined;
+  /**
+   * @internal Protocol / TUI: assistant token sink for the
+   * current `run()` turn. Set by `createAgentSessionBackend`
+   * during `prompt`; cleared in `finally`.
+   */
+  assistantStreamSink: ((delta: string) => void) | undefined;
+  /**
+   * @internal Protocol / TUI: live tool stdout sink for the
+   * current `run()` turn. Set by `createAgentSessionBackend`
+   * during `prompt`; cleared in `finally`.
+   */
+  toolOutputSink:
+    | ((info: { toolName: string; callId: string; stdout: string }) => void)
+    | undefined;
+  /** @internal Write/edit journal for `/undo`. */
+  actionJournal: ActionJournal;
   /**
    * @internal Phase A / Item 5 (self-review): `true` when
    * `this.askHandler` is the auto-installed
@@ -521,11 +555,16 @@ export class Agent {
     this.meshSubmitter = options.meshSubmitter;
     this.fanOutRegistry = options.fanOutRegistry;
     this.mcpClients = options.mcpClients;
+    this.jobRegistry = options.jobRegistry;
+    this.terminalService = options.terminalService;
     this.maxSubagents = options.maxSubagents ?? DEFAULT_MAX_SUBAGENTS;
     this.subagentOf = options.subagentOf;
     this.approval = options.approval ?? "on-request";
     this.userQuestions = options.userQuestions;
     this.plugins = options.plugins;
+    this.assistantStreamSink = undefined;
+    this.toolOutputSink = undefined;
+    this.actionJournal = new ActionJournal();
     // F9.2: register the 4 LSP tools when the host provides
     // a manager. We do this AFTER the constructor sets
     // `this.tools` so the registry is available.
@@ -665,12 +704,31 @@ export class Agent {
       noteToolCall: () => {
         this.toolCallCount++;
       },
+      emitToolOutput: (info) => {
+        this.toolOutputSink?.(info);
+      },
+      recordUndo: (entry) => {
+        this.actionJournal.push(entry);
+      },
     };
   }
 
   /** The AbortSignal tools see in their context. */
   get abortSignal(): AbortSignal {
     return this.abortController.signal;
+  }
+
+  /** Whether `/undo` can restore the last write/edit. */
+  canUndo(): boolean {
+    return this.actionJournal.canUndo();
+  }
+
+  /** Restore the last journaled write or edit. */
+  async undoLastFileChange(): Promise<{
+    path: string;
+    action: "restored" | "removed";
+  }> {
+    return this.actionJournal.undoLast();
   }
 
   /**
@@ -681,6 +739,17 @@ export class Agent {
    */
   abort(reason?: unknown): void {
     this.abortController.abort(reason);
+    const owner = this.session.id;
+    if (this.jobRegistry !== undefined) {
+      void this.jobRegistry.disposeOwner(owner);
+    }
+    if (this.terminalService !== undefined) {
+      for (const snap of this.terminalService.list(owner)) {
+        void this.terminalService
+          .kill(owner, snap.sessionId, "session aborted")
+          .catch(() => undefined);
+      }
+    }
   }
 
   /**
@@ -853,6 +922,29 @@ export class Agent {
     mode: NonNullable<Session["metadata"]["permissionMode"]>,
   ): void {
     this.sandboxPolicy = policyFromMode(mode, this.cwd);
+  }
+
+  /**
+   * F17.2 / protocol: change approval policy and wire the
+   * ask handler (mirrors REPL `/approval`).
+   */
+  setApprovalPolicy(
+    mode: import("./types.js").AskForApproval,
+  ): void {
+    this.approval = mode;
+    if (mode === "never") {
+      this.setAskHandler(async () => ({
+        kind: "deny",
+        reason: "approval mode is 'never'",
+      }));
+    } else {
+      this.setAskHandler(undefined);
+    }
+  }
+
+  /** Current approval policy label. */
+  getApprovalPolicy(): import("./types.js").AskForApproval {
+    return this.approval;
   }
 
   /**
@@ -1098,7 +1190,7 @@ export class Agent {
    * the agent's `@internal` state fields and
    * calls back into `this.emit` / `this.makeResult`.
    */
-  async run(prompt: string): Promise<AgentResult> {
+  async run(prompt: string | ReadonlyArray<ContentBlock>): Promise<AgentResult> {
     return runAgentLoop(this, prompt);
   }
 

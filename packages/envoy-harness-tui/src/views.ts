@@ -21,6 +21,57 @@ function peerLabel(p: ClientPeerInfo): string {
   return `${p.id}${model}${caps}`;
 }
 
+/** `/mesh` — mesh onboarding: discover peers, configure, and collaborate. */
+export function renderMeshView(options?: {
+  configuredPeers?: ReadonlyArray<{ id: string; endpoint: string }>;
+  connected?: number;
+  failed?: number;
+}): string[] {
+  const lines = [
+    "Mesh — collaborate across envoy-harness nodes",
+    "",
+    "Quick start:",
+    "  1. On each worker: envoy-peer serve --port 18123",
+    "  2. Start TUI with peers wired:",
+    "     envoy-harness-tui --spawn --provider openai --peers w1@127.0.0.1:18123",
+    "  3. Explore: /cluster /peers /route <tag> /scoreboard /team /trace",
+    "",
+    "Slash commands:",
+    "  /mesh      this guide",
+    "  /cluster   health + routing previews",
+    "  /peers     connected peer list",
+    "  /route     which peer would run a capability tag",
+    "  /scoreboard peer skill reputation",
+    "  /team      distributed team jobs",
+    "  /trace     peer discovery event log",
+    "",
+    "Configuration:",
+    "  [[peers]] in ~/.config/envoy-harness/config.toml",
+    "  --peers <id>@<host:port>     repeatable CLI flag",
+    "  ENVOY_PEERS=id@host:port,... env var (comma or space separated)",
+    "  --cluster-only               cluster console (no local agent chat)",
+    "  --connect-timeout-ms <n>     per-peer TCP connect timeout",
+    "",
+    "Modes:",
+    "  --spawn --peers …   live agent + mesh rail (recommended)",
+    "  --cluster-only      distributed ops console (chat echoes hint)",
+    "  envoy-peer ui       same cluster console via envoy-peer CLI",
+  ];
+  if (options?.configuredPeers !== undefined && options.configuredPeers.length > 0) {
+    lines.push("", "Configured endpoints:");
+    for (const peer of options.configuredPeers) {
+      lines.push(`  ${peer.id} → ${peer.endpoint}`);
+    }
+  }
+  if (options?.connected !== undefined) {
+    lines.push(
+      "",
+      `Live status: connected ${options.connected}, failed ${options.failed ?? 0}`,
+    );
+  }
+  return lines;
+}
+
 /** `/cluster` — per-peer health + totals + routing previews. */
 export function renderClusterView(
   cluster: ClientClusterStatus,
@@ -171,6 +222,33 @@ export function renderTraceView(
                 ? `rtt=${e.rttMs}ms`
                 : "health";
       return `  ${e.at} ${e.peerId} ${detail}`;
+    }),
+  ];
+}
+
+/** `/plan` tab — current plan text. */
+export function renderPlanView(text: string): string[] {
+  if (text.trim().length === 0) return ["Plan — empty (use /plan enter)"];
+  return ["Plan", ...text.split("\n").map((l) => `  ${l}`)];
+}
+
+/** `/memory` tab — memory list or body. */
+export function renderMemoryView(text: string): string[] {
+  if (text.trim().length === 0) return ["Memory — empty"];
+  return ["Memory", ...text.split("\n").map((l) => `  ${l}`)];
+}
+
+/** `/diff` tab — inline git diff view. */
+export function renderGitDiffView(text: string): string[] {
+  if (text.trim().length === 0) return ["Git diff — clean"];
+  const lines = text.split("\n");
+  return [
+    "Git diff",
+    ...lines.map((line) => {
+      if (line.startsWith("+")) return `  ${line}`;
+      if (line.startsWith("-")) return `  ${line}`;
+      if (line.startsWith("@@")) return `  ${line}`;
+      return `  ${line}`;
     }),
   ];
 }

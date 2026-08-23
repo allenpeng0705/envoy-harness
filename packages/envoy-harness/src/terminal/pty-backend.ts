@@ -199,6 +199,10 @@ function createPtySession(
       const before = retainedText(lines);
       let latestViewport = chunk;
       handle.write(chunk);
+      const readLiveViewport = (): string => {
+        const after = retainedText(lines);
+        return after.length > before.length ? after.slice(before.length) : latestViewport;
+      };
       const done = waitForQuiescence({
         lines,
         getStatus,
@@ -218,7 +222,9 @@ function createPtySession(
       return {
         done,
         readOutput() {
-          return { delta: latestViewport, truncated: false };
+          const viewport = readLiveViewport();
+          latestViewport = viewport;
+          return { delta: viewport, truncated: false };
         },
         cancel() {
           return false;

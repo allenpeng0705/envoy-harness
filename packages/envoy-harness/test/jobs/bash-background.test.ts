@@ -52,6 +52,44 @@ describe("makeBashTool background", () => {
     await jobs.wait(parsed.id, 5_000, c.session.id);
     await jobs.dispose();
   });
+
+  it("background bash streams output via onToolOutput", async () => {
+    const jobs = createLocalJobRegistry();
+    const tool = makeBashTool({ jobs });
+    const chunks: string[] = [];
+    const c = {
+      ...ctx(process.cwd()),
+      onToolOutput: (stdout: string) => chunks.push(stdout),
+    };
+    const result = await tool.execute(
+      { command: "printf 'bg-stream'", background: true },
+      c,
+    );
+    expect(result.isError).toBeFalsy();
+    const parsed = JSON.parse(String(result.content)) as { id: string };
+    await jobs.wait(parsed.id, 5_000, c.session.id);
+    expect(chunks.join("")).toContain("bg-stream");
+    await jobs.dispose();
+  });
+
+  it("background jobs emit onToolOutput while running", async () => {
+    const jobs = createLocalJobRegistry();
+    const tool = makeBashTool({ jobs });
+    const chunks: string[] = [];
+    const c = {
+      ...ctx(process.cwd()),
+      onToolOutput: (stdout: string) => chunks.push(stdout),
+    };
+    const result = await tool.execute(
+      { command: "printf 'bg-stream'", background: true },
+      c,
+    );
+    expect(result.isError).toBeFalsy();
+    const parsed = JSON.parse(String(result.content)) as { id: string };
+    await jobs.wait(parsed.id, 5_000, c.session.id);
+    expect(chunks.join("")).toContain("bg-stream");
+    await jobs.dispose();
+  });
 });
 
 describe("wireEnvironmentTools", () => {

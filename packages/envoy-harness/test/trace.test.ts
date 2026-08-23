@@ -192,6 +192,7 @@ describe("TraceEvent union", () => {
         ts: "",
         iteration: 1,
         callId: "t1",
+        toolName: "bash",
         result: { content: "ok" },
         durationMs: 5,
       },

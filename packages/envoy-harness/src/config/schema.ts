@@ -120,7 +120,39 @@ export const ConfigLayerSchema = z
      */
     hooks: z.array(HookHandlerSpecSchema).optional(),
     /**
-     * Phase G / Item 3 (Review 3 / Medium 4): additional
+     * MCP stdio servers to spawn at runner startup. Tools appear as
+     * `mcp__<name>__<tool>` on the model tool list.
+     */
+    mcpServers: z
+      .array(
+        z
+          .object({
+            name: z.string().min(1),
+            command: z.string().min(1),
+            args: z.array(z.string()).optional(),
+            env: z.record(z.string()).optional(),
+          })
+          .strict(),
+      )
+      .optional(),
+    /**
+     * Static mesh peers for collaboration (cluster rail, /peers, /route).
+     * TOML: `[[peers]]` with `id`, `endpoint` (`host:port`), optional
+     * `model` and `capabilities`.
+     */
+    peers: z
+      .array(
+        z
+          .object({
+            id: z.string().min(1),
+            endpoint: z.string().min(1),
+            model: z.string().optional(),
+            capabilities: z.array(z.string()).optional(),
+          })
+          .strict(),
+      )
+      .optional(),
+    /**
      * plugin names the user explicitly trusts. Combined
      * with the in-binary built-in whitelist (the
      * `envoy-harness-plugin-*` samples that ship in this

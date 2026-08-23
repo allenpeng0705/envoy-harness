@@ -15,9 +15,14 @@ import {
   FrameDecoder,
   installToolPermissionAskHook,
   JsonRpcError,
+  type ProtocolSessionBackend,
 } from "../../src/protocol/index.js";
+import { Agent, InMemorySession, ToolRegistry } from "../../src/index.js";
 import { HookRegistry } from "../../src/hooks/index.js";
-import type { Agent } from "../../src/agent.js";
+import {
+  FakeModel,
+  textResponse,
+} from "../fixtures/fake-model.js";
 
 describe("framing", () => {
   it("round-trips a JSON-RPC message", () => {
@@ -89,7 +94,7 @@ describe("ACP server", () => {
 
     const result = (await pair.client.request("session/prompt", {
       sessionId: created.sessionId,
-      text: "hello",
+      prompt: { text: "hello" },
     })) as { stopReason: string; messages: Array<{ text: string }> };
 
     expect(result.stopReason).toBe("end_turn");
@@ -112,7 +117,7 @@ describe("ACP server", () => {
     await expect(
       pair.client.request("session/prompt", {
         sessionId: "x",
-        text: "hi",
+        prompt: { text: "hi" },
       }),
     ).rejects.toBeInstanceOf(JsonRpcError);
     pair.close();
@@ -137,7 +142,7 @@ describe("ACP server", () => {
     };
     const result = (await pair.client.request("session/prompt", {
       sessionId,
-      text: "run",
+      prompt: { text: "run" },
     })) as { stopReason: string };
     expect(result.stopReason).toBe("end_turn");
     pair.close();
@@ -170,7 +175,7 @@ describe("ACP server", () => {
 
     const promptPromise = pair.client.request("session/prompt", {
       sessionId,
-      text: "slow",
+      prompt: { text: "slow" },
     });
     // Let the prompt start.
     await new Promise((r) => setTimeout(r, 10));
@@ -211,7 +216,7 @@ describe("SDK server", () => {
 
     const result = (await pair.client.request("session/prompt", {
       sessionId,
-      text: "sdk-hi",
+      prompt: { text: "sdk-hi" },
     })) as { stopReason: string };
     expect(result.stopReason).toBe("end_turn");
     expect(events.length).toBeGreaterThanOrEqual(1);
@@ -254,7 +259,7 @@ describe("createAgentSessionBackend", () => {
     const ac = new AbortController();
     const promptPromise = backend.prompt({
       sessionId,
-      text: "slow",
+      prompt: { text: "slow" },
       signal: ac.signal,
       requestPermission: async () => "allow",
     });
@@ -274,9 +279,19 @@ describe("createAgentSessionBackend", () => {
           getMessageCount() {
             return history.length;
           },
-          async run(prompt: string) {
+          async run(prompt: string | ReadonlyArray<{ type: string }>) {
             turn += 1;
-            history.push({ role: "user", content: prompt });
+            const text =
+              typeof prompt === "string"
+                ? prompt
+                : prompt
+                    .map((b) =>
+                      b.type === "text" && "text" in b
+                        ? String((b as { text: string }).text)
+                        : "[block]",
+                    )
+                    .join("\n");
+            history.push({ role: "user", content: text });
             history.push({
               role: "assistant",
               content: `reply-${turn}`,
@@ -296,7 +311,7 @@ describe("createAgentSessionBackend", () => {
     const { sessionId } = await backend.createSession({});
     const r1 = await backend.prompt({
       sessionId,
-      text: "first",
+      prompt: { text: "first" },
       signal: new AbortController().signal,
       requestPermission: async () => "allow",
     });
@@ -304,7 +319,7 @@ describe("createAgentSessionBackend", () => {
 
     const r2 = await backend.prompt({
       sessionId,
-      text: "second",
+      prompt: { text: "second" },
       signal: new AbortController().signal,
       requestPermission: async () => "allow",
     });
@@ -351,7 +366,7 @@ describe("createAgentSessionBackend", () => {
     const { sessionId } = await backend.createSession({});
     const promptPromise = backend.prompt({
       sessionId,
-      text: "need-perm",
+      prompt: { text: "need-perm" },
       signal: new AbortController().signal,
       requestPermission: () =>
         new Promise(() => {
@@ -391,14 +406,14 @@ describe("createAgentSessionBackend", () => {
     await expect(
       backend.prompt({
         sessionId: a.sessionId,
-        text: "gone",
+        prompt: { text: "gone" },
         signal: new AbortController().signal,
         requestPermission: async () => "allow",
       }),
     ).rejects.toThrow(/unknown session/);
     const ok = await backend.prompt({
       sessionId: c.sessionId,
-      text: "kept",
+      prompt: { text: "kept" },
       signal: new AbortController().signal,
       requestPermission: async () => "allow",
     });
@@ -406,6 +421,181 @@ describe("createAgentSessionBackend", () => {
     void b;
   });
 
+  it("compact drops messages via session/compact", async () => {
+    const messages: Array<{ role: string; content: string }> = [
+      { role: "user", content: "a" },
+      { role: "assistant", content: "b" },
+      { role: "user", content: "c" },
+      { role: "assistant", content: "d" },
+    ];
+    const backend = createAgentSessionBackend({
+      createAgent: () =>
+        ({
+          abort() {},
+          cwd: process.cwd(),
+          getMessageCount() {
+            return messages.length;
+          },
+          compact(keep: number) {
+            const next = messages.slice(-keep);
+            messages.length = 0;
+            messages.push(...next);
+          },
+          async run(prompt: string) {
+            messages.push({ role: "user", content: prompt });
+            messages.push({ role: "assistant", content: "ok" });
+            return {
+              messages: [...messages],
+              stopReason: "end_turn" as const,
+              costUsd: 0,
+              iterations: 1,
+            };
+          },
+        }) as unknown as Agent,
+    });
+    const { sessionId } = await backend.createSession({});
+    const result = await backend.compact!({ sessionId, keep: 2 });
+    expect(result.messageCountBefore).toBe(4);
+    expect(result.messageCountAfter).toBe(2);
+    expect(result.droppedCount).toBe(2);
+  });
+
+  it("emits session/token while the model streams", async () => {
+    const pair = createInProcessJsonRpcPair();
+    const backend = createAgentSessionBackend({
+      createAgent: ({ sessionId, cwd, askHandler }) =>
+        new Agent({
+          model: new FakeModel([textResponse("streamed hello")]),
+          tools: new ToolRegistry(),
+          hooks: new HookRegistry(),
+          session: new InMemorySession(sessionId, {
+            cwd: cwd ?? process.cwd(),
+            startedAt: new Date().toISOString(),
+            permissionMode: "workspace-write",
+          }),
+          cwd: cwd ?? process.cwd(),
+          askHandler,
+        }),
+    });
+    attachAcpServer({ connection: pair.server, backend });
+
+    await pair.client.request("initialize", {});
+    const { sessionId } = (await pair.client.request("session/new", {})) as {
+      sessionId: string;
+    };
+
+    const tokens: string[] = [];
+    pair.client.setNotificationHandler((method, params) => {
+      if (method === "session/token") {
+        const p = params as { token?: { delta?: string } };
+        if (p.token?.delta !== undefined) tokens.push(p.token.delta);
+      }
+    });
+
+    const result = (await pair.client.request("session/prompt", {
+      sessionId,
+      prompt: { text: "hi" },
+    })) as { stopReason: string; messages: Array<{ text: string }> };
+
+    expect(result.stopReason).toBe("end_turn");
+    expect(tokens.join("")).toBe("streamed hello");
+    expect(result.messages.some((m) => m.text === "streamed hello")).toBe(true);
+    pair.close();
+  });
+
+  it("clears stream sinks when cancelled mid-prompt", async () => {
+    let agentRef: Agent | undefined;
+    const backend = createAgentSessionBackend({
+      createAgent: ({ sessionId, cwd, askHandler }) => {
+        const agent = new Agent({
+          model: new FakeModel([textResponse("done")]),
+          tools: new ToolRegistry(),
+          hooks: new HookRegistry(),
+          session: new InMemorySession(sessionId, {
+            cwd: cwd ?? process.cwd(),
+            startedAt: new Date().toISOString(),
+            permissionMode: "workspace-write",
+          }),
+          cwd: cwd ?? process.cwd(),
+          askHandler,
+        });
+        agentRef = agent;
+        return agent;
+      },
+    });
+
+    const { sessionId } = await backend.createSession({});
+    const ac = new AbortController();
+    const tokens: string[] = [];
+    const promptPromise = backend.prompt({
+      sessionId,
+      prompt: { text: "hi" },
+      signal: ac.signal,
+      requestPermission: async () => "allow",
+      onToken: (t) => tokens.push(t.delta),
+    });
+    await new Promise((r) => setTimeout(r, 5));
+    const staleSink = agentRef!.assistantStreamSink;
+    backend.cancel(sessionId);
+    await promptPromise;
+    expect(agentRef?.assistantStreamSink).toBeUndefined();
+    expect(agentRef?.toolOutputSink).toBeUndefined();
+    const countAfterCancel = tokens.length;
+    staleSink?.("stale");
+    expect(tokens.length).toBe(countAfterCancel);
+  });
+
+  it("session/cancel stops mid-prompt token notifications", async () => {
+    const pair = createInProcessJsonRpcPair();
+    const backend: ProtocolSessionBackend = {
+      async createSession() {
+        return { sessionId: "sess-cancel-stream" };
+      },
+      async prompt(params) {
+        const local = new AbortController();
+        params.signal.addEventListener("abort", () => local.abort(), {
+          once: true,
+        });
+        let count = 0;
+        while (!local.signal.aborted && count < 200) {
+          params.onToken?.({ role: "assistant", delta: "x" });
+          count += 1;
+          await new Promise((r) => setTimeout(r, 5));
+        }
+        return {
+          stopReason: local.signal.aborted ? "cancelled" : "end_turn",
+          messages: [],
+        };
+      },
+      cancel() {},
+    };
+    attachAcpServer({ connection: pair.server, backend });
+
+    await pair.client.request("initialize", {});
+    const { sessionId } = (await pair.client.request("session/new", {})) as {
+      sessionId: string;
+    };
+
+    const tokens: string[] = [];
+    pair.client.setNotificationHandler((method, params) => {
+      if (method === "session/token") {
+        const p = params as { token?: { delta?: string } };
+        if (p.token?.delta !== undefined) tokens.push(p.token.delta);
+      }
+    });
+
+    const promptPromise = pair.client.request("session/prompt", {
+      sessionId,
+      prompt: { text: "slow" },
+    });
+    await new Promise((r) => setTimeout(r, 25));
+    await pair.client.request("session/cancel", { sessionId });
+    const result = (await promptPromise) as { stopReason: string };
+    expect(result.stopReason).toBe("cancelled");
+    expect(tokens.length).toBeLessThan(200);
+    expect(tokens.length).toBeGreaterThan(0);
+    pair.close();
+  });
 });
 
 describe("JsonRpcConnection", () => {
@@ -516,7 +706,7 @@ describe("permission ask — defensive host response parsing", () => {
     };
     const result = (await pair.client.request("session/prompt", {
       sessionId,
-      text: "needs-perm",
+      prompt: { text: "needs-perm" },
     })) as { stopReason: string; messages: Array<{ text: string }> };
     expect(result.stopReason).toBe("permission_denied");
     expect(result.messages.at(-1)?.text).toMatch(/permission denied/);
@@ -540,7 +730,7 @@ describe("permission ask — defensive host response parsing", () => {
     };
     const result = (await pair.client.request("session/prompt", {
       sessionId,
-      text: "deny-me",
+      prompt: { text: "deny-me" },
     })) as { stopReason: string; messages: Array<{ text: string }> };
     expect(result.stopReason).toBe("permission_denied");
     pair.close();

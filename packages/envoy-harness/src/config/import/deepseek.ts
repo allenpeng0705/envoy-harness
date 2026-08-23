@@ -45,6 +45,7 @@ import { parse as parseYaml } from "yaml";
 import { ConfigLoadError } from "../loader.js";
 import { ConfigLayerSchema, type ConfigLayer, type HookHandlerSpec } from "../schema.js";
 import { parseClaudeCodeHooks } from "./claude-code.js";
+import { importCodexConfig } from "./codex.js";
 
 /** A non-fatal warning surfaced by the importer. */
 export interface DeepseekImportWarning {
@@ -118,11 +119,26 @@ const KNOWN_HOOK_BRIDGES: ReadonlyMap<
       return [...result.specs];
     },
   ],
+  [
+    "dsh-hooks-codex",
+    async (entry, cordisDir) => {
+      const config = entry.config as Record<string, unknown> | undefined;
+      const configPath = readStringField(config, "configPath");
+      if (configPath === undefined) {
+        throw new ConfigLoadError(
+          `deepseek importer: ${entry.id}: dsh-hooks-codex ` +
+            `requires a 'configPath' field (path to codex config.toml)`,
+          entry.id,
+        );
+      }
+      const resolved = path.isAbsolute(configPath)
+        ? configPath
+        : path.resolve(cordisDir, configPath);
+      const result = await importCodexConfig({ filePath: resolved });
+      return [...(result.layer.hooks ?? [])];
+    },
+  ],
   // Future bridges:
-  // [
-  //   "dsh-hooks-codex",
-  //   async (entry, cordisDir) => { ... },
-  // ],
 ]);
 
 /**

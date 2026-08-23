@@ -161,6 +161,9 @@ export const editTool: Tool<
     }
 
     try {
+      if (ctx.recordUndo !== undefined) {
+        ctx.recordUndo({ path: resolved, previousContent: original });
+      }
       await fs.writeFile(resolved, updated, "utf8");
       return {
         content: `edited ${resolved}`,

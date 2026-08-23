@@ -117,6 +117,8 @@ export interface ToolResultEvent extends TraceBase {
   iteration: number;
   /** The tool call id this is a result for. */
   callId: string;
+  /** Tool name (mirrors the originating `tool_call`). */
+  toolName: string;
   result: ToolResult;
   durationMs: number;
 }

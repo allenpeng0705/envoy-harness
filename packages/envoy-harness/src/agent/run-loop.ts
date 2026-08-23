@@ -66,11 +66,11 @@ import { MCP_TOOL_PREFIX } from "../mcp/types.js";
  *             only; the loop calls `agent.emit`,
  *             `agent.makeResult`, `agent.executor`,
  *             etc.)
- * @param prompt the user's prompt for this turn
+ * @param prompt the user's prompt for this turn (text or content blocks)
  */
 export async function runAgentLoop(
   agent: Agent,
-  prompt: string,
+  prompt: string | ReadonlyArray<ContentBlock>,
 ): Promise<AgentResult> {
   // System prompt goes first (idempotent: skip if a system
   // message is already present).
@@ -82,7 +82,11 @@ export async function runAgentLoop(
       { type: "text", text: agent.systemPrompt },
     ]);
   }
-  agent.session.appendMessage("user", [{ type: "text", text: prompt }]);
+  if (typeof prompt === "string") {
+    agent.session.appendMessage("user", [{ type: "text", text: prompt }]);
+  } else {
+    agent.session.appendMessage("user", [...prompt]);
+  }
 
   // F9.4: emit agent_start. The model name is the best
   // guess we have (the agent doesn't know which model
@@ -144,6 +148,9 @@ export async function runAgentLoop(
         messages: agent.session.messages,
         tools: [...agent.tools.list(), ...mcpToolDefinitions],
         signal: agent.abortController.signal,
+        ...(agent.assistantStreamSink !== undefined
+          ? { onTextDelta: agent.assistantStreamSink }
+          : {}),
       });
     } catch (err) {
       // Model errors are surfaced as a synthetic assistant

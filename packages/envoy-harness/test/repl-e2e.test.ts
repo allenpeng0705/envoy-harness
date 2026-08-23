@@ -437,10 +437,10 @@ describe("snapshot: /help and dispatch table", () => {
     }
   });
 
-  it("the dispatch table covers all 28 built-in commands (no missing, no collisions)", () => {
-    // 9 from F17.2 + 8 from F17.2.5 + 3 from F17.5 + 2 from F17.6
+  it("the dispatch table covers all 29 built-in commands (no missing, no collisions)", () => {
+    // 9 from F17.2 + 8 from F17.2.5 + 3 from F17.5 + 3 from F17.6
     // + 3 from F14.1 (/rename, /copy, /memory) + 3 from F14.3
-    // (/review, /export, /plan) = 28. /undo is deferred.
+    // (/review, /export, /plan) = 29.
     const allNames = [
       ...BUILTIN_COMMANDS,
       ...BUILTIN_INFO_COMMANDS,
@@ -450,6 +450,6 @@ describe("snapshot: /help and dispatch table", () => {
       ...BUILTIN_TIER2_BATCH4_COMMANDS,
     ].map((c) => c.name);
     expect(new Set(allNames).size).toBe(allNames.length);
-    expect(allNames.length).toBe(28);
+    expect(allNames.length).toBe(29);
   });
 });

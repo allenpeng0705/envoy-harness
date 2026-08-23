@@ -217,6 +217,12 @@ export async function startPeerServer(options: {
           : {}),
       }),
     });
+    // Tolerate client disconnects (ECONNRESET etc.) — an unhandled
+    // connection "error" event would crash the whole peer server.
+    connection.on("error", (err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`[peer] connection error: ${message}\n`);
+    });
     socket.on("close", () => connection.close());
   });
   await new Promise<void>((resolvePromise, reject) => {

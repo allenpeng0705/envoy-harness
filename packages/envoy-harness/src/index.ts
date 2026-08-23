@@ -139,6 +139,7 @@ export {
   type AgentOptions,
   type AgentResult,
 } from "./agent.js";
+export { ActionJournal, type UndoEntry } from "./action-journal.js";
 
 // Re-export built-in tools (§10 of the design doc)
 export {
@@ -491,7 +492,11 @@ export {
   type McpTool,
   formatMcpResult,
   registerMcpTools,
+  wireMcpClientsFromConfig,
+  runStdioMcpServer,
+  MCP_SERVER_PROTOCOL_VERSION,
   type McpToolBridgeResult,
+  type WiredMcpClients,
 } from "./mcp/index.js";
 
 // T3.4: re-export the OS sandbox executor interface
@@ -610,11 +615,15 @@ export {
   createFakeSearchProvider,
   createHttpFetchProvider,
   createBraveSearchProvider,
+  createExaSearchProvider,
+  createPerplexitySearchProvider,
   createWebRuntime,
   makeWebTools,
   registerWebTools,
   WebError,
   type BraveSearchProviderOptions,
+  type ExaSearchProviderOptions,
+  type PerplexitySearchProviderOptions,
   type HttpFetchProviderOptions,
   type WebErrorCode,
   type WebFetchBody,
@@ -789,3 +798,24 @@ export {
   type SdkServerOptions,
   type ToolPermissionAskHookOptions,
 } from "./protocol/index.js";
+
+// Distributed mesh — static peer endpoint parsing + optional cluster wiring
+export {
+  parsePeerEndpoint,
+  parsePeerEndpointsFromEnv,
+  parsePeerEndpointsList,
+  type PeerEndpointSpec,
+} from "./peers/endpoints.js";
+export {
+  peersFromConfigLayer,
+  resolvePeerEndpoints,
+  type ResolvedPeerEndpoint,
+  type ResolvePeerEndpointsOptions,
+} from "./peers/resolve.js";
+export {
+  mergeClusterSeams,
+  wirePeerCluster,
+  type ClusterSeams,
+  type WirePeerClusterOptions,
+  type WirePeerClusterResult,
+} from "./peers/wire-cluster.js";

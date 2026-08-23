@@ -39,6 +39,8 @@ import { parse as parseToml } from "smol-toml";
 
 import { ConfigLayerSchema, type ConfigLayer } from "../schema.js";
 import { ConfigLoadError } from "../loader.js";
+import { parseCodexHookTable } from "./codex-hooks.js";
+import { parseCodexMcpServers } from "./codex-mcp.js";
 
 /**
  * A single warning the importer reports. The runner
@@ -97,8 +99,7 @@ const KNOWN_BUT_IGNORED_KEYS: ReadonlyMap<
 > = new Map([
   ["model", { reason: "not yet supported (envoy-harness CLI flag today)" }],
   ["model_providers", { reason: "not yet supported (envoy-harness CLI flag today)" }],
-  ["mcp_servers", { reason: "MCP transports land in a future chunk" }],
-  ["mcp_oauth_credentials_store", { reason: "MCP transports land in a future chunk" }],
+  ["mcp_oauth_credentials_store", { reason: "MCP OAuth store not yet supported" }],
   ["web_search", { reason: "web search lands in Phase C" }],
   ["skills", { reason: "skill loader lands in Phase B item 3" }],
   ["agents", { reason: "subagent registry lands in Phase C" }],
@@ -258,7 +259,21 @@ export async function importCodexConfig(
     }
   }
 
-  // 3. Walk the parsed object for warnings. We do this AFTER
+  if ("mcp_servers" in parsed) {
+    layer.mcpServers = parseCodexMcpServers(
+      parsed.mcp_servers,
+      options.filePath,
+    );
+  }
+
+  if ("hook" in parsed) {
+    const hookSpecs = parseCodexHookTable(parsed.hook);
+    if (hookSpecs.length > 0) {
+      layer.hooks = [...(layer.hooks ?? []), ...hookSpecs];
+    }
+  }
+
+  // 3. Walk the parsed object for warnings.
   //    the known-field extraction so the warnings don't fire
   //    for keys we've already mapped.
   collectWarnings(parsed, "", warnings);
@@ -385,6 +400,8 @@ const KNOWN_MAPPED_PARENTS: ReadonlySet<string> = new Set([
   "sandbox_mode",
   "approval_policy",
   "sandbox_workspace_write",
+  "mcp_servers",
+  "hook",
 ]);
 
 /**

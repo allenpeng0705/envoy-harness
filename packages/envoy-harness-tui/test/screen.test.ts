@@ -45,7 +45,7 @@ describe("layoutRows", () => {
         statusLine: "status",
         railLine: "rail",
         transcript: ["t1", "t2", "t3"],
-        inputLine: "> prompt",
+        inputLines: ["> prompt"],
       },
       40,
       6,
@@ -63,7 +63,7 @@ describe("layoutRows", () => {
       {
         statusLine: "s",
         transcript: ["a", "b", "c", "d", "e"],
-        inputLine: ">",
+        inputLines: [">"],
       },
       20,
       4,
@@ -87,7 +87,11 @@ describe("buildStatusLine", () => {
   });
 
   it("falls back to em-dash model and ready", () => {
-    expect(buildStatusLine({})).toBe("envoy-harness · model — · ready");
+    expect(buildStatusLine({})).toBe("envoy-harness · model — · mesh · /mesh · ready");
+  });
+
+  it("shows mesh hint when no peers are connected", () => {
+    expect(buildStatusLine({ meshHint: true })).toContain("mesh · /mesh");
   });
 });
 
@@ -101,9 +105,10 @@ describe("buildRailLine", () => {
     ).toBe("peers: p1(deepseek-chat)[rtt=12ms]  p2[down]");
   });
 
-  it("returns undefined for an empty cluster (no rail)", () => {
-    expect(buildRailLine([])).toBeUndefined();
-    expect(buildRailLine(undefined)).toBeUndefined();
+  it("shows mesh hint when the cluster is empty", () => {
+    expect(buildRailLine([])).toContain("mesh:");
+    expect(buildRailLine([])).toContain("/mesh");
+    expect(buildRailLine(undefined)).toContain("mesh:");
   });
 });
 
@@ -115,7 +120,7 @@ describe("Screen", () => {
       statusLine: "status",
       railLine: "rail",
       transcript: ["t1"],
-      inputLine: "> hi",
+      inputLines: ["> hi"],
       inputCursor: 4,
     };
     screen.render(model);
@@ -138,14 +143,14 @@ describe("Screen", () => {
       statusLine: "s",
       railLine: "r",
       transcript: ["a"],
-      inputLine: "> ",
+      inputLines: ["> "],
     });
     const before = cap.text().length;
     screen.render({
       statusLine: "s",
       railLine: "r",
       transcript: ["b"], // changed row 3
-      inputLine: "> ",
+      inputLines: ["> "],
     });
     const delta = cap.text().slice(before);
     expect(delta).toContain("\x1b[3;1H");
@@ -162,9 +167,50 @@ describe("Screen", () => {
     screen.render({
       statusLine: "status",
       transcript: [],
-      inputLine: "> ",
+      inputLines: ["> "],
     });
     const first = cap.text();
     expect(first).toContain("\x1b[36mstatus\x1b[0m");
+  });
+
+  it("lays out a multi-line composer at the bottom with palette rows above", () => {
+    const rows = layoutRows(
+      {
+        statusLine: "s",
+        railLine: "r",
+        transcript: ["t1", "t2", "t3"],
+        inputLines: ["> line1", "line2"],
+        palette: ["/cluster", "/cancel"],
+        paletteSelected: 0,
+      },
+      30,
+      10,
+    );
+    expect(rows).toHaveLength(10);
+    // rows: status, rail, transcript (3), pad, palette (2), input (2)
+    expect(rows[0]).toBe("s");
+    expect(rows[1]).toBe("r");
+    expect(rows.slice(2, 5)).toEqual(["t1", "t2", "t3"]);
+    expect(rows[5]).toBe("");
+    expect(rows[6]).toBe("> /cluster");
+    expect(rows[7]).toBe("  /cancel");
+    expect(rows[8]).toBe("> line1");
+    expect(rows[9]).toBe("line2");
+  });
+
+  it("positions the cursor on the active composer line", () => {
+    const cap = capture();
+    const screen = new Screen(cap.stream, { width: 30, height: 6 });
+    screen.render({
+      statusLine: "s",
+      transcript: [],
+      inputLines: ["> ab", "cd"],
+      inputCursorLine: 1,
+      inputCursor: 1,
+    });
+    // input lines occupy rows 5-6 of a 6-row screen? Height 6 → bottom 2 →
+    // row 5 = "> ab", row 6 clipped? layoutRows returns exactly height rows:
+    // status(1) + transcript(3) + input(2) = 6. Cursor row = 5 + cursorLine(1) + 1 = 6.
+    expect(cap.text()).toContain("\x1b[6;2H");
   });
 });

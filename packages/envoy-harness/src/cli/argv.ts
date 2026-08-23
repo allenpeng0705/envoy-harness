@@ -25,6 +25,10 @@
 
 import type { PermissionMode } from "../types.js";
 import {
+  parsePeerEndpoint,
+  parsePeerEndpointsFromEnv,
+} from "../peers/endpoints.js";
+import {
   parsePluginConfigEntry,
   PluginConfigParseError,
   type PluginConfigEntry,
@@ -52,6 +56,9 @@ const RUN_FLAGS = new Set([
   "--from",
   "--plugin",
   "--plugin-config",
+  "--peers",
+  "--peer",
+  "--connect-timeout-ms",
   "--plan",
   "--repl",
   "--acp",
@@ -100,6 +107,9 @@ const RUN_VALUED_FLAGS = new Set([
   "--from",
   "--plugin",
   "--plugin-config",
+  "--peers",
+  "--peer",
+  "--connect-timeout-ms",
 ]);
 
 /** A flag that takes a value for the self-evolve subcommand. */
@@ -241,6 +251,14 @@ export interface RunParsedArgs {
    * Mutually exclusive with `--repl`.
    */
   acp: boolean;
+  /**
+   * `--peers <id>@<host:port>` (repeatable): static peer cluster for
+   * mesh collaboration (cluster rail, /peers, /route, …). Also reads
+   * `ENVOY_PEERS` when no CLI peers are given.
+   */
+  peers: Array<{ id: string; endpoint: string }>;
+  /** `--connect-timeout-ms <n>`: per-peer TCP connect timeout. */
+  peerConnectTimeoutMs: number | undefined;
   /** `--no-color`: disable ANSI colors. */
   noColor: boolean;
   /** `--verbose`: print hook fires and validator verdicts. */
@@ -315,7 +333,28 @@ export interface TeamParsedArgs {
   positional: string[];
 }
 
-export type ParsedArgs = RunParsedArgs | SelfEvolveParsedArgs | TeamParsedArgs;
+/** Args for the `doctor` subcommand. */
+export interface DoctorParsedArgs {
+  subcommand: "doctor";
+  help: boolean;
+  version: boolean;
+  config?: string | undefined;
+}
+
+/** Args for the `mcp` subcommand (stdio MCP server). */
+export interface McpParsedArgs {
+  subcommand: "mcp";
+  help: boolean;
+  version: boolean;
+  cwd?: string | undefined;
+}
+
+export type ParsedArgs =
+  | RunParsedArgs
+  | SelfEvolveParsedArgs
+  | TeamParsedArgs
+  | DoctorParsedArgs
+  | McpParsedArgs;
 
 /** Error thrown when argv parsing fails. Caught by the runner. */
 export class ArgvError extends Error {
@@ -341,6 +380,12 @@ export function parseArgs(argv: ReadonlyArray<string>): ParsedArgs {
   }
   if (firstPositional === "team") {
     return parseTeamArgs(argv);
+  }
+  if (firstPositional === "doctor") {
+    return parseDoctorArgs(argv);
+  }
+  if (firstPositional === "mcp") {
+    return parseMcpArgs(argv);
   }
   return parseRunArgs(argv);
 }
@@ -376,6 +421,8 @@ function parseRunArgs(argv: ReadonlyArray<string>): RunParsedArgs {
     plan: false,
     repl: false,
     acp: false,
+    peers: [],
+    peerConnectTimeoutMs: undefined,
     noColor: false,
     verbose: false,
     quiet: false,
@@ -507,6 +554,23 @@ function parseRunArgs(argv: ReadonlyArray<string>): RunParsedArgs {
               throw err;
             }
             break;
+          case "--peers":
+          case "--peer": {
+            try {
+              out.peers.push(parsePeerEndpoint(value));
+            } catch (err) {
+              throw new ArgvError((err as Error).message);
+            }
+            break;
+          }
+          case "--connect-timeout-ms": {
+            const n = Number(value);
+            if (!Number.isInteger(n) || n <= 0) {
+              throw new ArgvError(`invalid --connect-timeout-ms: ${value}`);
+            }
+            out.peerConnectTimeoutMs = n;
+            break;
+          }
         }
         continue;
       }
@@ -514,6 +578,9 @@ function parseRunArgs(argv: ReadonlyArray<string>): RunParsedArgs {
       throw new ArgvError(`unhandled flag: ${arg}`);
     }
     out.positional.push(arg);
+  }
+  if (out.peers.length === 0) {
+    out.peers = [...parsePeerEndpointsFromEnv()];
   }
   return out;
 }
@@ -675,6 +742,7 @@ export function formatHelp(version: string): string {
     "  envoy-harness [flags] -                    # read prompt from stdin",
     "  envoy-harness [flags] <prompt-file>        # read prompt from a file",
     "  envoy-harness self-evolve [flags]          # run one self-evolution cycle",
+    "  envoy-harness doctor [--config <path>]     # health checks",
     "",
     "Flags (run):",
     "  --sandbox <mode>       read-only | workspace-write | danger-full-access",
@@ -695,6 +763,8 @@ export function formatHelp(version: string): string {
     "  --from <format>        source format for --import-config (v0: codex)",
     "  --plugin <name>        load a plugin (repeatable; must be in the curated whitelist)",
     "  --plugin-config <spec> per-plugin config (repeatable; '<name>.<key>=<value>')",
+    "  --peers <id>@<host:port>  mesh peer endpoint (repeatable; also ENVOY_PEERS)",
+    "  --connect-timeout-ms <n>  per-peer connect timeout (default 10000)",
     "  --plan                 read + plan only, no writes",
     "  --repl                 interactive REPL (no positional prompt)",
     "  --acp                  serve ACP JSON-RPC on stdio (hosts / TUI)",
@@ -791,5 +861,67 @@ function parseTeamArgs(argv: ReadonlyArray<string>): TeamParsedArgs {
     out.positional.push(arg);
   }
 
+  return out;
+}
+
+function parseMcpArgs(argv: ReadonlyArray<string>): McpParsedArgs {
+  const out: McpParsedArgs = {
+    subcommand: "mcp",
+    help: false,
+    version: false,
+  };
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]!;
+    if (arg === "mcp") continue;
+    if (arg === "--help") {
+      out.help = true;
+      continue;
+    }
+    if (arg === "--version") {
+      out.version = true;
+      continue;
+    }
+    if (arg === "--cwd") {
+      const next = argv[i + 1];
+      if (next === undefined) {
+        throw new ArgvError("--cwd requires a path");
+      }
+      out.cwd = next;
+      i++;
+      continue;
+    }
+    throw new ArgvError(`unknown flag for mcp subcommand: ${arg}`);
+  }
+  return out;
+}
+
+function parseDoctorArgs(argv: ReadonlyArray<string>): DoctorParsedArgs {
+  const out: DoctorParsedArgs = {
+    subcommand: "doctor",
+    help: false,
+    version: false,
+  };
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]!;
+    if (arg === "doctor") continue;
+    if (arg === "--help") {
+      out.help = true;
+      continue;
+    }
+    if (arg === "--version") {
+      out.version = true;
+      continue;
+    }
+    if (arg === "--config") {
+      const next = argv[i + 1];
+      if (next === undefined) {
+        throw new ArgvError("flag --config requires a value");
+      }
+      out.config = next;
+      i++;
+      continue;
+    }
+    throw new ArgvError(`unknown flag for doctor subcommand: ${arg}`);
+  }
   return out;
 }

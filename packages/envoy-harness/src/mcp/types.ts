@@ -62,6 +62,12 @@ export interface McpTool {
  * calls `tools/call`. `close()` releases the
  * transport.
  */
+/** Optional callbacks for an in-flight `tools/call`. */
+export interface McpCallToolOptions {
+  /** MCP `notifications/progress` / `notifications/message` text. */
+  onProgress?: (text: string) => void;
+}
+
 export interface McpClient {
   /** The server's display name (matches the config key in TOML). */
   readonly serverName: string;
@@ -76,6 +82,7 @@ export interface McpClient {
   callTool(
     name: string,
     args: unknown,
+    options?: McpCallToolOptions,
   ): Promise<McpCallToolResult>;
   /** Release the transport. Idempotent. */
   close(): Promise<void>;
