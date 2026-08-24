@@ -26,14 +26,25 @@
 import type { SandboxPolicy } from "../types.js";
 import { LandlockSandboxExecutor } from "./backends/landlock.js";
 import { SeatbeltSandboxExecutor } from "./backends/seatbelt.js";
+import {
+  WindowsJobSandboxExecutor,
+  type WindowsJobSandboxExecutorOptions,
+} from "./backends/windows-job.js";
+import {
+  WindowsSidecarSandboxExecutor,
+  isWindowsSidecarAvailable,
+  type WindowsSidecarSandboxExecutorOptions,
+} from "./backends/windows-sidecar.js";
 import { NoopSandboxExecutor, type SandboxExecutor } from "./types.js";
 
 export interface ResolveSandboxExecutorOptions {
   policy: SandboxPolicy;
   platform?: NodeJS.Platform;
-  force?: "landlock" | "seatbelt" | "noop";
+  force?: "landlock" | "seatbelt" | "windows-sandbox" | "noop";
   landlock?: ConstructorParameters<typeof LandlockSandboxExecutor>[0];
   seatbelt?: ConstructorParameters<typeof SeatbeltSandboxExecutor>[0];
+  windowsJob?: WindowsJobSandboxExecutorOptions;
+  windowsSidecar?: WindowsSidecarSandboxExecutorOptions;
 }
 
 export function resolveSandboxExecutor(
@@ -48,6 +59,12 @@ export function resolveSandboxExecutor(
   }
   if (options.force === "seatbelt") {
     return new SeatbeltSandboxExecutor(options.seatbelt);
+  }
+  if (options.force === "windows-sandbox") {
+    if (isWindowsSidecarAvailable()) {
+      return new WindowsSidecarSandboxExecutor(options.windowsSidecar);
+    }
+    return new WindowsJobSandboxExecutor(options.windowsJob);
   }
 
   const platform = options.platform ?? process.platform;
@@ -67,6 +84,15 @@ export function resolveSandboxExecutor(
   if (options.policy.backend === "darwin-sandbox") {
     if (platform === "darwin") {
       return new SeatbeltSandboxExecutor(options.seatbelt);
+    }
+    return new NoopSandboxExecutor();
+  }
+  if (options.policy.backend === "windows-sandbox") {
+    if (platform === "win32") {
+      if (isWindowsSidecarAvailable()) {
+        return new WindowsSidecarSandboxExecutor(options.windowsSidecar);
+      }
+      return new WindowsJobSandboxExecutor(options.windowsJob);
     }
     return new NoopSandboxExecutor();
   }

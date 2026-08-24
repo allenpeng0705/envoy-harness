@@ -21,6 +21,8 @@ export type ClusterSeams = Pick<
 export interface WirePeerClusterOptions {
   peers: ReadonlyArray<ResolvedPeerEndpoint>;
   connectTimeoutMs?: number;
+  /** When true, wire an empty pool that still supports `cluster/connect`. */
+  enableRuntimeConnect?: boolean;
   onFailure?: (id: string, err: Error) => void;
 }
 
@@ -60,7 +62,9 @@ export function mergeClusterSeams(
 export async function wirePeerCluster(
   options: WirePeerClusterOptions,
 ): Promise<WirePeerClusterResult | undefined> {
-  if (options.peers.length === 0) return undefined;
+  if (options.peers.length === 0 && !options.enableRuntimeConnect) {
+    return undefined;
+  }
 
   type PeerModule = typeof import("@envoymesh/envoy-harness-peer");
   let peerMod: PeerModule;
@@ -79,16 +83,18 @@ export async function wirePeerCluster(
     ...(options.onFailure !== undefined ? { onFailure: options.onFailure } : {}),
   });
 
-  await managed.connectPeers(
-    options.peers.map((peer) => ({
-      id: peer.id,
-      endpoint: peer.endpoint,
-      ...(peer.model !== undefined ? { model: peer.model } : {}),
-      ...(peer.capabilities !== undefined
-        ? { capabilities: peer.capabilities }
-        : {}),
-    })),
-  );
+  if (options.peers.length > 0) {
+    await managed.connectPeers(
+      options.peers.map((peer) => ({
+        id: peer.id,
+        endpoint: peer.endpoint,
+        ...(peer.model !== undefined ? { model: peer.model } : {}),
+        ...(peer.capabilities !== undefined
+          ? { capabilities: peer.capabilities }
+          : {}),
+      })),
+    );
+  }
 
   const peerUi = managed.createUiBackend();
 

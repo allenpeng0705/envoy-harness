@@ -10,6 +10,7 @@ import type {
   ClientTeamJob,
   EnvoyHarnessClient,
 } from "@envoymesh/envoy-harness-client";
+import { parsePeerEndpoint } from "@envoymesh/envoy-harness";
 
 import { parseSlash } from "./slash.js";
 import { formatActivityLine, type ActivityLike } from "./activity.js";
@@ -17,6 +18,7 @@ import { buildPermissionPreview } from "./permission-preview.js";
 import {
   formatPermissionBlock,
   formatTranscriptLine,
+  type TranscriptFormatOptions,
   type TranscriptLine,
   type TranscriptRole,
 } from "./transcript.js";
@@ -33,6 +35,7 @@ export interface TuiSessionOptions {
   cwd?: string;
   onTranscript?: (lines: readonly TranscriptLine[]) => void;
   onPermission?: (req: PermissionRequest) => Promise<"allow" | "deny">;
+  transcriptFormat?: TranscriptFormatOptions;
 }
 
 export class TuiSession {
@@ -61,18 +64,21 @@ export class TuiSession {
   readonly #discoveryEvents: ClientDiscoveryEvent[] = [];
   #gitDiffStaged = false;
   #gitDiffStat = false;
+  #imagesSupported = false;
   #permissionWaiter:
     | {
         req: PermissionRequest;
         resolve: (d: "allow" | "deny") => void;
       }
     | undefined;
+  #transcriptFormat: TranscriptFormatOptions;
 
   constructor(options: TuiSessionOptions) {
     this.#client = options.client;
     this.#cwd = options.cwd;
     this.#onTranscript = options.onTranscript;
     this.#onPermission = options.onPermission;
+    this.#transcriptFormat = options.transcriptFormat ?? {};
     this.#removeSessionUpdate = this.#client.onNotification(
       "session/update",
       (params) => this.#handleSessionUpdate(params),
@@ -147,6 +153,14 @@ export class TuiSession {
     return this.#gitDiffStat;
   }
 
+  get imagesSupported(): boolean {
+    return this.#imagesSupported;
+  }
+
+  setTranscriptFormat(options: TranscriptFormatOptions): void {
+    this.#transcriptFormat = options;
+  }
+
   /** Used by EnvoyHarnessClient.onPermissionRequest. */
   handlePermissionRequest(
     req: PermissionRequest,
@@ -156,10 +170,13 @@ export class TuiSession {
     }
     return new Promise<"allow" | "deny">((resolve) => {
       this.#permissionWaiter = { req, resolve };
-      this.#push("status", formatPermissionBlock(req));
+      this.#push("status", formatPermissionBlock(req, undefined, this.#transcriptFormat));
       void buildPermissionPreview(req, this.#cwd).then((preview) => {
         if (preview !== undefined && preview.trim().length > 0) {
-          this.#push("status", formatPermissionBlock(req, preview));
+          this.#push(
+            "status",
+            formatPermissionBlock(req, preview, this.#transcriptFormat),
+          );
         }
       });
     });
@@ -175,6 +192,8 @@ export class TuiSession {
 
   async start(): Promise<void> {
     const init = await this.#client.initialize();
+    this.#imagesSupported =
+      init.capabilities?.promptCapabilities?.image === true;
     this.#push(
       "status",
       `ACP protocol v${init.protocolVersion} — /help for commands`,
@@ -292,7 +311,9 @@ export class TuiSession {
           await this.runInit();
           return "ok";
         case "resume":
-          await this.resumeSession(slash.id);
+          if (slash.id !== undefined && slash.id.length > 0) {
+            await this.resumeSession(slash.id);
+          }
           return "ok";
         case "quit":
           return "quit";
@@ -404,6 +425,40 @@ export class TuiSession {
     return this.#clusterSnapshot;
   }
 
+  /** `/mesh connect <id@host:port>` — runtime peer wiring. */
+  async connectMeshPeer(raw: string): Promise<void> {
+    let spec: { id: string; endpoint: string };
+    try {
+      spec = parsePeerEndpoint(raw);
+    } catch (err) {
+      this.#push(
+        "status",
+        `mesh connect: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return;
+    }
+    try {
+      const result = await this.#client.connectClusterPeer({
+        id: spec.id,
+        endpoint: spec.endpoint,
+      });
+      if (result.ok) {
+        this.#push("status", `mesh: connected ${spec.id}@${spec.endpoint}`);
+        await this.refreshCluster();
+      } else {
+        this.#push(
+          "status",
+          `mesh connect failed: ${result.error ?? "unknown error"}`,
+        );
+      }
+    } catch (err) {
+      this.#push(
+        "status",
+        `mesh connect unavailable: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
   /** U2 — the host's model label from `config/get` (best-effort). */
   async getModelLabel(): Promise<string | undefined> {
     try {
@@ -476,7 +531,7 @@ export class TuiSession {
   /** U5 — plain-mode `/search`: list matching transcript lines. */
   async showSearch(term: string): Promise<void> {
     const matches = this.#lines
-      .map(formatTranscriptLine)
+      .map((line) => formatTranscriptLine(line, this.#transcriptFormat))
       .filter((line) => line.toLowerCase().includes(term.toLowerCase()));
     if (matches.length === 0) {
       this.#push("status", `Search "${term}" — no matches`);
@@ -1013,6 +1068,17 @@ export class TuiSession {
     }
   }
 
+  /** U6a.5 — persisted sessions for resume picker (`sessions/list`). */
+  async listPersistedSessions(): Promise<
+    Awaited<ReturnType<EnvoyHarnessClient["listSessions"]>>
+  > {
+    try {
+      return await this.#client.listSessions();
+    } catch {
+      return [];
+    }
+  }
+
   /** U6 — plan tab body. */
   async fetchPlanView(): Promise<string> {
     if (this.#sessionId === undefined) return "";
@@ -1173,7 +1239,9 @@ export class TuiSession {
   }
 
   renderTranscript(): string {
-    return this.#lines.map(formatTranscriptLine).join("\n");
+    return this.#lines
+      .map((line) => formatTranscriptLine(line, this.#transcriptFormat))
+      .join("\n");
   }
 
   #push(role: TranscriptRole, text: string): void {

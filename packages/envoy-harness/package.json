@@ -57,9 +57,12 @@
   "optionalDependencies": {
     "@deepseek-ai/node-addon-landlock-run": "^0.1.1",
     "@envoymesh/envoy-harness-peer": "file:../envoy-harness-peer",
+    "@envoymesh/envoy-harness-tui": "file:../envoy-harness-tui",
+    "@envoymesh/envoy-sandbox-win": "file:../envoy-sandbox-win",
     "node-pty": "^1.0.0"
   },
   "devDependencies": {
+    "@envoymesh/envoy-harness-cordis": "file:../envoy-harness-cordis",
     "@envoymesh/envoy-harness-peer": "file:../envoy-harness-peer",
     "@types/node": "^22.10.0",
     "tsx": "^4.19.0",

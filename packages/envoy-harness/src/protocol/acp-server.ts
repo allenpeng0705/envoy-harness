@@ -79,6 +79,18 @@ export function attachAcpServer(options: AcpServerOptions): () => void {
         return { sessionId: loaded.sessionId };
       }
 
+      case "sessions/list": {
+        assertInitialized(initialized);
+        if (backend.listSessions === undefined) {
+          throw new JsonRpcError(
+            "sessions/list not supported",
+            JsonRpcErrorCode.METHOD_NOT_FOUND,
+          );
+        }
+        const sessions = await backend.listSessions();
+        return { sessions };
+      }
+
       case "session/prompt": {
         assertInitialized(initialized);
         const p = parsePromptParams(params);

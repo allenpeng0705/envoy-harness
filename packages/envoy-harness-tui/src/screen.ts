@@ -11,6 +11,8 @@ export interface ScreenLayoutModel {
   statusLine: string;
   /** Optional one-line cluster rail (peers + health). */
   railLine?: string;
+  /** U6 — view tab strip (Chat · Plan · Memory · Diff · Mesh). */
+  tabLine?: string;
   /** Full transcript; the renderer keeps the bottom window. */
   transcript: readonly string[];
   /** The composer buffer split into lines (last line is the bottom row). */
@@ -23,6 +25,8 @@ export interface ScreenLayoutModel {
   palette?: readonly string[];
   /** Index of the highlighted palette row. */
   paletteSelected?: number;
+  /** U6a.5 — dim hint above composer (e.g. image paste). */
+  composerHint?: string;
 }
 
 export interface ScreenOptions {
@@ -58,10 +62,14 @@ export function layoutRows(
   if (model.railLine !== undefined) {
     rows.push(fitLine(model.railLine, width));
   }
+  if (model.tabLine !== undefined) {
+    rows.push(fitLine(model.tabLine, width));
+  }
   const inputLines = model.inputLines.length > 0 ? model.inputLines : [""];
   const palette = model.palette ?? [];
-  const bottom = palette.length + inputLines.length;
-  const usedTop = rows.length; // 1 (status) or 2 (status + rail)
+  const hintRows = model.composerHint !== undefined ? 1 : 0;
+  const bottom = palette.length + inputLines.length + hintRows;
+  const usedTop = rows.length; // status + optional rail + optional tabs
   const transcriptHeight = Math.max(0, height - usedTop - bottom);
   const tail = model.transcript.slice(-transcriptHeight);
   for (const line of tail) {
@@ -75,6 +83,9 @@ export function layoutRows(
       fitLine(`${i === model.paletteSelected ? ">" : " "} ${item}`, width),
     );
   });
+  if (model.composerHint !== undefined) {
+    rows.push(fitLine(model.composerHint, width));
+  }
   for (const line of inputLines) {
     rows.push(fitLine(line, width));
   }
@@ -89,6 +100,61 @@ export interface StatusBarInfo {
   /** When true, show `mesh · /mesh` instead of cluster counts (no peers yet). */
   meshHint?: boolean;
   busy?: boolean;
+  /** U6 — active detail view (shown when not chat). */
+  view?: string;
+}
+
+/** Tab ids rendered in the main strip (coding-agent panels). */
+export const VIEW_TAB_IDS = [
+  "chat",
+  "plan",
+  "memory",
+  "git-diff",
+  "mesh",
+] as const;
+
+export type ViewTabId = (typeof VIEW_TAB_IDS)[number];
+
+const VIEW_TAB_LABELS: Record<ViewTabId, string> = {
+  chat: "Chat",
+  plan: "Plan",
+  memory: "Memory",
+  "git-diff": "Diff",
+  mesh: "Mesh",
+};
+
+/**
+ * U6 — one-line tab strip. Active tab is bold; optional accent on active.
+ * Maps cluster/team/scoreboard views to Mesh tab highlight.
+ */
+export function buildViewTabLine(
+  activeView: string,
+  options?: { accent?: string },
+): string {
+  const meshViews = new Set([
+    "mesh",
+    "cluster",
+    "peers",
+    "team",
+    "scoreboard",
+    "route",
+    "trace",
+  ]);
+  const highlighted: ViewTabId = meshViews.has(activeView)
+    ? "mesh"
+    : VIEW_TAB_IDS.includes(activeView as ViewTabId)
+      ? (activeView as ViewTabId)
+      : "chat";
+  const parts = VIEW_TAB_IDS.map((id) => {
+    const label = VIEW_TAB_LABELS[id];
+    if (id !== highlighted) return label;
+    const text = `[${label}]`;
+    if (options?.accent !== undefined) {
+      return `${options.accent}${text}\x1b[0m`;
+    }
+    return text;
+  });
+  return parts.join("  ");
 }
 
 /** Build the one-line status bar (pure). */
@@ -96,6 +162,9 @@ export function buildStatusLine(info: StatusBarInfo): string {
   const parts = ["envoy-harness"];
   if (info.sessionId !== undefined) parts.push(`session ${info.sessionId}`);
   parts.push(`model ${info.model ?? "—"}`);
+  if (info.view !== undefined && info.view !== "chat") {
+    parts.push(`view ${info.view}`);
+  }
   if (info.meshHint === true || (info.clusterTotal ?? 0) === 0) {
     parts.push("mesh · /mesh");
   } else if (info.clusterTotal !== undefined) {

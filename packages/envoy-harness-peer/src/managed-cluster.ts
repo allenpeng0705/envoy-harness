@@ -14,7 +14,7 @@ import {
   type ConnectResultLike,
   type PeerHealthInfo,
 } from "./status.js";
-import { connectPeerClient, type TcpPeerClient } from "./tcp.js";
+import { connectPeerClient } from "./tcp.js";
 
 export interface ManagedPeerClusterOptions {
   connectTimeoutMs?: number;
@@ -158,17 +158,4 @@ export class ManagedPeerCluster implements ConnectResultLike {
     }
     this.connected.length = 0;
   }
-}
-
-export type ManagedPeerConnect = typeof connectPeerClient;
-
-/** Injectable connect for hermetic tests. */
-export function asManagedConnect(
-  fn: (opts: {
-    host: string;
-    port: number;
-    connectTimeoutMs?: number;
-  }) => Promise<{ client: TcpPeerClient["client"]; close(): void }>,
-): typeof connectPeerClient {
-  return fn as typeof connectPeerClient;
 }

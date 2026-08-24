@@ -9,6 +9,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./ehui": {
+      "types": "./dist/ehui.d.ts",
+      "import": "./dist/ehui.js"
     }
   },
   "files": ["dist", "README.md", "LICENSE"],

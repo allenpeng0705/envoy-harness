@@ -12,6 +12,7 @@ import {
   policyToSeatbeltProfile,
   resolveSandboxExecutor,
   SeatbeltSandboxExecutor,
+  WindowsJobSandboxExecutor,
   type SandboxContext,
 } from "../src/sandbox/index.js";
 import type { SandboxPolicy } from "../src/types.js";
@@ -421,6 +422,66 @@ describe("resolveSandboxExecutor — hermeticity (regression)", () => {
       force: "landlock",
     });
     expect(exec).toBeInstanceOf(LandlockSandboxExecutor);
+  });
+
+  it("windows-sandbox backend on win32 resolves to WindowsJobSandboxExecutor", () => {
+    const policy = {
+      mode: "workspace-write" as const,
+      approval: "on-request" as const,
+      backend: "windows-sandbox" as const,
+      writableRoots: [],
+      networkAccess: false,
+      slashTmpWritable: true,
+    };
+    const exec = resolveSandboxExecutor({ policy, platform: "win32" });
+    expect(exec).toBeInstanceOf(WindowsJobSandboxExecutor);
+  });
+
+  it("windows-sandbox backend off win32 falls back to noop", () => {
+    const policy = {
+      mode: "workspace-write" as const,
+      approval: "on-request" as const,
+      backend: "windows-sandbox" as const,
+      writableRoots: [],
+      networkAccess: false,
+      slashTmpWritable: true,
+    };
+    const exec = resolveSandboxExecutor({ policy, platform: "linux" });
+    expect(exec).toBeInstanceOf(NoopSandboxExecutor);
+  });
+
+  it("windows-sandbox force works on non-win32 with noop fallback executor", () => {
+    const policy = {
+      mode: "workspace-write" as const,
+      approval: "on-request" as const,
+      backend: "none" as const,
+      writableRoots: [],
+      networkAccess: false,
+      slashTmpWritable: true,
+    };
+    const exec = resolveSandboxExecutor({
+      policy,
+      platform: "linux",
+      force: "windows-sandbox",
+      windowsJob: { onUnusable: "noop" },
+    });
+    expect(exec).toBeInstanceOf(WindowsJobSandboxExecutor);
+  });
+});
+
+describe("WindowsJobSandboxExecutor", () => {
+  it("noop fallback on non-win32 runs sh -c", async () => {
+    const exec = new WindowsJobSandboxExecutor({ onUnusable: "noop" });
+    const result = await exec.execute("echo win-f2a", makeCtx(READ_ONLY));
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.trim()).toBe("win-f2a");
+  });
+
+  it("errors on non-win32 when onUnusable is error", async () => {
+    const exec = new WindowsJobSandboxExecutor({ onUnusable: "error" });
+    const result = await exec.execute("echo no", makeCtx(READ_ONLY));
+    expect(result.isError).toBe(true);
+    expect(result.stderr).toContain("only available on Windows");
   });
 });
 

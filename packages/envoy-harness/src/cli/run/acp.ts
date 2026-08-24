@@ -28,6 +28,7 @@ import {
   type ProtocolSessionBackend,
 } from "../../index.js";
 import type { ParsedArgs } from "../argv.js";
+import { wireCordisExtensions } from "../../cordis/wire-from-config.js";
 import { CliError } from "./errors.js";
 import { makeEmptyRunResult, resolveModel, defaultSessionDir } from "./helpers.js";
 import { EXIT_USAGE, type RunOptions, type RunResult } from "./types.js";
@@ -171,6 +172,13 @@ async function resolveAcpBackend(
       tools,
     );
     const env = wireEnvironmentTools(tools);
+    const cordisWire = await wireCordisExtensions({
+      plugins: configLayer.cordisPlugins,
+      cwd: defaultCwd,
+      tools,
+      environment: env,
+    });
+    const jobRegistry = cordisWire.jobs;
     const memoryStore = new LocalMemoryStore({
       memoryRoot:
         process.env["ENVOY_MEMORY_DIR"] ??
@@ -209,7 +217,7 @@ async function resolveAcpBackend(
                 }),
               cwd: cwd ?? defaultCwd,
               askHandler,
-              jobRegistry: env.jobs,
+              jobRegistry,
               terminalService: env.terminals,
               ...(mcpWire !== undefined ? { mcpClients: mcpWire.registry } : {}),
               ...(parsed.maxTurns !== undefined
@@ -228,6 +236,9 @@ async function resolveAcpBackend(
       async dispose() {
         if (mcpWire !== undefined) {
           await mcpWire.dispose().catch(() => undefined);
+        }
+        if (cordisWire.cordisDispose !== undefined) {
+          await cordisWire.cordisDispose().catch(() => undefined);
         }
         await env.dispose().catch(() => undefined);
         if (clusterDispose !== undefined) {

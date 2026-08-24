@@ -155,9 +155,11 @@ describe("PermissionProfileNameSchema", () => {
 // ---------------------------------------------------------------------------
 
 describe("SandboxBackendSchema", () => {
-  it("accepts all 3 backends", () => {
+  it("accepts all backends", () => {
     const backends: SandboxBackend[] = [
       "linux-landlock",
+      "darwin-sandbox",
+      "windows-sandbox",
       "process-fs-namespace",
       "none",
     ];

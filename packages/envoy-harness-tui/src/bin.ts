@@ -9,7 +9,11 @@
  * - `--peers <id>@<host:port>`: wire static peer discovery (repeatable)
  */
 
-import { createFakeSessionBackend } from "@envoymesh/envoy-harness";
+import {
+  createFakeSessionBackend,
+  loadConfig,
+  resolvePeerEndpoints,
+} from "@envoymesh/envoy-harness";
 
 import { createClusterTui } from "./cluster-wiring.js";
 import { createInProcessTui } from "./in-process.js";
@@ -20,6 +24,7 @@ import {
 } from "./peers-config.js";
 import { createSpawnedTui } from "./spawn.js";
 import { runInteractive } from "./ui.js";
+import { DEFAULT_ACCENT } from "./transcript.js";
 
 const TUI_HELP = `envoy-harness-tui — terminal host for envoy-harness (ACP)
 
@@ -38,9 +43,11 @@ Mesh / collaboration:
   --peers <id>@<host:port>   static peer endpoint (repeatable)
   --connect-timeout-ms <n>   per-peer TCP connect timeout (default 10000)
   ENVOY_PEERS                same as --peers (comma or space separated)
+  config.toml [[peers]]      loaded automatically (see mesh guide)
 
-Env:
+  Env:
   ENVOY_HARNESS_BIN  override harness executable for --spawn
+  --no-color         disable ANSI colors (status bar + transcript)
 
 Inside the TUI: /mesh /help /cluster /peers /route /scoreboard /team /trace
 Permission prompts: type allow or deny
@@ -76,6 +83,13 @@ async function main(): Promise<void> {
     return;
   }
 
+  const noColor = argv.includes("--no-color");
+  const interactiveOpts = {
+    ...(noColor
+      ? { transcriptFormat: { useColor: false } }
+      : { accent: DEFAULT_ACCENT, transcriptFormat: { useColor: true } }),
+  };
+
   let peerFlags: ReturnType<typeof parseTuiPeerFlags>;
   try {
     peerFlags = parseTuiPeerFlags(argv);
@@ -90,7 +104,11 @@ async function main(): Promise<void> {
   const spawn = argv.includes("--spawn");
   const clusterOnly = peerFlags.clusterOnly;
   const demo = !spawn && !clusterOnly;
-  const configuredPeers = peerFlags.peers;
+  const { layer: configLayer } = await loadConfig({});
+  const configuredPeers = resolvePeerEndpoints({
+    configLayer,
+    cliPeers: peerFlags.peers,
+  });
 
   if (clusterOnly) {
     if (configuredPeers.length === 0) {
@@ -117,6 +135,7 @@ async function main(): Promise<void> {
       await runInteractive({
         session: tui.session,
         configuredPeers,
+        ...interactiveOpts,
       });
     } finally {
       tui.close();
@@ -150,6 +169,7 @@ async function main(): Promise<void> {
       await runInteractive({
         session: tui.session,
         configuredPeers,
+        ...interactiveOpts,
       });
     } finally {
       tui.close();
@@ -204,6 +224,7 @@ async function main(): Promise<void> {
     await runInteractive({
       session: tui.session,
       configuredPeers,
+      ...interactiveOpts,
     });
   } finally {
     tui.close();

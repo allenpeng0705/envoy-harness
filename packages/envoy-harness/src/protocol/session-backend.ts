@@ -164,6 +164,17 @@ export interface ProtocolSessionBackend {
     sessionId: string;
     cwd?: string;
   }): Promise<{ sessionId: string }>;
+  /** U6a.5 — list persisted sessions for resume picker. */
+  listSessions?(): Promise<
+    ReadonlyArray<{
+      id: string;
+      mtimeMs: number;
+      title?: string;
+      cwd?: string;
+      startedAt?: string;
+      messageCount: number;
+    }>
+  >;
   prompt(params: {
     sessionId: string;
     prompt: ProtocolPromptInput;

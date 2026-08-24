@@ -40,6 +40,7 @@ import { wireMcpClientsFromConfig } from "../../mcp/index.js";
 import { policyFromMode } from "../../permissions/policy.js";
 import { resolveSession } from "../../session/resolve.js";
 import type { ParsedArgs } from "../argv.js";
+import { wireCordisExtensions } from "../../cordis/wire-from-config.js";
 import { CliError } from "./errors.js";
 import {
   DEFAULT_MAX_COST_USD,
@@ -204,6 +205,13 @@ export async function runAgent(
   );
   // Phase C: jobs / web / terminal (Cordis-free L3 ports).
   const environment = wireEnvironmentTools(tools);
+  const cordisWire = await wireCordisExtensions({
+    plugins: configLayer.cordisPlugins,
+    cwd,
+    tools,
+    environment,
+  });
+  const jobRegistry = cordisWire.jobs;
   const hooks = options.hooks ?? new HookRegistry();
 
   // Build the sandbox executor from CLI flags (opt-in).
@@ -223,7 +231,12 @@ export async function runAgent(
     // synonym for "no override" (same as omitting the flag),
     // but the resolver's `force` enum is `"noop"` for
     // explicit noop. Map at the boundary.
-    const force: "landlock" | "seatbelt" | "noop" | undefined =
+    const force:
+      | "landlock"
+      | "seatbelt"
+      | "windows-sandbox"
+      | "noop"
+      | undefined =
       parsed.sandboxExecutor === "none"
         ? "noop"
         : parsed.sandboxExecutor;
@@ -239,7 +252,7 @@ export async function runAgent(
     session,
     hooks,
     cwd,
-    jobRegistry: environment.jobs,
+    jobRegistry: jobRegistry,
     terminalService: environment.terminals,
     ...(mcpWire !== undefined ? { mcpClients: mcpWire.registry } : {}),
     ...(sandboxExecutor !== undefined ? { sandboxExecutor } : {}),
@@ -442,6 +455,9 @@ export async function runAgent(
   }
 
   await environment.dispose().catch(() => undefined);
+  if (cordisWire.cordisDispose !== undefined) {
+    await cordisWire.cordisDispose().catch(() => undefined);
+  }
   if (mcpWire !== undefined) {
     await mcpWire.dispose().catch(() => undefined);
   }

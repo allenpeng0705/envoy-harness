@@ -19,6 +19,7 @@ import {
   renderMeshView,
   renderPeersView,
   renderPlanView,
+  renderResumeView,
   renderRouteView,
   renderScoreboardView,
   renderSearchView,
@@ -38,7 +39,8 @@ export type UiView =
   | "trace"
   | "plan"
   | "memory"
-  | "git-diff";
+  | "git-diff"
+  | "resume";
 
 /** Fetch a view body, falling back to an "unavailable" line on error. */
 async function tryView(
@@ -67,6 +69,7 @@ export async function resolveViewBody(
   meshOptions?: {
     configuredPeers?: ReadonlyArray<{ id: string; endpoint: string }>;
   },
+  renderOptions?: { color?: boolean },
 ): Promise<string[]> {
   if (view === "chat") {
     return session.transcript.map(formatTranscriptLine);
@@ -121,10 +124,18 @@ export async function resolveViewBody(
     return renderTraceView(session.discoveryEvents);
   }
   if (view === "plan") {
-    return tryView(async () => renderPlanView(await session.fetchPlanView()), "plan");
+    return tryView(
+      async () =>
+        renderPlanView(await session.fetchPlanView(), renderOptions),
+      "plan",
+    );
   }
   if (view === "memory") {
-    return tryView(async () => renderMemoryView(await session.fetchMemoryView()), "memory");
+    return tryView(
+      async () =>
+        renderMemoryView(await session.fetchMemoryView(), renderOptions),
+      "memory",
+    );
   }
   if (view === "git-diff") {
     return tryView(
@@ -134,8 +145,16 @@ export async function resolveViewBody(
             session.gitDiffStaged,
             session.gitDiffStat,
           ),
+          renderOptions,
         ),
       "git-diff",
+    );
+  }
+  if (view === "resume") {
+    return tryView(
+      async () =>
+        renderResumeView(await session.listPersistedSessions(), renderOptions),
+      "resume",
     );
   }
   return routeTag !== undefined

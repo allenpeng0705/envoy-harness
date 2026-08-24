@@ -160,6 +160,56 @@ export class SessionStore {
   }
 
   /**
+   * List persisted sessions with summary metadata for UI pickers (U6a.5).
+   */
+  async listSummaries(): Promise<
+    Array<{
+      id: string;
+      mtimeMs: number;
+      title?: string;
+      cwd?: string;
+      startedAt?: string;
+      messageCount: number;
+    }>
+  > {
+    const ids = await this.list();
+    const summaries = await Promise.all(
+      ids.map(async (id) => {
+        const stat = await fs.stat(this.filePath(id));
+        let title: string | undefined;
+        let cwd: string | undefined;
+        let startedAt: string | undefined;
+        let messageCount = 0;
+        try {
+          const raw = await fs.readFile(this.filePath(id), "utf8");
+          const lines = raw.split("\n").filter((l) => l.trim().length > 0);
+          messageCount = Math.max(0, lines.length - 1);
+          const header = JSON.parse(lines[0] ?? "{}") as {
+            _kind?: string;
+            metadata?: SessionMetadata;
+          };
+          if (header._kind === "header" && header.metadata !== undefined) {
+            title = header.metadata.title;
+            cwd = header.metadata.cwd;
+            startedAt = header.metadata.startedAt;
+          }
+        } catch {
+          // skip corrupt headers
+        }
+        return {
+          id,
+          mtimeMs: stat.mtimeMs,
+          ...(title !== undefined ? { title } : {}),
+          ...(cwd !== undefined ? { cwd } : {}),
+          ...(startedAt !== undefined ? { startedAt } : {}),
+          messageCount,
+        };
+      }),
+    );
+    return summaries;
+  }
+
+  /**
    * Delete a session by id. No-op if it doesn't
    * exist. Returns `true` if a file was deleted.
    */

@@ -2,6 +2,8 @@
  * Transcript line shown in the TUI (committed messages only).
  */
 
+import { color, SGR } from "./theme.js";
+
 export type TranscriptRole =
   | "user"
   | "assistant"
@@ -14,6 +16,16 @@ export interface TranscriptLine {
   text: string;
   at: string;
 }
+
+export interface TranscriptFormatOptions {
+  /** When false, omit ANSI (plain mode / `--no-color`). */
+  useColor?: boolean;
+}
+
+/** Default cyan accent for status bar + active tab (U6a.2). */
+export const DEFAULT_ACCENT = SGR.cyan;
+
+const MAX_PERMISSION_PREVIEW_LINES = 10;
 
 /** Role label shown in the transcript margin. */
 export function transcriptTag(role: TranscriptRole): string {
@@ -31,17 +43,42 @@ export function transcriptTag(role: TranscriptRole): string {
   }
 }
 
+function formatRoleTag(
+  role: TranscriptRole,
+  options?: TranscriptFormatOptions,
+): string {
+  const raw = transcriptTag(role);
+  if (!options?.useColor) return raw;
+  switch (role) {
+    case "user":
+      return color(raw, SGR.cyan);
+    case "assistant":
+      return color(raw, `${SGR.bold}${SGR.magenta}`);
+    case "tool":
+      return color(raw, SGR.dim);
+    case "system":
+      return color(raw, SGR.dim);
+    case "status":
+      return color(raw, SGR.yellow);
+  }
+}
+
 /**
  * Format one transcript line for display (plain ANSI — no markdown engine).
  * Multi-line messages use a continued margin so code blocks and tool
  * output read like Claude Code / Codex transcripts.
  */
-export function formatTranscriptLine(line: TranscriptLine): string {
-  const tag = transcriptTag(line.role);
-  const body = formatMessageBody(line.role, line.text);
+export function formatTranscriptLine(
+  line: TranscriptLine,
+  options?: TranscriptFormatOptions,
+): string {
+  const tag = formatRoleTag(line.role, options);
+  const body = formatMessageBody(line.role, line.text, options);
   const lines = body.split("\n");
   if (lines.length === 0) return `[${tag}]`;
-  const head = `[${tag}] ${lines[0]}`;
+  const headPrefix =
+    line.role === "tool" ? toolTranscriptHeadPrefix(line.text, options) : "";
+  const head = `[${tag}]${headPrefix ? ` ${headPrefix}` : ""} ${lines[0]}`;
   if (lines.length === 1) return head;
   const indent =
     line.role === "tool"
@@ -52,18 +89,59 @@ export function formatTranscriptLine(line: TranscriptLine): string {
   return [head, ...lines.slice(1).map((l) => `${indent}${l}`)].join("\n");
 }
 
+/** U6a.3 — icon + tool name prefix for committed tool transcript lines. */
+function toolTranscriptHeadPrefix(
+  text: string,
+  options?: TranscriptFormatOptions,
+): string {
+  const icon = toolTranscriptIcon(text);
+  const name = toolTranscriptName(text);
+  const label = `${icon} ${name}`;
+  return options?.useColor ? color(label, SGR.dim) : label;
+}
+
+function toolTranscriptIcon(text: string): string {
+  const trimmed = text.trimStart();
+  if (
+    trimmed.startsWith("denied") ||
+    trimmed.startsWith("error") ||
+    trimmed.includes("✗")
+  ) {
+    return "✗";
+  }
+  const name = toolTranscriptName(text).toLowerCase();
+  if (name === "bash" || name === "shell" || name === "run_terminal_cmd") {
+    return "⚙";
+  }
+  return "✓";
+}
+
+function toolTranscriptName(text: string): string {
+  const trimmed = text.trimStart();
+  const head = trimmed.match(/^([a-zA-Z0-9_.-]+)/);
+  if (head !== null) return head[1]!;
+  return "tool";
+}
+
 /** Render message body: light structure for tools + fenced code blocks. */
-export function formatMessageBody(role: TranscriptRole, text: string): string {
+export function formatMessageBody(
+  role: TranscriptRole,
+  text: string,
+  options?: TranscriptFormatOptions,
+): string {
   if (role === "tool") {
-    return formatToolBody(text);
+    return formatToolBody(text, options);
   }
   if (role === "assistant") {
-    return formatAssistantBody(text);
+    return formatAssistantBody(text, options);
   }
   return text;
 }
 
-function formatToolBody(text: string): string {
+function formatToolBody(
+  text: string,
+  options?: TranscriptFormatOptions,
+): string {
   const trimmed = text.trim();
   if (trimmed.length === 0) return "(empty tool result)";
   if (trimmed.includes("\n- ") && trimmed.includes("\n+ ")) {
@@ -76,17 +154,20 @@ function formatToolBody(text: string): string {
       )
       .join("\n");
   }
-  // Common agent denial / error strings — surface clearly.
   if (trimmed.startsWith("denied by user:")) {
-    return `denied — ${trimmed.slice("denied by user:".length).trim()}`;
+    const body = `denied — ${trimmed.slice("denied by user:".length).trim()}`;
+    return options?.useColor ? color(body, SGR.red) : body;
   }
   if (trimmed.startsWith("denied:")) {
-    return trimmed;
+    return options?.useColor ? color(trimmed, SGR.red) : trimmed;
   }
   return trimmed;
 }
 
-function formatAssistantBody(text: string): string {
+function formatAssistantBody(
+  text: string,
+  options?: TranscriptFormatOptions,
+): string {
   const lines = text.split("\n");
   const out: string[] = [];
   let inFence = false;
@@ -100,11 +181,15 @@ function formatAssistantBody(text: string): string {
     const fence = line.trimStart().startsWith("```");
     if (fence) {
       inFence = !inFence;
-      out.push(inFence ? "┌─ code ─" : "└─");
+      const fenceLabel = inFence ? "┌─ code ─" : "└─";
+      out.push(
+        options?.useColor ? color(fenceLabel, SGR.dim) : fenceLabel,
+      );
       continue;
     }
     if (inFence) {
-      out.push(`│ ${line}`);
+      const fenced = `│ ${line}`;
+      out.push(options?.useColor ? color(fenced, SGR.dim) : fenced);
     } else {
       out.push(line);
     }
@@ -119,17 +204,48 @@ export function formatPermissionBlock(
     args: unknown;
   },
   preview?: string,
+  options?: TranscriptFormatOptions,
 ): string {
-  const lines = [`Allow tool \`${req.toolName}\`?`, req.description];
+  const inner: string[] = [
+    `Allow tool ${req.toolName}?`,
+    req.description,
+  ];
   const argsText = formatPermissionArgs(req.args);
   if (argsText.length > 0) {
-    lines.push(argsText);
+    inner.push(argsText);
   }
   if (preview !== undefined && preview.trim().length > 0) {
-    lines.push("--- preview ---", preview);
+    const previewLines = preview.split("\n");
+    if (previewLines.length > MAX_PERMISSION_PREVIEW_LINES) {
+      inner.push(
+        "--- preview ---",
+        ...previewLines.slice(0, MAX_PERMISSION_PREVIEW_LINES),
+        `… ${previewLines.length - MAX_PERMISSION_PREVIEW_LINES} more line(s) — scroll transcript`,
+      );
+    } else {
+      inner.push("--- preview ---", preview);
+    }
   }
-  lines.push("Type allow or deny (a/y / d/n)");
-  return lines.join("\n");
+  inner.push("Type allow or deny (a/y / d/n)");
+  return boxLines(inner, options);
+}
+
+function boxLines(
+  innerLines: string[],
+  options?: TranscriptFormatOptions,
+): string {
+  const width = Math.min(
+    76,
+    Math.max(20, ...innerLines.map((l) => l.length)),
+  );
+  const top = `┌${"─".repeat(width + 2)}┐`;
+  const bottom = `└${"─".repeat(width + 2)}┘`;
+  const body = innerLines.map((l) => `│ ${l.padEnd(width)} │`);
+  const boxed = [top, ...body, bottom].join("\n");
+  if (options?.useColor) {
+    return color(boxed, SGR.yellow);
+  }
+  return boxed;
 }
 
 function formatPermissionArgs(args: unknown): string {

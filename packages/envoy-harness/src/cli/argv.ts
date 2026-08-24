@@ -148,10 +148,16 @@ export interface RunParsedArgs {
    * `--sandbox-executor <name>`: opt into a kernel-level
    * sandbox backend. `none` is the default (validators only,
    * hermetic tests). Supported: `landlock` (Linux only),
-   * `seatbelt` (macOS only). On a non-matching platform the
-   * resolver falls back to noop rather than fail-closed.
+   * `seatbelt` (macOS only), `windows-sandbox` (Windows only).
+   * On a non-matching platform the resolver falls back to noop
+   * rather than fail-closed.
    */
-  sandboxExecutor: "landlock" | "seatbelt" | "none" | undefined;
+  sandboxExecutor:
+    | "landlock"
+    | "seatbelt"
+    | "windows-sandbox"
+    | "none"
+    | undefined;
   /** `--approval <mode>`: ask-for-approval policy. */
   approval: string | undefined;
   /** `--model <id>`: model identifier (passed to the adapter). */
@@ -349,12 +355,21 @@ export interface McpParsedArgs {
   cwd?: string | undefined;
 }
 
+/** Args for the `tui` subcommand (delegate to envoy-harness-tui). */
+export interface TuiParsedArgs {
+  subcommand: "tui";
+  help: boolean;
+  version: boolean;
+  noColor: boolean;
+}
+
 export type ParsedArgs =
   | RunParsedArgs
   | SelfEvolveParsedArgs
   | TeamParsedArgs
   | DoctorParsedArgs
-  | McpParsedArgs;
+  | McpParsedArgs
+  | TuiParsedArgs;
 
 /** Error thrown when argv parsing fails. Caught by the runner. */
 export class ArgvError extends Error {
@@ -386,6 +401,9 @@ export function parseArgs(argv: ReadonlyArray<string>): ParsedArgs {
   }
   if (firstPositional === "mcp") {
     return parseMcpArgs(argv);
+  }
+  if (firstPositional === "tui") {
+    return parseTuiArgs(argv);
   }
   return parseRunArgs(argv);
 }
@@ -473,9 +491,14 @@ function parseRunArgs(argv: ReadonlyArray<string>): RunParsedArgs {
             out.sandbox = value;
             break;
           case "--sandbox-executor":
-            if (value !== "landlock" && value !== "seatbelt" && value !== "none") {
+            if (
+              value !== "landlock" &&
+              value !== "seatbelt" &&
+              value !== "windows-sandbox" &&
+              value !== "none"
+            ) {
               throw new ArgvError(
-                `invalid --sandbox-executor: ${value} (expected landlock | seatbelt | none)`,
+                `invalid --sandbox-executor: ${value} (expected landlock | seatbelt | windows-sandbox | none)`,
               );
             }
             out.sandboxExecutor = value;
@@ -743,10 +766,11 @@ export function formatHelp(version: string): string {
     "  envoy-harness [flags] <prompt-file>        # read prompt from a file",
     "  envoy-harness self-evolve [flags]          # run one self-evolution cycle",
     "  envoy-harness doctor [--config <path>]     # health checks",
+    "  envoy-harness tui [flags]                  # terminal UI (envoy-harness-tui)",
     "",
     "Flags (run):",
     "  --sandbox <mode>       read-only | workspace-write | danger-full-access",
-    "  --sandbox-executor <b> landlock | seatbelt | none  (opt-in kernel sandbox; default none)",
+    "  --sandbox-executor <b> landlock | seatbelt | windows-sandbox | none  (opt-in kernel sandbox; default none)",
     "  --approval <mode>      unless-trusted | on-request | granular | never",
     "  --model <id>           LLM model identifier",
     "  --provider <name>      LLM provider (openai, anthropic, deepseek, ollama)",
@@ -786,6 +810,17 @@ export function formatHelp(version: string): string {
     "  --recent-failures <n>  recent entries to feed the prompt (default 20)",
     "  --pull                 opt in to federated pull (default: off)",
     "  --peer-id <id>         this peer's id (recorded in adoptions log)",
+    "",
+    "Flags (tui):",
+    "  --spawn                spawn envoy-harness --acp (default for envoy-harness tui)",
+    "  --demo                 in-process demo backend",
+    "  --cluster-only         mesh cluster console",
+    "  --peers <id>@<host:port>  static peer (repeatable)",
+    "  --connect-timeout-ms <n>",
+    "  --provider <name>      LLM provider for --spawn",
+    "  --model <id>           LLM model for --spawn",
+    "  --ask-permission       demo permission prompts",
+    "  --no-color             disable ANSI colors",
     "",
     "See docs/design.md §19 for the full surface.",
   ].join("\n");
@@ -922,6 +957,61 @@ function parseDoctorArgs(argv: ReadonlyArray<string>): DoctorParsedArgs {
       continue;
     }
     throw new ArgvError(`unknown flag for doctor subcommand: ${arg}`);
+  }
+  return out;
+}
+
+const TUI_FLAGS = new Set([
+  "--demo",
+  "--spawn",
+  "--cluster-only",
+  "--peers",
+  "--connect-timeout-ms",
+  "--provider",
+  "--model",
+  "--ask-permission",
+  "--help",
+  "-h",
+  "--no-color",
+]);
+
+function parseTuiArgs(argv: ReadonlyArray<string>): TuiParsedArgs {
+  const out: TuiParsedArgs = {
+    subcommand: "tui",
+    help: false,
+    version: false,
+    noColor: false,
+  };
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]!;
+    if (arg === "tui") continue;
+    if (arg === "--help" || arg === "-h") {
+      out.help = true;
+      continue;
+    }
+    if (arg === "--version") {
+      out.version = true;
+      continue;
+    }
+    if (arg === "--no-color") {
+      out.noColor = true;
+      continue;
+    }
+    if (!TUI_FLAGS.has(arg)) {
+      throw new ArgvError(`unknown flag for tui subcommand: ${arg}`);
+    }
+    if (
+      arg === "--peers" ||
+      arg === "--connect-timeout-ms" ||
+      arg === "--provider" ||
+      arg === "--model"
+    ) {
+      const next = argv[i + 1];
+      if (next === undefined || next.startsWith("--")) {
+        throw new ArgvError(`${arg} requires a value`);
+      }
+      i++;
+    }
   }
   return out;
 }

@@ -160,11 +160,16 @@ export interface DoctorRunResult {
   }>;
 }
 
+export interface TuiRunResult {
+  subcommand: "tui";
+}
+
 export type CliRunResult =
   | RunResult
   | SelfEvolveRunResult
   | TeamRunResult
-  | DoctorRunResult;
+  | DoctorRunResult
+  | TuiRunResult;
 
 /** The process exit code. */
 export type ExitCode = 0 | 1 | 2 | 64 | 65 | 66;

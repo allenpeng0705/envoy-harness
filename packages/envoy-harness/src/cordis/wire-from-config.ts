@@ -9,9 +9,12 @@ import type { ToolRegistry } from "../tools/registry.js";
 import type { JobRegistry } from "../jobs/index.js";
 import type { SkillRegistry } from "../skills/index.js";
 import type { WebRuntime } from "../web/types.js";
+import type { EnvironmentCapabilities } from "../environment/wire.js";
 
 export interface CordisWireResult {
   dispose: () => Promise<void>;
+  /** Replacement jobs registry when Cordis provides `jobs`. */
+  jobs?: JobRegistry;
 }
 
 export interface CordisWireOptions {
@@ -21,6 +24,40 @@ export interface CordisWireOptions {
   jobs: JobRegistry;
   skills: SkillRegistry;
   web: WebRuntime;
+}
+
+export interface CordisEnvironmentWire {
+  jobs: JobRegistry;
+  cordisDispose?: () => Promise<void>;
+}
+
+/** Bridge Cordis plugins into an already-wired environment. */
+export async function wireCordisExtensions(
+  options: {
+    plugins: ReadonlyArray<{ name: string; config?: unknown }> | undefined;
+    cwd: string;
+    tools: ToolRegistry;
+    environment: EnvironmentCapabilities;
+  },
+): Promise<CordisEnvironmentWire> {
+  if (options.plugins === undefined || options.plugins.length === 0) {
+    return { jobs: options.environment.jobs };
+  }
+  const wired = await wireCordisFromConfig({
+    plugins: options.plugins,
+    cwd: options.cwd,
+    tools: options.tools,
+    jobs: options.environment.jobs,
+    skills: options.environment.skills,
+    web: options.environment.web,
+  });
+  if (wired === undefined) {
+    return { jobs: options.environment.jobs };
+  }
+  return {
+    jobs: wired.jobs ?? options.environment.jobs,
+    cordisDispose: wired.dispose,
+  };
 }
 
 /** Host whitelisted Cordis plugins when the optional package is installed. */
@@ -38,7 +75,20 @@ export async function wireCordisFromConfig(
         ...(p.config !== undefined ? { config: p.config } : {}),
       })),
     });
+    const capabilities = container.capabilities();
+    let jobs: JobRegistry | undefined;
+    if (capabilities.some((c: { service: string }) => c.service === "jobs")) {
+      jobs = cordis.createHostedJobsRegistry(container.ctx);
+    }
+    if (
+      capabilities.some((c: { service: string }) => c.service === "skills")
+    ) {
+      options.skills.registerProvider(
+        cordis.createHostedSkillsProvider(container.ctx),
+      );
+    }
     return {
+      ...(jobs !== undefined ? { jobs } : {}),
       dispose: async () => {
         await container.dispose();
       },

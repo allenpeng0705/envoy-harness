@@ -8,6 +8,12 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import { loadConfig, resolveConfigPath } from "../../config/index.js";
+import {
+  isWindowsSandboxAvailable,
+  isWindowsSidecarAvailable,
+  LandlockSandboxExecutor,
+  SeatbeltSandboxExecutor,
+} from "../../sandbox/index.js";
 import { isPtyAvailable } from "../../terminal/pty-backend.js";
 import type { ParsedArgs } from "../argv.js";
 import type { DoctorRunResult, RunOptions } from "./types.js";
@@ -66,6 +72,71 @@ export async function runDoctorChecks(
     ok: isPtyAvailable(),
     detail: isPtyAvailable() ? "node-pty loadable" : "fake terminal only",
   });
+
+  if (process.platform === "linux") {
+    const landlock = new LandlockSandboxExecutor({ onUnusable: "noop" });
+    const probe = await landlock.execute("echo ok", {
+      policy: {
+        mode: "read-only",
+        approval: "on-request",
+        backend: "linux-landlock",
+        writableRoots: [],
+        networkAccess: false,
+        slashTmpWritable: true,
+      },
+      cwd: process.cwd(),
+      signal: new AbortController().signal,
+    });
+    checks.push({
+      name: "landlock",
+      ok: probe.exitCode === 0 && !probe.isError,
+      detail:
+        probe.exitCode === 0
+          ? "landlock-run probe ok"
+          : probe.stderr.trim() || `exit ${probe.exitCode}`,
+    });
+  }
+
+  if (process.platform === "darwin") {
+    const seatbelt = new SeatbeltSandboxExecutor({ onUnusable: "noop" });
+    const probe = await seatbelt.execute("echo ok", {
+      policy: {
+        mode: "read-only",
+        approval: "on-request",
+        backend: "darwin-sandbox",
+        writableRoots: [],
+        networkAccess: false,
+        slashTmpWritable: true,
+      },
+      cwd: process.cwd(),
+      signal: new AbortController().signal,
+    });
+    checks.push({
+      name: "seatbelt",
+      ok: probe.exitCode === 0 && !probe.isError,
+      detail:
+        probe.exitCode === 0
+          ? "sandbox-exec probe ok"
+          : probe.stderr.trim() || `exit ${probe.exitCode}`,
+    });
+  }
+
+  if (process.platform === "win32") {
+    const sidecar = isWindowsSidecarAvailable();
+    checks.push({
+      name: "windows_sandbox",
+      ok: isWindowsSandboxAvailable(),
+      detail: sidecar
+        ? "F2b sidecar available (envoy-sandbox-win); FS ACL when fsIsolation=true"
+        : "F2a job-object scaffold (install @envoymesh/envoy-sandbox-win for F2b)",
+    });
+  } else {
+    checks.push({
+      name: "windows_sandbox",
+      ok: true,
+      detail: "skipped (not win32)",
+    });
+  }
 
   const home = os.homedir();
   const sessionDir = path.join(home, ".local", "share", "envoy-harness", "sessions");

@@ -12,7 +12,7 @@ import {
   JsonRpcConnection,
 } from "@envoymesh/envoy-harness";
 
-import { EnvoyHarnessClient } from "../src/index.js";
+import { EnvoyHarnessClient, EHUI_PANELS, createEhuiDataSource } from "../src/index.js";
 
 function pairedClientAndServer(): {
   client: EnvoyHarnessClient;
@@ -260,6 +260,30 @@ describe("EnvoyHarnessClient", () => {
     const { sessionId } = await pair.client.acpNewSession();
     const result = await pair.client.prompt(sessionId, "acp");
     expect(result.messages.at(-1)).toMatchObject({ text: "echo:acp" });
+    pair.close();
+  });
+});
+
+describe("EHUI client hooks", () => {
+  it("EHUI_PANELS lists mesh panels with wire methods", () => {
+    const ids = EHUI_PANELS.map((p) => p.id);
+    expect(ids).toContain("plan");
+    expect(ids).toContain("git-diff");
+    expect(ids).toContain("mesh");
+  });
+
+  it("createEhuiDataSource delegates to client methods", async () => {
+    const pair = pairedClientAndServer();
+    attachAcpServer({
+      connection: pair.server,
+      backend: createFakeSessionBackend(),
+    });
+    await pair.client.initialize();
+    const { sessionId } = await pair.client.acpNewSession();
+    const ehui = createEhuiDataSource(pair.client, sessionId);
+    expect(ehui.sessionId).toBe(sessionId);
+    const cluster = await ehui.clusterStatus();
+    expect(cluster.peers).toBeDefined();
     pair.close();
   });
 });

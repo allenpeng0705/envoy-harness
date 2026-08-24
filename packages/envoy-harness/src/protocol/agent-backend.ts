@@ -338,6 +338,13 @@ export function createAgentSessionBackend(
       return { sessionId };
     },
 
+    async listSessions() {
+      if (options.sessionStore === undefined) {
+        return [];
+      }
+      return await options.sessionStore.listSummaries();
+    },
+
     async prompt(params) {
       const live = sessions.get(params.sessionId);
       if (live === undefined) {

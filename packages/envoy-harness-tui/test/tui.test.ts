@@ -17,6 +17,15 @@ describe("parseSlash", () => {
     expect(parseSlash("/quit")?.kind).toBe("quit");
     expect(parseSlash("hello")).toBeNull();
   });
+
+  it("parses mesh show and mesh connect", () => {
+    expect(parseSlash("/mesh")).toMatchObject({ kind: "mesh", action: "show" });
+    expect(parseSlash("/mesh connect p1@127.0.0.1:18123")).toMatchObject({
+      kind: "mesh",
+      action: "connect",
+      endpoint: "p1@127.0.0.1:18123",
+    });
+  });
 });
 
 describe("TuiSession via in-process ACP", () => {

@@ -632,6 +632,52 @@ describe("OpenAIAdapter — request shape", () => {
 });
 
 // ---------------------------------------------------------------------------
+// OpenAIAdapter — streaming abort
+// ---------------------------------------------------------------------------
+
+describe("OpenAIAdapter — streaming abort", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("stops streaming when the abort signal fires and does not force tool_use", async () => {
+    const controller = new AbortController();
+    const stream = new ReadableStream<Uint8Array>({
+      start(ctrl) {
+        ctrl.enqueue(
+          new TextEncoder().encode(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n",
+          ),
+        );
+      },
+      pull() {
+        // Block the second read until the abort signal is observed.
+      },
+    });
+    const mock = vi.fn(async () => new Response(stream, { status: 200 }));
+    vi.stubGlobal("fetch", mock);
+
+    const adapter = new OpenAIAdapter({
+      apiKey: "k",
+      model: "gpt-4o",
+    });
+    const deltas: string[] = [];
+    const result = await adapter.complete({
+      messages: [],
+      tools: [],
+      signal: controller.signal,
+      onTextDelta: (d) => {
+        deltas.push(d);
+        controller.abort();
+      },
+    });
+    expect(deltas).toEqual(["hi"]);
+    expect(result.stopReason).toBe("end_turn");
+    expect(result.content).toEqual([{ type: "text", text: "hi" }]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // OpenAIAdapter — error handling
 // ---------------------------------------------------------------------------
 

@@ -66,7 +66,11 @@ export function createPerplexitySearchProvider(
     id: "perplexity",
     available(): boolean {
       const fromEnv = env[PERPLEXITY_KEY_NAME];
-      return typeof fromEnv === "string" && fromEnv.length > 0;
+      if (typeof fromEnv === "string" && fromEnv.length > 0) return true;
+      const refs = options.credentials?.list() ?? [];
+      return refs.some(
+        (r) => r.name === PERPLEXITY_KEY_NAME && r.source === "file",
+      );
     },
     async search(
       request: WebSearchRequest,

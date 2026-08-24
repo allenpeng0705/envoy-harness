@@ -188,6 +188,7 @@ export class OpenAIAdapter implements ModelAdapter {
     let finishReason: ModelResponse["stopReason"] = "end_turn";
     let responseModel = this.model;
     let usage: ModelResponse["usage"] | undefined;
+    let streamAborted = false;
     const toolParts = new Map<
       number,
       { id: string; name: string; args: string }
@@ -262,6 +263,7 @@ export class OpenAIAdapter implements ModelAdapter {
 
     while (true) {
       if (input.signal?.aborted) {
+        streamAborted = true;
         try {
           await reader.cancel();
         } catch {
@@ -301,7 +303,10 @@ export class OpenAIAdapter implements ModelAdapter {
         args,
       });
     }
-    if (content.some((b) => b.type === "tool_call")) {
+    if (
+      !streamAborted &&
+      content.some((b) => b.type === "tool_call")
+    ) {
       finishReason = "tool_use";
     }
     return {

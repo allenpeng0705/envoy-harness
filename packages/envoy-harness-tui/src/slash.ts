@@ -35,13 +35,13 @@ export type SlashResult =
   | { kind: "plan"; action: string; text?: string; reason?: string }
   | { kind: "review"; staged?: boolean }
   | { kind: "init" }
-  | { kind: "resume"; id: string }
+  | { kind: "resume"; id?: string }
   | { kind: "quit" }
   | { kind: "unknown"; command: string };
 
 /** Distributed mesh slash commands (cluster collaboration). */
 export const MESH_SLASH_COMMANDS: ReadonlyArray<{ name: string; description: string }> = [
-  { name: "mesh", description: "mesh setup guide — discover peers & config" },
+  { name: "mesh", description: "mesh guide; /mesh connect <id@host:port>" },
   { name: "cluster", description: "cluster health + routing previews" },
   { name: "peers", description: "list connected peers" },
   { name: "route", description: "routing preview: /route <capability tag>" },
@@ -68,7 +68,7 @@ export const SLASH_COMMANDS: ReadonlyArray<{ name: string; description: string }
   { name: "plan", description: "plan mode: enter | show | edit | propose | approve | reject | exit" },
   { name: "review", description: "model code review of git diff (optional staged)" },
   { name: "init", description: "generate AGENTS.md via the model" },
-  { name: "resume", description: "resume session: /resume <session-id>" },
+  { name: "resume", description: "resume session: /resume or /resume <id>" },
   { name: "search", description: "search transcript: /search <term>" },
   { name: "provider", description: "swap provider: /provider <name> [model]" },
   { name: "model", description: "show model swap usage" },
@@ -165,8 +165,20 @@ export function parseSlash(line: string): SlashResult | null {
       return { kind: "help", text: HELP };
     case "cancel":
       return { kind: "cancel" };
-    case "mesh":
-      return { kind: "mesh" };
+    case "mesh": {
+      const sub = parts[1]?.toLowerCase();
+      if (sub === "connect") {
+        const raw = parts.slice(2).join(" ").trim() || rest.trim();
+        if (raw.length === 0) {
+          return {
+            kind: "unknown",
+            command: "mesh connect <id@host:port>",
+          };
+        }
+        return { kind: "mesh", action: "connect", endpoint: raw };
+      }
+      return { kind: "mesh", action: "show" };
+    }
     case "peers":
       return { kind: "peers" };
     case "cluster":
@@ -297,7 +309,7 @@ export function parseSlash(line: string): SlashResult | null {
     case "resume": {
       const id = rest.trim();
       if (id.length === 0) {
-        return { kind: "unknown", command: "resume (usage: /resume <session-id>)" };
+        return { kind: "resume" };
       }
       return { kind: "resume", id };
     }

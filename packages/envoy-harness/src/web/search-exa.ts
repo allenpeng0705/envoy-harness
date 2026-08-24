@@ -58,7 +58,11 @@ export function createExaSearchProvider(
     id: "exa",
     available(): boolean {
       const fromEnv = env[EXA_KEY_NAME];
-      return typeof fromEnv === "string" && fromEnv.length > 0;
+      if (typeof fromEnv === "string" && fromEnv.length > 0) return true;
+      const refs = options.credentials?.list() ?? [];
+      return refs.some(
+        (r) => r.name === EXA_KEY_NAME && r.source === "file",
+      );
     },
     async search(request: WebSearchRequest, signal: AbortSignal): Promise<WebSearchResult> {
       const key = await resolveKey(signal);

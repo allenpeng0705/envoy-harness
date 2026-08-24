@@ -7,14 +7,15 @@ import {
   mergeClusterSeams,
   type ProtocolSessionBackend,
   wirePeerCluster,
-  type PeerEndpointSpec,
+  type ResolvedPeerEndpoint,
 } from "@envoymesh/envoy-harness";
 
 import { createInProcessTui, type InProcessTui } from "./in-process.js";
 
 export interface WireClusterBackendOptions {
-  peers: ReadonlyArray<PeerEndpointSpec>;
+  peers: ReadonlyArray<ResolvedPeerEndpoint>;
   connectTimeoutMs?: number;
+  enableRuntimeConnect?: boolean;
   base?: ProtocolSessionBackend;
   onFailure?: (id: string, err: Error) => void;
 }
@@ -34,6 +35,9 @@ export async function wireClusterBackend(
     ...(options.connectTimeoutMs !== undefined
       ? { connectTimeoutMs: options.connectTimeoutMs }
       : {}),
+    ...(options.enableRuntimeConnect === true
+      ? { enableRuntimeConnect: true }
+      : {}),
     ...(options.onFailure !== undefined ? { onFailure: options.onFailure } : {}),
   });
 
@@ -51,7 +55,7 @@ export async function wireClusterBackend(
 }
 
 export interface ClusterTuiOptions {
-  peers: ReadonlyArray<PeerEndpointSpec>;
+  peers: ReadonlyArray<ResolvedPeerEndpoint>;
   connectTimeoutMs?: number;
   cwd?: string;
   base?: ProtocolSessionBackend;

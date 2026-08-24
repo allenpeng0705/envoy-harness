@@ -47,6 +47,8 @@ export { parseSlash, type SlashResult, MESH_SLASH_COMMANDS, SLASH_COMMANDS } fro
 
 export {
   formatTranscriptLine,
+  DEFAULT_ACCENT,
+  type TranscriptFormatOptions,
   type TranscriptLine,
   type TranscriptRole,
 } from "./transcript.js";

@@ -89,6 +89,56 @@ describe("loadConfigFile: well-formed TOML", () => {
     expect(layer.askForApproval).toBeUndefined();
     expect(layer.writableRoots).toBeUndefined();
   });
+
+  it("reads [[peers]] mesh endpoints", async () => {
+    const file = path.join(tmpDir, "config-peers.toml");
+    await writeFile(
+      file,
+      [
+        `[[peers]]`,
+        `id = "w1"`,
+        `endpoint = "127.0.0.1:18123"`,
+        `model = "deepseek-chat"`,
+        `capabilities = ["research"]`,
+        ``,
+      ].join("\n"),
+      "utf8",
+    );
+
+    const layer = await loadConfigFile(file);
+    expect(layer.peers).toEqual([
+      {
+        id: "w1",
+        endpoint: "127.0.0.1:18123",
+        model: "deepseek-chat",
+        capabilities: ["research"],
+      },
+    ]);
+  });
+
+  it("reads [[cordis_plugins]] Cordis plugin entries", async () => {
+    const file = path.join(tmpDir, "config-cordis.toml");
+    await writeFile(
+      file,
+      [
+        `[[cordis_plugins]]`,
+        `name = "jobs-local"`,
+        ``,
+        `[[cordis_plugins]]`,
+        `name = "skill-filesystem"`,
+        `[cordis_plugins.config]`,
+        `watch = false`,
+        ``,
+      ].join("\n"),
+      "utf8",
+    );
+
+    const layer = await loadConfigFile(file);
+    expect(layer.cordisPlugins).toEqual([
+      { name: "jobs-local" },
+      { name: "skill-filesystem", config: { watch: false } },
+    ]);
+  });
 });
 
 describe("loadConfigFile: missing file", () => {

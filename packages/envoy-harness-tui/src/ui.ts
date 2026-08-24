@@ -16,11 +16,12 @@ import { Composer, type ComposerKey } from "./composer.js";
 import {
   buildRailLine,
   buildStatusLine,
+  buildViewTabLine,
   Screen,
 } from "./screen.js";
 import type { TuiSession } from "./session.js";
 import { matchingSlashCommands, parseSlash } from "./slash.js";
-import { formatTranscriptLine } from "./transcript.js";
+import { formatTranscriptLine, type TranscriptFormatOptions } from "./transcript.js";
 import { renderDiscoveryTicker } from "./views.js";
 import {
   resolveClusterRoutePreviews,
@@ -43,6 +44,8 @@ export interface RunInteractiveOptions {
   refreshCluster?: boolean;
   /** U5 — ANSI SGR prefix for the status bar (e.g. `"\x1b[36m"`). */
   accent?: string;
+  /** U6a.2 — transcript + permission styling (default color on). */
+  transcriptFormat?: TranscriptFormatOptions;
   /** Peer endpoints configured at launch (shown in `/mesh`). */
   configuredPeers?: ReadonlyArray<{ id: string; endpoint: string }>;
 }
@@ -56,6 +59,9 @@ export async function runInteractive(
   const { session } = options;
 
   await session.start();
+  if (options.transcriptFormat !== undefined) {
+    session.setTranscriptFormat(options.transcriptFormat);
+  }
 
   const interactive =
     options.interactive ??
@@ -75,13 +81,16 @@ async function runPlain(options: RunInteractiveOptions): Promise<void> {
   const input = options.input ?? process.stdin;
   const output = options.output ?? process.stdout;
   const { session } = options;
+  const transcriptFormat = options.transcriptFormat ?? { useColor: true };
   let printed = 0;
   const flush = (): void => {
     const lines = session.transcript;
     while (printed < lines.length) {
       const line = lines[printed];
       if (line !== undefined) {
-        output.write(`${formatTranscriptLine(line)}\n`);
+        output.write(
+          `${formatTranscriptLine(line, transcriptFormat)}\n`,
+        );
       }
       printed++;
     }
@@ -187,6 +196,7 @@ async function runInteractiveScreen(
           ? { sessionId: session.sessionId }
           : {}),
         ...(modelLabel !== undefined ? { model: modelLabel } : {}),
+        ...(view !== "chat" ? { view } : {}),
         meshHint: clusterTotal === 0,
         ...(clusterTotal > 0
           ? {
@@ -195,6 +205,9 @@ async function runInteractiveScreen(
             }
           : {}),
         busy: session.busy,
+      });
+      const tabLine = buildViewTabLine(view, {
+        ...(options.accent !== undefined ? { accent: options.accent } : {}),
       });
       const railLine = buildRailLine(
         cluster?.peers.map((p) => ({
@@ -223,6 +236,7 @@ async function runInteractiveScreen(
         options.configuredPeers !== undefined
           ? { configuredPeers: options.configuredPeers }
           : undefined,
+        { color: true },
       );
       const ticker =
         session.discoveryEvents.length > 0
@@ -239,12 +253,22 @@ async function runInteractiveScreen(
       screen.render({
         statusLine,
         railLine,
+        tabLine,
         transcript: [...ticker, ...viewBody],
         inputLines: bufferLines.map((line, i) =>
           i === 0 ? `${prefix}${line}` : line,
         ),
         inputCursorLine: cursorLine,
         inputCursor: prefix.length + (composer.cursor - (lastNl + 1)),
+        ...(session.imagesSupported &&
+        composer.buffer.length === 0 &&
+        view === "chat" &&
+        !session.busy
+          ? {
+              composerHint:
+                "images: paste ![alt](data:image/png;base64,…) in your message",
+            }
+          : {}),
         ...(paletteItems.length > 0
           ? {
               palette: paletteItems,
@@ -295,9 +319,12 @@ async function runInteractiveScreen(
         if (slash !== null) {
           switch (slash.kind) {
             case "mesh":
-              view = "mesh";
-              await render();
-              return;
+              if (slash.action !== "connect") {
+                view = "mesh";
+                await render();
+                return;
+              }
+              break;
             case "peers":
               view = "peers";
               await render();
@@ -347,9 +374,31 @@ async function runInteractiveScreen(
               view = "git-diff";
               await render();
               return;
+            case "resume":
+              if (slash.id === undefined || slash.id.length === 0) {
+                view = "resume";
+                await render();
+                return;
+              }
+              break;
             default:
               break; // help/cancel/quit/unknown → session.submit
           }
+        }
+        if (view === "resume") {
+          const pick = rawLine.trim();
+          if (pick.length > 0) {
+            const sessions = await session.listPersistedSessions();
+            let id = pick;
+            const n = Number(pick);
+            if (Number.isInteger(n) && n >= 1 && n <= sessions.length) {
+              id = sessions[n - 1]!.id;
+            }
+            await session.resumeSession(id);
+            view = "chat";
+          }
+          await render();
+          return;
         }
         if (view !== "chat") {
           // A plain message while in a detail view returns to chat.

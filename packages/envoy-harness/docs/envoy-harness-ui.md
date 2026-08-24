@@ -1,6 +1,7 @@
 # Envoy Harness UI (EHUI) - the dedicated envoy-harness interface
 
-Status: U1-U5 DONE (2026-08-23; U3 follow-ups included); U6+ planned.
+Status: U1-U5 DONE (2026-08-23; U3 follow-ups included); U6a partial (tab strip +
+colored panels + `envoy-harness tui`); see [ehui-panel-spec.md](./ehui-panel-spec.md).
 Master plan section:
 `implementation-plan.md` §"Envoy Harness UI - the second major feature".
 
@@ -140,7 +141,7 @@ in the UI but `peers/list` remains the compatibility surface.
 | U2 | TUI renderer v2 | ANSI screen module (buffer + diff + regions), composer upgrade, status bar, cluster rail reading `cluster/status`; keymaps; hermetic render tests | ✅ |
 | U3 | Distributed detail views | `/cluster`, `/team`, `/scoreboard` panels + discovery event stream; `envoy-peer ui` standalone wiring | ✅ |
 | U4 | EnvoyMesh panels | desktop/EnvoyGo consume cluster/scoreboard via ACP host | ✅ |
-| U5 | Polish | theming, search, diff view, images, session resume, trace/observability panel, memory/plan tabs | partial (search/trace/accent shipped; diff/images/resume tabs deferred) |
+| U5 | Polish | theming, search, diff view, images, session resume, trace/observability panel, memory/plan tabs | **partial** — U6a: tab strip + colored plan/memory/diff panels; images/resume picker deferred |
 
 **Success criteria (v1):** a user on one machine can open the dedicated
 TUI, see the cluster rail (peers + models + health), watch a team job

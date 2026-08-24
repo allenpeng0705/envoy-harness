@@ -358,6 +358,9 @@ function mapKebabToCamel(obj: unknown): Record<string, unknown> {
       case "mcp_servers":
         out["mcpServers"] = v;
         break;
+      case "cordis_plugins":
+        out["cordisPlugins"] = v;
+        break;
       default:
         // Unknown key — let the zod schema decide.
         out[k] = v;

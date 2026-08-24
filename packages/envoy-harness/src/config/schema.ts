@@ -153,6 +153,20 @@ export const ConfigLayerSchema = z
       )
       .optional(),
     /**
+     * Whitelisted Cordis plugins (`@envoymesh/envoy-harness-cordis`).
+     * TOML: `[[cordis_plugins]]` with `name` and optional inline `config`.
+     */
+    cordisPlugins: z
+      .array(
+        z
+          .object({
+            name: z.string().min(1),
+            config: z.record(z.unknown()).optional(),
+          })
+          .strict(),
+      )
+      .optional(),
+    /**
      * plugin names the user explicitly trusts. Combined
      * with the in-binary built-in whitelist (the
      * `envoy-harness-plugin-*` samples that ship in this

@@ -29,6 +29,19 @@ export {
 } from "./backends/seatbelt.js";
 
 export {
+  WindowsJobSandboxExecutor,
+  isWindowsSandboxAvailable,
+  type WindowsJobSandboxExecutorOptions,
+} from "./backends/windows-job.js";
+
+export {
+  WindowsSidecarSandboxExecutor,
+  isWindowsSidecarAvailable,
+  resolveWindowsSidecarBin,
+  type WindowsSidecarSandboxExecutorOptions,
+} from "./backends/windows-sidecar.js";
+
+export {
   resolveSandboxExecutor,
   type ResolveSandboxExecutorOptions,
 } from "./resolve.js";

@@ -8,6 +8,7 @@ import {
   renderClusterView,
   renderDiscoveryTicker,
   renderPeersView,
+  renderResumeView,
   renderRouteView,
   renderScoreboardView,
   renderSearchView,
@@ -179,5 +180,21 @@ describe("renderTraceView", () => {
     expect(lines[0]).toBe("Trace (2)");
     expect(lines[1]).toContain("p1 rtt=5ms");
     expect(lines[2]).toContain("p1 connected");
+  });
+});
+
+describe("renderResumeView", () => {
+  it("lists numbered sessions for picker", () => {
+    const lines = renderResumeView([
+      {
+        id: "sess-abc",
+        mtimeMs: 1,
+        title: "fix bug",
+        messageCount: 4,
+      },
+    ]);
+    expect(lines.join("\n")).toContain("Resume session");
+    expect(lines.join("\n")).toContain("sess-abc");
+    expect(lines.join("\n")).toContain("fix bug");
   });
 });

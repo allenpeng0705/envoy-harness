@@ -153,6 +153,9 @@ export async function runAgentLoop(
           : {}),
       });
     } catch (err) {
+      if (agent.abortController.signal.aborted) {
+        return agent.makeResult([], "aborted", iterations);
+      }
       // Model errors are surfaced as a synthetic assistant
       // message so the user sees the error in the transcript
       // and the loop exits cleanly (no retry policy in v0).
@@ -177,6 +180,10 @@ export async function runAgentLoop(
     // Agent attributes it to the right model (each model has
     // its own price). Unknown model + missing usage = 0 cost
     // (graceful default for FakeModel / local).
+    if (agent.abortController.signal.aborted) {
+      return agent.makeResult(response.content, "aborted", iterations);
+    }
+
     if (response.usage) {
       agent.costTracker.addUsage(
         {

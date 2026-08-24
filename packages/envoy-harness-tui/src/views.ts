@@ -12,6 +12,8 @@ import type {
   ClientTeamJob,
 } from "@envoymesh/envoy-harness-client";
 
+import { color, SGR } from "./theme.js";
+
 function peerLabel(p: ClientPeerInfo): string {
   const model = p.model !== undefined ? ` ${p.model}` : "";
   const caps =
@@ -44,6 +46,9 @@ export function renderMeshView(options?: {
     "  /scoreboard peer skill reputation",
     "  /team      distributed team jobs",
     "  /trace     peer discovery event log",
+    "",
+    "Runtime connect:",
+    "  /mesh connect <id>@<host:port>   add a peer without restart",
     "",
     "Configuration:",
     "  [[peers]] in ~/.config/envoy-harness/config.toml",
@@ -226,29 +231,102 @@ export function renderTraceView(
   ];
 }
 
-/** `/plan` tab — current plan text. */
-export function renderPlanView(text: string): string[] {
-  if (text.trim().length === 0) return ["Plan — empty (use /plan enter)"];
-  return ["Plan", ...text.split("\n").map((l) => `  ${l}`)];
+/** U6 — optional ANSI coloring for screen mode. */
+export interface ViewRenderOptions {
+  color?: boolean;
+}
+
+/** `/plan` tab — current plan text with section header. */
+export function renderPlanView(
+  text: string,
+  options?: ViewRenderOptions,
+): string[] {
+  const { color: useColor = false } = options ?? {};
+  const header = useColor
+    ? `${color("Plan", SGR.bold)} ${color("(read-only · /plan edit)", SGR.dim)}`
+    : "Plan (read-only · /plan edit)";
+  if (text.trim().length === 0) {
+    return [
+      header,
+      useColor ? color("  empty — use /plan enter", SGR.dim) : "  empty — use /plan enter",
+    ];
+  }
+  const body = text.split("\n").map((l) => `  ${l}`);
+  return [header, ...body];
 }
 
 /** `/memory` tab — memory list or body. */
-export function renderMemoryView(text: string): string[] {
-  if (text.trim().length === 0) return ["Memory — empty"];
-  return ["Memory", ...text.split("\n").map((l) => `  ${l}`)];
+export function renderMemoryView(
+  text: string,
+  options?: ViewRenderOptions,
+): string[] {
+  const { color: useColor = false } = options ?? {};
+  const header = useColor
+    ? `${color("Memory", SGR.bold)} ${color("( /memory list | read | add )", SGR.dim)}`
+    : "Memory ( /memory list | read | add )";
+  if (text.trim().length === 0) {
+    return [header, useColor ? color("  empty", SGR.dim) : "  empty"];
+  }
+  return [header, ...text.split("\n").map((l) => `  ${l}`)];
 }
 
-/** `/diff` tab — inline git diff view. */
-export function renderGitDiffView(text: string): string[] {
-  if (text.trim().length === 0) return ["Git diff — clean"];
-  const lines = text.split("\n");
-  return [
-    "Git diff",
-    ...lines.map((line) => {
-      if (line.startsWith("+")) return `  ${line}`;
-      if (line.startsWith("-")) return `  ${line}`;
-      if (line.startsWith("@@")) return `  ${line}`;
-      return `  ${line}`;
-    }),
-  ];
+/** `/diff` tab — inline git diff with optional ANSI colors. */
+export function renderGitDiffView(
+  text: string,
+  options?: ViewRenderOptions,
+): string[] {
+  const { color: useColor = false } = options ?? {};
+  const header = useColor
+    ? `${color("Git diff", SGR.bold)} ${color("( /diff --staged --stat )", SGR.dim)}`
+    : "Git diff ( /diff --staged --stat )";
+  if (text.trim().length === 0) {
+    return [header, useColor ? color("  clean working tree", SGR.green) : "  clean working tree"];
+  }
+  const lines = text.split("\n").map((line) => {
+    const padded = `  ${line}`;
+    if (!useColor) return padded;
+    if (line.startsWith("+++") || line.startsWith("---")) {
+      return color(padded, SGR.bold);
+    }
+    if (line.startsWith("+")) return color(padded, SGR.green);
+    if (line.startsWith("-")) return color(padded, SGR.red);
+    if (line.startsWith("@@")) return color(padded, SGR.cyan);
+    return padded;
+  });
+  return [header, ...lines];
+}
+
+/** U6a.5 — resume picker from `sessions/list`. */
+export function renderResumeView(
+  sessions: ReadonlyArray<{
+    id: string;
+    mtimeMs: number;
+    title?: string;
+    cwd?: string;
+    messageCount: number;
+  }>,
+  options?: ViewRenderOptions,
+): string[] {
+  const { color: useColor = false } = options ?? {};
+  const header = useColor
+    ? `${color("Resume session", SGR.bold)} ${color("( type row # or session id )", SGR.dim)}`
+    : "Resume session ( type row # or session id )";
+  if (sessions.length === 0) {
+    return [
+      header,
+      useColor ? color("  no persisted sessions — use --persist", SGR.dim) : "  no persisted sessions — use --persist",
+    ];
+  }
+  const lines = [header, "  #   id          messages  title / cwd"];
+  sessions.forEach((s, i) => {
+    const title = s.title ?? s.cwd ?? "—";
+    const shortId = s.id.length > 12 ? `${s.id.slice(0, 10)}…` : s.id;
+    lines.push(
+      `  ${String(i + 1).padStart(2)}  ${shortId.padEnd(12)} ${String(s.messageCount).padStart(3)}     ${title}`,
+    );
+  });
+  lines.push(
+    useColor ? color("  Esc → chat", SGR.dim) : "  Esc → chat",
+  );
+  return lines;
 }

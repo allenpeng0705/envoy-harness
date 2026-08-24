@@ -41,6 +41,7 @@ import {
   buildAgentSystemPrompt,
 } from "../../index.js";
 import { wireEnvironmentTools } from "../../environment/index.js";
+import { wireCordisExtensions } from "../../cordis/wire-from-config.js";
 import { wireMcpClientsFromConfig } from "../../mcp/index.js";
 import { loadConfig } from "../../index.js";
 import {
@@ -141,6 +142,13 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
   );
   // Phase C: jobs / web / terminal (Cordis-free L3 ports).
   const environment = wireEnvironmentTools(tools);
+  const cordisWire = await wireCordisExtensions({
+    plugins: configLayer.cordisPlugins,
+    cwd,
+    tools,
+    environment,
+  });
+  const jobRegistry = cordisWire.jobs;
   const hooks = opts.hooks ?? new HookRegistry();
 
   const agentOptions: ConstructorParameters<typeof Agent>[0] = {
@@ -149,7 +157,7 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
     session,
     hooks,
     cwd,
-    jobRegistry: environment.jobs,
+    jobRegistry,
     terminalService: environment.terminals,
     ...(mcpWire !== undefined ? { mcpClients: mcpWire.registry } : {}),
   };
@@ -391,6 +399,9 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
     // agent. Errors here are silent (we're at exit;
     // a provider-disposal failure is not actionable).
     disposeUserQuestionsProvider();
+    if (cordisWire.cordisDispose !== undefined) {
+      await cordisWire.cordisDispose().catch(() => undefined);
+    }
     await environment.dispose().catch(() => undefined);
     if (mcpWire !== undefined) {
       await mcpWire.dispose().catch(() => undefined);

@@ -7,61 +7,27 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
 
 import { JsonRpcConnection } from "@envoymesh/envoy-harness";
+import type {
+  ClientClusterStatus,
+  ClientDiscoveryEvent,
+  ClientPeerInfo,
+  ClientScoreboardEntry,
+  ClientSessionSummary,
+  ClientTeamJob,
+  EhuiDataSource,
+} from "./ehui.js";
 
-export interface ClientPeerInfo {
-  id: string;
-  model?: string;
-  capabilities?: readonly string[];
-}
-
-/** U1 — cluster status (peers + health) for the dedicated UI. */
-export interface ClientClusterStatus {
-  peers: Array<{
-    id: string;
-    model?: string;
-    capabilities?: readonly string[];
-    health: { ok: boolean; rttMs?: number; lastPingAt?: string; error?: string };
-  }>;
-  connected: number;
-  failed: number;
-}
-
-/** U1 — one team job (agents + status) for the dedicated UI. */
-export interface ClientTeamJob {
-  jobId: string;
-  status: "running" | "completed" | "failed";
-  createdAt: string;
-  costUsd?: number;
-  agents: Array<{
-    id: string;
-    host: string;
-    model?: string;
-    status: "pending" | "running" | "completed" | "failed";
-    costUsd?: number;
-    startedAt?: string;
-    completedAt?: string;
-  }>;
-}
-
-/** U1 — one scoreboard entry (reputation per peer+skill). */
-export interface ClientScoreboardEntry {
-  workerPeerId: string;
-  skillId: string;
-  score: number;
-  passCount: number;
-  failCount: number;
-  partialCount: number;
-}
-
-/** U3 — one discovery/lifecycle event (`discovery/event`). */
-export interface ClientDiscoveryEvent {
-  type: "peer.connected" | "peer.disconnected" | "peer.failed" | "peer.health";
-  peerId: string;
-  model?: string;
-  rttMs?: number;
-  error?: string;
-  at: string;
-}
+export type {
+  ClientClusterStatus,
+  ClientDiscoveryEvent,
+  ClientPeerInfo,
+  ClientScoreboardEntry,
+  ClientSessionSummary,
+  ClientTeamJob,
+  EhuiDataSource,
+  EhuiPanelId,
+} from "./ehui.js";
+export { EHUI_PANELS } from "./ehui.js";
 
 export interface EnvoyHarnessClientOptions {
   input: Readable;
@@ -134,10 +100,18 @@ export class EnvoyHarnessClient {
     };
   }
 
-  async initialize(): Promise<{ protocolVersion: number }> {
+  async initialize(): Promise<{
+    protocolVersion: number;
+    capabilities?: {
+      promptCapabilities?: { image?: boolean };
+    };
+  }> {
     this.#dialect = "acp";
     return (await this.#conn.request("initialize", {})) as {
       protocolVersion: number;
+      capabilities?: {
+        promptCapabilities?: { image?: boolean };
+      };
     };
   }
 
@@ -159,6 +133,14 @@ export class EnvoyHarnessClient {
       sessionId,
       ...(cwd !== undefined ? { cwd } : {}),
     })) as { sessionId: string };
+  }
+
+  /** U6a.5 — list persisted sessions (`sessions/list`). */
+  async listSessions(): Promise<ClientSessionSummary[]> {
+    const res = (await this.#conn.request("sessions/list", {})) as {
+      sessions: ClientSessionSummary[];
+    };
+    return res.sessions;
   }
 
   async createSession(params?: {
@@ -462,6 +444,26 @@ export class EnvoyHarnessClient {
   close(): void {
     this.#conn.close();
   }
+}
+
+/** Create an EHUI data-source for a live session (EnvoyGo side panel). */
+export function createEhuiDataSource(
+  client: EnvoyHarnessClient,
+  sessionId: string,
+): EhuiDataSource {
+  return {
+    sessionId,
+    plan: (action, options) => client.sessionPlan(sessionId, action, options),
+    memory: (op, options) => client.sessionMemory(sessionId, op, options),
+    gitDiff: (options) => client.gitDiff(sessionId, options),
+    gitStatus: () => client.gitStatus(sessionId),
+    clusterStatus: () => client.clusterStatus(),
+    listPeers: () => client.listPeers(),
+    teamJobs: () => client.teamJobs(),
+    scoreboardSummary: () => client.scoreboardSummary(),
+    listSessions: () => client.listSessions(),
+    subscribeDiscovery: (listener) => client.subscribeDiscovery(listener),
+  };
 }
 
 export { JsonRpcConnection };
