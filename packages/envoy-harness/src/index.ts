@@ -420,9 +420,15 @@ export {
   isImportFormat,
   loadConfig,
   loadConfigFile,
+  loadConfigStack,
   loadConfigWithImport,
+  mergeConfigLayers,
   parseClaudeCodeHooks,
+  resolveAgentRuntimeConfig,
   resolveConfigPath,
+  applyShellEnvironmentPolicy,
+  ShellEnvironmentPolicySchema,
+  systemPromptOptionsFromConfig,
   SUPPORTED_IMPORT_FORMATS,
   type ConfigLayer,
   type CodexImportResult,
@@ -433,8 +439,12 @@ export {
   type ImportCodexOptions,
   type ImportDeepseekOptions,
   type ImportFormat,
+  type LoadConfigStackOptions,
+  type LoadedConfigStack,
   type ParseClaudeCodeHooksOptions,
   type ParseClaudeCodeHooksResult,
+  type ResolvedAgentRuntimeConfig,
+  type ShellEnvironmentPolicy,
   type SkippedCcHook,
 } from "./config/index.js";
 
@@ -668,15 +678,29 @@ export {
 export {
   createSystemPromptRegistry,
   agentsMdSection,
+  bashGuidanceSection,
+  harnessIdentitySection,
+  jobsGuidanceSection,
+  personaSection,
+  permissionsPolicySection,
   planModeSection,
+  readFileGuidanceSection,
   terminalGuidanceSection,
+  webSearchGuidanceSection,
   workspaceSection,
+  DEFAULT_PROJECT_DOC_FALLBACKS,
   buildAgentSystemPrompt,
   type BuildAgentSystemPromptOptions,
   type PromptAssemblyContext,
   type PromptSection,
   type SystemPromptRegistry,
 } from "./system-prompt/index.js";
+
+export {
+  assembleTurnContext,
+  type AssembleTurnContextOptions,
+  type AssembledTurnContext,
+} from "./context/turn-context.js";
 
 export {
   createDefaultCredentials,

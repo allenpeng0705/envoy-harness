@@ -58,6 +58,12 @@ export interface UserQuestionRequest {
    */
   options?: ReadonlyArray<string>;
   /**
+   * 0-based index into `options` marked as recommended
+   * (Claude/Codex-style hint). Providers may highlight it;
+   * ignored when `options` is unset or the index is OOB.
+   */
+  recommendedIndex?: number;
+  /**
    * Multiline mode: the human types until a sentinel
    * (default `"""` on its own line). Useful for diffs +
    * error logs + anything the LLM asks the human to paste

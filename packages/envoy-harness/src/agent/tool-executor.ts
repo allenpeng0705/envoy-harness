@@ -116,6 +116,11 @@ export interface ToolExecutorContext {
    * tool call. `"never"` fails closed.
    */
   readonly getApproval: () => AskForApproval;
+  /**
+   * Env map for bash/job spawns (after shell_environment_policy).
+   * When omitted, tools fall back to process.env.
+   */
+  readonly getShellEnv?: () => Record<string, string>;
   /** Abort signal. The executor breaks out of the loop when aborted. */
   readonly abortSignal: AbortSignal;
   /** F10.2: cap on parallel sub-agent calls per turn. */
@@ -444,6 +449,9 @@ export class ToolExecutor {
         // Pass the live policy so the bash tool enforces the
         // current mode, not the session-start mode.
         sandboxPolicy: this.ctx.getSandboxPolicy(),
+        ...(this.ctx.getShellEnv !== undefined
+          ? { shellEnv: this.ctx.getShellEnv() }
+          : {}),
         ...(sandboxExecutor !== undefined ? { sandboxExecutor } : {}),
         ...(this.ctx.emitToolOutput !== undefined
           ? {

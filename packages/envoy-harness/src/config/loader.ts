@@ -361,8 +361,41 @@ function mapKebabToCamel(obj: unknown): Record<string, unknown> {
       case "cordis_plugins":
         out["cordisPlugins"] = v;
         break;
+      case "developer_instructions":
+        out["developerInstructions"] = v;
+        break;
+      case "include_harness_identity":
+        out["includeHarnessIdentity"] = v;
+        break;
+      case "project_doc_fallback_filenames":
+        out["projectDocFallbackFilenames"] = v;
+        break;
+      case "shell_environment_policy":
+        out["shellEnvironmentPolicy"] = mapShellEnvPolicy(v);
+        break;
       default:
         // Unknown key — let the zod schema decide.
+        out[k] = v;
+        break;
+    }
+  }
+  return out;
+}
+
+function mapShellEnvPolicy(raw: unknown): Record<string, unknown> {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    return {};
+  }
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    switch (k) {
+      case "include_only":
+        out["includeOnly"] = v;
+        break;
+      case "ignore_default_excludes":
+        out["ignoreDefaultExcludes"] = v;
+        break;
+      default:
         out[k] = v;
         break;
     }

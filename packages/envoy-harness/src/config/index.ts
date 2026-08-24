@@ -17,6 +17,24 @@ export {
   loadConfigWithImport,
   resolveConfigPath,
 } from "./loader.js";
+export {
+  applyShellEnvironmentPolicy,
+  ShellEnvironmentPolicySchema,
+  type ShellEnvironmentPolicy,
+} from "./shell-env.js";
+export {
+  resolveAgentRuntimeConfig,
+  systemPromptOptionsFromConfig,
+  type ResolvedAgentRuntimeConfig,
+} from "./apply.js";
+export {
+  defaultDistConfigPath,
+  loadConfigStack,
+  mergeConfigLayers,
+  parseConfigLayer,
+  type LoadConfigStackOptions,
+  type LoadedConfigStack,
+} from "./layers.js";
 
 // Phase B / Item 15: external config importers.
 // Chunk 15.1 ships the codex importer; chunk 15.2 adds

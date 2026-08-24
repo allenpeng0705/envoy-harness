@@ -47,6 +47,7 @@ import type { ContentBlock } from "../tools/index.js";
 import type { ModelResponse } from "../model.js";
 import type { Agent, AgentResult } from "../agent.js";
 import { MCP_TOOL_PREFIX } from "../mcp/types.js";
+import { assembleTurnContext } from "../context/turn-context.js";
 
 /**
  * Run the agent's turn loop. Reads from the
@@ -82,6 +83,32 @@ export async function runAgentLoop(
       { type: "text", text: agent.systemPrompt },
     ]);
   }
+
+  // DeepSeek/Codex: inject skill catalog + memory index + plan
+  // as a user-role fragment before the actual user prompt.
+  const plan =
+    typeof agent.session.getPlan === "function"
+      ? agent.session.getPlan()
+      : undefined;
+  const turnCtx = await assembleTurnContext({
+    cwd: agent.cwd,
+    signal: agent.abortSignal,
+    ...(agent.memoryStore !== undefined
+      ? { memoryStore: agent.memoryStore }
+      : {}),
+    ...(agent.skills !== undefined ? { skills: agent.skills } : {}),
+    ...(agent.skillCatalogDigest !== undefined
+      ? { skillCatalogDigest: agent.skillCatalogDigest }
+      : {}),
+    ...(plan !== undefined ? { plan } : {}),
+  });
+  agent.skillCatalogDigest = turnCtx.skillCatalogDigest;
+  if (turnCtx.text.length > 0) {
+    agent.session.appendMessage("user", [
+      { type: "text", text: turnCtx.text },
+    ]);
+  }
+
   if (typeof prompt === "string") {
     agent.session.appendMessage("user", [{ type: "text", text: prompt }]);
   } else {

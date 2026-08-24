@@ -14,6 +14,7 @@ import {
   agentsMdSection,
   buildAgentSystemPrompt,
   createSystemPromptRegistry,
+  DEFAULT_PROJECT_DOC_FALLBACKS,
   InMemorySession,
   newSessionId,
   terminalGuidanceSection,
@@ -96,6 +97,22 @@ describe("built-in sections", () => {
     const registry = createSystemPromptRegistry();
     registry.register(agentsMdSection(tmpDir));
     expect(await registry.render()).toContain("Project rules here.");
+  });
+
+  it("falls back to ENVOY.md when AGENTS.md is absent", async () => {
+    await fs.mkdir(path.join(tmpDir, ".git"), { recursive: true });
+    await fs.writeFile(path.join(tmpDir, "ENVOY.md"), "Envoy project rules.");
+    const registry = createSystemPromptRegistry();
+    registry.register(agentsMdSection(tmpDir));
+    expect(await registry.render()).toContain("Envoy project rules.");
+  });
+
+  it("DEFAULT_PROJECT_DOC_FALLBACKS is ENVOY.md then CLAUDE.md then CONTRIBUTING.md", () => {
+    expect([...DEFAULT_PROJECT_DOC_FALLBACKS]).toEqual([
+      "ENVOY.md",
+      "CLAUDE.md",
+      "CONTRIBUTING.md",
+    ]);
   });
 });
 

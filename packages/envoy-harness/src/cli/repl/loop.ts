@@ -39,11 +39,12 @@ import {
   type Session,
   type SessionMetadata,
   buildAgentSystemPrompt,
+  loadConfigStack,
+  systemPromptOptionsFromConfig,
 } from "../../index.js";
 import { wireEnvironmentTools } from "../../environment/index.js";
 import { wireCordisExtensions } from "../../cordis/wire-from-config.js";
 import { wireMcpClientsFromConfig } from "../../mcp/index.js";
-import { loadConfig } from "../../index.js";
 import {
   createReplStdinProvider,
   createUserQuestionService,
@@ -133,9 +134,10 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
   }
   const tools = new ToolRegistry();
   for (const t of BUILTIN_TOOLS) tools.register(t);
-  const { layer: configLayer } = await loadConfig(
-    opts.args.config !== undefined ? { filePath: opts.args.config } : {},
-  );
+  const { layer: configLayer } = await loadConfigStack({
+    cwd,
+    ...(opts.args.config !== undefined ? { filePath: opts.args.config } : {}),
+  });
   const mcpWire = await wireMcpClientsFromConfig(
     configLayer.mcpServers,
     tools,
@@ -159,11 +161,25 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
     cwd,
     jobRegistry,
     terminalService: environment.terminals,
+    skills: environment.skills,
     ...(mcpWire !== undefined ? { mcpClients: mcpWire.registry } : {}),
+    ...(configLayer.shellEnvironmentPolicy !== undefined
+      ? { shellEnvironmentPolicy: configLayer.shellEnvironmentPolicy }
+      : {}),
+    ...(configLayer.askForApproval !== undefined
+      ? { approval: configLayer.askForApproval }
+      : {}),
   };
   // Phase G — the REPL's system prompt: AGENTS.md discovery + terminal
   // guidance (the REPL wires terminal tools via wireEnvironmentTools).
-  agentOptions.systemPrompt = await buildAgentSystemPrompt({ cwd });
+  agentOptions.systemPrompt = await buildAgentSystemPrompt({
+    cwd,
+    ...systemPromptOptionsFromConfig(configLayer),
+    permissionMode: session.metadata.permissionMode ?? "read-only",
+    ...(configLayer.askForApproval !== undefined
+      ? { askForApproval: configLayer.askForApproval }
+      : {}),
+  });
   if (opts.args.maxTurns !== undefined) {
     agentOptions.maxIterations = opts.args.maxTurns;
   }
@@ -223,6 +239,7 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
     new LocalMemoryStore({
       memoryRoot: process.env["ENVOY_MEMORY_DIR"] ?? "./memories",
     });
+  agentOptions.memoryStore = memoryStore;
 
   const agent = new Agent(agentOptions);
 

@@ -13,6 +13,7 @@ import {
   Agent,
   attachAcpServer,
   BUILTIN_TOOLS,
+  buildAgentSystemPrompt,
   createAgentSessionBackend,
   createFakeSessionBackend,
   HookRegistry,
@@ -24,7 +25,9 @@ import {
   wireEnvironmentTools,
   wireMcpClientsFromConfig,
   type ModelAdapter,
-  loadConfig,
+  loadConfigStack,
+  resolveAgentRuntimeConfig,
+  systemPromptOptionsFromConfig,
   type ProtocolSessionBackend,
 } from "../../index.js";
 import type { ParsedArgs } from "../argv.js";
@@ -122,9 +125,11 @@ async function resolveAcpBackend(
     };
   }
 
-  const { layer: configLayer } = await loadConfig(
-    parsed.config !== undefined ? { filePath: parsed.config } : {},
-  );
+  const defaultCwdEarly = parsed.cwd ?? options.cwd ?? process.cwd();
+  const { layer: configLayer } = await loadConfigStack({
+    cwd: defaultCwdEarly,
+    ...(parsed.config !== undefined ? { filePath: parsed.config } : {}),
+  });
   const { resolvePeerEndpoints } = await import("../../peers/resolve.js");
   const peerEndpoints = resolvePeerEndpoints({
     configLayer,
@@ -157,7 +162,7 @@ async function resolveAcpBackend(
 
   const model = resolveLiveModel(parsed, options);
   if (model !== undefined) {
-    const defaultCwd = parsed.cwd ?? options.cwd ?? process.cwd();
+    const defaultCwd = defaultCwdEarly;
     // Build the tool registry + environment ONCE for the whole
     // ACP server. Building them inside the createAgent factory
     // (one call per session) leaks jobs / terminals / web
@@ -184,6 +189,25 @@ async function resolveAcpBackend(
         process.env["ENVOY_MEMORY_DIR"] ??
         path.join(defaultCwd, "memories"),
     });
+    const runtime = resolveAgentRuntimeConfig(defaultCwd, configLayer, {
+      permissionMode: parsed.sandbox ?? "workspace-write",
+      ...(parsed.approval !== undefined
+        ? {
+            askForApproval: parsed.approval as
+              | "unless-trusted"
+              | "on-request"
+              | "granular"
+              | "never",
+          }
+        : {}),
+    });
+    const systemPrompt = await buildAgentSystemPrompt({
+      cwd: defaultCwd,
+      ...systemPromptOptionsFromConfig(configLayer),
+      permissionMode: runtime.permissionMode,
+      askForApproval: runtime.askForApproval,
+      plan: parsed.plan === true,
+    });
     return {
       backend: await wireCluster(
         createAgentSessionBackend({
@@ -204,6 +228,7 @@ async function resolveAcpBackend(
               description: t.description,
             })),
           createAgent: ({ sessionId, cwd, askHandler, session }) => {
+            const sessionCwd = cwd ?? defaultCwd;
             const hooks = new HookRegistry();
             return new Agent({
               model,
@@ -212,11 +237,23 @@ async function resolveAcpBackend(
               session:
                 session ??
                 new InMemorySession(sessionId, {
-                  cwd: cwd ?? defaultCwd,
+                  cwd: sessionCwd,
+                  permissionMode: runtime.permissionMode,
                   startedAt: new Date().toISOString(),
                 }),
-              cwd: cwd ?? defaultCwd,
+              cwd: sessionCwd,
               askHandler,
+              systemPrompt,
+              approval: runtime.askForApproval,
+              sandboxPolicy: runtime.sandboxPolicy,
+              memoryStore,
+              skills: env.skills,
+              ...(configLayer.shellEnvironmentPolicy !== undefined
+                ? {
+                    shellEnvironmentPolicy:
+                      configLayer.shellEnvironmentPolicy,
+                  }
+                : {}),
               jobRegistry,
               terminalService: env.terminals,
               ...(mcpWire !== undefined ? { mcpClients: mcpWire.registry } : {}),

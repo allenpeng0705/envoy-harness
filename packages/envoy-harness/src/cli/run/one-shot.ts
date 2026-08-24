@@ -25,7 +25,8 @@ import {
   EXIT_USAGE,
   HookRegistry,
   JsonLinesTracer,
-  loadConfig,
+  LocalMemoryStore,
+  loadConfigStack,
   loadConfigWithImport,
   NullTracer,
   ToolRegistry,
@@ -34,10 +35,12 @@ import {
   type Session,
   type SessionMetadata,
   buildAgentSystemPrompt,
+  systemPromptOptionsFromConfig,
 } from "../../index.js";
 import { wireEnvironmentTools } from "../../environment/index.js";
 import { wireMcpClientsFromConfig } from "../../mcp/index.js";
 import { policyFromMode } from "../../permissions/policy.js";
+import * as path from "node:path";
 import { resolveSession } from "../../session/resolve.js";
 import type { ParsedArgs } from "../argv.js";
 import { wireCordisExtensions } from "../../cordis/wire-from-config.js";
@@ -128,30 +131,19 @@ export async function runAgent(
       }
     }
   } else {
-    const hasExplicitPath =
-      parsed.config !== undefined ||
-      process.env["ENVOY_HARNESS_CONFIG"] !== undefined;
-    if (hasExplicitPath) {
-      // User explicitly asked for a file (--config or env var) —
-      // surface errors. The loader resolves the env var path
-      // when filePath is undefined.
-      const { layer } = await loadConfig(
-        parsed.config !== undefined ? { filePath: parsed.config } : {},
-      );
+    // Config stack: dist → user → project `.envoy/config.toml`.
+    try {
+      const { layer } = await loadConfigStack({
+        cwd: parsed.cwd ?? options.cwd ?? process.cwd(),
+        ...(parsed.config !== undefined ? { filePath: parsed.config } : {}),
+      });
       configLayer = layer;
-    } else {
-      // Default path: try, but silence ENOENT (most users don't
-      // have a config file yet). Malformed files still throw.
-      try {
-        const { layer } = await loadConfig();
-        configLayer = layer;
-      } catch (err) {
-        if (
-          !(err instanceof ConfigLoadError) ||
-          !/ENOENT/.test(String(err.cause))
-        ) {
-          throw err;
-        }
+    } catch (err) {
+      if (
+        !(err instanceof ConfigLoadError) ||
+        !/ENOENT/.test(String(err.cause))
+      ) {
+        throw err;
       }
     }
   }
@@ -279,7 +271,48 @@ export async function runAgent(
   agentOptions.systemPrompt = await buildAgentSystemPrompt({
     cwd,
     plan: parsed.plan === true,
+    ...systemPromptOptionsFromConfig(configLayer),
+    permissionMode: effectiveMode ?? "read-only",
+    ...(configLayer.askForApproval !== undefined
+      ? { askForApproval: configLayer.askForApproval }
+      : parsed.approval !== undefined
+        ? {
+            askForApproval: parsed.approval as
+              | "unless-trusted"
+              | "on-request"
+              | "granular"
+              | "never",
+          }
+        : {}),
   });
+  agentOptions.memoryStore = new LocalMemoryStore({
+    memoryRoot:
+      process.env["ENVOY_MEMORY_DIR"] ?? path.join(cwd, "memories"),
+  });
+  agentOptions.skills = environment.skills;
+  if (configLayer.shellEnvironmentPolicy !== undefined) {
+    agentOptions.shellEnvironmentPolicy = configLayer.shellEnvironmentPolicy;
+  }
+  if (configLayer.askForApproval !== undefined) {
+    agentOptions.approval = configLayer.askForApproval;
+  } else if (parsed.approval !== undefined) {
+    agentOptions.approval = parsed.approval as
+      | "unless-trusted"
+      | "on-request"
+      | "granular"
+      | "never";
+  }
+  // Apply ConfigLayer sandbox extras on top of session mode.
+  {
+    const { resolveAgentRuntimeConfig } = await import("../../config/apply.js");
+    const runtime = resolveAgentRuntimeConfig(cwd, configLayer, {
+      permissionMode: effectiveMode ?? "read-only",
+      ...(agentOptions.approval !== undefined
+        ? { askForApproval: agentOptions.approval }
+        : {}),
+    });
+    agentOptions.sandboxPolicy = runtime.sandboxPolicy;
+  }
   if (options.askHandler) {
     agentOptions.askHandler = options.askHandler;
   } else {

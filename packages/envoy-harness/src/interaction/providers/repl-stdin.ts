@@ -138,7 +138,9 @@ function renderPromptHeader(
   if (req.options !== undefined && req.options.length > 0) {
     lines.push("");
     for (let i = 0; i < req.options.length; i++) {
-      lines.push(`  [${i + 1}] ${req.options[i]}`);
+      const star =
+        req.recommendedIndex === i ? " (recommended)" : "";
+      lines.push(`  [${i + 1}] ${req.options[i]}${star}`);
     }
     lines.push("");
     lines.push("(type a number, or free-form text)");

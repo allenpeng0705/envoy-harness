@@ -19,3 +19,8 @@ export {
 } from "./inject.js";
 
 export { runReview, type ReviewVerdict, type RunReviewOptions } from "./review.js";
+
+export {
+  makeEnterPlanModeTool,
+  makeExitPlanModeTool,
+} from "./mode-tools.js";

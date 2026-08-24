@@ -91,6 +91,15 @@ const AskUserInputSchema = z.object({
       "Optional fixed-choice options. When set, the human sees a numbered picker. " +
         "The answer carries the chosen option's `value` and 0-based `optionIndex`.",
     ),
+  recommendedIndex: z
+    .number()
+    .int()
+    .nonnegative()
+    .optional()
+    .describe(
+      "0-based index into `options` to highlight as recommended. " +
+        "Ignored when `options` is unset or the index is out of range.",
+    ),
   multiline: z
     .boolean()
     .optional()
@@ -153,6 +162,9 @@ export function makeAskUserTool(
       const req: UserQuestionRequest = {
         prompt: args.prompt,
         ...(args.options !== undefined ? { options: args.options } : {}),
+        ...(args.recommendedIndex !== undefined
+          ? { recommendedIndex: args.recommendedIndex }
+          : {}),
         ...(args.multiline !== undefined ? { multiline: args.multiline } : {}),
         ...(args.timeoutMs !== undefined ? { timeoutMs: args.timeoutMs } : {}),
         signal: ctx.abortSignal,

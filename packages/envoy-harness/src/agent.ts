@@ -52,6 +52,7 @@ import type {
   SandboxPolicy,
 } from "./types.js";
 import { CostTracker } from "./cost.js";
+import { applyShellEnvironmentPolicy } from "./config/shell-env.js";
 import { policyFromMode } from "./permissions/policy.js";
 import { resolveSandboxExecutor } from "./sandbox/resolve.js";
 import type { SandboxExecutor } from "./sandbox/types.js";
@@ -73,6 +74,10 @@ import {
   createAskForApprovalShim,
 } from "./interaction/ask-for-approval-shim.js";
 import { makeAskUserTool } from "./interaction/ask-user-tool.js";
+import {
+  makeEnterPlanModeTool,
+  makeExitPlanModeTool,
+} from "./plan/mode-tools.js";
 import type { UserQuestionService } from "./interaction/user-questions.js";
 
 /** Default max iterations before the agent throws. */
@@ -286,6 +291,23 @@ export interface AgentOptions {
    */
   terminalService?: import("./terminal/types.js").TerminalSessionService;
   /**
+   * Memory store for per-turn memory-index injection.
+   */
+  memoryStore?: import("./memories/store.js").MemoryStore;
+  /**
+   * Skill registry for per-turn skill-catalog injection.
+   */
+  skills?: import("./skills/registry.js").SkillRegistry;
+  /**
+   * Codex-shaped shell env filter applied to bash / background jobs.
+   */
+  shellEnvironmentPolicy?: import("./config/shell-env.js").ShellEnvironmentPolicy;
+  /**
+   * Optional pre-built sandbox policy (from ConfigLayer). When set,
+   * overrides the policy derived from session permission mode alone.
+   */
+  sandboxPolicy?: import("./types.js").SandboxPolicy;
+  /**
    * Phase F: optional explicit OS sandbox executor.
    * When omitted, the agent resolves one from the
    * live sandbox policy + host platform (landlock
@@ -455,6 +477,16 @@ export class Agent {
   terminalService:
     | import("./terminal/types.js").TerminalSessionService
     | undefined;
+  /** @internal Per-turn memory index injection. */
+  memoryStore: import("./memories/store.js").MemoryStore | undefined;
+  /** @internal Per-turn skill catalog injection. */
+  skills: import("./skills/registry.js").SkillRegistry | undefined;
+  /** @internal Digest of last injected skill catalog (KV-cache stable). */
+  skillCatalogDigest: string | undefined;
+  /** @internal Shell env policy for bash/jobs. */
+  shellEnvironmentPolicy:
+    | import("./config/shell-env.js").ShellEnvironmentPolicy
+    | undefined;
   /** @internal F10.2: max sub-agents per turn. */
   maxSubagents: number;
   /** @internal F10.6: parent session id (when this is a
@@ -557,6 +589,10 @@ export class Agent {
     this.mcpClients = options.mcpClients;
     this.jobRegistry = options.jobRegistry;
     this.terminalService = options.terminalService;
+    this.memoryStore = options.memoryStore;
+    this.skills = options.skills;
+    this.skillCatalogDigest = undefined;
+    this.shellEnvironmentPolicy = options.shellEnvironmentPolicy;
     this.maxSubagents = options.maxSubagents ?? DEFAULT_MAX_SUBAGENTS;
     this.subagentOf = options.subagentOf;
     this.approval = options.approval ?? "on-request";
@@ -581,6 +617,12 @@ export class Agent {
     // it with a fresh closure over the new service.
     if (this.userQuestions) {
       this.tools.register(makeAskUserTool({ service: this.userQuestions }));
+      this.tools.register(
+        makeEnterPlanModeTool({ userQuestions: this.userQuestions }),
+      );
+      this.tools.register(
+        makeExitPlanModeTool({ userQuestions: this.userQuestions }),
+      );
       // When the host did NOT provide an explicit
       // `askHandler`, install a shim that delegates to
       // the same service. The shim is a `AskHandler`
@@ -647,13 +689,14 @@ export class Agent {
       this.abortController = new AbortController();
     }
     this.systemPrompt = options.systemPrompt;
-    // Build the sandbox policy from the session's permission mode.
-    // The bash tool uses this (via ToolContext) so runtime policy
-    // changes (`setPermissionMode`) take effect on the next call.
-    this.sandboxPolicy = policyFromMode(
-      this.session.metadata.permissionMode ?? "read-only",
-      this.cwd,
-    );
+    // Host-supplied ConfigLayer policy wins; otherwise derive from
+    // session permission mode (bash uses this via ToolContext).
+    this.sandboxPolicy =
+      options.sandboxPolicy ??
+      policyFromMode(
+        this.session.metadata.permissionMode ?? "read-only",
+        this.cwd,
+      );
     this.sandboxExecutor = options.sandboxExecutor;
     // Cost tracker. v0 defaults to "local" (which has $0 pricing);
     // F7.2+ adapters set the model name in their ModelResponse, so
@@ -689,6 +732,8 @@ export class Agent {
         resolveSandboxExecutor({ policy: this.sandboxPolicy }),
       getAskHandler: () => this.askHandler,
       getApproval: () => this.approval,
+      getShellEnv: () =>
+        applyShellEnvironmentPolicy(this.shellEnvironmentPolicy),
       abortSignal: this.abortController.signal,
       maxSubagents: this.maxSubagents,
       meshSubmitter: this.meshSubmitter,
@@ -883,8 +928,16 @@ export class Agent {
     // (idempotent — `false` when no tool was
     // registered).
     this.tools.unregister("ask_user");
+    this.tools.unregister("enter_plan_mode");
+    this.tools.unregister("exit_plan_mode");
     if (service) {
       this.tools.register(makeAskUserTool({ service }));
+      this.tools.register(
+        makeEnterPlanModeTool({ userQuestions: service }),
+      );
+      this.tools.register(
+        makeExitPlanModeTool({ userQuestions: service }),
+      );
     }
     // Replace the shim if (a) the current askHandler
     // is the previously-installed shim OR (b) no

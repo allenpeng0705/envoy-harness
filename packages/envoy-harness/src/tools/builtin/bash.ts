@@ -126,7 +126,7 @@ async function executeBash(
   const input: BashValidationInput = {
     command,
     argv: tokenizeShellCommand(command),
-    env: envRecord(),
+    env: ctx.shellEnv ?? envRecord(),
     cwd: ctx.cwd,
     policy,
   };
@@ -160,6 +160,7 @@ async function executeBash(
         createProcessJobHooks({
           command,
           cwd: ctx.cwd,
+          ...(ctx.shellEnv !== undefined ? { env: ctx.shellEnv } : {}),
           ...(maxOutputBytes !== undefined
             ? { outputLimitBytes: maxOutputBytes }
             : {}),
@@ -216,6 +217,7 @@ async function runBash(
   return new Promise((resolve) => {
     const child = spawn("sh", ["-c", command], {
       cwd: ctx.cwd,
+      env: ctx.shellEnv ?? process.env,
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";

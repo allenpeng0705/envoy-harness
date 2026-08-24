@@ -31,6 +31,7 @@ import {
   PermissionModeSchema,
   SandboxBackendSchema,
 } from "../types.js";
+import { ShellEnvironmentPolicySchema } from "./shell-env.js";
 
 /**
  * Phase B / Item 15.2: a single hook handler spec in
@@ -196,6 +197,22 @@ export const ConfigLayerSchema = z
       })
       .strict()
       .optional(),
+    /** Deployment persona injected into the system prompt. */
+    persona: z.string().optional(),
+    /** Extra developer instructions for the system prompt. */
+    developerInstructions: z.string().optional(),
+    /** When false, omit the harness identity opener. Default true. */
+    includeHarnessIdentity: z.boolean().optional(),
+    /**
+     * Extra project-doc filenames after AGENTS.md
+     * (default ENVOY.md, CLAUDE.md, CONTRIBUTING.md when unset at prompt build).
+     */
+    projectDocFallbackFilenames: z.array(z.string().min(1)).optional(),
+    /**
+     * Codex-shaped policy for bash/job spawn env.
+     * TOML: `[shell_environment_policy]`.
+     */
+    shellEnvironmentPolicy: ShellEnvironmentPolicySchema.optional(),
   })
   .strict();
 export type ConfigLayer = z.infer<typeof ConfigLayerSchema>;
