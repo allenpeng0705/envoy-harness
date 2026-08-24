@@ -74,6 +74,13 @@ import {
   createAskForApprovalShim,
 } from "./interaction/ask-for-approval-shim.js";
 import { makeAskUserTool } from "./interaction/ask-user-tool.js";
+import { makeSuggestFollowUpsTool } from "./interaction/suggest-follow-ups-tool.js";
+import {
+  emptyTurnHints,
+  hasTurnHints,
+  mergeTurnHints,
+  type TurnHints,
+} from "./interaction/turn-hints.js";
 import {
   makeEnterPlanModeTool,
   makeExitPlanModeTool,
@@ -408,6 +415,11 @@ export interface AgentResult {
     outputTokens: number;
     costUsd: number;
   };
+  /**
+   * Optional follow-up suggestions and deferred tasks recorded via
+   * `suggest_follow_ups` during this turn.
+   */
+  turnHints?: TurnHints;
 }
 
 export class Agent {
@@ -532,6 +544,8 @@ export class Agent {
     | undefined;
   /** @internal Write/edit journal for `/undo`. */
   actionJournal: ActionJournal;
+  /** @internal Follow-ups / deferrals collected during the current `run()`. */
+  turnHints: TurnHints = emptyTurnHints();
   /**
    * @internal Phase A / Item 5 (self-review): `true` when
    * `this.askHandler` is the auto-installed
@@ -601,6 +615,12 @@ export class Agent {
     this.assistantStreamSink = undefined;
     this.toolOutputSink = undefined;
     this.actionJournal = new ActionJournal();
+    this.turnHints = emptyTurnHints();
+    this.tools.register(
+      makeSuggestFollowUpsTool({
+        record: (hints) => this.recordTurnHints(hints),
+      }),
+    );
     // F9.2: register the 4 LSP tools when the host provides
     // a manager. We do this AFTER the constructor sets
     // `this.tools` so the registry is available.
@@ -774,6 +794,16 @@ export class Agent {
     action: "restored" | "removed";
   }> {
     return this.actionJournal.undoLast();
+  }
+
+  /** Clear follow-up hints at the start of each `run()`. */
+  clearTurnHints(): void {
+    this.turnHints = emptyTurnHints();
+  }
+
+  /** Merge hints from `suggest_follow_ups` tool calls. */
+  recordTurnHints(partial: TurnHints): void {
+    this.turnHints = mergeTurnHints(this.turnHints, partial);
   }
 
   /**
@@ -1311,6 +1341,7 @@ export class Agent {
         outputTokens: cost.outputTokens,
         costUsd: cost.costUsd,
       },
+      ...(hasTurnHints(this.turnHints) ? { turnHints: this.turnHints } : {}),
     });
     return {
       content,
@@ -1324,6 +1355,7 @@ export class Agent {
         outputTokens: cost.outputTokens,
         costUsd: cost.costUsd,
       },
+      ...(hasTurnHints(this.turnHints) ? { turnHints: this.turnHints } : {}),
     };
   }
 }

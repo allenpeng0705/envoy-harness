@@ -30,6 +30,7 @@ import {
   webSearchGuidanceSection,
   workspaceSection,
   interactionGuidanceSection,
+  turnHintsGuidanceSection,
 } from "./builtin.js";
 import type { PromptSection } from "./types.js";
 
@@ -121,6 +122,7 @@ export async function buildAgentSystemPrompt(
   );
 
   registry.register(interactionGuidanceSection());
+  registry.register(turnHintsGuidanceSection());
 
   if (options.terminalGuidance !== false) {
     registry.register(terminalGuidanceSection());

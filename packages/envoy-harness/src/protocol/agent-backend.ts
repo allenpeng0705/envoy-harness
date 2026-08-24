@@ -4,6 +4,7 @@
 
 import type { MemoryStore } from "../memories/store.js";
 import type { Agent, AgentResult } from "../agent.js";
+import { hasTurnHints } from "../interaction/turn-hints.js";
 import { createProviderAdapter } from "../llm/index.js";
 import { HookRegistry } from "../hooks/index.js";
 import { newSessionId } from "../session.js";
@@ -435,7 +436,13 @@ export function createAgentSessionBackend(
         const stopReason = params.signal.aborted
           ? "cancelled"
           : result.stopReason;
-        return { stopReason, messages };
+        return {
+          stopReason,
+          messages,
+          ...(result.turnHints !== undefined && hasTurnHints(result.turnHints)
+            ? { turnHints: result.turnHints }
+            : {}),
+        };
       } finally {
         live.agent.tracer = priorTracer;
         live.agent.assistantStreamSink = undefined;

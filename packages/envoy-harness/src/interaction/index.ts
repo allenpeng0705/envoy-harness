@@ -34,3 +34,16 @@ export {
   createAskForApprovalShim,
   type CreateAskForApprovalShimOptions,
 } from "./ask-for-approval-shim.js";
+
+export {
+  emptyTurnHints,
+  hasTurnHints,
+  mergeTurnHints,
+  type DeferredTask,
+  type TurnHints,
+} from "./turn-hints.js";
+
+export {
+  makeSuggestFollowUpsTool,
+  type MakeSuggestFollowUpsToolOptions,
+} from "./suggest-follow-ups-tool.js";

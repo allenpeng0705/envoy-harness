@@ -122,6 +122,22 @@ export function interactionGuidanceSection(): PromptSection {
 }
 
 /**
+ * End-of-turn follow-ups and deferred work (Codex / Claude / DeepSeek parity).
+ */
+export function turnHintsGuidanceSection(): PromptSection {
+  return {
+    name: "interaction:turn-hints",
+    order: 66,
+    text:
+      "When finishing a turn, if follow-ups or deferrals would help the human, " +
+      "call `suggest_follow_ups` with short `followUps` (actionable next steps) " +
+      "and/or `deferred` entries (`task` + `reason`). Defer only what you cannot " +
+      "safely do now (blocked, out of scope, needs approval). Skip the tool when " +
+      "there is nothing useful to suggest.",
+  };
+}
+
+/**
  * Codex/Claude-style environment block (order -95).
  */
 export function workspaceSection(cwd: string): PromptSection {

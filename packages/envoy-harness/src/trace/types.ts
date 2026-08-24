@@ -130,6 +130,7 @@ export interface AgentEndEvent extends TraceBase {
   iterations: number;
   toolCalls: number;
   metrics: AgentResult["metrics"];
+  turnHints?: import("../interaction/turn-hints.js").TurnHints;
 }
 
 /** Emitted when the agent loop catches an error. */

@@ -708,6 +708,43 @@ signals helper later without prompt injection.
 redaction + shape invariants.
 **Tests:** sink contract, invariant failure on secret leak.
 
+## 18. EnvoyMesh EH composer parity (12b extension)
+
+**Status:** ✅ done (2026-08-24). Implemented in **EnvoyMesh** (not Package 1).
+
+**Cursor-shaped composer dock stack** above the EH input in Envoy Chat and
+EH terminal sessions:
+
+| Layer | Event / RPC | UI |
+|-------|-------------|-----|
+| Tool permission | `eh:permission` → `ehRespondToPermission` | `EhPermissionDock` (diff preview) |
+| User question | `eh:user_question` | `EhUserQuestionDock` |
+| Context | project cwd + attached/touched files | `EhContextStrip` |
+| Changes | `eh:files_changed` + activity | `EhChangesDock` → EHUI git-diff |
+| Follow-ups | `eh:turn_hints` | `EhTurnHintsDock` |
+| Queue | non-blocking `startEnvoyHarnessTurn` | `EhInputQueue` |
+| Composer | attachments + slash | `EhChatComposer` |
+
+**Attachments (unified with EnvoyAI / Ext Agent):**
+
+- Shared hook `useAgentDraftAttachments` + `AgentAttachmentComposerLeading`
+  (Tauri native pick **or** browser `<input type="file">`).
+- Browser uploads use `uploadEnvoyAttachment` with optional `targetDir`;
+  EH writes under `{project}/.envoy-attachments/` so paths pass
+  `filterAttachmentsUnderCwd`.
+- Turn RPC: `startEnvoyHarnessTurn(text, attachments?)` merges attachment
+  context via `buildEhPromptPayload`.
+
+**Pi vs EH permissions:** Pi keeps `pi:proposal` / `_acpPermissionBridge`;
+EH persistent ACP host uses `_ehPermissionBridge` → `eh:permission` (Social
+only — not routed through Pi chat).
+
+**Tests (EnvoyMesh):** `useEhTurnQueue` (event delivery, cancel UX, stable
+subscriptions), `EhStillWorkingIndicator`, `node-service-eh-permission`,
+`permission-preview`, `useEhTurnContext`, `useAgentDraftAttachments`,
+`EhPermissionDock`, `EnvoyHarnessPanel` (submit + cancel), `envoy-uploads`
+(`targetDir`).
+
 ---
 
 ## Intentional deferrals (optional / no consumer yet)

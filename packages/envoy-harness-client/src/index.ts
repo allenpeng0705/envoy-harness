@@ -32,6 +32,12 @@ export { EHUI_PANELS } from "./ehui.js";
 export interface EnvoyHarnessClientOptions {
   input: Readable;
   output: Writable;
+  /**
+   * Default JSON-RPC request timeout (ms). `session/prompt` uses a
+   * longer per-call budget — agent turns include LLM + tools + user
+   * questions. Default 120s.
+   */
+  defaultRequestTimeoutMs?: number;
   onPermissionRequest?: (req: {
     sessionId: string;
     toolName: string;
@@ -55,6 +61,7 @@ export class EnvoyHarnessClient {
     this.#conn = new JsonRpcConnection({
       input: options.input,
       output: options.output,
+      defaultRequestTimeoutMs: options.defaultRequestTimeoutMs ?? 120_000,
       onRequest: async (method, params) => {
         if (method === "session/request_permission") {
           const req = params as {
@@ -152,17 +159,38 @@ export class EnvoyHarnessClient {
     };
   }
 
+  /** One agent turn — LLM + tools + user questions (Codex-style long budget). */
+  static readonly PROMPT_TIMEOUT_MS = 900_000;
+
   async prompt(
     sessionId: string,
     text: string,
     content?: ReadonlyArray<
       { type: "text"; text: string } | { type: "image"; mimeType: string; data: string }
     >,
-  ): Promise<{ stopReason: string; messages: unknown[] }> {
-    return (await this.#conn.request("session/prompt", {
-      sessionId,
-      ...(content !== undefined && content.length > 0 ? { content } : { text }),
-    })) as { stopReason: string; messages: unknown[] };
+  ): Promise<{
+    stopReason: string;
+    messages: unknown[];
+    turnHints?: {
+      followUps?: string[];
+      deferred?: Array<{ task: string; reason: string }>;
+    };
+  }> {
+    return (await this.#conn.request(
+      "session/prompt",
+      {
+        sessionId,
+        ...(content !== undefined && content.length > 0 ? { content } : { text }),
+      },
+      EnvoyHarnessClient.PROMPT_TIMEOUT_MS,
+    )) as {
+      stopReason: string;
+      messages: unknown[];
+      turnHints?: {
+        followUps?: string[];
+        deferred?: Array<{ task: string; reason: string }>;
+      };
+    };
   }
 
   async cancel(sessionId: string): Promise<void> {

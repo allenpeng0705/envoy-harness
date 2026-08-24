@@ -28,6 +28,8 @@ import {
   loadConfigStack,
   resolveAgentRuntimeConfig,
   systemPromptOptionsFromConfig,
+  createUserQuestionService,
+  createReplStdinProvider,
   type ProtocolSessionBackend,
 } from "../../index.js";
 import type { ParsedArgs } from "../argv.js";
@@ -208,6 +210,14 @@ async function resolveAcpBackend(
       askForApproval: runtime.askForApproval,
       plan: parsed.plan === true,
     });
+    const userQuestions = createUserQuestionService();
+    const disposeUserQuestionsProvider = userQuestions.registerProvider(
+      createReplStdinProvider({
+        input: (options.stdin ?? process.stdin) as Readable,
+        output: stderr as Writable,
+        name: "acp-stdin",
+      }),
+    );
     return {
       backend: await wireCluster(
         createAgentSessionBackend({
@@ -263,6 +273,7 @@ async function resolveAcpBackend(
               ...(parsed.maxCostUsd !== undefined
                 ? { maxCostUsd: parsed.maxCostUsd }
                 : {}),
+              userQuestions,
             });
           },
           sessionStore: new SessionStore({
@@ -271,6 +282,7 @@ async function resolveAcpBackend(
         }),
       ),
       async dispose() {
+        disposeUserQuestionsProvider();
         if (mcpWire !== undefined) {
           await mcpWire.dispose().catch(() => undefined);
         }

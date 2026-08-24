@@ -27,6 +27,7 @@ export interface ProtocolToken {
 export interface ProtocolPromptResult {
   stopReason: string;
   messages: ProtocolCommittedMessage[];
+  turnHints?: import("../interaction/turn-hints.js").TurnHints;
 }
 
 export interface ProtocolCompactResult {

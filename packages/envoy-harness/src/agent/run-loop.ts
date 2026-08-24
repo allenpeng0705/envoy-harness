@@ -115,6 +115,8 @@ export async function runAgentLoop(
     agent.session.appendMessage("user", [...prompt]);
   }
 
+  agent.clearTurnHints();
+
   // F9.4: emit agent_start. The model name is the best
   // guess we have (the agent doesn't know which model
   // the adapter will use until the first call returns

@@ -10,6 +10,7 @@ import type {
   ClientTeamJob,
   EnvoyHarnessClient,
 } from "@envoymesh/envoy-harness-client";
+import { hasTurnHints, type TurnHints } from "@envoymesh/envoy-harness";
 import { parsePeerEndpoint } from "@envoymesh/envoy-harness";
 
 import { parseSlash } from "./slash.js";
@@ -71,7 +72,10 @@ export class TuiSession {
         resolve: (d: "allow" | "deny") => void;
       }
     | undefined;
+  #turnHints: TurnHints | undefined;
   #transcriptFormat: TranscriptFormatOptions;
+  /** Codex-shaped follow-ups typed while a turn is in flight. */
+  readonly #inputQueue: string[] = [];
 
   constructor(options: TuiSessionOptions) {
     this.#client = options.client;
@@ -127,6 +131,15 @@ export class TuiSession {
     return this.#busy;
   }
 
+  /** Follow-up chips from the last completed turn (`suggest_follow_ups`). */
+  get turnHints(): TurnHints | undefined {
+    return this.#turnHints;
+  }
+
+  clearTurnHints(): void {
+    this.#turnHints = undefined;
+  }
+
   get transcript(): readonly TranscriptLine[] {
     return this.#lines;
   }
@@ -155,6 +168,22 @@ export class TuiSession {
 
   get imagesSupported(): boolean {
     return this.#imagesSupported;
+  }
+
+  /** Queued user lines waiting for the current turn to finish. */
+  get queuedInputCount(): number {
+    return this.#inputQueue.length;
+  }
+
+  /** Drop one queued line (newest last). */
+  dropQueuedInput(index: number): boolean {
+    if (index < 0 || index >= this.#inputQueue.length) return false;
+    this.#inputQueue.splice(index, 1);
+    return true;
+  }
+
+  clearQueuedInput(): void {
+    this.#inputQueue.length = 0;
   }
 
   setTranscriptFormat(options: TranscriptFormatOptions): void {
@@ -331,12 +360,23 @@ export class TuiSession {
       return "ok";
     }
     if (this.#busy) {
-      this.#push("status", "busy — /cancel to abort");
+      this.#inputQueue.push(trimmed);
+      this.#push(
+        "status",
+        `queued (${this.#inputQueue.length}): ${trimmed.length > 72 ? `${trimmed.slice(0, 72)}…` : trimmed}`,
+      );
       return "ok";
     }
 
+    await this.#runUserPrompt(trimmed);
+    return "ok";
+  }
+
+  async #runUserPrompt(trimmed: string): Promise<void> {
+    if (this.#sessionId === undefined) return;
     this.#push("user", trimmed);
     this.#busy = true;
+    this.#turnHints = undefined;
     this.#turnSeen.clear();
     this.#turnToolActivityLines = 0;
     this.#turnActivityLineIndices.length = 0;
@@ -347,6 +387,14 @@ export class TuiSession {
       for (const msg of result.messages) {
         this.#consumeProtocolMessage(msg);
       }
+      if (result.turnHints !== undefined && hasTurnHints(result.turnHints)) {
+        this.#turnHints = result.turnHints;
+        if (result.turnHints.deferred !== undefined) {
+          for (const item of result.turnHints.deferred) {
+            this.#push("status", `deferred: ${item.task} — ${item.reason}`);
+          }
+        }
+      }
       this.#push("status", `stop: ${result.stopReason}`);
     } catch (err) {
       this.#push("status", `error: ${(err as Error).message}`);
@@ -356,8 +404,16 @@ export class TuiSession {
       this.#turnActivityLineIndices.length = 0;
       this.#streamingAssistantText = "";
       this.#streamingAssistantLineIndex = undefined;
+      await this.#drainInputQueue();
     }
-    return "ok";
+  }
+
+  async #drainInputQueue(): Promise<void> {
+    while (this.#inputQueue.length > 0 && !this.#busy) {
+      const next = this.#inputQueue.shift();
+      if (next === undefined || next.trim().length === 0) continue;
+      await this.#runUserPrompt(next.trim());
+    }
   }
 
   async cancel(): Promise<void> {

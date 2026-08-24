@@ -244,7 +244,17 @@ async function runInteractiveScreen(
           : [];
       if (quitting) return; // a queued render may have started pre-quit
       const prefix = inputPrefix();
-      const paletteItems = matchingSlashCommands(composer.buffer);
+      const slashPalette = matchingSlashCommands(composer.buffer);
+      const followUps =
+        view === "chat" &&
+        !session.busy &&
+        composer.buffer.length === 0 &&
+        session.turnHints?.followUps !== undefined &&
+        session.turnHints.followUps.length > 0
+          ? [...session.turnHints.followUps]
+          : [];
+      const followUpMode = followUps.length > 0;
+      const paletteItems = followUpMode ? followUps : slashPalette;
       if (paletteItems.length === 0) paletteIndex = 0;
       const bufferLines = composer.buffer.split("\n");
       const before = composer.buffer.slice(0, composer.cursor);
@@ -260,15 +270,26 @@ async function runInteractiveScreen(
         ),
         inputCursorLine: cursorLine,
         inputCursor: prefix.length + (composer.cursor - (lastNl + 1)),
-        ...(session.imagesSupported &&
-        composer.buffer.length === 0 &&
-        view === "chat" &&
-        !session.busy
+        ...(followUpMode
           ? {
-              composerHint:
-                "images: paste ![alt](data:image/png;base64,…) in your message",
+              composerHint: "↑↓ follow-up · Enter send · Esc dismiss",
             }
-          : {}),
+          : session.busy || session.queuedInputCount > 0
+            ? {
+                composerHint:
+                  session.queuedInputCount > 0
+                    ? `Enter queues (${session.queuedInputCount} waiting) · /cancel aborts`
+                    : "Enter queues · /cancel aborts current turn",
+              }
+            : session.imagesSupported &&
+              composer.buffer.length === 0 &&
+              view === "chat" &&
+              !session.busy
+            ? {
+                composerHint:
+                  "images: paste ![alt](data:image/png;base64,…) in your message",
+              }
+            : {}),
         ...(paletteItems.length > 0
           ? {
               palette: paletteItems,
@@ -431,9 +452,18 @@ async function runInteractiveScreen(
 
     input.on("keypress", (ch: string | undefined, key: ComposerKey) => {
       if (quitting) return;
-      // U5+ — slash palette: while the composer holds a `/prefix`, arrows
-      // navigate the palette, Enter selects, Esc closes, Tab completes.
-      const paletteItems = matchingSlashCommands(composer.buffer);
+      // U5+ — slash / follow-up palette navigation.
+      const slashPalette = matchingSlashCommands(composer.buffer);
+      const followUps =
+        view === "chat" &&
+        !session.busy &&
+        composer.buffer.length === 0 &&
+        session.turnHints?.followUps !== undefined &&
+        session.turnHints.followUps.length > 0
+          ? [...session.turnHints.followUps]
+          : [];
+      const followUpMode = followUps.length > 0;
+      const paletteItems = followUpMode ? followUps : slashPalette;
       if (paletteItems.length > 0) {
         if (key.name === "up" || key.name === "down") {
           const delta = key.name === "up" ? -1 : 1;
@@ -449,14 +479,17 @@ async function runInteractiveScreen(
             composer.setLine(item);
             const action = composer.handleKey(undefined, key);
             if (action.type === "submit") {
-              // Reuse the submit path below.
               handleSubmit(action.line);
             }
           }
           return;
         }
         if (key.name === "escape") {
-          composer.setLine("");
+          if (followUpMode) {
+            session.clearTurnHints();
+          } else {
+            composer.setLine("");
+          }
           paletteIndex = 0;
           void render();
           return;
