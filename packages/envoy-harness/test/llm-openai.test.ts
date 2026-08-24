@@ -675,6 +675,41 @@ describe("OpenAIAdapter — streaming abort", () => {
     expect(result.stopReason).toBe("end_turn");
     expect(result.content).toEqual([{ type: "text", text: "hi" }]);
   });
+
+  it("tolerates usage: null in SSE chunks (MiniMax / OpenAI-compat)", async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(ctrl) {
+        const enc = new TextEncoder();
+        ctrl.enqueue(
+          enc.encode(
+            'data: {"choices":[{"delta":{"content":"hello"},"finish_reason":null}],"usage":null}\n\n',
+          ),
+        );
+        ctrl.enqueue(
+          enc.encode(
+            'data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":null}\n\n',
+          ),
+        );
+        ctrl.enqueue(enc.encode("data: [DONE]\n\n"));
+        ctrl.close();
+      },
+    });
+    const mock = vi.fn(async () => new Response(stream, { status: 200 }));
+    vi.stubGlobal("fetch", mock);
+
+    const adapter = new OpenAIAdapter({
+      apiKey: "k",
+      model: "MiniMax-M3",
+    });
+    const result = await adapter.complete({
+      messages: [],
+      tools: [],
+      onTextDelta: () => {},
+    });
+    expect(result.content).toEqual([{ type: "text", text: "hello" }]);
+    expect(result.stopReason).toBe("end_turn");
+    expect(result.usage).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -805,6 +840,22 @@ describe("parseChatResponse", () => {
       ],
     });
     expect(r.usage).toBeUndefined();
+  });
+
+  it("omits usage when usage is null", () => {
+    const r = parseChatResponse({
+      model: "MiniMax-M3",
+      choices: [
+        {
+          index: 0,
+          finish_reason: "stop",
+          message: { role: "assistant", content: "hi" },
+        },
+      ],
+      usage: null,
+    });
+    expect(r.usage).toBeUndefined();
+    expect(r.content).toEqual([{ type: "text", text: "hi" }]);
   });
 
   it("returns empty content when there are no choices", () => {

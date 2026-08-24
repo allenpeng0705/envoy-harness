@@ -79,7 +79,7 @@ interface OpenAIChatResponse {
     prompt_tokens: number;
     completion_tokens: number;
     total_tokens: number;
-  };
+  } | null;
 }
 
 /** An error response from OpenAI (the parts we read). */
@@ -225,7 +225,7 @@ export class OpenAIAdapter implements ModelAdapter {
         }>;
       };
       if (parsed.model !== undefined) responseModel = parsed.model;
-      if (parsed.usage !== undefined) {
+      if (parsed.usage != null) {
         usage = {
           inputTokens: parsed.usage.prompt_tokens,
           outputTokens: parsed.usage.completion_tokens,

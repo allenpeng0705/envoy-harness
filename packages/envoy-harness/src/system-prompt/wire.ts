@@ -3,6 +3,7 @@
  *
  * Default composition:
  *   -100  agents-md      (AGENTS.md discovery — now actually wired)
+ *    -95  workspace      (Codex <environment_context> / Claude CWD block)
  *    -50  plan-mode      (only when `--plan`)
  *    100  terminal:guidance
  *
@@ -13,7 +14,12 @@
 
 import { importCursorRules } from "../config/import/cursor.js";
 import { createSystemPromptRegistry } from "./registry.js";
-import { agentsMdSection, planModeSection, terminalGuidanceSection } from "./builtin.js";
+import {
+  agentsMdSection,
+  planModeSection,
+  terminalGuidanceSection,
+  workspaceSection,
+} from "./builtin.js";
 import type { PromptSection } from "./types.js";
 
 export interface BuildAgentSystemPromptOptions {
@@ -23,6 +29,8 @@ export interface BuildAgentSystemPromptOptions {
   extraSections?: ReadonlyArray<PromptSection>;
   /** Include the terminal guidance section (default true). */
   terminalGuidance?: boolean;
+  /** Include the workspace cwd section (default true). */
+  workspace?: boolean;
 }
 
 /** Render the default envoy system prompt for a run. */
@@ -31,6 +39,9 @@ export async function buildAgentSystemPrompt(
 ): Promise<string> {
   const registry = createSystemPromptRegistry();
   registry.register(agentsMdSection(options.cwd));
+  if (options.workspace !== false) {
+    registry.register(workspaceSection(options.cwd));
+  }
   const cursor = await importCursorRules(options.cwd);
   if (cursor.rulesText.length > 0) {
     registry.register({

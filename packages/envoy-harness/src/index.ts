@@ -670,6 +670,7 @@ export {
   agentsMdSection,
   planModeSection,
   terminalGuidanceSection,
+  workspaceSection,
   buildAgentSystemPrompt,
   type BuildAgentSystemPromptOptions,
   type PromptAssemblyContext,

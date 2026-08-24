@@ -100,9 +100,12 @@ describe("built-in sections", () => {
 });
 
 describe("buildAgentSystemPrompt", () => {
-  it("composes AGENTS.md + terminal guidance", async () => {
+  it("composes Codex-style environment_context + AGENTS.md + terminal guidance", async () => {
     await fs.writeFile(path.join(tmpDir, "AGENTS.md"), "Team conventions.");
     const prompt = await buildAgentSystemPrompt({ cwd: tmpDir });
+    expect(prompt).toContain("<environment_context>");
+    expect(prompt).toContain(`<cwd>${path.resolve(tmpDir)}</cwd>`);
+    expect(prompt).toContain("<shell>");
     expect(prompt).toContain("Team conventions.");
     expect(prompt).toContain("inferred_idle");
   });

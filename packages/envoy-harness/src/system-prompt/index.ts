@@ -10,6 +10,7 @@ export {
   agentsMdSection,
   planModeSection,
   terminalGuidanceSection,
+  workspaceSection,
 } from "./builtin.js";
 export { buildAgentSystemPrompt, type BuildAgentSystemPromptOptions } from "./wire.js";
 export type { PromptAssemblyContext, PromptSection } from "./types.js";
