@@ -196,7 +196,9 @@ export async function runAgent(
     tools,
   );
   // Phase C: jobs / web / terminal (Cordis-free L3 ports).
-  const environment = wireEnvironmentTools(tools);
+  const environment = wireEnvironmentTools(tools, {
+    ...(options.skills !== undefined ? { skills: options.skills } : {}),
+  });
   const cordisWire = await wireCordisExtensions({
     plugins: configLayer.cordisPlugins,
     cwd,

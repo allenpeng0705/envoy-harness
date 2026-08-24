@@ -178,7 +178,9 @@ async function resolveAcpBackend(
       configLayer.mcpServers,
       tools,
     );
-    const env = wireEnvironmentTools(tools);
+    const env = wireEnvironmentTools(tools, {
+      ...(options.skills !== undefined ? { skills: options.skills } : {}),
+    });
     const cordisWire = await wireCordisExtensions({
       plugins: configLayer.cordisPlugins,
       cwd: defaultCwd,

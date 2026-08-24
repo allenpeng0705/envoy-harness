@@ -127,7 +127,9 @@ describe("agent_start event", () => {
     if (start?.kind !== "agent_start") return;
     expect(start.sessionId).toBeTruthy();
     expect(start.cwd).toBe("/");
-    expect(start.tools).toEqual([]);
+    // `suggest_follow_ups` is registered by default in the Agent
+    // constructor (follow-up hints for the chat UI).
+    expect(start.tools).toEqual(["suggest_follow_ups"]);
   });
 
   it("includes the registered tool names in `tools`", async () => {
@@ -153,7 +155,7 @@ describe("agent_start event", () => {
     const events = parseTrace(stream);
     const start = events.find((e) => e.kind === "agent_start");
     if (start?.kind !== "agent_start") return;
-    expect(start.tools).toEqual(["echo"]);
+    expect(start.tools).toEqual(["echo", "suggest_follow_ups"]);
   });
 });
 

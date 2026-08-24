@@ -114,6 +114,7 @@ export async function runReplDispatch(
     ...(options.hooks ? { hooks: options.hooks } : {}),
     ...(options.cwd ? { cwd: options.cwd } : {}),
     ...(options.lineReader ? { lineReader: options.lineReader } : {}),
+    ...(options.skills ? { skills: options.skills } : {}),
     ...(sessionStore ? { sessionStore } : {}),
     ...(resumeFromId ? { resumeFromId } : {}),
     ...(createSession ? { createSession } : {}),

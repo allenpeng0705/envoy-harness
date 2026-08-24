@@ -146,4 +146,51 @@ describe("adapter-backed peer server (MAP-over-JSON-RPC)", () => {
     expect(response.verdict).toBeUndefined();
     pair.close();
   });
+
+  it("caps verifyAfterExecute so repeated submits stop charging the verifier", async () => {
+    let verifyCalls = 0;
+    const adapter = stubAdapter({
+      execute: async (input) =>
+        signedResult({ correlationId: input.correlationId }),
+      verify: async () => {
+        verifyCalls += 1;
+        return [{ kind: "pass", score: 1, confidence: "high" }];
+      },
+    });
+    const pair = createInProcessPeerPair(
+      createPeerServerHandler({
+        adapter,
+        identity: { peerId: "peer-1" },
+        verifyAfterExecute: true,
+        maxVerifyAfterExecute: 1,
+      }),
+    );
+
+    const first = await pair.client.executeWithVerdict({
+      skillId: "research",
+      objective: "x",
+      inputArtifacts: [],
+      costCeilingUsd: 1,
+      deadlineMs: 10_000,
+      correlationId: "corr-budget-1",
+      signal: new AbortController().signal,
+    });
+    expect(first.verdict).toBeDefined();
+
+    const second = await pair.client.executeWithVerdict({
+      skillId: "research",
+      objective: "x",
+      inputArtifacts: [],
+      costCeilingUsd: 1,
+      deadlineMs: 10_000,
+      correlationId: "corr-budget-2",
+      signal: new AbortController().signal,
+    });
+    // Budget exhausted: the result still returns, but the verifier is
+    // not charged again and no verdict is attached.
+    expect(second.result.correlationId).toBe("corr-budget-2");
+    expect(second.verdict).toBeUndefined();
+    expect(verifyCalls).toBe(1);
+    pair.close();
+  });
 });

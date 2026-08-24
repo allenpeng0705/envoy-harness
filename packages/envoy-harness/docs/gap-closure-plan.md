@@ -739,11 +739,49 @@ EH terminal sessions:
 EH persistent ACP host uses `_ehPermissionBridge` → `eh:permission` (Social
 only — not routed through Pi chat).
 
-**Tests (EnvoyMesh):** `useEhTurnQueue` (event delivery, cancel UX, stable
-subscriptions), `EhStillWorkingIndicator`, `node-service-eh-permission`,
-`permission-preview`, `useEhTurnContext`, `useAgentDraftAttachments`,
-`EhPermissionDock`, `EnvoyHarnessPanel` (submit + cancel), `envoy-uploads`
-(`targetDir`).
+**Tests (EnvoyMesh):** `useEhTurnQueue` (event delivery, cancel UX, queue drain,
+inject-after-cancel, reconnect), `EhStillWorkingIndicator`, `EhInputQueue`,
+`EhComposerDockStack`, `EhContextStrip`, `EhChangesDock`,
+`node-service-eh-permission`, `permission-preview`, `useEhTurnContext`,
+`useAgentDraftAttachments`, `EhPermissionDock`, `EnvoyHarnessPanel`,
+`envoy-harness-panel-e2e` (mocked node lifecycle), `envoy-uploads` (`targetDir`),
+`envoy-harness-workspace` (cwd → session resolution).
+
+---
+
+## 19. Envoy Chat — per-project workspace history (implemented)
+
+**Problem:** Social “Envoy” chat kept turns only in React state. Node restart
+or remount showed an empty thread even though the harness agent had JSONL
+persistence infrastructure.
+
+**Design (Cursor / Codex / Claude Code parity):**
+
+| Concept | Envoy Mesh behavior |
+|---------|---------------------|
+| **Workspace** | One project folder (`envoyHarnessCwd`) |
+| **Agent session** | One persisted harness JSONL transcript per workspace |
+| **Sidebar thread** | Single “Envoy” chat; transcript **swaps** when project folder changes |
+| **Terminal** | Separate PTY per cwd (unchanged) — TUI has its own ACP child |
+| **Memories / context** | `{project}/memories` + AGENTS.md (unchanged) |
+
+**Storage:**
+
+- Harness sessions: `{profileDir}/envoy-harness/sessions/<uuid>.jsonl`
+- Node config map: `envoyHarnessSessionByCwd[normalizedCwd] → sessionId`
+- Fallback: scan disk for most recent session with matching `metadata.cwd`
+
+**RPCs:**
+
+- `getEnvoyHarnessChatHistory` — hydrate UI on mount / cwd change
+- `resetEnvoyHarnessChat` — `/new`, `/clear`, `/reset` (fresh session for cwd)
+- `EnvoyHarnessStatus.sessionId` + `messageCount` — header/debug
+
+**ACP host:** `session/load` when mapping exists; `session/new` creates
+**persisted** JSONL (agent-backend `createSession` uses `SessionStore.create`).
+
+**Future (not v1):** multiple sidebar “Envoy” threads per user via
+`envoyHarnessChats[]` `{ id, cwd, sessionId, title }` — same storage, picker UI.
 
 ---
 

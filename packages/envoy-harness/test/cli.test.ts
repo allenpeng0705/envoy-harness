@@ -14,11 +14,14 @@ import * as path from "node:path";
 import {
   ArgvError,
   CliError,
+  createSkillRegistry,
   parseArgs,
   run,
   type ContentBlock,
   type ModelAdapter,
   type ModelResponse,
+  type SkillProvider,
+  type SkillSummary,
 } from "../src/index.js";
 import { StringWritable } from "./helpers.js";
 
@@ -418,8 +421,9 @@ describe("run: with a fake model", () => {
     let captured: string | undefined;
     const fakeModel: ModelAdapter = {
       async complete(input) {
-        // Phase G: the system message (AGENTS.md) is prepended; the user
-        // prompt is the first user message.
+        // The user prompt is the first user message. An empty
+        // skill registry is injected below so the skill-catalog
+        // fragment is NOT prepended (hermetic transcript).
         const firstUser = input.messages.find((m) => m.role === "user");
         const firstBlock = firstUser?.content[0] as
           | Extract<ContentBlock, { type: "text" }>
@@ -434,10 +438,58 @@ describe("run: with a fake model", () => {
     await run({
       argv: ["a", "b", "c"],
       model: fakeModel,
+      skills: createSkillRegistry(),
       stdout: out,
       stderr: err,
     });
     expect(captured).toBe("a b c");
+  });
+
+  it("prepends the skill catalog to the first user turn when skills are registered", async () => {
+    const out = new StringWritable();
+    const err = new StringWritable();
+    let captured: string | undefined;
+    const provider: SkillProvider = {
+      name: "test",
+      async list() {
+        const summaries: SkillSummary[] = [
+          {
+            name: "demo",
+            description: "A demo skill",
+            provider: "test",
+            invocation: { modelInvocable: true, userInvocable: true },
+          },
+        ];
+        return summaries;
+      },
+      async get() {
+        return undefined;
+      },
+    };
+    const skills = createSkillRegistry();
+    skills.registerProvider(provider);
+    const fakeModel: ModelAdapter = {
+      async complete(input) {
+        const firstUser = input.messages.find((m) => m.role === "user");
+        const firstBlock = firstUser?.content[0] as
+          | Extract<ContentBlock, { type: "text" }>
+          | undefined;
+        captured = firstBlock?.text;
+        return {
+          content: [{ type: "text", text: "ok" }],
+          stopReason: "end_turn",
+        };
+      },
+    };
+    await run({
+      argv: ["a", "b", "c"],
+      model: fakeModel,
+      skills,
+      stdout: out,
+      stderr: err,
+    });
+    expect(captured).toContain("<available_skills>");
+    expect(captured).toContain('<skill name="demo">');
   });
 
   it("wires discovered AGENTS.md into the system prompt (Phase G)", async () => {

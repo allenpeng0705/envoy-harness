@@ -73,6 +73,15 @@ export interface WireEnvironmentOptions {
   /** Override default credentials file path (tests). */
   credentialsFilePath?: string;
   /**
+   * Skill registry override. When set, the default filesystem
+   * provider (project + user roots) is NOT registered — the host
+   * controls exactly which skills are discoverable. CLI hosts
+   * and tests use this to pin skill discovery deterministically
+   * (an empty registry makes transcripts hermetic; EnvoyMesh can
+   * point at mesh-scoped skills).
+   */
+  skills?: SkillRegistry;
+  /**
    * Register the SKILL.md model-facing tools (`skill`,
    * `skill_list`) on the supplied tool registry. Default
    * `true`. Set `false` for hosts that want to manage their
@@ -205,10 +214,12 @@ export function wireEnvironmentTools(
   // SKILL.md loader (L0 reuse): project + user roots, codex /
   // deepseek / universal. Hosts can disable by passing
   // `enableSkills: false` in WireEnvironmentOptions.
-  const skills: SkillRegistry = createSkillRegistry();
-  skills.registerProvider(
-    createFilesystemSkillProvider({ homeDir: os.homedir() }),
-  );
+  const skills: SkillRegistry = options.skills ?? createSkillRegistry();
+  if (options.skills === undefined) {
+    skills.registerProvider(
+      createFilesystemSkillProvider({ homeDir: os.homedir() }),
+    );
+  }
   if (options.enableSkills !== false) {
     registerSkillTools(tools, skills);
   }

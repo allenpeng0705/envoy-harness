@@ -143,7 +143,9 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
     tools,
   );
   // Phase C: jobs / web / terminal (Cordis-free L3 ports).
-  const environment = wireEnvironmentTools(tools);
+  const environment = wireEnvironmentTools(tools, {
+    ...(opts.skills !== undefined ? { skills: opts.skills } : {}),
+  });
   const cordisWire = await wireCordisExtensions({
     plugins: configLayer.cordisPlugins,
     cwd,

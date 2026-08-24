@@ -201,8 +201,21 @@ export function createAgentSessionBackend(
   return {
     async createSession(params) {
       pruneIfNeeded();
-      const sessionId = newSessionId();
       const cwd = params?.cwd ?? options.defaultCwd;
+      let sessionId: string;
+      let persisted:
+        | import("../session/persisted-session.js").PersistedSession
+        | undefined;
+      if (options.sessionStore !== undefined) {
+        persisted = await options.sessionStore.create({
+          cwd,
+          startedAt: new Date().toISOString(),
+          permissionMode: "workspace-write",
+        });
+        sessionId = persisted.id;
+      } else {
+        sessionId = newSessionId();
+      }
       const live: LiveSession = {
         agent: undefined as unknown as Agent,
         abort: undefined,
@@ -249,7 +262,12 @@ export function createAgentSessionBackend(
         }
         return { kind: "allow" };
       };
-      live.agent = options.createAgent({ sessionId, cwd, askHandler });
+      live.agent = options.createAgent({
+        sessionId,
+        cwd,
+        askHandler,
+        ...(persisted !== undefined ? { session: persisted } : {}),
+      });
       // process-wide defaultRegistry when createAgent omits hooks.
       const hooks = live.agent.hooks ?? new HookRegistry();
       installToolPermissionAskHook(hooks, {

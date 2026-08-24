@@ -50,6 +50,14 @@ export interface PeerServerOptions {
    * verdict (the client falls back to its v1 placeholder).
    */
   verifyAfterExecute?: boolean;
+  /**
+   * Optional cap on how many `verifyAfterExecute` verifications run per
+   * server lifetime. Once the cap is reached, subsequent submits skip
+   * the automatic verify (the response carries no verdict — the client
+   * falls back to its v1 placeholder). This bounds the 2× cost an LLM
+   * verifier imposes on every submit. `undefined` = no cap.
+   */
+  maxVerifyAfterExecute?: number;
 }
 
 /** Build a JSON-RPC request handler for the peer dialect. */
@@ -57,6 +65,7 @@ export function createPeerServerHandler(
   options: PeerServerOptions,
 ): RequestHandler {
   const { adapter, identity } = options;
+  let verifyAfterExecuteCount = 0;
   const unwrap = <T>(method: string, params: unknown): T => {
     if (options.verifier !== undefined) {
       return unwrapEnvelope(
@@ -87,11 +96,22 @@ export function createPeerServerHandler(
               const response: PeerSubmitResponse = { result: executeResult };
               return response;
             }
+            if (
+              options.maxVerifyAfterExecute !== undefined &&
+              verifyAfterExecuteCount >= options.maxVerifyAfterExecute
+            ) {
+              // Budget exhausted: skip the verifier rather than charging
+              // the host another LLM call. The client's placeholder
+              // verdict applies (same shape as verifyAfterExecute: false).
+              const response: PeerSubmitResponse = { result: executeResult };
+              return response;
+            }
             try {
               const verdicts = await adapter.verify({
                 result: executeResult,
                 objective: input.objective,
               });
+              verifyAfterExecuteCount += 1;
               const response: PeerSubmitResponse = {
                 result: executeResult,
                 verdict: combinePeerVerdicts(verdicts),

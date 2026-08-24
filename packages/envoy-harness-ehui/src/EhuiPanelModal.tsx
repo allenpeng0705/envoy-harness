@@ -1,4 +1,4 @@
-import type { JSX, MouseEvent } from "react";
+import { useId, type JSX, type MouseEvent } from "react";
 
 import type { EhuiDataSource, EhuiPanelId } from "@envoymesh/envoy-harness-client/ehui";
 
@@ -20,6 +20,10 @@ export interface EhuiPanelModalProps {
 
 export function EhuiPanelModal(props: EhuiPanelModalProps): JSX.Element {
   const stop = (e: MouseEvent) => e.stopPropagation();
+  // Unique per-instance id: two modals (chat + terminal) can be mounted
+  // at once, and a hard-coded `aria-labelledby` would point at a
+  // duplicated id.
+  const titleId = useId();
 
   return (
     <div
@@ -31,11 +35,11 @@ export function EhuiPanelModal(props: EhuiPanelModalProps): JSX.Element {
         className={props.panelClassName ?? "modal-panel ehui-modal-panel"}
         role="dialog"
         aria-modal="true"
-        aria-labelledby="ehui-modal-title"
+        aria-labelledby={titleId}
         onClick={stop}
       >
         <div className="modal-header ehui-modal-header">
-          <h2 id="ehui-modal-title">{ehuiPanelLabel(props.panel)}</h2>
+          <h2 id={titleId}>{ehuiPanelLabel(props.panel)}</h2>
           <button
             type="button"
             className={props.closeButtonClassName ?? "modal-close"}

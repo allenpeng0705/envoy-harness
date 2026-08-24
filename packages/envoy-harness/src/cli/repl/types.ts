@@ -22,6 +22,7 @@ import type { ModelAdapter } from "../../model.js";
 import type { Agent } from "../../agent.js";
 import type { SubagentRecord } from "../../subagent/types.js";
 import type { VerifierRule } from "../../verifier/types.js";
+import type { SkillRegistry } from "../../skills/registry.js";
 import type { RunParsedArgs } from "../argv.js";
 import type { ReplCommandRegistry } from "./registry.js";
 
@@ -91,6 +92,14 @@ export interface ReplOptions {
    * `src/verifier/types.ts`.
    */
   verifierRules?: ReadonlyArray<VerifierRule>;
+  /**
+   * Phase G: skill registry override. When set, the REPL does
+   * not scan the default project/user skill roots — the caller
+   * controls exactly which skills the agent sees. Tests pass an
+   * empty registry so transcripts are hermetic (the skill-catalog
+   * fragment is only injected when the registry is non-empty).
+   */
+  skills?: SkillRegistry;
   /**
    * F17.2.5: optional profile loader. The `/profile` command
    * reads this; when undefined, prints "no profile loader".

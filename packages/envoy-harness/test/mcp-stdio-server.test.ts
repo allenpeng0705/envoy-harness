@@ -12,7 +12,7 @@ import { runStdioMcpServer } from "../src/mcp/stdio-server.js";
 import { ToolRegistry } from "../src/tools/registry.js";
 
 function readFrame(decoder: FrameDecoder) {
-  return decoder.take()[0] as Record<string, unknown>;
+  return decoder.take()[0] as unknown as Record<string, unknown>;
 }
 
 describe("runStdioMcpServer", () => {
@@ -35,7 +35,11 @@ describe("runStdioMcpServer", () => {
 
     const server = runStdioMcpServer({
       tools,
-      toolContext: { cwd: "/tmp" },
+      toolContext: {
+        cwd: "/tmp",
+        session: {} as never,
+        abortSignal: new AbortController().signal,
+      },
       input,
       output,
     });

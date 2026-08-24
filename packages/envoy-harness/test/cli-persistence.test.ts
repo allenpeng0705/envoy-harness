@@ -23,7 +23,12 @@ import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { CliError, run, type ModelAdapter } from "../src/index.js";
+import {
+  CliError,
+  createSkillRegistry,
+  run,
+  type ModelAdapter,
+} from "../src/index.js";
 import { StringWritable, scriptedTextModel } from "./helpers.js";
 
 let tmpDir: string;
@@ -290,6 +295,7 @@ describe("CLI: --fork", () => {
         "source",
       ],
       model: scriptedTextModel("source reply"),
+      skills: createSkillRegistry(),
       stdout: out,
       stderr: err,
       cwd: tmpDir,
@@ -311,6 +317,7 @@ describe("CLI: --fork", () => {
         "forked",
       ],
       model: scriptedTextModel("forked reply"),
+      skills: createSkillRegistry(),
       stdout: out2,
       stderr: err2,
       cwd: tmpDir,

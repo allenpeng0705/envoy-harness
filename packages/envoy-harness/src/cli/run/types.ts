@@ -18,6 +18,7 @@ import type {
   ModelAdapter,
   ProtocolSessionBackend,
   SandboxExecutor,
+  SkillRegistry,
   Tracer,
 } from "../../index.js";
 import type { LineReader } from "../repl/index.js";
@@ -86,6 +87,14 @@ export interface RunOptions {
    * mock for hermeticity).
    */
   sandboxExecutor?: SandboxExecutor;
+  /**
+   * Phase G: skill registry override. When set, the CLI does not
+   * scan the default project/user skill roots — the caller
+   * controls exactly which skills the agent sees. Tests pass an
+   * empty registry for hermetic transcripts; hosts (EnvoyMesh)
+   * can point at mesh-scoped skills.
+   */
+  skills?: SkillRegistry;
 }
 
 /** Result of a successful `run` invocation. */

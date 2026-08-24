@@ -71,7 +71,16 @@ export async function assembleTurnContext(
         options.skillCatalogDigest,
       );
       nextDigest = catalog.digest;
-      if (catalog.changed && catalog.text.length > 0) {
+      // Skip the empty catalog: an empty registry must not inject
+      // a `<available_skills>\n</available_skills>` stub into the
+      // transcript (it would add a phantom user message on every
+      // fresh session). The digest still advances so a later skill
+      // addition triggers injection.
+      if (
+        catalog.changed &&
+        catalog.text.length > 0 &&
+        summaries.length > 0
+      ) {
         fragments.push(createSkillCatalogFragment(summaries));
       }
     } catch {

@@ -45,6 +45,30 @@ export interface ResolveSandboxExecutorOptions {
   seatbelt?: ConstructorParameters<typeof SeatbeltSandboxExecutor>[0];
   windowsJob?: WindowsJobSandboxExecutorOptions;
   windowsSidecar?: WindowsSidecarSandboxExecutorOptions;
+  /**
+   * Explicit Windows executor choice. When set, overrides the
+   * ambient sidecar-availability check (`isWindowsSidecarAvailable`
+   * reads the environment + installed package, which is not
+   * deterministic for tests and hosts). Hosts with a broken or
+   * unwanted sidecar can force `"job"`.
+   */
+  windowsMode?: "sidecar" | "job";
+}
+
+/**
+ * Pick the Windows executor: explicit `windowsMode` wins, then the
+ * ambient sidecar check, then the Job-object fallback.
+ */
+function resolveWindowsExecutor(
+  options: ResolveSandboxExecutorOptions,
+): SandboxExecutor {
+  if (options.windowsMode === "job") {
+    return new WindowsJobSandboxExecutor(options.windowsJob);
+  }
+  if (options.windowsMode === "sidecar" || isWindowsSidecarAvailable()) {
+    return new WindowsSidecarSandboxExecutor(options.windowsSidecar);
+  }
+  return new WindowsJobSandboxExecutor(options.windowsJob);
 }
 
 export function resolveSandboxExecutor(
@@ -61,10 +85,7 @@ export function resolveSandboxExecutor(
     return new SeatbeltSandboxExecutor(options.seatbelt);
   }
   if (options.force === "windows-sandbox") {
-    if (isWindowsSidecarAvailable()) {
-      return new WindowsSidecarSandboxExecutor(options.windowsSidecar);
-    }
-    return new WindowsJobSandboxExecutor(options.windowsJob);
+    return resolveWindowsExecutor(options);
   }
 
   const platform = options.platform ?? process.platform;
@@ -89,10 +110,7 @@ export function resolveSandboxExecutor(
   }
   if (options.policy.backend === "windows-sandbox") {
     if (platform === "win32") {
-      if (isWindowsSidecarAvailable()) {
-        return new WindowsSidecarSandboxExecutor(options.windowsSidecar);
-      }
-      return new WindowsJobSandboxExecutor(options.windowsJob);
+      return resolveWindowsExecutor(options);
     }
     return new NoopSandboxExecutor();
   }

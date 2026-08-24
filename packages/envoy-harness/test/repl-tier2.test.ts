@@ -28,9 +28,12 @@ import {
   BUILTIN_COMMANDS,
   BUILTIN_INFO_COMMANDS,
   BUILTIN_TIER2_COMMANDS,
+  createSkillRegistry,
   runRepl,
   type LineReader,
   type ModelAdapter,
+  type SkillRegistry,
+  type SkillProvider,
 } from "../src/index.js";
 import {
   StringWritable,
@@ -39,6 +42,22 @@ import {
   scriptedModel,
   textBlock,
 } from "./helpers.js";
+
+/**
+ * Run the REPL with an empty skill registry by default. The agent
+ * injects the skill-catalog fragment on the first turn when skills
+ * are discoverable, which makes transcript counts environment-
+ * dependent (depends on `~/.codex/skills` etc.). An empty registry
+ * pins the counts; tests that exercise the catalog pass their own
+ * registry explicitly.
+ */
+function runReplWithSkills(
+  opts: Omit<Parameters<typeof runRepl>[0], "skills"> & {
+    skills?: SkillRegistry;
+  },
+): ReturnType<typeof runRepl> {
+  return runRepl({ ...opts, skills: opts.skills ?? createSkillRegistry() });
+}
 
 // ---------------------------------------------------------------------------
 // Per-test setup: fresh temp cwd for /init tests
@@ -101,7 +120,7 @@ describe("/new", () => {
     ]);
     const out = new StringWritable();
     const err = new StringWritable();
-    const result = await runRepl({
+    const result = await runReplWithSkills({
       model,
       args: makeArgs(),
       lineReader: fakeLineReader([
@@ -139,7 +158,7 @@ describe("/new", () => {
       { content: [textBlock("response 1")] },
     ]);
     const out = new StringWritable();
-    await runRepl({
+    await runReplWithSkills({
       model,
       args: makeArgs(),
       lineReader: fakeLineReader([
@@ -180,7 +199,7 @@ describe("/compact", () => {
     const model = scriptedModel(responses);
     const out = new StringWritable();
     const err = new StringWritable();
-    const result = await runRepl({
+    const result = await runReplWithSkills({
       model,
       args: makeArgs(),
       lineReader: fakeLineReader([
@@ -212,7 +231,7 @@ describe("/compact", () => {
     }));
     const model = scriptedModel(responses);
     const out = new StringWritable();
-    await runRepl({
+    await runReplWithSkills({
       model,
       args: makeArgs(),
       lineReader: fakeLineReader([
@@ -227,11 +246,48 @@ describe("/compact", () => {
     expect(out.data).toMatch(/^compacted: 13 → 4 messages \(kept last 3\)$/m);
   });
 
+  it("includes the skill-catalog fragment in the count when skills are registered", async () => {
+    // The agent injects the catalog as a user-role fragment on the
+    // FIRST turn only. With 1 turn that is system + catalog + user
+    // + assistant = 4 messages, so /compact 100 is a no-op that
+    // reports 4 (not 3).
+    const provider: SkillProvider = {
+      name: "test",
+      async list() {
+        return [
+          {
+            name: "demo",
+            description: "A demo skill",
+            provider: "test",
+            invocation: { modelInvocable: true, userInvocable: true },
+          },
+        ];
+      },
+      async get() {
+        return undefined;
+      },
+    };
+    const skills = createSkillRegistry();
+    skills.registerProvider(provider);
+    const model = scriptedModel([{ content: [textBlock("ok")] }]);
+    const out = new StringWritable();
+    await runReplWithSkills({
+      model,
+      args: makeArgs(),
+      lineReader: fakeLineReader(["prompt", "/compact 100", "/quit"]),
+      stdout: out,
+      stderr: new StringWritable(),
+      historyPath: "",
+      skills,
+    });
+    expect(out.data).toMatch(/^compacted: 4 → 4 messages \(kept last 100\)$/m);
+  });
+
   it("rejects a non-numeric <keep> arg", async () => {
     const model = scriptedModel([{ content: [textBlock("ok")] }]);
     const out = new StringWritable();
     const err = new StringWritable();
-    await runRepl({
+    await runReplWithSkills({
       model,
       args: makeArgs(),
       lineReader: fakeLineReader(["prompt", "/compact abc", "/quit"]),
@@ -276,7 +332,7 @@ describe("/compact", () => {
     };
     const out = new StringWritable();
     const err = new StringWritable();
-    await runRepl({
+    await runReplWithSkills({
       model,
       args: makeArgs({ cwd: tempCwd }),
       lineReader: fakeLineReader([
@@ -297,7 +353,7 @@ describe("/compact", () => {
   it("is a no-op when the session is shorter than <keep>", async () => {
     const model = scriptedModel([{ content: [textBlock("ok")] }]);
     const out = new StringWritable();
-    await runRepl({
+    await runReplWithSkills({
       model,
       args: makeArgs(),
       lineReader: fakeLineReader(["prompt", "/compact 100", "/quit"]),
@@ -335,7 +391,7 @@ describe("/compact flags (Phase A item 1)", () => {
     }));
     const model = scriptedModel(responses);
     const out = new StringWritable();
-    await runRepl({
+    await runReplWithSkills({
       model,
       args: makeArgs(),
       lineReader: multiTurnLineReader("/compact --keep 3", 6),
@@ -352,7 +408,7 @@ describe("/compact flags (Phase A item 1)", () => {
     }));
     const model = scriptedModel(responses);
     const out = new StringWritable();
-    await runRepl({
+    await runReplWithSkills({
       model,
       args: makeArgs(),
       lineReader: multiTurnLineReader("/compact --budget 100", 6),
@@ -374,7 +430,7 @@ describe("/compact flags (Phase A item 1)", () => {
     const model = scriptedModel(responses);
     const out = new StringWritable();
     const err = new StringWritable();
-    await runRepl({
+    await runReplWithSkills({
       model,
       args: makeArgs(),
       lineReader: multiTurnLineReader("/compact --budget 0", 6),
@@ -392,7 +448,7 @@ describe("/compact flags (Phase A item 1)", () => {
     const model = scriptedModel(responses);
     const out = new StringWritable();
     const err = new StringWritable();
-    await runRepl({
+    await runReplWithSkills({
       model,
       args: makeArgs(),
       lineReader: multiTurnLineReader("/compact --remote", 6),
@@ -408,7 +464,7 @@ describe("/compact flags (Phase A item 1)", () => {
     const model = scriptedModel([{ content: [textBlock("ok")] }]);
     const out = new StringWritable();
     const err = new StringWritable();
-    await runRepl({
+    await runReplWithSkills({
       model,
       args: makeArgs(),
       lineReader: fakeLineReader(["prompt", "/compact --foo", "/quit"]),
@@ -423,7 +479,7 @@ describe("/compact flags (Phase A item 1)", () => {
     const model = scriptedModel([{ content: [textBlock("ok")] }]);
     const out = new StringWritable();
     const err = new StringWritable();
-    await runRepl({
+    await runReplWithSkills({
       model,
       args: makeArgs(),
       lineReader: fakeLineReader(["prompt", "/compact --keep abc", "/quit"]),
@@ -450,7 +506,7 @@ describe("/init", () => {
     ]);
     const out = new StringWritable();
     const err = new StringWritable();
-    const result = await runRepl({
+    const result = await runReplWithSkills({
       model: initModel,
       args: makeArgs({ cwd: tempCwd, sandbox: "workspace-write" }),
       lineReader: fakeLineReader(["/init", "/quit"]),
@@ -479,7 +535,7 @@ describe("/init", () => {
     };
     const out = new StringWritable();
     const err = new StringWritable();
-    const result = await runRepl({
+    const result = await runReplWithSkills({
       model: throwingModel,
       args: makeArgs({ cwd: tempCwd, sandbox: "workspace-write" }),
       lineReader: fakeLineReader([
@@ -515,7 +571,7 @@ describe("/init", () => {
     };
     const out = new StringWritable();
     const err = new StringWritable();
-    await runRepl({
+    await runReplWithSkills({
       model: emptyModel,
       args: makeArgs({ cwd: tempCwd, sandbox: "workspace-write" }),
       lineReader: fakeLineReader(["/init", "/quit"]),
@@ -540,7 +596,7 @@ describe("/init", () => {
     ]);
     const out = new StringWritable();
     const err = new StringWritable();
-    await runRepl({
+    await runReplWithSkills({
       model: initModel,
       // Default session mode is read-only (design invariant #1).
       args: makeArgs({ cwd: tempCwd }),

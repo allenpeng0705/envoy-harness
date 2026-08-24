@@ -43,6 +43,8 @@ describe("parseServeArgs", () => {
         "--owner-id",
         "envoy:owner:p1",
         "--verify-after-execute",
+        "--max-verify-after-execute",
+        "3",
       ]),
     ).toEqual({
       host: "127.0.0.1",
@@ -52,12 +54,16 @@ describe("parseServeArgs", () => {
       model: "deepseek-chat",
       ownerId: "envoy:owner:p1",
       verifyAfterExecute: true,
+      maxVerifyAfterExecute: 3,
     });
   });
 
   it("rejects unknown flags and bad ports", () => {
     expect(() => parseServeArgs(["--nope"])).toThrow(/unknown flag/);
     expect(() => parseServeArgs(["--port", "70000"])).toThrow(/--port/);
+    expect(() =>
+      parseServeArgs(["--max-verify-after-execute", "-1"]),
+    ).toThrow(/--max-verify-after-execute/);
     expect(() => parseServeArgs(["--host"])).toThrow(/requires a value/);
   });
 });

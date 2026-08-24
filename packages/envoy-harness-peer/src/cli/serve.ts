@@ -45,6 +45,7 @@ export interface PeerServeArgs {
   model?: string;
   ownerId?: string;
   verifyAfterExecute?: boolean;
+  maxVerifyAfterExecute?: number;
   help?: boolean;
 }
 
@@ -91,6 +92,14 @@ export function parseServeArgs(argv: readonly string[]): PeerServeArgs {
       case "--verify-after-execute":
         args.verifyAfterExecute = true;
         break;
+      case "--max-verify-after-execute": {
+        const value = Number(requireValue(argv, ++i, "--max-verify-after-execute"));
+        if (!Number.isInteger(value) || value < 0) {
+          throw new Error("--max-verify-after-execute must be a non-negative integer");
+        }
+        args.maxVerifyAfterExecute = value;
+        break;
+      }
       default:
         throw new Error(`unknown flag: ${flag}`);
     }
@@ -121,6 +130,10 @@ Options:
   --owner-id <owner>         advertised owner id (default: peer id)
   --verify-after-execute     run adapter.verify after every peer/submit and
                              include the combined verdict in the response
+  --max-verify-after-execute <n>
+                             cap auto-verifies per server lifetime (bounds
+                             LLM-verifier cost; only meaningful with
+                             --verify-after-execute)
   --help                     show this help
 `;
 
@@ -204,6 +217,7 @@ export async function startPeerServer(options: {
   host?: string;
   port?: number;
   verifyAfterExecute?: boolean;
+  maxVerifyAfterExecute?: number;
 }): Promise<StartedPeerServer> {
   const server: Server = createServer((socket: Socket) => {
     const connection = new JsonRpcConnection({
@@ -214,6 +228,9 @@ export async function startPeerServer(options: {
         identity: options.identity,
         ...(options.verifyAfterExecute !== undefined
           ? { verifyAfterExecute: options.verifyAfterExecute }
+          : {}),
+        ...(options.maxVerifyAfterExecute !== undefined
+          ? { maxVerifyAfterExecute: options.maxVerifyAfterExecute }
           : {}),
       }),
     });
@@ -297,6 +314,9 @@ export async function runPeerServeCli(
       port: args.port,
       ...(args.verifyAfterExecute !== undefined
         ? { verifyAfterExecute: args.verifyAfterExecute }
+        : {}),
+      ...(args.maxVerifyAfterExecute !== undefined
+        ? { maxVerifyAfterExecute: args.maxVerifyAfterExecute }
         : {}),
     });
     io.stdout.write(

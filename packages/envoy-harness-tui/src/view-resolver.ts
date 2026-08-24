@@ -72,7 +72,7 @@ export async function resolveViewBody(
   renderOptions?: { color?: boolean },
 ): Promise<string[]> {
   if (view === "chat") {
-    return session.transcript.map(formatTranscriptLine);
+    return session.transcript.map((line) => formatTranscriptLine(line));
   }
   if (view === "mesh") {
     const meshViewOptions: {
@@ -115,7 +115,7 @@ export async function resolveViewBody(
   if (view === "search") {
     return searchTerm !== undefined
       ? renderSearchView(
-          session.transcript.map(formatTranscriptLine),
+          session.transcript.map((line) => formatTranscriptLine(line)),
           searchTerm,
         )
       : ["/search <term> — search the transcript"];

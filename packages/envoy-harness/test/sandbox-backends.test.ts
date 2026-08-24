@@ -13,6 +13,7 @@ import {
   resolveSandboxExecutor,
   SeatbeltSandboxExecutor,
   WindowsJobSandboxExecutor,
+  WindowsSidecarSandboxExecutor,
   type SandboxContext,
 } from "../src/sandbox/index.js";
 import type { SandboxPolicy } from "../src/types.js";
@@ -424,7 +425,7 @@ describe("resolveSandboxExecutor — hermeticity (regression)", () => {
     expect(exec).toBeInstanceOf(LandlockSandboxExecutor);
   });
 
-  it("windows-sandbox backend on win32 resolves to WindowsJobSandboxExecutor", () => {
+  it("windows-sandbox backend on win32 resolves to WindowsJobSandboxExecutor (sidecar unavailable)", () => {
     const policy = {
       mode: "workspace-write" as const,
       approval: "on-request" as const,
@@ -433,8 +434,32 @@ describe("resolveSandboxExecutor — hermeticity (regression)", () => {
       networkAccess: false,
       slashTmpWritable: true,
     };
-    const exec = resolveSandboxExecutor({ policy, platform: "win32" });
+    // `windowsMode: "job"` pins the choice hermetically — the ambient
+    // sidecar-availability check depends on the environment/installed
+    // package and must not drive tests.
+    const exec = resolveSandboxExecutor({
+      policy,
+      platform: "win32",
+      windowsMode: "job",
+    });
     expect(exec).toBeInstanceOf(WindowsJobSandboxExecutor);
+  });
+
+  it("windows-sandbox backend on win32 prefers the sidecar when available", () => {
+    const policy = {
+      mode: "workspace-write" as const,
+      approval: "on-request" as const,
+      backend: "windows-sandbox" as const,
+      writableRoots: [],
+      networkAccess: false,
+      slashTmpWritable: true,
+    };
+    const exec = resolveSandboxExecutor({
+      policy,
+      platform: "win32",
+      windowsMode: "sidecar",
+    });
+    expect(exec).toBeInstanceOf(WindowsSidecarSandboxExecutor);
   });
 
   it("windows-sandbox backend off win32 falls back to noop", () => {
@@ -463,9 +488,29 @@ describe("resolveSandboxExecutor — hermeticity (regression)", () => {
       policy,
       platform: "linux",
       force: "windows-sandbox",
+      windowsMode: "job",
       windowsJob: { onUnusable: "noop" },
     });
     expect(exec).toBeInstanceOf(WindowsJobSandboxExecutor);
+  });
+
+  it("windows-sandbox force prefers the sidecar wrapper when requested", () => {
+    const policy = {
+      mode: "workspace-write" as const,
+      approval: "on-request" as const,
+      backend: "none" as const,
+      writableRoots: [],
+      networkAccess: false,
+      slashTmpWritable: true,
+    };
+    const exec = resolveSandboxExecutor({
+      policy,
+      platform: "linux",
+      force: "windows-sandbox",
+      windowsMode: "sidecar",
+      windowsSidecar: { onUnusable: "noop" },
+    });
+    expect(exec).toBeInstanceOf(WindowsSidecarSandboxExecutor);
   });
 });
 
