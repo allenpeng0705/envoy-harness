@@ -25,6 +25,10 @@ import {
 import { installToolPermissionAskHook } from "./permission-hook.js";
 import type { Session } from "../session.js";
 import { SessionStore } from "../session/session-store.js";
+import {
+  shouldAskUnderAutoRun,
+  type AutoRunPolicy,
+} from "../permissions/auto-run.js";
 import type {
   ProtocolClusterStatus,
   ProtocolScoreboardEntry,
@@ -51,7 +55,7 @@ export interface AgentSessionBackendOptions {
    * When set, PreToolUse asks only for tools where this returns true.
    * Default: ask for every tool (ACP host decides allow/deny).
    */
-  shouldAskTool?: (toolName: string) => boolean;
+  shouldAskTool?: (toolName: string, args?: unknown) => boolean;
   /** Cap live sessions; oldest are dropped. Default 32. */
   maxSessions?: number;
   /**
@@ -94,6 +98,8 @@ interface LiveSession {
   createdAt: number;
   modelLabel?: string;
   providerLabel?: string;
+  /** Session-level auto-run permission policy (TUI / ACP hosts). */
+  autoRun?: AutoRunPolicy;
 }
 
 function messageText(content: unknown): string {
@@ -201,7 +207,7 @@ export function createAgentSessionBackend(
   return {
     async createSession(params) {
       pruneIfNeeded();
-      const cwd = params?.cwd ?? options.defaultCwd;
+      const cwd = params?.cwd ?? options.defaultCwd ?? process.cwd();
       let sessionId: string;
       let persisted:
         | import("../session/persisted-session.js").PersistedSession
@@ -271,9 +277,17 @@ export function createAgentSessionBackend(
       // process-wide defaultRegistry when createAgent omits hooks.
       const hooks = live.agent.hooks ?? new HookRegistry();
       installToolPermissionAskHook(hooks, {
-        ...(options.shouldAskTool !== undefined
-          ? { shouldAsk: options.shouldAskTool }
-          : {}),
+        shouldAsk: (toolName, args) => {
+          // Session-level auto-run policy (TUI / hosts) wins; otherwise
+          // fall back to the host's shouldAskTool, then ask.
+          const autoRun = shouldAskUnderAutoRun(
+            live.autoRun,
+            toolName,
+            args,
+          );
+          if (autoRun !== undefined) return autoRun;
+          return options.shouldAskTool?.(toolName, args) ?? true;
+        },
       });
       sessions.set(sessionId, live);
       return { sessionId };
@@ -349,9 +363,15 @@ export function createAgentSessionBackend(
       });
       const hooks = live.agent.hooks ?? new HookRegistry();
       installToolPermissionAskHook(hooks, {
-        ...(options.shouldAskTool !== undefined
-          ? { shouldAsk: options.shouldAskTool }
-          : {}),
+        shouldAsk: (toolName, args) => {
+          const autoRun = shouldAskUnderAutoRun(
+            live.autoRun,
+            toolName,
+            args,
+          );
+          if (autoRun !== undefined) return autoRun;
+          return options.shouldAskTool?.(toolName, args) ?? true;
+        },
       });
       sessions.set(sessionId, live);
       return { sessionId };
@@ -557,7 +577,7 @@ export function createAgentSessionBackend(
         throw new Error(`unknown session: ${params.sessionId}`);
       }
       assertSessionIdle(live);
-      const out: { sandbox?: string; approval?: string } = {};
+      const out: { sandbox?: string; approval?: string; autoRun?: string } = {};
       if (params.sandbox !== undefined) {
         live.agent.setPermissionMode(params.sandbox);
         out.sandbox = params.sandbox;
@@ -566,7 +586,23 @@ export function createAgentSessionBackend(
         live.agent.setApprovalPolicy(params.approval);
         out.approval = params.approval;
       }
+      if (params.autoRun !== undefined) {
+        live.autoRun = params.autoRun;
+        out.autoRun = params.autoRun;
+      }
       return out;
+    },
+
+    async getPolicy(params) {
+      const live = sessions.get(params.sessionId);
+      if (live === undefined) {
+        throw new Error(`unknown session: ${params.sessionId}`);
+      }
+      return {
+        sandbox: live.agent.getPermissionMode(),
+        approval: live.agent.getApprovalPolicy(),
+        ...(live.autoRun !== undefined ? { autoRun: live.autoRun } : {}),
+      };
     },
 
     async gitDiff(params) {

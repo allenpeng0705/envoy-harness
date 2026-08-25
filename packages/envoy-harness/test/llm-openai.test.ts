@@ -59,6 +59,78 @@ describe("createProviderAdapter — OpenAI-compatible endpoints", () => {
   });
 });
 
+describe("createProviderAdapter — MiniMax / GLM / Qwen dispatch", () => {
+  it("minimax uses its own endpoint + MINIMAX_API_KEY + default model", () => {
+    const adapter = createProviderAdapter({
+      provider: "minimax",
+      env: { MINIMAX_API_KEY: "mm-test" } as NodeJS.ProcessEnv,
+    }) as unknown as { baseUrl: string; model: string; apiKey: string };
+    expect(adapter.baseUrl).toBe("https://api.minimax.io/v1");
+    expect(adapter.model).toBe("MiniMax-M3");
+    expect(adapter.apiKey).toBe("mm-test");
+    // MINIMAX_BASE_URL overrides the default.
+    const custom = createProviderAdapter({
+      provider: "minimax",
+      env: {
+        MINIMAX_API_KEY: "k",
+        MINIMAX_BASE_URL: "https://api.minimaxi.com/v1",
+      } as NodeJS.ProcessEnv,
+    }) as unknown as { baseUrl: string };
+    expect(custom.baseUrl).toBe("https://api.minimaxi.com/v1");
+  });
+
+  it("glm / zhipu uses the Zhipu endpoint + ZHIPU_API_KEY", () => {
+    const adapter = createProviderAdapter({
+      provider: "glm",
+      env: { ZHIPU_API_KEY: "glm-test" } as NodeJS.ProcessEnv,
+    }) as unknown as { baseUrl: string; model: string };
+    expect(adapter.baseUrl).toBe("https://open.bigmodel.cn/api/paas/v4");
+    expect(adapter.model).toBe("glm-4-flash");
+    const alias = createProviderAdapter({
+      provider: "zhipu",
+      env: { ZHIPU_API_KEY: "k" } as NodeJS.ProcessEnv,
+    }) as unknown as { baseUrl: string };
+    expect(alias.baseUrl).toContain("bigmodel.cn");
+  });
+
+  it("qwen / dashscope uses the DashScope compatible endpoint + DASHSCOPE_API_KEY", () => {
+    const adapter = createProviderAdapter({
+      provider: "qwen",
+      env: { DASHSCOPE_API_KEY: "qw-test" } as NodeJS.ProcessEnv,
+    }) as unknown as { baseUrl: string; model: string };
+    expect(adapter.baseUrl).toBe(
+      "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    );
+    expect(adapter.model).toBe("qwen-plus");
+    const alias = createProviderAdapter({
+      provider: "dashscope",
+      env: { DASHSCOPE_API_KEY: "k" } as NodeJS.ProcessEnv,
+    }) as unknown as { baseUrl: string };
+    expect(alias.baseUrl).toContain("dashscope");
+  });
+
+  it("throws a clear error when the provider-specific API key is missing", () => {
+    expect(() =>
+      createProviderAdapter({
+        provider: "glm",
+        env: {} as NodeJS.ProcessEnv,
+      }),
+    ).toThrow(/ZHIPU_API_KEY/);
+    expect(() =>
+      createProviderAdapter({
+        provider: "qwen",
+        env: {} as NodeJS.ProcessEnv,
+      }),
+    ).toThrow(/DASHSCOPE_API_KEY/);
+    expect(() =>
+      createProviderAdapter({
+        provider: "minimax",
+        env: {} as NodeJS.ProcessEnv,
+      }),
+    ).toThrow(/MINIMAX_API_KEY/);
+  });
+});
+
 /** Build a minimal Tool for tests. */
 function makeTool(overrides: Partial<Tool> & Pick<Tool, "name" | "parameters">): Tool {
   return {
@@ -270,6 +342,39 @@ describe("messagesToOpenAI", () => {
     expect(msgs).toEqual([
       { role: "tool", tool_call_id: "c1", content: "hello" },
     ]);
+  });
+
+  it("remaps duplicate tool_call ids across turns (provider 400 guard)", () => {
+    // A weak model reused id "2013" in a later turn. The provider
+    // rejects duplicate ids, so the converter must remap the 2nd
+    // occurrence + its result.
+    const msgs = messagesToOpenAI([
+      assistantToolCall("2013", "bash", { command: "ls" }),
+      toolResult("2013", "ok", false),
+      assistantToolCall("2013", "read_file", { path: "x" }),
+      toolResult("2013", "file", false),
+    ]);
+    const assistantIds = msgs
+      .filter((m) => m.role === "assistant")
+      .flatMap((m) => (m.tool_calls ?? []).map((tc) => tc.id));
+    expect(assistantIds).toEqual(["2013", "call_1"]);
+    const resultIds = msgs
+      .filter((m) => m.role === "tool")
+      .map((m) => (m as { tool_call_id: string }).tool_call_id);
+    expect(resultIds).toEqual(["2013", "call_1"]);
+  });
+
+  it("keeps unique ids untouched", () => {
+    const msgs = messagesToOpenAI([
+      assistantToolCall("a1", "bash", { command: "ls" }),
+      toolResult("a1", "ok"),
+      assistantToolCall("a2", "read_file", { path: "x" }),
+      toolResult("a2", "file"),
+    ]);
+    const ids = msgs
+      .filter((m) => m.role === "assistant")
+      .flatMap((m) => (m.tool_calls ?? []).map((tc) => tc.id));
+    expect(ids).toEqual(["a1", "a2"]);
   });
 
   it("emits tool result with object content as JSON string", () => {
@@ -712,6 +817,82 @@ describe("OpenAIAdapter — streaming abort", () => {
   });
 });
 
+describe("OpenAIAdapter — streaming FLAT-shape tool calls (MiniMax-style)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("recovers the tool name from a flat-shape streaming response", async () => {
+    const chunks = [
+      `data: ${JSON.stringify({
+        id: "c1",
+        model: "MiniMax-M3",
+        choices: [
+          {
+            index: 0,
+            delta: {
+              role: "assistant",
+              content: null,
+              tool_calls: [
+                { index: 0, id: "c1", name: "bash", arguments: '{"command":"ls' },
+              ],
+            },
+            finish_reason: null,
+          },
+        ],
+      })}\n\n`,
+      `data: ${JSON.stringify({
+        id: "c1",
+        model: "MiniMax-M3",
+        choices: [
+          {
+            index: 0,
+            delta: {
+              tool_calls: [{ index: 0, arguments: ' -la"}' }],
+            },
+            finish_reason: "tool_calls",
+          },
+        ],
+      })}\n\n`,
+      "data: [DONE]\n\n",
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              for (const c of chunks) controller.enqueue(new TextEncoder().encode(c));
+              controller.close();
+            },
+          }),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        ),
+      ),
+    );
+
+    const adapter = new OpenAIAdapter({
+      apiKey: "k",
+      model: "MiniMax-M3",
+      baseUrl: "https://api.minimax.io/v1",
+    });
+    const result = await adapter.complete({
+      messages: [],
+      tools: [],
+      onTextDelta: () => {},
+    });
+    expect(result.content).toEqual([
+      {
+        type: "tool_call",
+        id: "c1",
+        name: "bash",
+        args: { command: "ls -la" },
+      },
+    ]);
+    expect(result.stopReason).toBe("tool_use");
+  });
+});
+
 // ---------------------------------------------------------------------------
 // OpenAIAdapter — error handling
 // ---------------------------------------------------------------------------
@@ -802,6 +983,33 @@ describe("parseChatResponse", () => {
                 type: "function",
                 function: { name: "bash", arguments: '{"command":"ls"}' },
               },
+            ],
+          },
+        },
+      ],
+    });
+    expect(r.content).toEqual([
+      { type: "tool_call", id: "c1", name: "bash", args: { command: "ls" } },
+    ]);
+    expect(r.stopReason).toBe("tool_use");
+  });
+
+  it("maps a FLAT-shape tool-call response (provider without the function wrapper)", () => {
+    // MiniMax / local llama-server style: `name` + `arguments` at the
+    // top level instead of `function: { name, arguments }`. The parser
+    // must not drop the name (a nameless call used to hit the executor's
+    // "tool call missing a tool name" path).
+    const r = parseChatResponse({
+      model: "mini",
+      choices: [
+        {
+          index: 0,
+          finish_reason: "tool_calls",
+          message: {
+            role: "assistant",
+            content: null,
+            tool_calls: [
+              { id: "c1", name: "bash", arguments: '{"command":"ls"}' },
             ],
           },
         },

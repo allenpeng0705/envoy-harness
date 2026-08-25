@@ -47,6 +47,7 @@ export interface ProtocolSetModelResult {
 export interface ProtocolSetPolicyResult {
   sandbox?: string;
   approval?: string;
+  autoRun?: string;
 }
 
 export interface ProtocolGitResult {
@@ -251,6 +252,11 @@ export interface ProtocolSessionBackend {
     sessionId: string;
     sandbox?: "read-only" | "workspace-write" | "danger-full-access";
     approval?: "unless-trusted" | "on-request" | "granular" | "never";
+    autoRun?: "always-confirm" | "safe-only" | "off";
+  }): Promise<ProtocolSetPolicyResult>;
+  /** Read the current sandbox / approval / auto-run policy for a session. */
+  getPolicy?(params: {
+    sessionId: string;
   }): Promise<ProtocolSetPolicyResult>;
   /** Read-only `git diff` for the session cwd. */
   gitDiff?(params: {
@@ -323,6 +329,10 @@ export function createFakeSessionBackend(options?: {
 } {
   let seq = 0;
   const sessions = new Set<string>();
+  const policies = new Map<
+    string,
+    { sandbox: string; approval: string; autoRun?: string }
+  >();
   const aborts = new Map<string, AbortController>();
   const cancelled: string[] = [];
   const prompts: Array<{ sessionId: string; text: string }> = [];
@@ -336,6 +346,10 @@ export function createFakeSessionBackend(options?: {
     async createSession() {
       const sessionId = `sess-${++seq}`;
       sessions.add(sessionId);
+      policies.set(sessionId, {
+        sandbox: "workspace-write",
+        approval: "on-request",
+      });
       return { sessionId };
     },
     async prompt(params) {
@@ -397,6 +411,19 @@ export function createFakeSessionBackend(options?: {
     cancel(sessionId) {
       cancelled.push(sessionId);
       aborts.get(sessionId)?.abort();
+    },
+    async setPolicy(params) {
+      const p = policies.get(params.sessionId);
+      if (p === undefined) throw new Error(`unknown session: ${params.sessionId}`);
+      if (params.sandbox !== undefined) p.sandbox = params.sandbox;
+      if (params.approval !== undefined) p.approval = params.approval;
+      if (params.autoRun !== undefined) p.autoRun = params.autoRun;
+      return { ...p };
+    },
+    async getPolicy(params) {
+      const p = policies.get(params.sessionId);
+      if (p === undefined) throw new Error(`unknown session: ${params.sessionId}`);
+      return { ...p };
     },
     listTools: () => tools,
     getConfig: () => options?.config ?? { version: "0.0.0" },

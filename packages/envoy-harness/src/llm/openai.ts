@@ -91,6 +91,28 @@ interface OpenAIErrorResponse {
   };
 }
 
+/**
+ * Some OpenAI-compatible providers (MiniMax, local llama-server, …) send
+ * tool calls in the FLAT shape — `{ id, name, arguments }` — instead of
+ * OpenAI's wrapper `{ id, function: { name, arguments } }`. Read both.
+ */
+type RawToolCall = {
+  id?: string;
+  function?: { name?: string; arguments?: string };
+  name?: string;
+  arguments?: string;
+};
+
+function readToolCallNameAndArgs(
+  tc: RawToolCall,
+): { name: string | undefined; arguments: string | undefined } {
+  const fn = tc.function;
+  return {
+    name: fn?.name ?? tc.name,
+    arguments: fn?.arguments ?? tc.arguments,
+  };
+}
+
 export class OpenAIAdapter implements ModelAdapter {
   private apiKey: string;
   private model: string;
@@ -216,11 +238,13 @@ export class OpenAIAdapter implements ModelAdapter {
             | null;
           delta?: {
             content?: string | null;
-            tool_calls?: Array<{
-              index: number;
-              id?: string;
-              function?: { name?: string; arguments?: string };
-            }>;
+        tool_calls?: Array<{
+          index: number;
+          id?: string;
+          function?: { name?: string; arguments?: string };
+          name?: string;
+          arguments?: string;
+        }>;
           };
         }>;
       };
@@ -253,10 +277,9 @@ export class OpenAIAdapter implements ModelAdapter {
             toolParts.set(tc.index, acc);
           }
           if (tc.id !== undefined) acc.id = tc.id;
-          if (tc.function?.name !== undefined) acc.name = tc.function.name;
-          if (tc.function?.arguments !== undefined) {
-            acc.args += tc.function.arguments;
-          }
+          const { name, arguments: argsDelta } = readToolCallNameAndArgs(tc);
+          if (name !== undefined && name.length > 0) acc.name = name;
+          if (argsDelta !== undefined) acc.args += argsDelta;
         }
       }
     };
@@ -356,9 +379,10 @@ export function parseChatResponse(parsed: OpenAIChatResponse): ModelResponse {
   }
   if (choice.message.tool_calls) {
     for (const tc of choice.message.tool_calls) {
+      const { name, arguments: rawArgs } = readToolCallNameAndArgs(tc);
       let args: unknown = {};
       try {
-        args = JSON.parse(tc.function.arguments);
+        args = JSON.parse(rawArgs ?? "{}");
       } catch {
         // Malformed JSON; leave args as {} (the tool's zod
         // validation will surface the error to the model).
@@ -366,7 +390,7 @@ export function parseChatResponse(parsed: OpenAIChatResponse): ModelResponse {
       content.push({
         type: "tool_call",
         id: tc.id,
-        name: tc.function.name,
+        name: name ?? "",
         args,
       });
     }

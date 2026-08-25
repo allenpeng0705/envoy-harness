@@ -34,6 +34,8 @@ export interface PermissionRequest {
 export interface TuiSessionOptions {
   client: EnvoyHarnessClient;
   cwd?: string;
+  /** Auto-run permission policy applied when a session starts. */
+  initialAutoRun?: "safe-only" | "always-confirm" | "off";
   onTranscript?: (lines: readonly TranscriptLine[]) => void;
   onPermission?: (req: PermissionRequest) => Promise<"allow" | "deny">;
   transcriptFormat?: TranscriptFormatOptions;
@@ -42,6 +44,7 @@ export interface TuiSessionOptions {
 export class TuiSession {
   readonly #client: EnvoyHarnessClient;
   readonly #cwd: string | undefined;
+  readonly #initialAutoRun: "safe-only" | "always-confirm" | "off" | undefined;
   #onTranscript: ((lines: readonly TranscriptLine[]) => void) | undefined;
   readonly #onPermission:
     | ((req: PermissionRequest) => Promise<"allow" | "deny">)
@@ -80,6 +83,7 @@ export class TuiSession {
   constructor(options: TuiSessionOptions) {
     this.#client = options.client;
     this.#cwd = options.cwd;
+    this.#initialAutoRun = options.initialAutoRun;
     this.#onTranscript = options.onTranscript;
     this.#onPermission = options.onPermission;
     this.#transcriptFormat = options.transcriptFormat ?? {};
@@ -231,6 +235,15 @@ export class TuiSession {
       this.#cwd !== undefined ? { cwd: this.#cwd } : undefined,
     );
     this.#sessionId = created.sessionId;
+    if (this.#initialAutoRun !== undefined) {
+      try {
+        await this.#client.setSessionPolicy(created.sessionId, {
+          autoRun: this.#initialAutoRun,
+        });
+      } catch {
+        // Best-effort — the policy is a convenience, not a hard requirement.
+      }
+    }
     this.#push("system", `session ${created.sessionId}`);
   }
 
@@ -311,6 +324,9 @@ export class TuiSession {
           return "ok";
         case "approval":
           await this.runSetApproval(slash.mode);
+          return "ok";
+        case "permissions":
+          await this.runSetAutoRun(slash.mode);
           return "ok";
         case "diff":
           await this.showGitDiff(slash.staged, slash.stat);
@@ -778,6 +794,15 @@ export class TuiSession {
         this.#cwd !== undefined ? { cwd: this.#cwd } : undefined,
       );
       this.#sessionId = created.sessionId;
+      if (this.#initialAutoRun !== undefined) {
+        try {
+          await this.#client.setSessionPolicy(created.sessionId, {
+            autoRun: this.#initialAutoRun,
+          });
+        } catch {
+          // Best-effort.
+        }
+      }
       this.#lines.length = 0;
       this.#turnSeen.clear();
       this.#lastTurnCostUsd = undefined;
@@ -934,6 +959,50 @@ export class TuiSession {
       this.#push("status", `approval: ${mode}`);
     } catch (err) {
       this.#push("status", `approval failed: ${(err as Error).message}`);
+    }
+  }
+
+  async runSetAutoRun(
+    mode: "safe-only" | "always-confirm" | "off" | undefined,
+  ): Promise<void> {
+    if (this.#sessionId === undefined) {
+      this.#push("status", "no active session");
+      return;
+    }
+    if (this.#busy) {
+      this.#push("status", "busy — /cancel first");
+      return;
+    }
+    try {
+      if (mode === undefined) {
+        // Show the current policy (no getter was available before;
+        // `session/get_policy` fills the gap).
+        const policy = await this.#client.getSessionPolicy(this.#sessionId);
+        const autoRun = policy.autoRun ?? "unset (host default)";
+        const label =
+          autoRun === "off"
+            ? "always approve"
+            : autoRun === "always-confirm"
+              ? "always ask"
+              : autoRun === "safe-only"
+                ? "default (auto-run safe)"
+                : autoRun;
+        this.#push(
+          "status",
+          `permissions: ${label} · sandbox: ${policy.sandbox ?? "?"} · approval: ${policy.approval ?? "?"}`,
+        );
+        return;
+      }
+      await this.#client.setSessionPolicy(this.#sessionId, { autoRun: mode });
+      const label =
+        mode === "safe-only"
+          ? "default (auto-run safe)"
+          : mode === "always-confirm"
+            ? "always ask"
+            : "always approve";
+      this.#push("status", `permissions: ${label}`);
+    } catch (err) {
+      this.#push("status", `permissions failed: ${(err as Error).message}`);
     }
   }
 

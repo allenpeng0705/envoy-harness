@@ -418,7 +418,7 @@ export function defaultBuildAgentFactory(opts: {
    * When `getAskHandler` is set, PreToolUse asks only when
    * this returns true. Default: ask for every tool.
    */
-  shouldAskTool?: (toolName: string) => boolean;
+  shouldAskTool?: (toolName: string, args?: unknown) => boolean;
 }): BuildAgentFn {
   const cwd = opts.cwd ?? process.cwd();
   return ({ skillId, objective, costCeilingUsd, signal }) => {

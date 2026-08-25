@@ -26,6 +26,7 @@ export type SlashResult =
   | { kind: "model" }
   | { kind: "sandbox"; mode: string }
   | { kind: "approval"; mode: string }
+  | { kind: "permissions"; mode: "safe-only" | "always-confirm" | "off" | undefined }
   | { kind: "diff"; staged?: boolean; stat?: boolean }
   | { kind: "git-status" }
   | { kind: "hooks" }
@@ -74,6 +75,7 @@ export const SLASH_COMMANDS: ReadonlyArray<{ name: string; description: string }
   { name: "model", description: "show model swap usage" },
   { name: "sandbox", description: "permission mode: read-only | workspace-write | …" },
   { name: "approval", description: "approval policy: on-request | never | …" },
+  { name: "permissions", description: "auto-run policy: show | default | ask | approve" },
   { name: "diff", description: "git diff (optional --staged --stat)" },
   { name: "git-status", description: "git status --porcelain" },
   { name: "clear", description: "clear the transcript display" },
@@ -254,6 +256,19 @@ export function parseSlash(line: string): SlashResult | null {
         };
       }
       return { kind: "approval", mode };
+    }
+    case "permissions": {
+      if (parts[1] === undefined || parts[1].length === 0) {
+        return { kind: "permissions", mode: undefined };
+      }
+      const raw = parts[1]?.toLowerCase();
+      if (raw === "default") return { kind: "permissions", mode: "safe-only" };
+      if (raw === "ask") return { kind: "permissions", mode: "always-confirm" };
+      if (raw === "approve") return { kind: "permissions", mode: "off" };
+      return {
+        kind: "unknown",
+        command: "permissions (usage: /permissions default|ask|approve)",
+      };
     }
     case "diff":
       return parseDiffFlags(rest);

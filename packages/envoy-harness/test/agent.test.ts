@@ -33,6 +33,7 @@ import {
   InMemorySession,
   newSessionId,
   ToolRegistry,
+  installToolPermissionAskHook,
   type ModelAdapter,
   type ModelResponse,
   type Session,
@@ -229,6 +230,263 @@ describe("Agent: tool call flow", () => {
     expect((toolMsg?.content[0] as { content: string }).content).toMatch(
       /unknown tool/,
     );
+  });
+
+  it("does NOT ask permission for an unknown tool (host noise regression)", async () => {
+    let askCalls = 0;
+    const hooks = new HookRegistry();
+    installToolPermissionAskHook(hooks, { shouldAsk: () => true });
+    const model = new FakeModel([
+      { content: [toolCall("tc1", "no_such_tool", { x: 1 })] },
+      textResponse("recovered"),
+    ]);
+    const { agent, session } = makeAgent(model, {
+      hooks,
+    });
+    agent.setAskHandler(async () => {
+      askCalls += 1;
+      return { kind: "allow" };
+    });
+    const result = await agent.run("go");
+    expect(result.stopReason).toBe("end_turn");
+    expect(askCalls).toBe(0);
+    const toolMsg = session.messages.find((m) => m.role === "tool");
+    expect((toolMsg?.content[0] as { content: string }).content).toMatch(
+      /unknown tool/,
+    );
+  });
+
+  it("refuses a tool call with an empty name without asking (malformed model call)", async () => {
+    let askCalls = 0;
+    const hooks = new HookRegistry();
+    installToolPermissionAskHook(hooks, { shouldAsk: () => true });
+    const model = new FakeModel([
+      { content: [toolCall("tc1", "", { command: "ls" })] },
+      textResponse("recovered"),
+    ]);
+    const { agent, session } = makeAgent(model, {
+      hooks,
+    });
+    agent.setAskHandler(async () => {
+      askCalls += 1;
+      return { kind: "allow" };
+    });
+    const result = await agent.run("go");
+    expect(result.stopReason).toBe("end_turn");
+    expect(askCalls).toBe(0);
+    const toolMsg = session.messages.find((m) => m.role === "tool");
+    expect((toolMsg?.content[0] as { content: string }).content).toMatch(
+      /missing a tool name/,
+    );
+  });
+
+  it("recovers a missing tool name when exactly one registered tool matches the args", async () => {
+    let askToolNames: string[] = [];
+    const hooks = new HookRegistry();
+    installToolPermissionAskHook(hooks, { shouldAsk: () => true });
+    const bash: Tool = {
+      name: "bash",
+      description: "run a shell command",
+      parameters: z.object({ command: z.string() }),
+      async execute({ command }) {
+        return { content: `ran: ${command}` };
+      },
+    };
+    const model = new FakeModel([
+      { content: [toolCall("tc1", "", { command: "ls -la" })] },
+      textResponse("recovered"),
+    ]);
+    const { agent, session } = makeAgent(model, {
+      tools: [echoTool, bash],
+      hooks,
+    });
+    agent.setAskHandler(async (req) => {
+      askToolNames.push(req.tool);
+      return { kind: "allow" };
+    });
+    const result = await agent.run("go");
+    expect(result.stopReason).toBe("end_turn");
+    // The name was inferred to `bash` — the permission ask named bash,
+    // and the tool executed.
+    expect(askToolNames).toEqual(["bash"]);
+    const bashMsg = session.messages.find(
+      (m) => m.role === "tool" && (m.content[0] as { content?: string }).content === "ran: ls -la",
+    );
+    expect(bashMsg).toBeDefined();
+  });
+
+  it("normalizes empty tool_call ids so the provider never sees duplicates/empties", async () => {
+    // MiniMax-style: the model emits tool calls with `id: ""`. The loop
+    // must rewrite them to non-empty unique ids in BOTH the assistant
+    // message and the tool results (otherwise the API rejects the turn
+    // and the results are unattributable).
+    const hooks = new HookRegistry();
+    installToolPermissionAskHook(hooks, { shouldAsk: () => false });
+    const bash: Tool = {
+      name: "bash",
+      description: "run a shell command",
+      parameters: z.object({ command: z.string() }),
+      async execute({ command }) {
+        return { content: `ran: ${command}` };
+      },
+    };
+    const model = new FakeModel([
+      {
+        content: [
+          toolCall("", "bash", { command: "ls" }),
+          toolCall("", "read_file", { path: "README.md" }),
+        ],
+      },
+      textResponse("done"),
+    ]);
+    const readFileTool: Tool = {
+      name: "read_file",
+      description: "read a file",
+      parameters: z.object({ path: z.string() }),
+      async execute({ path }) {
+        return { content: `file: ${path}` };
+      },
+    };
+    const { agent, session } = makeAgent(model, {
+      tools: [bash, readFileTool],
+      hooks,
+    });
+    const result = await agent.run("go");
+    expect(result.stopReason).toBe("end_turn");
+    // The assistant tool calls now carry non-empty unique ids.
+    const assistantMsg = session.messages.find((m) => m.role === "assistant");
+    const toolCallIds = (assistantMsg?.content ?? [])
+      .filter((b) => b.type === "tool_call")
+      .map((b) => (b as { id: string }).id);
+    expect(toolCallIds.length).toBe(2);
+    expect(toolCallIds.every((id) => id.length > 0)).toBe(true);
+    expect(new Set(toolCallIds).size).toBe(2);
+    // The tool results reference the same normalized ids (not "").
+    const toolResults = session.messages
+      .filter((m) => m.role === "tool")
+      .flatMap((m) =>
+        m.content
+          .filter((b) => b.type === "tool_result")
+          .map((b) => (b as { toolCallId: string }).toolCallId),
+      );
+    expect(toolResults.every((id) => id.length > 0)).toBe(true);
+    expect(toolResults.sort()).toEqual([...toolCallIds].sort());
+  });
+
+  it("refuses an empty-name call when multiple tools match the args (ambiguous)", async () => {
+    const hooks = new HookRegistry();
+    installToolPermissionAskHook(hooks, { shouldAsk: () => true });
+    const toolA: Tool = {
+      name: "tool_a",
+      description: "a",
+      parameters: z.object({ command: z.string() }),
+      async execute() {
+        return { content: "a" };
+      },
+    };
+    const toolB: Tool = {
+      name: "tool_b",
+      description: "b",
+      parameters: z.object({ command: z.string() }),
+      async execute() {
+        return { content: "b" };
+      },
+    };
+    const model = new FakeModel([
+      { content: [toolCall("tc1", "", { command: "ls" })] },
+      textResponse("recovered"),
+    ]);
+    const { agent, session } = makeAgent(model, {
+      tools: [toolA, toolB],
+      hooks,
+    });
+    const result = await agent.run("go");
+    expect(result.stopReason).toBe("end_turn");
+    const toolMsg = session.messages.find((m) => m.role === "tool");
+    expect((toolMsg?.content[0] as { content: string }).content).toMatch(
+      /missing a tool name/,
+    );
+  });
+
+  it("still asks permission for a known tool when the hook requests it", async () => {
+    let askCalls = 0;
+    const hooks = new HookRegistry();
+    installToolPermissionAskHook(hooks, { shouldAsk: () => true });
+    const model = new FakeModel([
+      { content: [toolCall("tc1", "echo", { message: "hi" })] },
+      textResponse("recovered"),
+    ]);
+    const { agent, session } = makeAgent(model, {
+      hooks,
+    });
+    agent.setAskHandler(async () => {
+      askCalls += 1;
+      return { kind: "allow" };
+    });
+    const result = await agent.run("go");
+    expect(result.stopReason).toBe("end_turn");
+    expect(askCalls).toBe(1);
+    const echoMsg = session.messages.find(
+      (m) => m.role === "tool" && (m.content[0] as { content?: string }).content === "hi",
+    );
+    expect(echoMsg).toBeDefined();
+  });
+
+  it("injects a corrective hint when the model repeats the same failing tool call", async () => {
+    const model = new FakeModel([
+      { content: [toolCall("tc1", "fail", { reason: "boom" })] },
+      { content: [toolCall("tc2", "fail", { reason: "boom" })] },
+      textResponse("recovered after hint"),
+    ]);
+    const { agent, session } = makeAgent(model, {
+      tools: [failTool],
+    });
+    const result = await agent.run("go");
+    expect(result.stopReason).toBe("end_turn");
+    // The corrective hint was injected after the 2nd identical failure.
+    const hint = session.messages.find(
+      (m) =>
+        m.role === "user" &&
+        m.content.some(
+          (b) =>
+            b.type === "text" &&
+            b.text.includes("Do NOT repeat that exact call"),
+        ),
+    );
+    expect(hint).toBeDefined();
+    // The model then recovered with text.
+    expect(
+      session.messages.some(
+        (m) =>
+          m.role === "assistant" &&
+          m.content.some(
+            (b) => b.type === "text" && b.text === "recovered after hint",
+          ),
+      ),
+    ).toBe(true);
+  });
+
+  it("retries an empty model response with a hint instead of ending empty", async () => {
+    const model = new FakeModel([
+      { content: [] },
+      textResponse("here is the answer"),
+    ]);
+    const { agent, session } = makeAgent(model);
+    const result = await agent.run("go");
+    expect(result.stopReason).toBe("end_turn");
+    expect(result.content[0]).toMatchObject({
+      type: "text",
+      text: "here is the answer",
+    });
+    const hint = session.messages.find(
+      (m) =>
+        m.role === "user" &&
+        m.content.some(
+          (b) =>
+            b.type === "text" && b.text.includes("Your previous response was empty"),
+        ),
+    );
+    expect(hint).toBeDefined();
   });
 
   it("handles invalid args gracefully (zod validation failure)", async () => {

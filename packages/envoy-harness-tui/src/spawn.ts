@@ -20,6 +20,8 @@ export interface SpawnedTuiOptions {
   /** Extra argv appended to the harness's `--acp` invocation (e.g. provider/model). */
   harnessArgs?: string[];
   env?: NodeJS.ProcessEnv;
+  /** Auto-run permission policy applied when the ACP session starts. */
+  initialAutoRun?: "safe-only" | "always-confirm" | "off";
   onPermission?: (req: PermissionRequest) => Promise<"allow" | "deny">;
   stderr?: SpawnAcpOptions["stderr"];
 }
@@ -79,6 +81,9 @@ export function createSpawnedTui(
   const session = new TuiSession({
     client: spawned.client,
     ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
+    ...(options.initialAutoRun !== undefined
+      ? { initialAutoRun: options.initialAutoRun }
+      : {}),
     ...(options.onPermission !== undefined
       ? { onPermission: options.onPermission }
       : {}),

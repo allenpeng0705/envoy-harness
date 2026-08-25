@@ -13,7 +13,7 @@ export interface ToolPermissionAskHookOptions {
   /**
    * Return false to skip asking (auto-allow). Default: ask for every tool.
    */
-  shouldAsk?: (toolName: string) => boolean;
+  shouldAsk?: (toolName: string, args?: unknown) => boolean;
 }
 
 /**
@@ -42,7 +42,11 @@ export function installToolPermissionAskHook(
       typeof (payload as { tool: unknown }).tool === "string"
         ? (payload as { tool: string }).tool
         : "tool";
-    if (!shouldAsk(tool)) {
+    const args =
+      typeof payload === "object" && payload !== null
+        ? (payload as { args?: unknown }).args
+        : undefined;
+    if (!shouldAsk(tool, args)) {
       return { kind: "continue" };
     }
     return {

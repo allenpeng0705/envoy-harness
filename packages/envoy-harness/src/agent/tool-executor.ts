@@ -238,7 +238,72 @@ export class ToolExecutor {
     iteration: number,
   ): Promise<void> {
     this.ctx.noteToolCall();
+    const isMcpCall = call.name.startsWith(MCP_TOOL_PREFIX);
+
+    // Malformed model call (empty tool name): some OpenAI-compatible
+    // providers (MiniMax, local llama-server) omit the tool name in the
+    // response while still sending the args. Recover by inferring the
+    // name from the args when EXACTLY ONE registered tool validates
+    // them. Otherwise refuse WITHOUT the permission hook — a host must
+    // never see "Allow tool ``?" for a call that cannot execute.
+    if (call.name.trim().length === 0) {
+      const inferred = inferToolNameFromArgs(this.ctx.tools, call.args);
+      if (inferred !== undefined) {
+        call = { ...call, name: inferred };
+      } else {
+        this.ctx.emit({
+          kind: "tool_call",
+          ts: new Date().toISOString(),
+          iteration,
+          call,
+        });
+        // Diagnostic: include the args + registered tool names so the
+        // model (and the user) can see exactly what failed and what the
+        // executor compared against. This also lets the model correct
+        // its next call instead of looping blindly.
+        const message = `tool call missing a tool name (args: ${JSON.stringify(
+          call.args,
+        )}; registered: ${this.ctx.tools
+          .list()
+          .map((t) => t.name)
+          .join(", ")})`;
+        this.appendToolResult(call.id, message, true);
+        this.ctx.emit({
+          kind: "tool_result",
+          ts: new Date().toISOString(),
+          iteration,
+          callId: call.id,
+          toolName: call.name,
+          result: { content: message, isError: true },
+          durationMs: 0,
+        });
+        return;
+      }
+    }
     const tool = this.ctx.tools.get(call.name);
+
+    // Unknown tool (not an MCP-routed call): surface the error directly
+    // instead of pausing on a permission prompt for a tool that cannot
+    // execute. The trace still records the attempt + error.
+    if (!tool && !isMcpCall) {
+      this.ctx.emit({
+        kind: "tool_call",
+        ts: new Date().toISOString(),
+        iteration,
+        call,
+      });
+      this.appendToolResult(call.id, `unknown tool: ${call.name}`, true);
+      this.ctx.emit({
+        kind: "tool_result",
+        ts: new Date().toISOString(),
+        iteration,
+        callId: call.id,
+        toolName: call.name,
+        result: { content: `unknown tool: ${call.name}`, isError: true },
+        durationMs: 0,
+      });
+      return;
+    }
 
     // PreToolUse hook (audit log, rate limit, block, ask).
     const preDecision = await this.firePreToolUse(call);
@@ -365,34 +430,15 @@ export class ToolExecutor {
     // client directly. A registry-registered MCP tool
     // flows through the normal path so envoy's hooks,
     // arg validation, and permissions govern it.
-    if (call.name.startsWith(MCP_TOOL_PREFIX) && tool === undefined) {
+    if (isMcpCall && tool === undefined) {
       await this.executeMcpCall(call, iteration);
       return;
     }
 
-    if (!tool) {
-      // F9.4: emit tool_call + tool_result even for
-      // unknown tools (the trace records the attempt
-      // + the error). Without this, an unknown tool
-      // is invisible in the trace.
-      this.ctx.emit({
-        kind: "tool_call",
-        ts: new Date().toISOString(),
-        iteration,
-        call,
-      });
-      this.appendToolResult(call.id, `unknown tool: ${call.name}`, true);
-      this.ctx.emit({
-        kind: "tool_result",
-        ts: new Date().toISOString(),
-        iteration,
-        callId: call.id,
-        toolName: call.name,
-        result: { content: `unknown tool: ${call.name}`, isError: true },
-        durationMs: 0,
-      });
-      return;
-    }
+    // Both the unknown-tool and MCP branches returned above, so `tool`
+    // is guaranteed defined here. TS cannot narrow the compound
+    // conditions, so capture it once.
+    const registeredTool = tool as NonNullable<typeof tool>;
 
     // F9.4: emit tool_call (after the PreToolUse hook
     // passes but BEFORE arg validation). The model can
@@ -408,7 +454,7 @@ export class ToolExecutor {
 
     // Arg validation. Re-runs for the `modify` case
     // (the host may have given us a different shape).
-    const parsed = tool.parameters.safeParse(call.args);
+    const parsed = registeredTool.parameters.safeParse(call.args);
     if (!parsed.success) {
       this.appendToolResult(
         call.id,
@@ -442,7 +488,7 @@ export class ToolExecutor {
 
     try {
       const sandboxExecutor = this.ctx.getSandboxExecutor();
-      const result = await tool.execute(parsed.data, {
+      const result = await registeredTool.execute(parsed.data, {
         cwd: this.ctx.cwd,
         session: this.ctx.session,
         abortSignal: this.ctx.abortSignal,
@@ -646,4 +692,50 @@ export class ToolExecutor {
     }
     this.appendToolResult(call.id, resultContent, isError);
   }
+}
+
+/**
+ * Recover a missing tool name by matching the args against the
+ * registered tools' zod schemas. Returns the tool name only when EXACTLY
+ * ONE tool validates — ambiguous matches stay unresolved (the caller
+ * refuses the call) so we never guess wrong.
+ */
+export function inferToolNameFromArgs(
+  tools: ToolRegistry,
+  args: unknown,
+): string | undefined {
+  // Key-based fallback: an args object carrying a tool-specific key is
+  // unambiguous even if a future tool's schema also accepts it. This is
+  // the pragmatic recovery for providers that drop the tool name.
+  if (args !== null && typeof args === "object") {
+    const record = args as Record<string, unknown>;
+    if (typeof record.command === "string" && tools.has("bash")) {
+      return "bash";
+    }
+    if (typeof record.path === "string" && tools.has("read_file")) {
+      return "read_file";
+    }
+  }
+
+  let match: string | undefined;
+  let count = 0;
+  for (const t of tools.list()) {
+    const parsed = t.parameters.safeParse(args);
+    // Require the schema to actually consume at least one argument key:
+    // an all-optional schema (e.g. `suggest_follow_ups`) matches ANY
+    // object after zod strips unknown keys, which would make inference
+    // ambiguous for every call.
+    const data = parsed.data as Record<string, unknown> | undefined;
+    const consumedKeys =
+      parsed.success &&
+      data !== undefined &&
+      typeof data === "object" &&
+      Object.keys(data).length > 0;
+    if (consumedKeys) {
+      match = t.name;
+      count += 1;
+      if (count > 1) return undefined;
+    }
+  }
+  return count === 1 ? match : undefined;
 }

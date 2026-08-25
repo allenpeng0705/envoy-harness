@@ -44,6 +44,17 @@ import type {
   UserQuestionService,
 } from "../src/interaction/user-questions.js";
 
+/** Minimal registered `bash` tool so permission asks target a KNOWN tool
+ *  (the executor no longer asks for unknown tools — a host-noise fix). */
+const bashTool: Tool = {
+  name: "bash",
+  description: "test bash",
+  parameters: z.object({ command: z.string() }),
+  async execute({ command }) {
+    return { content: `ran: ${command}` };
+  },
+};
+
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
@@ -266,6 +277,7 @@ describe("Agent + userQuestions — AskForApproval shim", () => {
       userQuestions: service,
       askHandler: explicitHandler,
       hook,
+      tools: [bashTool],
       model: scriptedModel([
         {
           content: [
@@ -391,6 +403,7 @@ describe("Agent + userQuestions — setUserQuestions (live wire)", () => {
       userQuestions: undefined,
       askHandler: explicitHandler,
       hook,
+      tools: [bashTool],
       model: scriptedModel([
         {
           content: [
@@ -484,6 +497,7 @@ describe("Agent + userQuestions — setUserQuestions (live wire)", () => {
     const { agent } = agentWithUserQuestions({
       userQuestions: service,
       hook,
+      tools: [bashTool],
       model: scriptedModel([
         {
           content: [

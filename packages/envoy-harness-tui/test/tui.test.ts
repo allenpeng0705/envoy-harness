@@ -26,6 +26,26 @@ describe("parseSlash", () => {
       endpoint: "p1@127.0.0.1:18123",
     });
   });
+
+  it("parses /permissions into the auto-run policy", () => {
+    expect(parseSlash("/permissions")).toEqual({
+      kind: "permissions",
+      mode: undefined,
+    });
+    expect(parseSlash("/permissions default")).toEqual({
+      kind: "permissions",
+      mode: "safe-only",
+    });
+    expect(parseSlash("/permissions ask")).toEqual({
+      kind: "permissions",
+      mode: "always-confirm",
+    });
+    expect(parseSlash("/permissions approve")).toEqual({
+      kind: "permissions",
+      mode: "off",
+    });
+    expect(parseSlash("/permissions bogus")?.kind).toBe("unknown");
+  });
 });
 
 describe("TuiSession via in-process ACP", () => {
@@ -40,6 +60,25 @@ describe("TuiSession via in-process ACP", () => {
     expect(text).toContain("[you] hello");
     expect(text).toContain("[agent] echo:hello");
     expect(text).toContain("stop: end_turn");
+    tui.close();
+  });
+
+  it("/permissions shows the current policy and sets a new one", async () => {
+    const tui = createInProcessTui();
+    await tui.session.start();
+    expect(tui.session.sessionId).toMatch(/^sess-/);
+
+    await tui.session.submit("/permissions");
+    let text = tui.session.renderTranscript();
+    expect(text).toContain("permissions: unset (host default)");
+
+    await tui.session.submit("/permissions approve");
+    text = tui.session.renderTranscript();
+    expect(text).toContain("permissions: always approve");
+
+    await tui.session.submit("/permissions");
+    text = tui.session.renderTranscript();
+    expect(text).toContain("permissions: always approve");
     tui.close();
   });
 

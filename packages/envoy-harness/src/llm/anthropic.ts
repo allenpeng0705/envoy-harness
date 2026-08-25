@@ -282,6 +282,28 @@ export function messagesToAnthropic(
   messages: ReadonlyArray<Message>,
 ): AnthropicWireMessage[] {
   const out: AnthropicWireMessage[] = [];
+  // Anthropic also requires unique tool_use ids per conversation. Some
+  // models reuse an id across turns — remap repeats + their results.
+  const usedWireIds = new Set<string>();
+  const lastWireIdByOriginal = new Map<string, string>();
+  let generated = 0;
+  const nextWireId = (original: string): string => {
+    const source = original.trim();
+    if (source.length > 0 && !usedWireIds.has(source)) {
+      usedWireIds.add(source);
+      lastWireIdByOriginal.set(original, source);
+      return source;
+    }
+    generated += 1;
+    let candidate = `call_${generated}`;
+    while (usedWireIds.has(candidate)) {
+      generated += 1;
+      candidate = `call_${generated}`;
+    }
+    usedWireIds.add(candidate);
+    lastWireIdByOriginal.set(original, candidate);
+    return candidate;
+  };
   for (const m of messages) {
     if (m.role === "assistant") {
       const content: Array<AnthropicTextBlock | AnthropicToolUseBlock> = [];
@@ -291,7 +313,7 @@ export function messagesToAnthropic(
         } else if (b.type === "tool_call") {
           content.push({
             type: "tool_use",
-            id: b.id,
+            id: nextWireId(b.id),
             name: b.name,
             input: isRecord(b.args) ? b.args : {},
           });
@@ -333,14 +355,14 @@ export function messagesToAnthropic(
       } else if (text.length > 0) {
         out.push({ role: "user", content: text });
       }
-      const toolResults = collectToolResults(m.content);
+      const toolResults = collectToolResults(m.content, lastWireIdByOriginal);
       if (toolResults.length > 0) {
         out.push({ role: "user", content: toolResults });
       }
       continue;
     }
     if (m.role === "tool") {
-      const toolResults = collectToolResults(m.content);
+      const toolResults = collectToolResults(m.content, lastWireIdByOriginal);
       if (toolResults.length > 0) {
         out.push({ role: "user", content: toolResults });
       }
@@ -399,13 +421,14 @@ function userBlocks(
 /** Extract tool_result blocks from a message's content array. */
 function collectToolResults(
   blocks: ReadonlyArray<ContentBlock>,
+  idMap?: ReadonlyMap<string, string>,
 ): AnthropicToolResultBlock[] {
   const out: AnthropicToolResultBlock[] = [];
   for (const b of blocks) {
     if (b.type === "tool_result") {
       out.push({
         type: "tool_result",
-        tool_use_id: b.toolCallId,
+        tool_use_id: idMap?.get(b.toolCallId) ?? b.toolCallId,
         content: typeof b.content === "string" ? b.content : JSON.stringify(b.content),
       });
     }

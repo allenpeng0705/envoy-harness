@@ -3,6 +3,7 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 
 import {
   ACP_PROTOCOL_VERSION,
@@ -17,8 +18,16 @@ import {
   JsonRpcError,
   type ProtocolSessionBackend,
 } from "../../src/protocol/index.js";
-import { Agent, InMemorySession, ToolRegistry } from "../../src/index.js";
+import {
+  Agent,
+  InMemorySession,
+  SessionStore,
+  ToolRegistry,
+} from "../../src/index.js";
 import { HookRegistry } from "../../src/hooks/index.js";
+import { promises as fs } from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import {
   FakeModel,
   textResponse,
@@ -268,6 +277,173 @@ describe("createAgentSessionBackend", () => {
     const result = await promptPromise;
     expect(abortCalls).toBeGreaterThanOrEqual(1);
     expect(result.stopReason).toBe("aborted");
+  });
+  it("createSession persists to the sessionStore when one is configured", async () => {
+    const dir = await fs.mkdtemp(
+      path.join(os.tmpdir(), "acp-persist-"),
+    );
+    try {
+      const store = new SessionStore({ dir });
+      let receivedSession: unknown;
+      const backend = createAgentSessionBackend({
+        defaultCwd: "/proj",
+        sessionStore: store,
+        createAgent: ({ sessionId, cwd, session }) => {
+          receivedSession = session;
+          return new Agent({
+            model: new FakeModel([textResponse("ok")]),
+            tools: new ToolRegistry(),
+            hooks: new HookRegistry(),
+            session:
+              session ??
+              new InMemorySession(sessionId, {
+                cwd: cwd ?? "/proj",
+                permissionMode: "workspace-write",
+                startedAt: new Date().toISOString(),
+              }),
+            cwd: cwd ?? "/proj",
+          });
+        },
+      });
+
+      const { sessionId } = await backend.createSession({ cwd: "/proj" });
+      // The session is on disk immediately (multi-session resume needs
+      // this), and the Agent was built on the persisted session.
+      expect(await store.exists(sessionId)).toBe(true);
+      expect(receivedSession).toBeDefined();
+
+      await backend.prompt({
+        sessionId,
+        prompt: { text: "hi" },
+        signal: new AbortController().signal,
+        requestPermission: async () => "allow",
+      });
+      // Wait for the fire-and-forget JSONL flush, then verify the turn
+      // wrote through to the persisted transcript.
+      await new Promise((r) => setTimeout(r, 25));
+      const persisted = await store.load(sessionId);
+      expect(persisted.messages.length).toBeGreaterThan(0);
+
+      // loadSession can resume it under the same id.
+      const loaded = await backend.loadSession!({ sessionId });
+      expect(loaded.sessionId).toBe(sessionId);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+  it("setPolicy autoRun 'off' auto-approves tools without invoking the ask handler", async () => {
+    let askCalls = 0;
+    const backend = createAgentSessionBackend({
+      defaultCwd: "/proj",
+      createAgent: ({ sessionId, cwd, session, askHandler }) =>
+        new Agent({
+          model: new FakeModel([
+            {
+              content: [
+                {
+                  type: "tool_call",
+                  id: "t1",
+                  name: "bash",
+                  args: { command: "rm -rf /tmp/x" },
+                },
+              ],
+            },
+            textResponse("done"),
+          ]),
+          tools: (() => {
+            const registry = new ToolRegistry();
+            registry.register({
+              name: "bash",
+              description: "shell",
+              parameters: z.object({ command: z.string() }),
+              async execute({ command }) {
+                return { content: `ran: ${command}` };
+              },
+            });
+            return registry;
+          })(),
+          hooks: new HookRegistry(),
+          session:
+            session ??
+            new InMemorySession(sessionId, {
+              cwd: cwd ?? "/proj",
+              permissionMode: "workspace-write",
+              startedAt: new Date().toISOString(),
+            }),
+          cwd: cwd ?? "/proj",
+          ...(askHandler !== undefined ? { askHandler } : {}),
+        }),
+    });
+    const { sessionId } = await backend.createSession({});
+    // Set the auto-run policy to "always approve".
+    await backend.setPolicy!({ sessionId, autoRun: "off" });
+    await backend.prompt({
+      sessionId,
+      prompt: { text: "clean tmp" },
+      signal: new AbortController().signal,
+      requestPermission: async () => {
+        askCalls += 1;
+        return "deny";
+      },
+    });
+    // Even a destructive bash call ran WITHOUT asking (autoRun off).
+    expect(askCalls).toBe(0);
+  });
+  it("setPolicy autoRun 'always-confirm' still asks (host prompt fires)", async () => {
+    let askCalls = 0;
+    const backend = createAgentSessionBackend({
+      defaultCwd: "/proj",
+      createAgent: ({ sessionId, cwd, session, askHandler }) =>
+        new Agent({
+          model: new FakeModel([
+            {
+              content: [
+                {
+                  type: "tool_call",
+                  id: "t1",
+                  name: "bash",
+                  args: { command: "ls" },
+                },
+              ],
+            },
+            textResponse("done"),
+          ]),
+          tools: (() => {
+            const registry = new ToolRegistry();
+            registry.register({
+              name: "bash",
+              description: "shell",
+              parameters: z.object({ command: z.string() }),
+              async execute({ command }) {
+                return { content: `ran: ${command}` };
+              },
+            });
+            return registry;
+          })(),
+          hooks: new HookRegistry(),
+          session:
+            session ??
+            new InMemorySession(sessionId, {
+              cwd: cwd ?? "/proj",
+              permissionMode: "workspace-write",
+              startedAt: new Date().toISOString(),
+            }),
+          cwd: cwd ?? "/proj",
+          ...(askHandler !== undefined ? { askHandler } : {}),
+        }),
+    });
+    const { sessionId } = await backend.createSession({});
+    await backend.setPolicy!({ sessionId, autoRun: "always-confirm" });
+    await backend.prompt({
+      sessionId,
+      prompt: { text: "list" },
+      signal: new AbortController().signal,
+      requestPermission: async () => {
+        askCalls += 1;
+        return "deny";
+      },
+    });
+    expect(askCalls).toBeGreaterThan(0);
   });
   it("prompt returns only this-turn messages (not full history)", async () => {
     let turn = 0;

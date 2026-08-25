@@ -749,11 +749,12 @@ inject-after-cancel, reconnect), `EhStillWorkingIndicator`, `EhInputQueue`,
 
 ---
 
-## 19. Envoy Chat — per-project workspace history (implemented)
+## 19. Envoy Chat — per-project workspace history + multi-thread (implemented)
 
 **Problem:** Social “Envoy” chat kept turns only in React state. Node restart
 or remount showed an empty thread even though the harness agent had JSONL
-persistence infrastructure.
+persistence infrastructure. A single global turn lock also blocked running
+prompts in two project chats at once.
 
 **Design (Cursor / Codex / Claude Code parity):**
 
@@ -761,7 +762,9 @@ persistence infrastructure.
 |---------|---------------------|
 | **Workspace** | One project folder (`envoyHarnessCwd`) |
 | **Agent session** | One persisted harness JSONL transcript per workspace |
-| **Sidebar thread** | Single “Envoy” chat; transcript **swaps** when project folder changes |
+| **Sidebar thread** | Up to 5 “Envoy” chats (`envoyHarnessChats[]`); each `{ id, cwd, title }` |
+| **Parallel turns** | One in-flight turn **per chat**; different projects can run concurrently |
+| **Event scoping** | All `eh:*` events carry optional `chatId`; panels ignore foreign chats |
 | **Terminal** | Separate PTY per cwd (unchanged) — TUI has its own ACP child |
 | **Memories / context** | `{project}/memories` + AGENTS.md (unchanged) |
 
@@ -769,19 +772,29 @@ persistence infrastructure.
 
 - Harness sessions: `{profileDir}/envoy-harness/sessions/<uuid>.jsonl`
 - Node config map: `envoyHarnessSessionByCwd[normalizedCwd] → sessionId`
+- Chat registry: `envoyHarnessChats[]`, `activeEnvoyHarnessChatId`
 - Fallback: scan disk for most recent session with matching `metadata.cwd`
 
 **RPCs:**
 
-- `getEnvoyHarnessChatHistory` — hydrate UI on mount / cwd change
+- `getEnvoyHarnessChatHistory` / `openEnvoyHarnessChat` — hydrate UI per chat
+- `listEnvoyHarnessChats`, `createEnvoyHarnessChat`, `removeEnvoyHarnessChat`
+- `startEnvoyHarnessTurn(prompt, attachments?, chatId?)` — scoped busy check
+- `getEnvoyHarnessTurnStatus(chatId?)`, `cancelEnvoyHarnessTurn(chatId?)`
 - `resetEnvoyHarnessChat` — `/new`, `/clear`, `/reset` (fresh session for cwd)
 - `EnvoyHarnessStatus.sessionId` + `messageCount` — header/debug
 
+**Runtime (node):** `EhChatRuntime` holds per-chat ACP hosts + active turns;
+permission / user-question bridges resolve `chatId` via session map.
+
+**UI:** `EnvoyHarnessPanel` filters `eh:permission`, `eh:user_question`,
+`eh:activity`, `eh:turn_hints`, `eh:prompt_busy` by `effectiveChatId`;
+`useEhTurnQueue` scopes token/complete/busy/reconnect the same way.
+Legacy events without `chatId` remain accepted for the terminal rail.
+
 **ACP host:** `session/load` when mapping exists; `session/new` creates
 **persisted** JSONL (agent-backend `createSession` uses `SessionStore.create`).
-
-**Future (not v1):** multiple sidebar “Envoy” threads per user via
-`envoyHarnessChats[]` `{ id, cwd, sessionId, title }` — same storage, picker UI.
+One persistent ACP child per chat (not one global host).
 
 ---
 

@@ -290,6 +290,18 @@ export function attachAcpServer(options: AcpServerOptions): () => void {
         return { result: await backend.setPolicy(p) };
       }
 
+      case "session/get_policy": {
+        assertInitialized(initialized);
+        if (backend.getPolicy === undefined) {
+          throw new JsonRpcError(
+            "session/get_policy not supported",
+            JsonRpcErrorCode.METHOD_NOT_FOUND,
+          );
+        }
+        const sessionId = readSessionId(params);
+        return { result: await backend.getPolicy({ sessionId }) };
+      }
+
       case "git/diff": {
         assertInitialized(initialized);
         if (backend.gitDiff === undefined) {
@@ -657,6 +669,7 @@ function parseSetPolicyParams(params: unknown): {
   sessionId: string;
   sandbox?: "read-only" | "workspace-write" | "danger-full-access";
   approval?: "unless-trusted" | "on-request" | "granular" | "never";
+  autoRun?: "always-confirm" | "safe-only" | "off";
 } {
   if (params === null || typeof params !== "object") {
     throw new JsonRpcError("invalid params", JsonRpcErrorCode.INVALID_PARAMS);
@@ -665,6 +678,7 @@ function parseSetPolicyParams(params: unknown): {
     sessionId?: unknown;
     sandbox?: unknown;
     approval?: unknown;
+    autoRun?: unknown;
   };
   const sessionId = readSessionId(params);
   const sandbox =
@@ -675,9 +689,16 @@ function parseSetPolicyParams(params: unknown): {
     typeof obj.approval === "string" && APPROVAL_MODES.has(obj.approval)
       ? (obj.approval as "unless-trusted" | "on-request" | "granular" | "never")
       : undefined;
-  if (sandbox === undefined && approval === undefined) {
+  const autoRun =
+    typeof obj.autoRun === "string" &&
+    (obj.autoRun === "always-confirm" ||
+      obj.autoRun === "safe-only" ||
+      obj.autoRun === "off")
+      ? (obj.autoRun as "always-confirm" | "safe-only" | "off")
+      : undefined;
+  if (sandbox === undefined && approval === undefined && autoRun === undefined) {
     throw new JsonRpcError(
-      "sandbox or approval required",
+      "sandbox, approval, or autoRun required",
       JsonRpcErrorCode.INVALID_PARAMS,
     );
   }
@@ -685,6 +706,7 @@ function parseSetPolicyParams(params: unknown): {
     sessionId,
     ...(sandbox !== undefined ? { sandbox } : {}),
     ...(approval !== undefined ? { approval } : {}),
+    ...(autoRun !== undefined ? { autoRun } : {}),
   };
 }
 

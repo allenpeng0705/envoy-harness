@@ -349,8 +349,12 @@ export type OpenAIMessage =
 /** A tool call in an assistant message. */
 export interface OpenAIToolCall {
   id: string;
-  type: "function";
-  function: { name: string; arguments: string };
+  type?: "function";
+  function?: { name: string; arguments: string };
+  /** Flat-shape providers (MiniMax, local llama-server) omit the
+   *  `function` wrapper and send `name`/`arguments` at the top level. */
+  name?: string;
+  arguments?: string;
 }
 
 /**
@@ -361,6 +365,30 @@ export interface OpenAIToolCall {
  */
 export function messagesToOpenAI(messages: ReadonlyArray<Message>): OpenAIMessage[] {
   const out: OpenAIMessage[] = [];
+  // Providers require UNIQUE tool_call ids across the whole conversation.
+  // Some models (MiniMax, weaker local models) reuse an id across turns,
+  // which the API rejects with `400 duplicate tool_call id`. Remap repeats
+  // to fresh ids and rewrite the matching tool_result references.
+  const usedWireIds = new Set<string>();
+  const lastWireIdByOriginal = new Map<string, string>();
+  let generated = 0;
+  const nextWireId = (original: string): string => {
+    const source = original.trim();
+    if (source.length > 0 && !usedWireIds.has(source)) {
+      usedWireIds.add(source);
+      lastWireIdByOriginal.set(original, source);
+      return source;
+    }
+    generated += 1;
+    let candidate = `call_${generated}`;
+    while (usedWireIds.has(candidate)) {
+      generated += 1;
+      candidate = `call_${generated}`;
+    }
+    usedWireIds.add(candidate);
+    lastWireIdByOriginal.set(original, candidate);
+    return candidate;
+  };
   for (const m of messages) {
     if (m.role === "system") {
       const text = blocksToText(m.content);
@@ -403,8 +431,9 @@ export function messagesToOpenAI(messages: ReadonlyArray<Message>): OpenAIMessag
       const toolCalls: OpenAIToolCall[] = [];
       for (const b of m.content) {
         if (b.type === "tool_call") {
+          const wireId = nextWireId(b.id);
           toolCalls.push({
-            id: b.id,
+            id: wireId,
             type: "function",
             function: {
               name: b.name,
@@ -432,7 +461,7 @@ export function messagesToOpenAI(messages: ReadonlyArray<Message>): OpenAIMessag
             : JSON.stringify(b.content);
           out.push({
             role: "tool",
-            tool_call_id: b.toolCallId,
+            tool_call_id: lastWireIdByOriginal.get(b.toolCallId) ?? b.toolCallId,
             content,
           });
         }

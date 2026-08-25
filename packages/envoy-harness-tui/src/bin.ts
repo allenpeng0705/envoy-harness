@@ -31,12 +31,14 @@ const TUI_HELP = `envoy-harness-tui — terminal host for envoy-harness (ACP)
 Usage:
   envoy-harness-tui [--demo | --spawn | --cluster-only]
                     [--peers <id>@<host:port>] [--connect-timeout-ms <n>]
-                    [--provider <name>] [--model <model>] [--ask-permission]
+                    [--provider <name>] [--model <model>]
+                    [--permissions default|ask|approve] [--ask-permission]
 
 Modes:
   --demo            in-process fake backend (default)
   --spawn           spawn \`envoy-harness --acp\` and attach over stdio;
-                    pass --provider/--model for a live model
+                    pass --provider/--model for a live model and
+                    --permissions to set the auto-run policy on session start
   --cluster-only    mesh cluster console (distributed ops; chat echoes hint)
 
 Mesh / collaboration:
@@ -50,7 +52,8 @@ Mesh / collaboration:
   --no-color         disable ANSI colors (status bar + transcript)
 
 Inside the TUI: /mesh /help /cluster /peers /route /scoreboard /team /trace
-Permission prompts: type allow or deny
+Permission: /permissions (show) | default | ask | approve · /sandbox · /approval
+Prompts: type allow or deny
 `;
 
 function buildHarnessArgs(
@@ -74,6 +77,22 @@ function buildHarnessArgs(
     harnessArgs.push("--peers", `${peer.id}@${peer.endpoint}`);
   }
   return harnessArgs;
+}
+
+/** Parse `--permissions default|ask|approve` (hosts pass their policy). */
+function parsePermissionsFlag(
+  argv: readonly string[],
+): "safe-only" | "always-confirm" | "off" | undefined {
+  const index = argv.indexOf("--permissions");
+  if (index === -1) return undefined;
+  const raw = argv[index + 1]?.toLowerCase();
+  if (raw === "default") return "safe-only";
+  if (raw === "ask") return "always-confirm";
+  if (raw === "approve") return "off";
+  if (raw === "safe-only" || raw === "always-confirm" || raw === "off") {
+    return raw;
+  }
+  return undefined;
 }
 
 async function main(): Promise<void> {
@@ -145,6 +164,7 @@ async function main(): Promise<void> {
 
   if (spawn) {
     const harnessArgs = buildHarnessArgs(argv, configuredPeers);
+    const initialAutoRun = parsePermissionsFlag(argv);
     const spawnEnv =
       configuredPeers.length > 0
         ? {
@@ -157,6 +177,7 @@ async function main(): Promise<void> {
       stderr: "inherit",
       harnessArgs,
       env: spawnEnv,
+      ...(initialAutoRun !== undefined ? { initialAutoRun } : {}),
     });
     try {
       const meshNote =

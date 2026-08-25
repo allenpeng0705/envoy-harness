@@ -351,13 +351,24 @@ export class EnvoyHarnessClient {
     policy: {
       sandbox?: "read-only" | "workspace-write" | "danger-full-access";
       approval?: "unless-trusted" | "on-request" | "granular" | "never";
+      autoRun?: "always-confirm" | "safe-only" | "off";
     },
-  ): Promise<{ sandbox?: string; approval?: string }> {
+  ): Promise<{ sandbox?: string; approval?: string; autoRun?: string }> {
     const res = (await this.#conn.request("session/set_policy", {
       sessionId,
       ...(policy.sandbox !== undefined ? { sandbox: policy.sandbox } : {}),
       ...(policy.approval !== undefined ? { approval: policy.approval } : {}),
-    })) as { result: { sandbox?: string; approval?: string } };
+      ...(policy.autoRun !== undefined ? { autoRun: policy.autoRun } : {}),
+    })) as { result: { sandbox?: string; approval?: string; autoRun?: string } };
+    return res.result;
+  }
+
+  async getSessionPolicy(
+    sessionId: string,
+  ): Promise<{ sandbox?: string; approval?: string; autoRun?: string }> {
+    const res = (await this.#conn.request("session/get_policy", {
+      sessionId,
+    })) as { result: { sandbox?: string; approval?: string; autoRun?: string } };
     return res.result;
   }
 
