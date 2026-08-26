@@ -3,6 +3,7 @@
  */
 
 import { color, SGR } from "./theme.js";
+import { displayWidth } from "./screen.js";
 
 export type TranscriptRole =
   | "user"
@@ -236,11 +237,13 @@ function boxLines(
 ): string {
   const width = Math.min(
     76,
-    Math.max(20, ...innerLines.map((l) => l.length)),
+    Math.max(20, ...innerLines.map(displayWidth)),
   );
   const top = `┌${"─".repeat(width + 2)}┐`;
   const bottom = `└${"─".repeat(width + 2)}┘`;
-  const body = innerLines.map((l) => `│ ${l.padEnd(width)} │`);
+  const body = innerLines.map((l) =>
+    `│ ${l}${" ".repeat(Math.max(0, width - displayWidth(l)))} │`,
+  );
   const boxed = [top, ...body, bottom].join("\n");
   if (options?.useColor) {
     return color(boxed, SGR.yellow);

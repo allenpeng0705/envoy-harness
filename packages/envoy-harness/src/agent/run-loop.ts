@@ -47,7 +47,9 @@ import type { ContentBlock } from "../tools/index.js";
 import type { ModelResponse } from "../model.js";
 import type { Agent, AgentResult } from "../agent.js";
 import { MCP_TOOL_PREFIX } from "../mcp/types.js";
+import { injectEphemeralUserContext } from "../context/ephemeral-user-context.js";
 import { assembleTurnContext } from "../context/turn-context.js";
+import { stripThinking } from "../util/strip-thinking.js";
 
 /**
  * Run the agent's turn loop. Reads from the
@@ -103,11 +105,9 @@ export async function runAgentLoop(
     ...(plan !== undefined ? { plan } : {}),
   });
   agent.skillCatalogDigest = turnCtx.skillCatalogDigest;
-  if (turnCtx.text.length > 0) {
-    agent.session.appendMessage("user", [
-      { type: "text", text: turnCtx.text },
-    ]);
-  }
+  // Do not persist turn context (skills / memory index / plan) — it is
+  // model-only and would show up as a phantom user bubble above the real
+  // human message in EH chat UIs.
 
   if (typeof prompt === "string") {
     agent.session.appendMessage("user", [{ type: "text", text: prompt }]);
@@ -173,6 +173,7 @@ export async function runAgentLoop(
     { count: number; lastError: string }
   >();
   let emptyResponseHinted = false;
+  let turnContextInjected = false;
   while (iterations < agent.maxIterations) {
     if (agent.abortController.signal.aborted) {
       return agent.makeResult([], "aborted", iterations);
@@ -182,8 +183,16 @@ export async function runAgentLoop(
     // 1. Call the model.
     let response: ModelResponse;
     try {
+      const messagesForModel =
+        !turnContextInjected && turnCtx.text.length > 0
+          ? injectEphemeralUserContext(
+              agent.session.messages,
+              turnCtx.text,
+            )
+          : agent.session.messages;
+      if (!turnContextInjected) turnContextInjected = true;
       response = await agent.model.complete({
-        messages: agent.session.messages,
+        messages: messagesForModel,
         tools: [...agent.tools.list(), ...mcpToolDefinitions],
         signal: agent.abortController.signal,
         ...(agent.assistantStreamSink !== undefined
@@ -304,8 +313,41 @@ export async function runAgentLoop(
         b.type === "tool_call",
     );
 
-    // 4. No tool calls → done.
+    // 4. No tool calls → done — unless the reply is thinking-only
+    //    (models often end_turn inside `<think>` without writing the
+    //    user-facing answer). Treat that like an empty response and
+    //    ask once for a real reply. If it still won't produce visible
+    //    text, return an explicit fallback so hosts don't show a blank
+    //    bubble (and don't treat the turn as "success with no content").
     if (toolCalls.length === 0) {
+      const visible = visibleTextFromContent(normalizedContent);
+      if (visible.length === 0 && !emptyResponseHinted) {
+        emptyResponseHinted = true;
+        const hint =
+          "[system] Your previous response had no user-visible answer (only private reasoning, or it was empty). Please answer the user's request now in plain text — do not put the answer only inside thinking tags.";
+        agent.session.appendMessage("user", [{ type: "text", text: hint }]);
+        agent.emit({
+          kind: "error",
+          ts: new Date().toISOString(),
+          iteration: iterations,
+          message: "thinking-only model response — retrying with a hint",
+        });
+        continue;
+      }
+      if (visible.length === 0) {
+        const fallback: ContentBlock[] = [
+          {
+            type: "text",
+            text: "(No visible reply was produced after retrying. Please try again or rephrase.)",
+          },
+        ];
+        agent.session.appendMessage("assistant", fallback);
+        return agent.makeResult(
+          fallback,
+          normalizeStopReason(response.stopReason),
+          iterations,
+        );
+      }
       return agent.makeResult(
         response.content,
         normalizeStopReason(response.stopReason),
@@ -407,6 +449,17 @@ function normalizeStopReason(
   modelReason: ModelResponse["stopReason"],
 ): AgentResult["stopReason"] {
   return modelReason;
+}
+
+/** Join text blocks and strip thinking wrappers → user-visible reply. */
+function visibleTextFromContent(
+  content: ReadonlyArray<ContentBlock>,
+): string {
+  const raw = content
+    .filter((b): b is Extract<ContentBlock, { type: "text" }> => b.type === "text")
+    .map((b) => b.text)
+    .join("\n");
+  return stripThinking(raw);
 }
 
 /**

@@ -1246,6 +1246,12 @@ export class TuiSession {
     if (activity.kind === "agent_end") {
       this.#collapseTurnActivityLines();
     }
+    // Quiet live feed: model thinking / successful tool stdout are noise.
+    // Keep tool_call (what it's doing), errors, progress, and agent_end.
+    if (activity.kind === "model_response") return;
+    if (activity.kind === "tool_result" && activity.isError !== true) return;
+    if (activity.kind === "agent_start") return;
+
     const key =
       activity.kind === "tool_progress"
         ? `${activity.kind}\0${activity.ts ?? ""}\0${activity.summary}`

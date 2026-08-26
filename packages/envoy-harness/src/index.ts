@@ -710,6 +710,12 @@ export {
 } from "./context/turn-context.js";
 
 export {
+  isEphemeralUserContextText,
+  isEphemeralUserMessage,
+  injectEphemeralUserContext,
+} from "./context/ephemeral-user-context.js";
+
+export {
   createDefaultCredentials,
   wireEnvironmentTools,
   type EnvironmentCapabilities,

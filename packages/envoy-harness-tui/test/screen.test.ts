@@ -9,6 +9,7 @@ import {
   buildRailLine,
   buildStatusLine,
   fitLine,
+  displayWidth,
   layoutRows,
   Screen,
 } from "../src/screen.js";
@@ -35,6 +36,14 @@ describe("fitLine", () => {
     expect(fitLine("hello world", 8)).toBe("hello w…");
     expect(fitLine("x", 1)).toBe("x");
     expect(fitLine("xy", 1)).toBe("…");
+  });
+
+  it("measures ANSI, CJK, emoji, and combining marks by terminal columns", () => {
+    expect(displayWidth("\x1b[36m你好\x1b[0m")).toBe(4);
+    expect(displayWidth("A🙂e\u0301")).toBe(4);
+    expect(displayWidth("👩‍💻🇨🇳")).toBe(4);
+    expect(visible(fitLine("你好世界", 5))).toBe("你好…");
+    expect(fitLine("🙂🙂🙂", 5)).not.toContain("\ud83d…");
   });
 });
 
@@ -212,5 +221,16 @@ describe("Screen", () => {
     // row 5 = "> ab", row 6 clipped? layoutRows returns exactly height rows:
     // status(1) + transcript(3) + input(2) = 6. Cursor row = 5 + cursorLine(1) + 1 = 6.
     expect(cap.text()).toContain("\x1b[6;2H");
+  });
+
+  it("reflows after a terminal resize", () => {
+    const cap = capture();
+    const screen = new Screen(cap.stream, { width: 20, height: 5 });
+    screen.render({ statusLine: "a long status", transcript: ["body"], inputLines: [">"] });
+    const before = cap.text().length;
+    screen.setSize(6, 3);
+    screen.render({ statusLine: "a long status", transcript: ["body"], inputLines: [">"] });
+    const delta = visible(cap.text().slice(before));
+    expect(delta).toContain("a lon…");
   });
 });

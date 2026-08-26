@@ -11,6 +11,7 @@ import { newSessionId } from "../session.js";
 import type { AskHandler } from "../types.js";
 import type { Tracer } from "../trace/types.js";
 import { traceEventToActivity } from "./activity-format.js";
+import { stripThinking } from "../util/strip-thinking.js";
 import { formatGitOutput, runGitDiff, runGitStatus } from "./git-runner.js";
 import { traceEventToCommittedMessage } from "./message-format.js";
 import {
@@ -464,7 +465,9 @@ export function createAgentSessionBackend(
         const turnMessages = result.messages.slice(priorCount);
         const messages: ProtocolCommittedMessage[] = [];
         for (const m of turnMessages) {
-          const text = messageText(m.content);
+          const raw = messageText(m.content);
+          const text =
+            m.role === "assistant" ? stripThinking(raw) : raw;
           if (text.length === 0) continue;
           const role = m.role as ProtocolCommittedMessage["role"];
           const msg: ProtocolCommittedMessage = { role, text };

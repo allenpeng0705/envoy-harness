@@ -2,7 +2,7 @@ import type { JSX } from "react";
 
 import type { UseEhuiPanelOptions } from "./use-ehui-panel.js";
 import { useEhuiPanel } from "./use-ehui-panel.js";
-import { MEMORY_OPS, PLAN_ACTIONS } from "./ehui-constants.js";
+import { MEMORY_OPS, MEMORY_OP_LABELS, PLAN_ACTIONS, PLAN_ACTION_LABELS } from "./ehui-constants.js";
 
 export interface EhuiPanelContentProps extends UseEhuiPanelOptions {
   className?: string;
@@ -57,7 +57,7 @@ export function EhuiPanelContent(props: EhuiPanelContentProps): JSX.Element {
               onClick={() => setPlanAction(action)}
               aria-pressed={planAction === action}
             >
-              {action}
+              {PLAN_ACTION_LABELS[action]}
             </button>
           ))}
         </div>
@@ -73,9 +73,11 @@ export function EhuiPanelContent(props: EhuiPanelContentProps): JSX.Element {
                 onClick={() => setMemoryOp(op)}
                 aria-pressed={memoryOp === op}
               >
-                {op}
+                {MEMORY_OP_LABELS[op]}
               </button>
             ))}
+          </div>
+          <div className="ehui-panel-actions">
             <button
               type="button"
               className={primaryActionButtonClassName}

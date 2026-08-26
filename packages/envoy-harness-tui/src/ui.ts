@@ -157,8 +157,8 @@ async function runInteractiveScreen(
   const output = options.output ?? process.stdout;
   const { session } = options;
   const screen = new Screen(output, {
-    ...(options.width !== undefined ? { width: options.width } : {}),
-    ...(options.height !== undefined ? { height: options.height } : {}),
+    width: options.width ?? (output as NodeJS.WriteStream).columns ?? 80,
+    height: options.height ?? (output as NodeJS.WriteStream).rows ?? 24,
     ...(options.accent !== undefined ? { accent: options.accent } : {}),
   });
   const composer = new Composer();
@@ -171,6 +171,16 @@ async function runInteractiveScreen(
   let discoveryUnsubscribe: (() => void) | undefined;
   let clusterRoutePreviews: ClusterRoutePreviews | undefined;
   let paletteIndex = 0;
+  const resizeOutput = output as NodeJS.WriteStream;
+  const onResize = (): void => {
+    if (options.width === undefined || options.height === undefined) {
+      screen.setSize(
+        options.width ?? resizeOutput.columns ?? screen.width,
+        options.height ?? resizeOutput.rows ?? screen.height,
+      );
+      void render();
+    }
+  };
 
   const inputPrefix = (): string => {
     if (session.pendingPermission !== undefined) {
@@ -313,10 +323,12 @@ async function runInteractiveScreen(
     // Detach emitKeypressEvents' data consumer so an open stdin (TTY)
     // doesn't keep the process alive after the UI exits.
     input.removeAllListeners("data");
+    resizeOutput.off?.("resize", onResize);
     if (typeof raw.pause === "function") raw.pause();
   };
 
   session.setOnTranscript(() => void render());
+  resizeOutput.on?.("resize", onResize);
 
   await render();
   // U3 — subscribe to the host's discovery stream (best-effort).

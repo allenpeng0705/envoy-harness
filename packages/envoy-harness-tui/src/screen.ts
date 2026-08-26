@@ -41,11 +41,100 @@ export interface ScreenOptions {
   accent?: string;
 }
 
-/** Truncate a line to `width` columns (fits ≥ 1). */
+const ANSI_SGR = /^\x1b\[[0-?]*[ -/]*[@-~]/;
+
+function runeWidth(rune: string): number {
+  const cp = rune.codePointAt(0) ?? 0;
+  if (cp === 0 || cp < 32 || (cp >= 0x7f && cp < 0xa0)) return 0;
+  if (/\p{Mark}/u.test(rune) || cp === 0x200d || cp === 0xfe0f) return 0;
+  return cp >= 0x1100 &&
+    (cp <= 0x115f || cp === 0x2329 || cp === 0x232a ||
+      (cp >= 0x2e80 && cp <= 0xa4cf && cp !== 0x303f) ||
+      (cp >= 0xac00 && cp <= 0xd7a3) ||
+      (cp >= 0xf900 && cp <= 0xfaff) ||
+      (cp >= 0xfe10 && cp <= 0xfe19) ||
+      (cp >= 0xfe30 && cp <= 0xfe6f) ||
+      (cp >= 0xff00 && cp <= 0xff60) ||
+      (cp >= 0xffe0 && cp <= 0xffe6) ||
+      (cp >= 0x1f300 && cp <= 0x1faff) ||
+      (cp >= 0x20000 && cp <= 0x3fffd))
+    ? 2
+    : 1;
+}
+
+function nextGrapheme(text: string, start: number): string {
+  let end = start;
+  let regionalIndicators = 0;
+  while (end < text.length) {
+    const rune = String.fromCodePoint(text.codePointAt(end)!);
+    const cp = rune.codePointAt(0)!;
+    const joinsPrevious = end > start && (
+      /\p{Mark}/u.test(rune) ||
+      cp === 0xfe0f ||
+      cp === 0x20e3 ||
+      (cp >= 0x1f3fb && cp <= 0x1f3ff)
+    );
+    if (end > start && !joinsPrevious && text.codePointAt(end - 1) !== 0x200d) {
+      const isRegional = cp >= 0x1f1e6 && cp <= 0x1f1ff;
+      if (!isRegional || regionalIndicators !== 1) break;
+    }
+    if (cp >= 0x1f1e6 && cp <= 0x1f1ff) regionalIndicators++;
+    end += rune.length;
+    if (text.codePointAt(end) === 0x200d) {
+      end += 1;
+    }
+  }
+  return text.slice(start, end);
+}
+
+function graphemeWidth(grapheme: string): number {
+  let width = 0;
+  for (const rune of grapheme) {
+    const cp = rune.codePointAt(0)!;
+    width = Math.max(width, cp >= 0x1f1e6 && cp <= 0x1f1ff ? 2 : runeWidth(rune));
+  }
+  return width;
+}
+
+/** Visible terminal columns, ignoring ANSI control sequences. */
+export function displayWidth(text: string): number {
+  let width = 0;
+  for (let i = 0; i < text.length;) {
+    const ansi = text.slice(i).match(ANSI_SGR)?.[0];
+    if (ansi !== undefined) {
+      i += ansi.length;
+      continue;
+    }
+    const grapheme = nextGrapheme(text, i);
+    width += graphemeWidth(grapheme);
+    i += grapheme.length;
+  }
+  return width;
+}
+
+/** Truncate a line to `width` terminal columns without splitting glyphs/ANSI. */
 export function fitLine(text: string, width: number): string {
-  if (text.length <= width) return text;
+  if (displayWidth(text) <= width) return text;
   if (width <= 1) return "…";
-  return `${text.slice(0, width - 1)}…`;
+  let out = "";
+  let columns = 0;
+  let hasAnsi = false;
+  for (let i = 0; i < text.length;) {
+    const ansi = text.slice(i).match(ANSI_SGR)?.[0];
+    if (ansi !== undefined) {
+      hasAnsi = true;
+      out += ansi;
+      i += ansi.length;
+      continue;
+    }
+    const rune = nextGrapheme(text, i);
+    const next = graphemeWidth(rune);
+    if (columns + next > width - 1) break;
+    out += rune;
+    columns += next;
+    i += rune.length;
+  }
+  return `${out}${hasAnsi ? "\x1b[0m" : ""}…`;
 }
 
 /**
@@ -211,8 +300,8 @@ export function buildRailLine(
  */
 export class Screen {
   readonly #output: NodeJS.WritableStream;
-  readonly #width: number;
-  readonly #height: number;
+  #width: number;
+  #height: number;
   readonly #accent: string | undefined;
   #last: string[] = [];
   #drawn = false;
@@ -230,6 +319,13 @@ export class Screen {
 
   get height(): number {
     return this.#height;
+  }
+
+  setSize(width: number, height: number): void {
+    this.#width = Math.max(1, width);
+    this.#height = Math.max(1, height);
+    this.#last = [];
+    this.#drawn = false;
   }
 
   /** Redraw with a diff. Rows are 1-based; the cursor ends on the input row. */

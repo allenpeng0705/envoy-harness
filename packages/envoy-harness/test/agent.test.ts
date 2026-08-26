@@ -489,6 +489,38 @@ describe("Agent: tool call flow", () => {
     expect(hint).toBeDefined();
   });
 
+  it("retries a thinking-only end_turn so the user gets a real answer", async () => {
+    const model = new FakeModel([
+      {
+        content: [
+          {
+            type: "text",
+            text: "<think>I should write the summary now…</think>",
+          },
+        ],
+        stopReason: "end_turn",
+      },
+      textResponse("## Agent loop\n\nHere is the detailed summary."),
+    ]);
+    const { agent, session } = makeAgent(model);
+    const result = await agent.run("summarize the agent loop");
+    expect(result.stopReason).toBe("end_turn");
+    expect(result.content[0]).toMatchObject({
+      type: "text",
+      text: "## Agent loop\n\nHere is the detailed summary.",
+    });
+    const hint = session.messages.find(
+      (m) =>
+        m.role === "user" &&
+        m.content.some(
+          (b) =>
+            b.type === "text" &&
+            b.text.includes("no user-visible answer"),
+        ),
+    );
+    expect(hint).toBeDefined();
+  });
+
   it("handles invalid args gracefully (zod validation failure)", async () => {
     const model = new FakeModel([
       // echo expects { message: string }; pass a number.

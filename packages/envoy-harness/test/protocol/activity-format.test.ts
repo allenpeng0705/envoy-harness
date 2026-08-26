@@ -38,4 +38,38 @@ describe("traceEventToActivity", () => {
     expect(a.summary).toContain("done");
     expect(a.costUsd).toBe(0.0123);
   });
+
+  it("does not paste thinking into model_response summaries", () => {
+    const a = traceEventToActivity({
+      kind: "model_response",
+      ts: "2026-01-01T00:00:00.000Z",
+      iteration: 1,
+      stopReason: "end_turn",
+      content: [
+        {
+          type: "text",
+          text: "<think>planning the answer…</think>",
+        },
+      ],
+    });
+    expect(a.summary).toBe("model responded (end_turn)");
+    expect(a.summary).not.toContain("planning");
+  });
+
+  it("summarizes bash listings without dumping entries", () => {
+    const listing = Array.from({ length: 12 }, (_, i) => `file-${i}.ts`).join(
+      "\n",
+    );
+    const a = traceEventToActivity({
+      kind: "tool_result",
+      ts: "2026-01-01T00:00:00.000Z",
+      iteration: 1,
+      callId: "c1",
+      toolName: "bash",
+      durationMs: 10,
+      result: { content: listing },
+    });
+    expect(a.summary).toBe("listed 12 entries");
+    expect(a.resultPreview!.length).toBeLessThanOrEqual(240);
+  });
 });

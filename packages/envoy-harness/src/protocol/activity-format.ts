@@ -1,10 +1,14 @@
 /**
  * Map agent trace events to protocol activity records for TUI / hosts.
+ *
+ * Keep summaries short: hosts show these inline during a turn, so dumping
+ * tool stdout or model thinking here is pure noise.
  */
 
 import type { ToolCall } from "../tools/index.js";
 import type { TraceEvent } from "../trace/types.js";
 import type { ProtocolActivityEvent } from "./session-backend.js";
+import { stripThinking } from "../util/strip-thinking.js";
 
 function truncate(s: string, max: number): string {
   if (s.length <= max) return s;
@@ -43,7 +47,7 @@ function summarizeToolCall(call: ToolCall): string {
     const cmd = typeof args.command === "string" ? args.command : "";
     return `bash — ${truncate(cmd.replace(/\s+/g, " ").trim(), 64)}`;
   }
-  if (call.name === "read_file") {
+  if (call.name === "read_file" || call.name === "read") {
     const path = typeof args.path === "string" ? args.path : "?";
     return `read ${path}`;
   }
@@ -54,6 +58,10 @@ function summarizeToolCall(call: ToolCall): string {
   }
 }
 
+/**
+ * Prefer status over content dumps. Directory listings and file bodies
+ * used to be pasted into the timeline and drowned out the real answer.
+ */
 function summarizeToolResult(
   toolName: string | undefined,
   content: string,
@@ -61,11 +69,37 @@ function summarizeToolResult(
 ): string {
   const trimmed = content.trim();
   if (trimmed.length === 0) return isError ? "(error, empty)" : "(ok)";
-  const head = truncate(trimmed.replace(/\s+/g, " "), 120);
-  if (toolName === "write" || toolName === "edit") {
-    return isError ? `failed — ${head}` : `updated — ${head}`;
+  if (isError) {
+    return `error — ${truncate(trimmed.replace(/\s+/g, " "), 80)}`;
   }
-  return isError ? `error — ${head}` : head;
+
+  const lines = trimmed.split(/\r?\n/).filter((line) => line.length > 0);
+  const name = toolName ?? "";
+
+  if (name === "write" || name === "edit") return "updated";
+  if (name === "read_file" || name === "read") {
+    return lines.length <= 1 ? "read" : `read ${lines.length} lines`;
+  }
+  if (name === "bash" || name === "shell") {
+    // Typical `ls` / `find` dumps: many short lines → don't paste them.
+    if (
+      lines.length >= 6 &&
+      lines.every((line) => line.length < 100) &&
+      !trimmed.includes("\n\n")
+    ) {
+      return `listed ${lines.length} entries`;
+    }
+    if (lines.length === 1 && lines[0]!.length < 80) return lines[0]!;
+    return lines.length > 1 ? `ok (${lines.length} lines)` : "ok";
+  }
+  if (
+    lines.length >= 8 &&
+    lines.every((line) => line.length < 100) &&
+    !trimmed.includes("\n\n")
+  ) {
+    return `listed ${lines.length} entries`;
+  }
+  return truncate(trimmed.replace(/\s+/g, " "), 72);
 }
 
 /** Convert one trace event to a wire-safe activity record. */
@@ -89,14 +123,16 @@ export function traceEventToActivity(event: TraceEvent): ProtocolActivityEvent {
         .filter((b) => b.type === "text")
         .map((b) => (b as { text: string }).text)
         .join("");
-      const preview =
-        textBlocks.length > 0
-          ? truncate(textBlocks.replace(/\s+/g, " ").trim(), 80)
-          : "";
+      const visible = stripThinking(textBlocks).replace(/\s+/g, " ").trim();
+      const hasTools = event.content.some((b) => b.type === "tool_call");
+      // Never paste thinking into the timeline — hosts already stream the
+      // real answer separately when there is one.
       const summary =
-        preview.length > 0
-          ? `${preview} (${event.stopReason})`
-          : `model responded (${event.stopReason})`;
+        visible.length > 0
+          ? `${truncate(visible, 72)} (${event.stopReason})`
+          : hasTools
+            ? `model responded (tool_use)`
+            : `model responded (${event.stopReason})`;
       return {
         ...base,
         kind: "model_response",
@@ -125,7 +161,9 @@ export function traceEventToActivity(event: TraceEvent): ProtocolActivityEvent {
         toolCallId: event.callId,
         isError,
         durationMs: event.durationMs,
-        resultPreview: text,
+        // Keep preview short on the wire — hosts that want full output
+        // should read the session transcript, not the activity feed.
+        resultPreview: truncate(text, 240),
         summary: summarizeToolResult(event.toolName, text, isError),
       };
     }
