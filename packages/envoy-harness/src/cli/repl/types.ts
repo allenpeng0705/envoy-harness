@@ -22,6 +22,7 @@ import type { ModelAdapter } from "../../model.js";
 import type { Agent } from "../../agent.js";
 import type { SubagentRecord } from "../../subagent/types.js";
 import type { VerifierRule } from "../../verifier/types.js";
+import type { SkillRegistry } from "../../skills/registry.js";
 import type { RunParsedArgs } from "../argv.js";
 import type { ReplCommandRegistry } from "./registry.js";
 
@@ -92,6 +93,14 @@ export interface ReplOptions {
    */
   verifierRules?: ReadonlyArray<VerifierRule>;
   /**
+   * Phase G: skill registry override. When set, the REPL does
+   * not scan the default project/user skill roots — the caller
+   * controls exactly which skills the agent sees. Tests pass an
+   * empty registry so transcripts are hermetic (the skill-catalog
+   * fragment is only injected when the registry is non-empty).
+   */
+  skills?: SkillRegistry;
+  /**
    * F17.2.5: optional profile loader. The `/profile` command
    * reads this; when undefined, prints "no profile loader".
    * The host reads the TOML config and adapts it to the
@@ -145,6 +154,28 @@ export interface ReplOptions {
    * a real `LocalMeshSubmitter`.
    */
   subagentRegistry?: SubagentRegistry;
+  /**
+   * Phase A / Item 5: the user-question service. When
+   * set, the REPL loop uses this service instead of
+   * creating a fresh one (the default behavior is
+   * "create a fresh service + register the REPL
+   * stdin provider"). Tests inject a fake service
+   * here to drive `ask_user` tool calls
+   * deterministically. Hosts that want a different
+   * provider (Tauri, mesh) can pass their own
+   * pre-populated service.
+   */
+  userQuestions?: import("../../interaction/index.js").UserQuestionService;
+  /**
+   * Phase A / Item 2: the memory store. When set,
+   * the REPL's `/memory` commands use this store
+   * directly. The default behavior (when unset) is
+   * to create a fresh `LocalMemoryStore` rooted at
+   * `./memories` (or `$ENVOY_MEMORY_DIR` when set).
+   * Tests inject a `LocalMemoryStore` rooted at a
+   * temp dir.
+   */
+  memoryStore?: import("../../memories/index.js").MemoryStore;
   /**
    * F14.1: seed value for `ReplContext.lastResponse`.
    * When set, the loop uses this as the initial
@@ -334,6 +365,14 @@ export interface ReplContext {
    *  "no sub-agents (the agent has no meshSubmitter
    *  or the submitter doesn't implement listSubagents)". */
   subagentRegistry?: SubagentRegistry;
+  /** Phase A / Item 2: the memory store. The `/memory`
+   * commands read + write this; when undefined, the
+   * commands print "no memory store configured".
+   * The REPL loop sets this from
+   * `ReplOptions.memoryStore` (or constructs a
+   * `LocalMemoryStore` from `$ENVOY_MEMORY_DIR` /
+   * `./memories` as a default). */
+  memoryStore?: import("../../memories/index.js").MemoryStore;
   /**
    * F14.1: the last assistant text from the most recent
    * agent turn. The loop updates this after every turn;

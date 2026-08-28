@@ -11,7 +11,16 @@
  * (via `run.js`). The split is internal —
  * external consumers see no change.
  */
-import type { HookRegistry, ModelAdapter, Tracer } from "../../index.js";
+import type { Readable } from "node:stream";
+
+import type {
+  HookRegistry,
+  ModelAdapter,
+  ProtocolSessionBackend,
+  SandboxExecutor,
+  SkillRegistry,
+  Tracer,
+} from "../../index.js";
 import type { LineReader } from "../repl/index.js";
 
 /** Options the runner accepts. The bin script and tests both
@@ -30,6 +39,18 @@ export interface RunOptions {
   stdout?: NodeJS.WritableStream;
   /** Where to write errors / status. Default: stderr. */
   stderr?: NodeJS.WritableStream;
+  /**
+   * Phase E / G: stdin for `--acp` JSON-RPC. Default:
+   * `process.stdin`. Tests inject a `PassThrough`.
+   */
+  stdin?: Readable;
+  /**
+   * Phase E / G: override the ACP session backend (tests /
+   * EnvoyMesh inject a live `createAgentSessionBackend`).
+   * When unset, `--acp` uses the demo fake unless `model`
+   * is also set.
+   */
+  protocolBackend?: ProtocolSessionBackend;
   /** F9.1: per-call approval handler. When the agent loop
    *  hits a hook decision of `kind: "ask"`, this handler is
    *  called. The default (when undefined) is a built-in
@@ -56,6 +77,24 @@ export interface RunOptions {
    * opens stdin).
    */
   lineReader?: LineReader;
+  /**
+   * Phase F / CLI bridge: a pre-built `SandboxExecutor`.
+   * When set, takes priority over `parsed.sandboxExecutor`
+   * (the `--sandbox-executor` CLI flag). Both ultimately
+   * flow into the `Agent` constructor's `sandboxExecutor`
+   * option — the programmatic path is for tests + library
+   * users that want a custom executor (e.g. an instrumented
+   * mock for hermeticity).
+   */
+  sandboxExecutor?: SandboxExecutor;
+  /**
+   * Phase G: skill registry override. When set, the CLI does not
+   * scan the default project/user skill roots — the caller
+   * controls exactly which skills the agent sees. Tests pass an
+   * empty registry for hermetic transcripts; hosts (EnvoyMesh)
+   * can point at mesh-scoped skills.
+   */
+  skills?: SkillRegistry;
 }
 
 /** Result of a successful `run` invocation. */
@@ -121,7 +160,25 @@ export interface TeamRunResult {
 }
 
 /** Union of the subcommand results. */
-export type CliRunResult = RunResult | SelfEvolveRunResult | TeamRunResult;
+export interface DoctorRunResult {
+  subcommand: "doctor";
+  checks: ReadonlyArray<{
+    name: string;
+    ok: boolean;
+    detail: string;
+  }>;
+}
+
+export interface TuiRunResult {
+  subcommand: "tui";
+}
+
+export type CliRunResult =
+  | RunResult
+  | SelfEvolveRunResult
+  | TeamRunResult
+  | DoctorRunResult
+  | TuiRunResult;
 
 /** The process exit code. */
 export type ExitCode = 0 | 1 | 2 | 64 | 65 | 66;

@@ -475,11 +475,16 @@ describe("public API surface", () => {
     expect(typeof createProviderAdapter).toBe("function");
   });
 
-  it("SUPPORTED_PROVIDERS lists all four providers", () => {
+  it("SUPPORTED_PROVIDERS lists OpenAI, Anthropic, DeepSeek, MiniMax, GLM, Qwen + aliases", () => {
     expect(SUPPORTED_PROVIDERS).toEqual([
       "openai",
       "anthropic",
       "deepseek",
+      "minimax",
+      "glm",
+      "zhipu",
+      "qwen",
+      "dashscope",
       "ollama",
     ]);
   });

@@ -13,6 +13,7 @@ export {
   parseMcpToolName,
   type McpClient,
   type McpClientRegistry,
+  type McpCallToolOptions,
   type McpCallToolResult,
   type McpTool,
 } from "./types.js";
@@ -24,3 +25,17 @@ export {
   type McpStdioProcess,
   type StdioMcpClientOptions,
 } from "./stdio-client.js";
+export {
+  formatMcpResult,
+  registerMcpTools,
+  type McpToolBridgeResult,
+} from "./bridge.js";
+export {
+  wireMcpClientsFromConfig,
+  type WiredMcpClients,
+} from "./wire-from-config.js";
+export {
+  runStdioMcpServer,
+  MCP_SERVER_PROTOCOL_VERSION,
+  type StdioMcpServerOptions,
+} from "./stdio-server.js";

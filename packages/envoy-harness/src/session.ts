@@ -35,6 +35,32 @@ export interface SessionMetadata {
   permissionMode?: "read-only" | "workspace-write" | "danger-full-access";
   /** ISO timestamp of session start. */
   startedAt: string;
+  /**
+   * Phase A / Item 6: the plan state. When `undefined`,
+   * the session has no plan (the default). The plan
+   * lifecycle is managed via `setPlan` / `getPlan`;
+   * the field is `readonly` to preserve the Session
+   * value-object contract (mutations go through the
+   * setter; the metadata reference itself doesn't
+   * change).
+   */
+  plan?: import("./plan/state.js").PlanState;
+  /**
+   * Phase D / Item 14b: cross-machine resume provenance.
+   * Optional; local sessions omit it. Remote resume
+   * (mesh adapter) stamps `originNode` / `resumedFrom`.
+   */
+  provenance?: SessionProvenance;
+}
+
+/** Provenance fields for cross-machine / checkpoint resume. */
+export interface SessionProvenance {
+  /** Node id that originally created the session (mesh). */
+  originNode?: string;
+  /** Session id this one was resumed/forked from. */
+  resumedFrom?: string;
+  /** ISO timestamp of the last checkpoint. */
+  checkpointAt?: string;
 }
 
 export interface Session {
@@ -91,6 +117,19 @@ export interface Session {
    * same + flushes the header line.
    */
   setTitle(title: string): void;
+  /**
+   * Phase A / Item 6: set the session's plan state.
+   * Pass `undefined` to clear the plan. The plan
+   * rides on `metadata.plan`; the metadata object
+   * itself is replaced (so `PersistedSession` can
+   * write the new state through to disk).
+   */
+  setPlan(plan: import("./plan/state.js").PlanState | undefined): void;
+  /**
+   * Phase A / Item 6: read the current plan state, or
+   * `undefined` when no plan has been set.
+   */
+  getPlan(): import("./plan/state.js").PlanState | undefined;
 }
 
 /**
@@ -142,6 +181,26 @@ export class InMemorySession implements Session {
    */
   setTitle(title: string): void {
     this.metadata.title = title;
+  }
+
+  /**
+   * Phase A / Item 6: set the session's plan state.
+   * The in-memory implementation just mutates
+   * `metadata.plan`; `PersistedSession` overrides
+   * this to also write the new state through to
+   * disk. Pass `undefined` to clear the plan.
+   */
+  setPlan(plan: import("./plan/state.js").PlanState | undefined): void {
+    if (plan === undefined) {
+      delete this.metadata.plan;
+    } else {
+      this.metadata.plan = plan;
+    }
+  }
+
+  /** Phase A / Item 6: read the current plan state. */
+  getPlan(): import("./plan/state.js").PlanState | undefined {
+    return this.metadata.plan;
   }
 
   /** No-op: nothing to flush for an in-memory session. */

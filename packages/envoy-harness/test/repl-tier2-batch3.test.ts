@@ -23,9 +23,10 @@ import {
 } from "./helpers.js";
 
 describe("BUILTIN_TIER2_BATCH3_COMMANDS", () => {
-  it("has the 2 expected commands", () => {
+  it("has the 3 expected commands (Phase A item 2 added /memory)", () => {
     expect(BUILTIN_TIER2_BATCH3_COMMANDS.map((c) => c.name).sort()).toEqual([
       "/copy",
+      "/memory",
       "/rename",
     ]);
   });

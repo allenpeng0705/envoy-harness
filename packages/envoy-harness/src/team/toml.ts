@@ -262,17 +262,27 @@ function toAgentSpec(raw: unknown, index: number): AgentSpec {
   const role = r["role"];
   const systemPrompt = r["system_prompt"];
   const objective = r["objective"];
+  const host = r["host"];
   if (typeof id !== "string") {
     throw new TomlParseError(0, "", `agents[${index}].id must be a string`);
   }
   if (typeof role !== "string") {
     throw new TomlParseError(0, "", `agents[${index}].role must be a string`);
   }
-  if (typeof systemPrompt !== "string") {
+  // Phase G: `system_prompt` is optional — when absent, the runner
+  // defaults to the assembled AGENTS.md + guidance prompt.
+  if (systemPrompt !== undefined && typeof systemPrompt !== "string") {
     throw new TomlParseError(
       0,
       "",
       `agents[${index}].system_prompt must be a string`,
+    );
+  }
+  if (host !== undefined && typeof host !== "string") {
+    throw new TomlParseError(
+      0,
+      "",
+      `agents[${index}].host must be a string`,
     );
   }
   if (typeof objective !== "string") {
@@ -302,5 +312,12 @@ function toAgentSpec(raw: unknown, index: number): AgentSpec {
       return d;
     });
   }
-  return { id, role, systemPrompt, objective, dependsOn };
+  return {
+    id,
+    role,
+    objective,
+    dependsOn,
+    ...(host !== undefined ? { host } : {}),
+    ...(systemPrompt !== undefined ? { systemPrompt } : {}),
+  };
 }

@@ -38,9 +38,9 @@
  */
 
 import {
-  defaultRegistry,
   HookRegistry,
 } from "./hooks/index.js";
+import { ActionJournal } from "./action-journal.js";
 import { InMemorySession, newSessionId } from "./session.js";
 import type { ModelAdapter } from "./model.js";
 import type { Session } from "./session.js";
@@ -52,7 +52,10 @@ import type {
   SandboxPolicy,
 } from "./types.js";
 import { CostTracker } from "./cost.js";
+import { applyShellEnvironmentPolicy } from "./config/shell-env.js";
 import { policyFromMode } from "./permissions/policy.js";
+import { resolveSandboxExecutor } from "./sandbox/resolve.js";
+import type { SandboxExecutor } from "./sandbox/types.js";
 import type { LspManager } from "./lsp/index.js";
 import { makeLspTools } from "./lsp/tools.js";
 import { NullTracer } from "./trace/null-tracer.js";
@@ -64,8 +67,25 @@ import { ToolExecutor, type ToolExecutorContext } from "./agent/tool-executor.js
 import { runAgentLoop } from "./agent/run-loop.js";
 import {
   compactMessages,
+  compactMessagesBudget,
   compactMessagesWithSummary,
 } from "./agent/compact.js";
+import {
+  createAskForApprovalShim,
+} from "./interaction/ask-for-approval-shim.js";
+import { makeAskUserTool } from "./interaction/ask-user-tool.js";
+import { makeSuggestFollowUpsTool } from "./interaction/suggest-follow-ups-tool.js";
+import {
+  emptyTurnHints,
+  hasTurnHints,
+  mergeTurnHints,
+  type TurnHints,
+} from "./interaction/turn-hints.js";
+import {
+  makeEnterPlanModeTool,
+  makeExitPlanModeTool,
+} from "./plan/mode-tools.js";
+import type { UserQuestionService } from "./interaction/user-questions.js";
 
 /** Default max iterations before the agent throws. */
 export const DEFAULT_MAX_ITERATIONS = 50;
@@ -83,7 +103,11 @@ export interface AgentOptions {
   tools: ToolRegistry;
   /** The session. The agent appends to its transcript. */
   session: Session;
-  /** Hook registry. Defaults to the singleton `defaultRegistry`. */
+  /**
+   * Hook registry. Defaults to a **fresh** `HookRegistry` per Agent so
+   * PreToolUse / ACP permission hooks cannot stack on a process-wide
+   * singleton. Pass `defaultRegistry` explicitly only when intentional.
+   */
   hooks?: HookRegistry;
   /** Working directory for tool execution. Defaults to `process.cwd()`. */
   cwd?: string;
@@ -262,6 +286,88 @@ export interface AgentOptions {
    * sub-chunk.
    */
   mcpClients?: import("./mcp/index.js").McpClientRegistry;
+  /**
+   * Phase C: background job registry. When set, `abort()` calls
+   * `disposeOwner(session.id)` so background bash / terminal
+   * sends are cancelled with the session.
+   */
+  jobRegistry?: import("./jobs/types.js").JobRegistry;
+  /**
+   * Phase C: terminal session service. When set, `abort()` closes
+   * every terminal owned by `session.id`.
+   */
+  terminalService?: import("./terminal/types.js").TerminalSessionService;
+  /**
+   * Memory store for per-turn memory-index injection.
+   */
+  memoryStore?: import("./memories/store.js").MemoryStore;
+  /**
+   * Skill registry for per-turn skill-catalog injection.
+   */
+  skills?: import("./skills/registry.js").SkillRegistry;
+  /**
+   * Codex-shaped shell env filter applied to bash / background jobs.
+   */
+  shellEnvironmentPolicy?: import("./config/shell-env.js").ShellEnvironmentPolicy;
+  /**
+   * Optional pre-built sandbox policy (from ConfigLayer). When set,
+   * overrides the policy derived from session permission mode alone.
+   */
+  sandboxPolicy?: import("./types.js").SandboxPolicy;
+  /**
+   * Phase F: optional explicit OS sandbox executor.
+   * When omitted, the agent resolves one from the
+   * live sandbox policy + host platform (landlock
+   * on Linux, seatbelt on macOS, noop elsewhere /
+   * when `backend: "none"`).
+   */
+  sandboxExecutor?: import("./sandbox/types.js").SandboxExecutor;
+  /**
+   * Phase B / Item 3.1: capability-module registry.
+   * When set, the constructor stores it on the
+   * `agent.plugins` field. The host (the CLI runner)
+   * constructs the agent FIRST (so the plugin's
+   * hooks / tools can register on the SAME
+   * `HookRegistry` / `ToolRegistry` the agent uses),
+   * then loads + registers the plugins via
+   * `registry.register(module, config, ctx)` where
+   * `ctx.hooks` and `ctx.tools` are the agent's own
+   * registries. The agent itself doesn't auto-wire
+   * plugins — the host owns that step.
+   *
+   * **Future chunks** add the integration: `/plugins`
+   * REPL command, sub-agent inheritance, and the
+   * `disposeAll()` call on `clearSession` /
+   * `newSession`.
+   */
+  plugins?: import("./plugins/index.js").PluginRegistry;
+  /**
+   * Phase A / Item 5: the user-question service. When
+   * set, the agent:
+   *
+   * 1. Auto-registers the `ask_user` tool on the tool
+   *    registry (the model can then call it to ask the
+   *    human questions; the tool delegates to the
+   *    service).
+   * 2. Installs an `AskForApproval` shim as the default
+   *    `askHandler` (when no explicit `askHandler` was
+   *    provided). Hooks that return `kind: "ask"` go
+   *    through the same service, so the human sees ONE
+   *    interaction surface for both `ask_user` and
+   *    approval.
+   *
+   * **No service → no `ask_user` tool, no shim.** The
+   * existing v0 behavior is preserved (no model-facing
+   * ask_user; `askHandler` defaults to deny or the
+   * host-injected handler).
+   *
+   * **Why opt-in:** the headless / Tauri / mesh hosts
+   * each wire their own provider. The CLI one-shot
+   * path deliberately does NOT set this (no human
+   * channel); the existing `defaultAskHandler` (deny +
+   * log) is the right behavior.
+   */
+  userQuestions?: UserQuestionService;
 }
 
 /** What `Agent.run()` returns. */
@@ -309,6 +415,11 @@ export interface AgentResult {
     outputTokens: number;
     costUsd: number;
   };
+  /**
+   * Optional follow-up suggestions and deferred tasks recorded via
+   * `suggest_follow_ups` during this turn.
+   */
+  turnHints?: TurnHints;
 }
 
 export class Agent {
@@ -340,6 +451,12 @@ export class Agent {
   toolCallCount = 0;
   /** @internal Effective sandbox policy, derived from the session. The verifier reads this. */
   sandboxPolicy: SandboxPolicy;
+  /**
+   * @internal Phase F: optional host-supplied OS sandbox
+   * executor. When undefined, `getSandboxExecutor` resolves
+   * from policy + platform.
+   */
+  sandboxExecutor: SandboxExecutor | undefined;
   /** @internal Cost tracker; populated across the run. F7.1. */
   costTracker: CostTracker;
   /** @internal F7.5: cost ceiling; when exceeded, the agent aborts. */
@@ -366,6 +483,22 @@ export class Agent {
    * lands in a follow-up sub-chunk.
    */
   mcpClients: import("./mcp/index.js").McpClientRegistry | undefined;
+  /** @internal Phase C: dispose background jobs on abort. */
+  jobRegistry: import("./jobs/types.js").JobRegistry | undefined;
+  /** @internal Phase C: close owned terminals on abort. */
+  terminalService:
+    | import("./terminal/types.js").TerminalSessionService
+    | undefined;
+  /** @internal Per-turn memory index injection. */
+  memoryStore: import("./memories/store.js").MemoryStore | undefined;
+  /** @internal Per-turn skill catalog injection. */
+  skills: import("./skills/registry.js").SkillRegistry | undefined;
+  /** @internal Digest of last injected skill catalog (KV-cache stable). */
+  skillCatalogDigest: string | undefined;
+  /** @internal Shell env policy for bash/jobs. */
+  shellEnvironmentPolicy:
+    | import("./config/shell-env.js").ShellEnvironmentPolicy
+    | undefined;
   /** @internal F10.2: max sub-agents per turn. */
   maxSubagents: number;
   /** @internal F10.6: parent session id (when this is a
@@ -374,8 +507,60 @@ export class Agent {
    *  attribute events without consumer-side
    *  inference. Undefined for the root agent. */
   subagentOf: string | undefined;
+  /**
+   * @internal Phase B / Item 3.1: capability-module
+   * registry. When set, the agent exposes a
+   * `CapabilityContext` to the registry (so plugins can
+   * register hooks / tools on this agent). The host
+   * owns the registry's lifetime; the agent is just
+   * a consumer.
+   */
+  plugins: import("./plugins/index.js").PluginRegistry | undefined;
   /** @internal F-fix: approval policy. Defaults to `on-request`. */
   approval: AskForApproval;
+  /**
+   * @internal Phase A / Item 5: the user-question service.
+   * When set, the agent exposes the `ask_user` tool and
+   * (when no explicit `askHandler` is configured) routes
+   * approval asks through the same service. The setter
+   * `setUserQuestions` lets hosts (e.g. the REPL) install
+   * the service after construction; the tool is
+   * registered / unregistered on the tool registry.
+   */
+  userQuestions: UserQuestionService | undefined;
+  /**
+   * @internal Protocol / TUI: assistant token sink for the
+   * current `run()` turn. Set by `createAgentSessionBackend`
+   * during `prompt`; cleared in `finally`.
+   */
+  assistantStreamSink: ((delta: string) => void) | undefined;
+  /**
+   * @internal Protocol / TUI: live tool stdout sink for the
+   * current `run()` turn. Set by `createAgentSessionBackend`
+   * during `prompt`; cleared in `finally`.
+   */
+  toolOutputSink:
+    | ((info: { toolName: string; callId: string; stdout: string }) => void)
+    | undefined;
+  /** @internal Write/edit journal for `/undo`. */
+  actionJournal: ActionJournal;
+  /** @internal Follow-ups / deferrals collected during the current `run()`. */
+  turnHints: TurnHints = emptyTurnHints();
+  /**
+   * @internal Phase A / Item 5 (self-review): `true` when
+   * `this.askHandler` is the auto-installed
+   * `AskForApproval` shim (i.e. NOT an explicit
+   * host-supplied handler). Used by `setUserQuestions`
+   * to know whether the shim should be REPLACED on a
+   * service change, and by `setAskHandler(undefined)`
+   * to know whether to install / clear the shim.
+   *
+   * **Invariant:** `this.askHandlerIsShim === false`
+   * whenever `this.askHandler` is an explicit
+   * host-supplied handler. The constructor + both
+   * setters keep this invariant.
+   */
+  askHandlerIsShim: boolean;
   /**
    * T2.3: the per-tool-call execution seam, extracted
    * from this file. `run()` calls `executor.executeMany(calls, iter)`
@@ -396,7 +581,7 @@ export class Agent {
     this.model = options.model;
     this.tools = options.tools;
     this.session = options.session;
-    this.hooks = options.hooks ?? defaultRegistry;
+    this.hooks = options.hooks ?? new HookRegistry();
     this.cwd = options.cwd ?? process.cwd();
     this.maxIterations = options.maxIterations ?? DEFAULT_MAX_ITERATIONS;
     this.maxCostUsd =
@@ -404,20 +589,72 @@ export class Agent {
         ? options.maxCostUsd
         : undefined;
     this.askHandler = options.askHandler;
+    // Phase A / Item 5 (self-review): the shim is NOT
+    // installed at this point — the explicit handler
+    // wins by default. The shim is installed below
+    // (in the `userQuestions` block) when both
+    // `userQuestions` is set AND no explicit `askHandler`
+    // was provided.
+    this.askHandlerIsShim = false;
     this.lspManager = options.lspManager;
     this.tracer = options.tracer ?? new NullTracer();
     this.meshSubmitter = options.meshSubmitter;
     this.fanOutRegistry = options.fanOutRegistry;
     this.mcpClients = options.mcpClients;
+    this.jobRegistry = options.jobRegistry;
+    this.terminalService = options.terminalService;
+    this.memoryStore = options.memoryStore;
+    this.skills = options.skills;
+    this.skillCatalogDigest = undefined;
+    this.shellEnvironmentPolicy = options.shellEnvironmentPolicy;
     this.maxSubagents = options.maxSubagents ?? DEFAULT_MAX_SUBAGENTS;
     this.subagentOf = options.subagentOf;
     this.approval = options.approval ?? "on-request";
+    this.userQuestions = options.userQuestions;
+    this.plugins = options.plugins;
+    this.assistantStreamSink = undefined;
+    this.toolOutputSink = undefined;
+    this.actionJournal = new ActionJournal();
+    this.turnHints = emptyTurnHints();
+    this.tools.register(
+      makeSuggestFollowUpsTool({
+        record: (hints) => this.recordTurnHints(hints),
+      }),
+    );
     // F9.2: register the 4 LSP tools when the host provides
     // a manager. We do this AFTER the constructor sets
     // `this.tools` so the registry is available.
     if (this.lspManager) {
       for (const tool of makeLspTools(this.lspManager)) {
         this.tools.register(tool);
+      }
+    }
+    // Phase A / Item 5: register the `ask_user` tool when
+    // the host provides a UserQuestionService. Without
+    // the service, the model never sees the tool (opt-in,
+    // same pattern as `task` + LSP). The tool closes
+    // over the service; `setUserQuestions(s)` replaces
+    // it with a fresh closure over the new service.
+    if (this.userQuestions) {
+      this.tools.register(makeAskUserTool({ service: this.userQuestions }));
+      this.tools.register(
+        makeEnterPlanModeTool({ userQuestions: this.userQuestions }),
+      );
+      this.tools.register(
+        makeExitPlanModeTool({ userQuestions: this.userQuestions }),
+      );
+      // When the host did NOT provide an explicit
+      // `askHandler`, install a shim that delegates to
+      // the same service. The shim is a `AskHandler`
+      // (F9.1) that translates the AskRequest into a
+      // UserQuestionRequest and the answer back into
+      // an AskDecision. Host-supplied handlers always
+      // win (they take precedence over the shim).
+      if (this.askHandler === undefined) {
+        this.askHandler = createAskForApprovalShim({
+          service: this.userQuestions,
+        });
+        this.askHandlerIsShim = true;
       }
     }
     // F10.1: register the `task` tool when the host
@@ -472,13 +709,15 @@ export class Agent {
       this.abortController = new AbortController();
     }
     this.systemPrompt = options.systemPrompt;
-    // Build the sandbox policy from the session's permission mode.
-    // The bash tool uses this (via ToolContext) so runtime policy
-    // changes (`setPermissionMode`) take effect on the next call.
-    this.sandboxPolicy = policyFromMode(
-      this.session.metadata.permissionMode ?? "read-only",
-      this.cwd,
-    );
+    // Host-supplied ConfigLayer policy wins; otherwise derive from
+    // session permission mode (bash uses this via ToolContext).
+    this.sandboxPolicy =
+      options.sandboxPolicy ??
+      policyFromMode(
+        this.session.metadata.permissionMode ?? "read-only",
+        this.cwd,
+      );
+    this.sandboxExecutor = options.sandboxExecutor;
     // Cost tracker. v0 defaults to "local" (which has $0 pricing);
     // F7.2+ adapters set the model name in their ModelResponse, so
     // cost is attributed per-response rather than per-construction.
@@ -508,8 +747,13 @@ export class Agent {
       session: this.session,
       cwd: this.cwd,
       getSandboxPolicy: () => this.sandboxPolicy,
+      getSandboxExecutor: () =>
+        this.sandboxExecutor ??
+        resolveSandboxExecutor({ policy: this.sandboxPolicy }),
       getAskHandler: () => this.askHandler,
       getApproval: () => this.approval,
+      getShellEnv: () =>
+        applyShellEnvironmentPolicy(this.shellEnvironmentPolicy),
       abortSignal: this.abortController.signal,
       maxSubagents: this.maxSubagents,
       meshSubmitter: this.meshSubmitter,
@@ -525,12 +769,41 @@ export class Agent {
       noteToolCall: () => {
         this.toolCallCount++;
       },
+      emitToolOutput: (info) => {
+        this.toolOutputSink?.(info);
+      },
+      recordUndo: (entry) => {
+        this.actionJournal.push(entry);
+      },
     };
   }
 
   /** The AbortSignal tools see in their context. */
   get abortSignal(): AbortSignal {
     return this.abortController.signal;
+  }
+
+  /** Whether `/undo` can restore the last write/edit. */
+  canUndo(): boolean {
+    return this.actionJournal.canUndo();
+  }
+
+  /** Restore the last journaled write or edit. */
+  async undoLastFileChange(): Promise<{
+    path: string;
+    action: "restored" | "removed";
+  }> {
+    return this.actionJournal.undoLast();
+  }
+
+  /** Clear follow-up hints at the start of each `run()`. */
+  clearTurnHints(): void {
+    this.turnHints = emptyTurnHints();
+  }
+
+  /** Merge hints from `suggest_follow_ups` tool calls. */
+  recordTurnHints(partial: TurnHints): void {
+    this.turnHints = mergeTurnHints(this.turnHints, partial);
   }
 
   /**
@@ -541,6 +814,17 @@ export class Agent {
    */
   abort(reason?: unknown): void {
     this.abortController.abort(reason);
+    const owner = this.session.id;
+    if (this.jobRegistry !== undefined) {
+      void this.jobRegistry.disposeOwner(owner);
+    }
+    if (this.terminalService !== undefined) {
+      for (const snap of this.terminalService.list(owner)) {
+        void this.terminalService
+          .kill(owner, snap.sessionId, "session aborted")
+          .catch(() => undefined);
+      }
+    }
   }
 
   /**
@@ -608,10 +892,101 @@ export class Agent {
   /**
    * F17.2: replace the per-call approval handler. Takes effect
    * on the next tool call. Pass `undefined` to remove the
-   * handler (the agent falls back to the default deny behavior).
+   * handler and fall back to the default (deny by default;
+   * the auto-installed shim if a `UserQuestionService` is
+   * registered).
+   *
+   * **Phase A / Item 5 (self-review):** the handler is
+   * considered "explicit" (the host owns it) whenever
+   * `handler !== undefined` OR `this.askHandlerIsShim`
+   * is false. The shim is the default; `setAskHandler`
+   * is the only way to install a non-default explicit
+   * handler. Calling `setAskHandler(undefined)` RESTORES
+   * the default — if a service is registered, the shim
+   * is re-installed; if not, the handler stays
+   * `undefined` (deny).
    */
   setAskHandler(handler: AskHandler | undefined): void {
     this.askHandler = handler;
+    if (handler !== undefined) {
+      // Explicit handler — host owns it. The shim
+      // is no longer active.
+      this.askHandlerIsShim = false;
+      return;
+    }
+    // `handler === undefined` — restore the default.
+    if (this.userQuestions !== undefined) {
+      // A service is registered; the default IS the
+      // shim. Install a fresh one.
+      this.askHandler = createAskForApprovalShim({
+        service: this.userQuestions,
+      });
+      this.askHandlerIsShim = true;
+    } else {
+      // No service; the default is deny. Stay
+      // `undefined`; clear the shim flag.
+      this.askHandlerIsShim = false;
+    }
+  }
+
+  /**
+   * Phase A / Item 5: install / replace the
+   * `UserQuestionService`. When set, the `ask_user` tool
+   * is (re)registered on the tool registry; when unset
+   * the tool is removed (the model no longer sees it).
+   *
+   * **The approval shim:** if the current `askHandler`
+   * is the auto-installed shim (i.e. NO explicit
+   * handler is set), this setter REPLACES the shim
+   * with a new one that closes over the new service
+   * (so approval hooks go through the right service).
+   * If the host passed an explicit handler, the
+   * explicit handler is left alone (it takes
+   * precedence). The setter does NOT overwrite an
+   * explicit handler — use `setAskHandler` for that.
+   *
+   * **Re-registration:** passing a new service replaces
+   * the previously-registered `ask_user` tool (the old
+   * service is no longer reachable from the model). The
+   * shim is rebuilt against the new service so approval
+   * goes through the right one.
+   */
+  setUserQuestions(service: UserQuestionService | undefined): void {
+    this.userQuestions = service;
+    // Replace the tool. The ToolRegistry throws on
+    // duplicate names; unregister the old one first
+    // (idempotent — `false` when no tool was
+    // registered).
+    this.tools.unregister("ask_user");
+    this.tools.unregister("enter_plan_mode");
+    this.tools.unregister("exit_plan_mode");
+    if (service) {
+      this.tools.register(makeAskUserTool({ service }));
+      this.tools.register(
+        makeEnterPlanModeTool({ userQuestions: service }),
+      );
+      this.tools.register(
+        makeExitPlanModeTool({ userQuestions: service }),
+      );
+    }
+    // Replace the shim if (a) the current askHandler
+    // is the previously-installed shim OR (b) no
+    // askHandler is set at all. In both cases, the
+    // new shim is the "default" — install it. An
+    // EXPLICIT askHandler always wins (no shim
+    // install).
+    const shimIsCurrent =
+      this.askHandlerIsShim || this.askHandler === undefined;
+    if (service && shimIsCurrent) {
+      this.askHandler = createAskForApprovalShim({ service });
+      this.askHandlerIsShim = true;
+    } else if (service === undefined && this.askHandlerIsShim) {
+      // Unregister: clear the shim. If an explicit
+      // handler was set, leave it alone — the host
+      // owns the lifecycle.
+      this.askHandler = undefined;
+      this.askHandlerIsShim = false;
+    }
   }
 
   /**
@@ -630,6 +1005,29 @@ export class Agent {
     mode: NonNullable<Session["metadata"]["permissionMode"]>,
   ): void {
     this.sandboxPolicy = policyFromMode(mode, this.cwd);
+  }
+
+  /**
+   * F17.2 / protocol: change approval policy and wire the
+   * ask handler (mirrors REPL `/approval`).
+   */
+  setApprovalPolicy(
+    mode: import("./types.js").AskForApproval,
+  ): void {
+    this.approval = mode;
+    if (mode === "never") {
+      this.setAskHandler(async () => ({
+        kind: "deny",
+        reason: "approval mode is 'never'",
+      }));
+    } else {
+      this.setAskHandler(undefined);
+    }
+  }
+
+  /** Current approval policy label. */
+  getApprovalPolicy(): import("./types.js").AskForApproval {
+    return this.approval;
   }
 
   /**
@@ -717,6 +1115,48 @@ export class Agent {
     for (const m of next) {
       this.session.appendMessage(m.role, m.content);
     }
+  }
+
+  /**
+   * Phase A / Item 1 (chunk 1.1) — compact the session by
+   * TOKEN BUDGET. Drops the oldest messages until the total
+   * token estimate fits `budget`. The token estimate is a
+   * pure, hermetic function (`estimateMessageTokens` in
+   * `src/context/budget.ts`); a real tokenizer can replace
+   * it in a future chunk without changing this signature.
+   *
+   * **When to use:** long-running REPL sessions where tool
+   * results can dominate the token budget. A count-based
+   * compaction (`compact(keep)`) is a bad proxy for the real
+   * budget.
+   *
+   * **No-op** when the session already fits. The system
+   * message is always preserved.
+   *
+   * **Returns** the post-compaction token count + an
+   * `overBudget` flag — `true` means the system message
+   * alone exceeded the budget. The caller can escalate to
+   * `compactWithSummary` in that case.
+   *
+   * @returns `{ totalTokensAfter, overBudget }` from the
+   *   underlying math. `droppedCount` is also returned for
+   *   parity with the other compact variants.
+   */
+  compactWithBudget(budget: number): {
+    totalTokensAfter: number;
+    overBudget: boolean;
+    droppedCount: number;
+  } {
+    const { messages: next, totalTokensAfter, overBudget, droppedCount } =
+      compactMessagesBudget(this.session.messages, budget);
+    if (droppedCount === 0) {
+      return { totalTokensAfter, overBudget, droppedCount };
+    }
+    this.session.clear();
+    for (const m of next) {
+      this.session.appendMessage(m.role, m.content);
+    }
+    return { totalTokensAfter, overBudget, droppedCount };
   }
 
   /**
@@ -833,7 +1273,7 @@ export class Agent {
    * the agent's `@internal` state fields and
    * calls back into `this.emit` / `this.makeResult`.
    */
-  async run(prompt: string): Promise<AgentResult> {
+  async run(prompt: string | ReadonlyArray<ContentBlock>): Promise<AgentResult> {
     return runAgentLoop(this, prompt);
   }
 
@@ -901,6 +1341,7 @@ export class Agent {
         outputTokens: cost.outputTokens,
         costUsd: cost.costUsd,
       },
+      ...(hasTurnHints(this.turnHints) ? { turnHints: this.turnHints } : {}),
     });
     return {
       content,
@@ -914,6 +1355,7 @@ export class Agent {
         outputTokens: cost.outputTokens,
         costUsd: cost.costUsd,
       },
+      ...(hasTurnHints(this.turnHints) ? { turnHints: this.turnHints } : {}),
     };
   }
 }

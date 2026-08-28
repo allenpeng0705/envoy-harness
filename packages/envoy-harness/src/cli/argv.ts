@@ -24,6 +24,15 @@
  */
 
 import type { PermissionMode } from "../types.js";
+import {
+  parsePeerEndpoint,
+  parsePeerEndpointsFromEnv,
+} from "../peers/endpoints.js";
+import {
+  parsePluginConfigEntry,
+  PluginConfigParseError,
+  type PluginConfigEntry,
+} from "../plugins/config-parser.js";
 
 /** v0 flag set for the `run` subcommand (default). */
 const RUN_FLAGS = new Set([
@@ -38,12 +47,21 @@ const RUN_FLAGS = new Set([
   "--max-turns",
   "--max-cost-usd",
   "--resume",
+  "--resume-remote",
   "--fork",
   "--persist",
   "--session-dir",
   "--config",
+  "--import-config",
+  "--from",
+  "--plugin",
+  "--plugin-config",
+  "--peers",
+  "--peer",
+  "--connect-timeout-ms",
   "--plan",
   "--repl",
+  "--acp",
   "--no-color",
   "--verbose",
   "--quiet",
@@ -73,6 +91,7 @@ const SELF_EVOLVE_FLAGS = new Set([
 /** A flag that takes a value (--flag value) for the run subcommand. */
 const RUN_VALUED_FLAGS = new Set([
   "--sandbox",
+  "--sandbox-executor",
   "--approval",
   "--model",
   "--provider",
@@ -80,9 +99,17 @@ const RUN_VALUED_FLAGS = new Set([
   "--max-turns",
   "--max-cost-usd",
   "--resume",
+  "--resume-remote",
   "--fork",
   "--session-dir",
   "--config",
+  "--import-config",
+  "--from",
+  "--plugin",
+  "--plugin-config",
+  "--peers",
+  "--peer",
+  "--connect-timeout-ms",
 ]);
 
 /** A flag that takes a value for the self-evolve subcommand. */
@@ -117,6 +144,20 @@ export interface RunParsedArgs {
   json: boolean;
   /** `--sandbox <mode>`: permission mode. */
   sandbox: PermissionMode | undefined;
+  /**
+   * `--sandbox-executor <name>`: opt into a kernel-level
+   * sandbox backend. `none` is the default (validators only,
+   * hermetic tests). Supported: `landlock` (Linux only),
+   * `seatbelt` (macOS only), `windows-sandbox` (Windows only).
+   * On a non-matching platform the resolver falls back to noop
+   * rather than fail-closed.
+   */
+  sandboxExecutor:
+    | "landlock"
+    | "seatbelt"
+    | "windows-sandbox"
+    | "none"
+    | undefined;
   /** `--approval <mode>`: ask-for-approval policy. */
   approval: string | undefined;
   /** `--model <id>`: model identifier (passed to the adapter). */
@@ -131,6 +172,12 @@ export interface RunParsedArgs {
   maxCostUsd: number | undefined;
   /** `--resume <session-id>`: resume a saved session. */
   resume: string | undefined;
+  /**
+   * Phase D / Item 14b: `--resume-remote <node>/<session>`.
+   * Parsed for forward-compat; Package 1 stubs with a clear
+   * "requires mesh adapter" error (no network).
+   */
+  resumeRemote: string | undefined;
   /** `--fork <session-id>`: fork a saved session. */
   fork: string | undefined;
   /**
@@ -152,6 +199,46 @@ export interface RunParsedArgs {
    */
   config?: string | undefined;
   /**
+   * Phase B / Item 15.1: `--import-config <path>`:
+   * path to a config file in a foreign format
+   * (codex, deepseek). Imported into the native
+   * `ConfigLayer`; imported values win over the
+   * native `--config` file but lose to explicit
+   * CLI flags. Requires `--from <format>` to
+   * pick the importer.
+   */
+  importConfig?: string | undefined;
+  /**
+   * Phase B / Item 15.1: `--from <format>`: the
+   * format of the `--import-config` file. v0
+   * supports `codex` only. The two flags are
+   * required together (passing one without the
+   * other is a usage error).
+   */
+  importFrom?: string | undefined;
+  /**
+   * Phase B / Item 3.1: `--plugin <module>` (repeatable):
+   * a plugin module path to load. The path MUST be in
+   * the curated whitelist (security boundary). v0
+   * accepts the built-in samples (e.g.
+   * `envoy-harness-plugin-audit-log`). An empty array
+   * means "no plugins loaded" (the default).
+   */
+  plugins: string[];
+  /**
+   * Phase B / Item 3.3: `--plugin-config <name>.<key>=<value>`
+   * (repeatable): a per-plugin config entry. The
+   * `<name>.` prefix scopes the entry to a specific
+   * plugin; multiple flags for the same plugin
+   * accumulate. The runner builds a
+   * `Map<name, Record<string, unknown>>` via
+   * `mergePluginConfigs` and passes the right config
+   * to each plugin's `register(module, config, ctx)`.
+   * An empty array means "no configs supplied" (the
+   * default; every plugin gets `{}`).
+   */
+  pluginConfigs: PluginConfigEntry[];
+  /**
    * F14.1: `--session-dir <path>`: where to
    * store / load persisted sessions. Default
    * `~/.local/state/envoy-harness/sessions`.
@@ -164,6 +251,20 @@ export interface RunParsedArgs {
   plan: boolean;
   /** `--repl`: enter the interactive REPL (F17.1). */
   repl: boolean;
+  /**
+   * Phase E / G: `--acp` — serve ACP JSON-RPC on stdio
+   * (Content-Length framing). No positional prompt.
+   * Mutually exclusive with `--repl`.
+   */
+  acp: boolean;
+  /**
+   * `--peers <id>@<host:port>` (repeatable): static peer cluster for
+   * mesh collaboration (cluster rail, /peers, /route, …). Also reads
+   * `ENVOY_PEERS` when no CLI peers are given.
+   */
+  peers: Array<{ id: string; endpoint: string }>;
+  /** `--connect-timeout-ms <n>`: per-peer TCP connect timeout. */
+  peerConnectTimeoutMs: number | undefined;
   /** `--no-color`: disable ANSI colors. */
   noColor: boolean;
   /** `--verbose`: print hook fires and validator verdicts. */
@@ -238,7 +339,37 @@ export interface TeamParsedArgs {
   positional: string[];
 }
 
-export type ParsedArgs = RunParsedArgs | SelfEvolveParsedArgs | TeamParsedArgs;
+/** Args for the `doctor` subcommand. */
+export interface DoctorParsedArgs {
+  subcommand: "doctor";
+  help: boolean;
+  version: boolean;
+  config?: string | undefined;
+}
+
+/** Args for the `mcp` subcommand (stdio MCP server). */
+export interface McpParsedArgs {
+  subcommand: "mcp";
+  help: boolean;
+  version: boolean;
+  cwd?: string | undefined;
+}
+
+/** Args for the `tui` subcommand (delegate to envoy-harness-tui). */
+export interface TuiParsedArgs {
+  subcommand: "tui";
+  help: boolean;
+  version: boolean;
+  noColor: boolean;
+}
+
+export type ParsedArgs =
+  | RunParsedArgs
+  | SelfEvolveParsedArgs
+  | TeamParsedArgs
+  | DoctorParsedArgs
+  | McpParsedArgs
+  | TuiParsedArgs;
 
 /** Error thrown when argv parsing fails. Caught by the runner. */
 export class ArgvError extends Error {
@@ -265,6 +396,15 @@ export function parseArgs(argv: ReadonlyArray<string>): ParsedArgs {
   if (firstPositional === "team") {
     return parseTeamArgs(argv);
   }
+  if (firstPositional === "doctor") {
+    return parseDoctorArgs(argv);
+  }
+  if (firstPositional === "mcp") {
+    return parseMcpArgs(argv);
+  }
+  if (firstPositional === "tui") {
+    return parseTuiArgs(argv);
+  }
   return parseRunArgs(argv);
 }
 
@@ -279,6 +419,7 @@ function parseRunArgs(argv: ReadonlyArray<string>): RunParsedArgs {
     version: false,
     json: false,
     sandbox: undefined,
+    sandboxExecutor: undefined,
     approval: undefined,
     model: undefined,
     provider: undefined,
@@ -286,12 +427,20 @@ function parseRunArgs(argv: ReadonlyArray<string>): RunParsedArgs {
     maxTurns: undefined,
     maxCostUsd: undefined,
     resume: undefined,
+    resumeRemote: undefined,
     fork: undefined,
     persist: false,
     sessionDir: undefined,
     config: undefined,
+    importConfig: undefined,
+    importFrom: undefined,
+    plugins: [],
+    pluginConfigs: [],
     plan: false,
     repl: false,
+    acp: false,
+    peers: [],
+    peerConnectTimeoutMs: undefined,
     noColor: false,
     verbose: false,
     quiet: false,
@@ -318,6 +467,10 @@ function parseRunArgs(argv: ReadonlyArray<string>): RunParsedArgs {
         out.repl = true;
         continue;
       }
+      if (arg === "--acp") {
+        out.acp = true;
+        continue;
+      }
       if (arg === "--persist") {
         out.persist = true;
         continue;
@@ -336,6 +489,19 @@ function parseRunArgs(argv: ReadonlyArray<string>): RunParsedArgs {
               );
             }
             out.sandbox = value;
+            break;
+          case "--sandbox-executor":
+            if (
+              value !== "landlock" &&
+              value !== "seatbelt" &&
+              value !== "windows-sandbox" &&
+              value !== "none"
+            ) {
+              throw new ArgvError(
+                `invalid --sandbox-executor: ${value} (expected landlock | seatbelt | windows-sandbox | none)`,
+              );
+            }
+            out.sandboxExecutor = value;
             break;
           case "--approval":
             if (
@@ -378,6 +544,9 @@ function parseRunArgs(argv: ReadonlyArray<string>): RunParsedArgs {
           case "--resume":
             out.resume = value;
             break;
+          case "--resume-remote":
+            out.resumeRemote = value;
+            break;
           case "--fork":
             out.fork = value;
             break;
@@ -387,6 +556,44 @@ function parseRunArgs(argv: ReadonlyArray<string>): RunParsedArgs {
           case "--config":
             out.config = value;
             break;
+          case "--import-config":
+            out.importConfig = value;
+            break;
+          case "--from":
+            out.importFrom = value;
+            break;
+          case "--plugin":
+            out.plugins.push(value);
+            break;
+          case "--plugin-config":
+            try {
+              out.pluginConfigs.push(parsePluginConfigEntry(value));
+            } catch (err) {
+              if (err instanceof PluginConfigParseError) {
+                // Re-throw as `ArgvError` so the runner
+                // converts to `CliError(EXIT_USAGE)`.
+                throw new ArgvError(err.message);
+              }
+              throw err;
+            }
+            break;
+          case "--peers":
+          case "--peer": {
+            try {
+              out.peers.push(parsePeerEndpoint(value));
+            } catch (err) {
+              throw new ArgvError((err as Error).message);
+            }
+            break;
+          }
+          case "--connect-timeout-ms": {
+            const n = Number(value);
+            if (!Number.isInteger(n) || n <= 0) {
+              throw new ArgvError(`invalid --connect-timeout-ms: ${value}`);
+            }
+            out.peerConnectTimeoutMs = n;
+            break;
+          }
         }
         continue;
       }
@@ -394,6 +601,9 @@ function parseRunArgs(argv: ReadonlyArray<string>): RunParsedArgs {
       throw new ArgvError(`unhandled flag: ${arg}`);
     }
     out.positional.push(arg);
+  }
+  if (out.peers.length === 0) {
+    out.peers = [...parsePeerEndpointsFromEnv()];
   }
   return out;
 }
@@ -555,9 +765,12 @@ export function formatHelp(version: string): string {
     "  envoy-harness [flags] -                    # read prompt from stdin",
     "  envoy-harness [flags] <prompt-file>        # read prompt from a file",
     "  envoy-harness self-evolve [flags]          # run one self-evolution cycle",
+    "  envoy-harness doctor [--config <path>]     # health checks",
+    "  envoy-harness tui [flags]                  # terminal UI (envoy-harness-tui)",
     "",
     "Flags (run):",
     "  --sandbox <mode>       read-only | workspace-write | danger-full-access",
+    "  --sandbox-executor <b> landlock | seatbelt | windows-sandbox | none  (opt-in kernel sandbox; default none)",
     "  --approval <mode>      unless-trusted | on-request | granular | never",
     "  --model <id>           LLM model identifier",
     "  --provider <name>      LLM provider (openai, anthropic, deepseek, ollama)",
@@ -565,12 +778,20 @@ export function formatHelp(version: string): string {
     "  --max-turns <n>        agent loop iteration cap (default 50)",
     "  --max-cost-usd <n>     cost ceiling (default 5.00)",
     "  --resume <session-id>  resume a previous session",
+    "  --resume-remote <node>/<session>  resume from a mesh peer (requires mesh adapter)",
     "  --fork <session-id>    fork a previous session",
     "  --persist              persist this session to disk (for --resume later)",
     "  --session-dir <path>   session storage dir (default ~/.local/state/envoy-harness/sessions)",
     "  --config <path>        TOML config file (default ~/.config/envoy-harness/config.toml)",
+    "  --import-config <path> import a foreign config file (use with --from <format>)",
+    "  --from <format>        source format for --import-config (v0: codex)",
+    "  --plugin <name>        load a plugin (repeatable; must be in the curated whitelist)",
+    "  --plugin-config <spec> per-plugin config (repeatable; '<name>.<key>=<value>')",
+    "  --peers <id>@<host:port>  mesh peer endpoint (repeatable; also ENVOY_PEERS)",
+    "  --connect-timeout-ms <n>  per-peer connect timeout (default 10000)",
     "  --plan                 read + plan only, no writes",
     "  --repl                 interactive REPL (no positional prompt)",
+    "  --acp                  serve ACP JSON-RPC on stdio (hosts / TUI)",
     "  --json                 JSON Lines output (machine-readable)",
     "  --quiet                suppress human output",
     "  --no-color             disable ANSI colors",
@@ -589,6 +810,17 @@ export function formatHelp(version: string): string {
     "  --recent-failures <n>  recent entries to feed the prompt (default 20)",
     "  --pull                 opt in to federated pull (default: off)",
     "  --peer-id <id>         this peer's id (recorded in adoptions log)",
+    "",
+    "Flags (tui):",
+    "  --spawn                spawn envoy-harness --acp (default for envoy-harness tui)",
+    "  --demo                 in-process demo backend",
+    "  --cluster-only         mesh cluster console",
+    "  --peers <id>@<host:port>  static peer (repeatable)",
+    "  --connect-timeout-ms <n>",
+    "  --provider <name>      LLM provider for --spawn",
+    "  --model <id>           LLM model for --spawn",
+    "  --ask-permission       demo permission prompts",
+    "  --no-color             disable ANSI colors",
     "",
     "See docs/design.md §19 for the full surface.",
   ].join("\n");
@@ -664,5 +896,122 @@ function parseTeamArgs(argv: ReadonlyArray<string>): TeamParsedArgs {
     out.positional.push(arg);
   }
 
+  return out;
+}
+
+function parseMcpArgs(argv: ReadonlyArray<string>): McpParsedArgs {
+  const out: McpParsedArgs = {
+    subcommand: "mcp",
+    help: false,
+    version: false,
+  };
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]!;
+    if (arg === "mcp") continue;
+    if (arg === "--help") {
+      out.help = true;
+      continue;
+    }
+    if (arg === "--version") {
+      out.version = true;
+      continue;
+    }
+    if (arg === "--cwd") {
+      const next = argv[i + 1];
+      if (next === undefined) {
+        throw new ArgvError("--cwd requires a path");
+      }
+      out.cwd = next;
+      i++;
+      continue;
+    }
+    throw new ArgvError(`unknown flag for mcp subcommand: ${arg}`);
+  }
+  return out;
+}
+
+function parseDoctorArgs(argv: ReadonlyArray<string>): DoctorParsedArgs {
+  const out: DoctorParsedArgs = {
+    subcommand: "doctor",
+    help: false,
+    version: false,
+  };
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]!;
+    if (arg === "doctor") continue;
+    if (arg === "--help") {
+      out.help = true;
+      continue;
+    }
+    if (arg === "--version") {
+      out.version = true;
+      continue;
+    }
+    if (arg === "--config") {
+      const next = argv[i + 1];
+      if (next === undefined) {
+        throw new ArgvError("flag --config requires a value");
+      }
+      out.config = next;
+      i++;
+      continue;
+    }
+    throw new ArgvError(`unknown flag for doctor subcommand: ${arg}`);
+  }
+  return out;
+}
+
+const TUI_FLAGS = new Set([
+  "--demo",
+  "--spawn",
+  "--cluster-only",
+  "--peers",
+  "--connect-timeout-ms",
+  "--provider",
+  "--model",
+  "--ask-permission",
+  "--help",
+  "-h",
+  "--no-color",
+]);
+
+function parseTuiArgs(argv: ReadonlyArray<string>): TuiParsedArgs {
+  const out: TuiParsedArgs = {
+    subcommand: "tui",
+    help: false,
+    version: false,
+    noColor: false,
+  };
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]!;
+    if (arg === "tui") continue;
+    if (arg === "--help" || arg === "-h") {
+      out.help = true;
+      continue;
+    }
+    if (arg === "--version") {
+      out.version = true;
+      continue;
+    }
+    if (arg === "--no-color") {
+      out.noColor = true;
+      continue;
+    }
+    if (!TUI_FLAGS.has(arg)) {
+      throw new ArgvError(`unknown flag for tui subcommand: ${arg}`);
+    }
+    if (
+      arg === "--peers" ||
+      arg === "--connect-timeout-ms" ||
+      arg === "--provider" ||
+      arg === "--model"
+    ) {
+      const next = argv[i + 1];
+      if (next === undefined || next.startsWith("--")) {
+        throw new ArgvError(`${arg} requires a value`);
+      }
+      i++;
+    }
+  }
   return out;
 }

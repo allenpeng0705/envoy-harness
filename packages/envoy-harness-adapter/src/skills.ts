@@ -55,7 +55,8 @@ export type EnvoyHarnessSkillId =
   | "plan"
   | "setup-sponsor-friend"
   | "peer-list"
-  | "relay-status";
+  | "relay-status"
+  | "peer-cluster";
 
 /** The full catalog. The orchestrator reads this for the manifest. */
 export const ENVOY_HARNESS_SKILLS: ReadonlyArray<SkillDescriptor> = [
@@ -154,6 +155,17 @@ export const ENVOY_HARNESS_SKILLS: ReadonlyArray<SkillDescriptor> = [
     maxSensitivity: "private",
     tags: ["mesh", "observability"],
   },
+  {
+    skillId: "peer-cluster",
+    description:
+      "List the configured envoy-harness peer cluster (id, model, " +
+      "capabilities) so the model can route sub-agents to a specific " +
+      "peer via task.preferred_peer_id. Backs model-side delegation " +
+      "by model/machine.",
+    costCeilingUsd: 0.1,
+    maxSensitivity: "private",
+    tags: ["mesh", "observability", "routing"],
+  },
 ];
 
 /** The set of well-known envoy-harness tool names. v0 ships two
@@ -163,7 +175,8 @@ export type EnvoyHarnessToolName =
   | "bash"
   | "sponsor_friend"
   | "list_peers"
-  | "relay_status";
+  | "relay_status"
+  | "peers";
 
 /**
  * Map a skill ID to the local tools the executor should
@@ -202,6 +215,8 @@ export function getToolsForSkill(skillId: string): ReadonlyArray<EnvoyHarnessToo
       return ["list_peers"];
     case "relay-status":
       return ["relay_status"];
+    case "peer-cluster":
+      return ["peers"];
     default:
       // Unknown skill ID: refuse the surface. The orchestrator
       // would not send this (it reads the manifest), so the

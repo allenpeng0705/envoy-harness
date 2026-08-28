@@ -45,10 +45,11 @@
     "adapter"
   ],
   "dependencies": {
-    "@envoymesh/agent-adapter": "link:../../../EnvoyMesh/packages/agent-adapter",
-    "@envoymesh/envoy-harness": "link:../envoy-harness",
-    "@envoymesh/identity": "link:../../../EnvoyMesh/packages/identity",
-    "@envoymesh/protocol": "link:../../../EnvoyMesh/packages/protocol"
+    "@envoymesh/agent-adapter": "file:../../../EnvoyMesh/packages/agent-adapter",
+    "@envoymesh/envoy-harness": "file:../envoy-harness",
+    "@envoymesh/envoy-harness-peer": "file:../envoy-harness-peer",
+    "@envoymesh/identity": "file:../../../EnvoyMesh/packages/identity",
+    "@envoymesh/protocol": "file:../../../EnvoyMesh/packages/protocol"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

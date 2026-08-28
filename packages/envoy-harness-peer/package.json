@@ -1,0 +1,40 @@
+{
+  "name": "@envoymesh/envoy-harness-peer",
+  "version": "0.0.0",
+  "description": "Standalone peer collaboration for envoy-harness — MAP-over-JSON-RPC transport, PeerClient, PeerMeshSubmitter (no EnvoyMesh required).",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "envoy-peer": "./bin/envoy-peer.ts"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "README.md", "LICENSE"],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "engines": {
+    "node": ">=22.19"
+  },
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@envoymesh/agent-adapter": "file:../../../EnvoyMesh/packages/agent-adapter",
+    "@envoymesh/envoy-harness": "file:../envoy-harness",
+    "@envoymesh/envoy-harness-tui": "file:../envoy-harness-tui",
+    "@envoymesh/protocol": "file:../../../EnvoyMesh/packages/protocol",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}

@@ -39,7 +39,9 @@ export interface AgentSpec {
   /** Free-form role label (e.g. "explore", "review"). */
   role: string;
   /** The system prompt for this agent. */
-  systemPrompt: string;
+  /** System prompt; omitted → the runner defaults to the assembled
+   *  AGENTS.md + guidance prompt (Phase G). */
+  systemPrompt?: string;
   /** The objective (the user task; can include
    *  `${input}` placeholders that get substituted
    *  with the team-level input). */
@@ -47,6 +49,14 @@ export interface AgentSpec {
   /** IDs of agents whose final text this agent
    *  should receive as a "context" message. */
   dependsOn: ReadonlyArray<string>;
+  /**
+   * D4 — where this agent runs. `"local"` (default) runs in-process;
+   * `"peer://<peerId>"` dispatches to a standalone envoy-harness peer
+   * (same or different machine, possibly a different model) via the
+   * host-supplied `TeamOptions.peerExecutor` (the peer package provides
+   * the implementation — Package 1 stays free of it).
+   */
+  host?: string;
 }
 
 /** The schedule (when the team should run). v0

@@ -7,15 +7,21 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { promises as fs } from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 
 import {
   ArgvError,
   CliError,
+  createSkillRegistry,
   parseArgs,
   run,
   type ContentBlock,
   type ModelAdapter,
   type ModelResponse,
+  type SkillProvider,
+  type SkillSummary,
 } from "../src/index.js";
 import { StringWritable } from "./helpers.js";
 
@@ -110,6 +116,176 @@ describe("parseArgs", () => {
   it("throws when a valued flag has no value", () => {
     expect(() => parseArgs(["--sandbox"])).toThrow(ArgvError);
     expect(() => parseArgs(["--model"])).toThrow(ArgvError);
+  });
+
+  // Phase B / Item 15.1: --import-config + --from.
+  it("captures --import-config and --from as valued flags", () => {
+    const a = parseRun([
+      "--import-config", "/tmp/codex.toml",
+      "--from", "codex",
+    ]);
+    expect(a.importConfig).toBe("/tmp/codex.toml");
+    expect(a.importFrom).toBe("codex");
+  });
+
+  it("--import-config + --from work in any flag order", () => {
+    const a = parseRun([
+      "--from", "codex",
+      "--import-config", "/etc/codex.toml",
+    ]);
+    expect(a.importConfig).toBe("/etc/codex.toml");
+    expect(a.importFrom).toBe("codex");
+  });
+
+  it("throws when --import-config or --from has no value", () => {
+    expect(() => parseArgs(["--import-config"])).toThrow(ArgvError);
+    expect(() => parseArgs(["--from"])).toThrow(ArgvError);
+  });
+
+  // Phase B / Item 3.1: --plugin is a repeatable valued
+  // flag. Each occurrence appends to the plugins list.
+  it("captures --plugin (repeatable) as a list", () => {
+    const a = parseRun(["--plugin", "alpha", "--plugin", "beta"]);
+    if (a.subcommand !== "run") throw new Error("expected run");
+    expect(a.plugins).toEqual(["alpha", "beta"]);
+  });
+
+  it("defaults plugins to an empty array when --plugin is absent", () => {
+    const a = parseRun(["hello"]);
+    if (a.subcommand !== "run") throw new Error("expected run");
+    expect(a.plugins).toEqual([]);
+  });
+
+  it("throws when --plugin has no value", () => {
+    expect(() => parseArgs(["--plugin"])).toThrow(ArgvError);
+  });
+
+  // Phase B / Item 3.3: --plugin-config is a
+  // repeatable valued flag. Each occurrence parses
+  // `<name>.<key>=<value>` and appends to the
+  // `pluginConfigs` list.
+  it("captures --plugin-config (repeatable) as a list of entries", () => {
+    const a = parseArgs([
+      "--plugin-config", "alpha.precision=2",
+      "--plugin-config", "alpha.separator=,",
+    ]);
+    if (a.subcommand !== "run") throw new Error("expected run");
+    expect(a.pluginConfigs).toEqual([
+      { name: "alpha", key: "precision", value: 2 },
+      { name: "alpha", key: "separator", value: "," },
+    ]);
+  });
+
+  it("defaults pluginConfigs to an empty array when --plugin-config is absent", () => {
+    const a = parseArgs(["hello"]);
+    if (a.subcommand !== "run") throw new Error("expected run");
+    expect(a.pluginConfigs).toEqual([]);
+  });
+
+  it("throws when --plugin-config has no value", () => {
+    expect(() => parseArgs(["--plugin-config"])).toThrow(ArgvError);
+  });
+
+  it("throws on a malformed --plugin-config spec (no dot)", () => {
+    expect(() => parseArgs(["--plugin-config", "nodot"])).toThrow(ArgvError);
+    expect(() => parseArgs(["--plugin-config", "nodot"])).toThrow(/<name>\.<key>/);
+  });
+
+  it("throws on a malformed --plugin-config spec (dot but no equals)", () => {
+    expect(() => parseArgs(["--plugin-config", "foo.noequals"])).toThrow(ArgvError);
+  });
+
+  // Phase B / Item 15.1: the runner's XOR check — both
+  // flags must be passed together. Caught by `run()`,
+  // not `parseArgs` (the parser accepts them
+  // independently; the runner enforces the constraint).
+  it("rejects --import-config without --from with a usage error", async () => {
+    const out = new StringWritable();
+    const err = new StringWritable();
+    try {
+      await run({
+        argv: ["--import-config", "/tmp/codex.toml", "hello"],
+        stdout: out,
+        stderr: err,
+        model: { async complete() { throw new Error("not called"); } },
+      });
+      throw new Error("expected throw");
+    } catch (e) {
+      expect(e).toBeInstanceOf(CliError);
+      expect((e as CliError).exitCode).toBe(64);
+      expect((e as CliError).message).toMatch(/--import-config and --from/);
+    }
+  });
+
+  it("rejects --from without --import-config with a usage error", async () => {
+    const out = new StringWritable();
+    const err = new StringWritable();
+    try {
+      await run({
+        argv: ["--from", "codex", "hello"],
+        stdout: out,
+        stderr: err,
+        model: { async complete() { throw new Error("not called"); } },
+      });
+      throw new Error("expected throw");
+    } catch (e) {
+      expect(e).toBeInstanceOf(CliError);
+      expect((e as CliError).exitCode).toBe(64);
+      expect((e as CliError).message).toMatch(/--import-config and --from/);
+    }
+  });
+
+  // Phase B / Item 15.1: end-to-end. A real codex TOML
+  // gets imported and the agent's permission mode
+  // reflects the imported value. We assert via the
+  // import-warning stderr line (the agent itself
+  // doesn't expose the ConfigLayer — but the warning
+  // proves the import ran).
+  it("imports a real codex config and prints ignored-key warnings", async () => {
+    const { mkdtemp, rm, writeFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const path = await import("node:path");
+    const dir = await mkdtemp(path.join(tmpdir(), "envoy-import-e2e-"));
+    try {
+      const codex = path.join(dir, "codex.toml");
+      await writeFile(
+        codex,
+        [
+          `sandbox_mode = "workspace-write"`,
+          `approval_policy = "on-request"`,
+          // A known-but-ignored key + an unknown one,
+          // so the warning summary line has something
+          // to print.
+          `model = "gpt-5.1"`,
+          `typo_field = 1`,
+          ``,
+        ].join("\n"),
+        "utf8",
+      );
+      const out = new StringWritable();
+      const err = new StringWritable();
+      const fakeModel: ModelAdapter = {
+        async complete(): Promise<ModelResponse> {
+          return {
+            content: [{ type: "text", text: "ok" }],
+            stopReason: "end_turn",
+          };
+        },
+      };
+      await run({
+        argv: ["--import-config", codex, "--from", "codex", "hi"],
+        model: fakeModel,
+        stdout: out,
+        stderr: err,
+      });
+      // Two ignored keys → "2 codex keys not mapped".
+      expect(err.data).toMatch(/2 codex keys not mapped/);
+      // The agent still ran (we're not asserting on its
+      // internal state — just on the import side-effect).
+      expect(out.data).toContain("ok");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -245,8 +421,13 @@ describe("run: with a fake model", () => {
     let captured: string | undefined;
     const fakeModel: ModelAdapter = {
       async complete(input) {
-        const first = input.messages[0];
-        const firstBlock = first?.content[0] as Extract<ContentBlock, { type: "text" }> | undefined;
+        // The user prompt is the first user message. An empty
+        // skill registry is injected below so the skill-catalog
+        // fragment is NOT prepended (hermetic transcript).
+        const firstUser = input.messages.find((m) => m.role === "user");
+        const firstBlock = firstUser?.content[0] as
+          | Extract<ContentBlock, { type: "text" }>
+          | undefined;
         captured = firstBlock?.text;
         return {
           content: [{ type: "text", text: "ok" }],
@@ -257,10 +438,99 @@ describe("run: with a fake model", () => {
     await run({
       argv: ["a", "b", "c"],
       model: fakeModel,
+      skills: createSkillRegistry(),
       stdout: out,
       stderr: err,
     });
     expect(captured).toBe("a b c");
+  });
+
+  it("prepends the skill catalog to the first user turn when skills are registered", async () => {
+    const out = new StringWritable();
+    const err = new StringWritable();
+    let captured: string | undefined;
+    const provider: SkillProvider = {
+      name: "test",
+      async list() {
+        const summaries: SkillSummary[] = [
+          {
+            name: "demo",
+            description: "A demo skill",
+            provider: "test",
+            invocation: { modelInvocable: true, userInvocable: true },
+          },
+        ];
+        return summaries;
+      },
+      async get() {
+        return undefined;
+      },
+    };
+    const skills = createSkillRegistry();
+    skills.registerProvider(provider);
+    const fakeModel: ModelAdapter = {
+      async complete(input) {
+        const firstUser = input.messages.find((m) => m.role === "user");
+        const firstBlock = firstUser?.content[0] as
+          | Extract<ContentBlock, { type: "text" }>
+          | undefined;
+        captured = firstBlock?.text;
+        return {
+          content: [{ type: "text", text: "ok" }],
+          stopReason: "end_turn",
+        };
+      },
+    };
+    await run({
+      argv: ["a", "b", "c"],
+      model: fakeModel,
+      skills,
+      stdout: out,
+      stderr: err,
+    });
+    expect(captured).toContain("<available_skills>");
+    expect(captured).toContain('<skill name="demo">');
+  });
+
+  it("wires discovered AGENTS.md into the system prompt (Phase G)", async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "cli-agentsmd-"));
+    try {
+      await fs.mkdir(path.join(tmp, ".git"), { recursive: true });
+      await fs.writeFile(path.join(tmp, "AGENTS.md"), "Team conventions.");
+      const out = new StringWritable();
+      const err = new StringWritable();
+      let systemText = "";
+      const fakeModel: ModelAdapter = {
+        async complete(input) {
+          systemText = input.messages
+            .filter((m) => m.role === "system")
+            .flatMap((m) => m.content)
+            .filter(
+              (b): b is Extract<typeof b, { type: "text" }> =>
+                b.type === "text",
+            )
+            .map((b) => b.text)
+            .join("");
+          return {
+            content: [{ type: "text", text: "ok" }],
+            stopReason: "end_turn",
+          };
+        },
+      };
+      await run({
+        argv: ["hi"],
+        model: fakeModel,
+        stdout: out,
+        stderr: err,
+        cwd: tmp,
+      });
+      // The previously-disconnected AGENTS.md discovery now reaches the
+      // model as the system message through the one-shot runner.
+      expect(systemText).toContain("Team conventions.");
+      expect(systemText).toContain("inferred_idle"); // terminal guidance
+    } finally {
+      await fs.rm(tmp, { recursive: true, force: true });
+    }
   });
 
   it("respects --quiet (no stdout)", async () => {

@@ -89,6 +89,56 @@ describe("loadConfigFile: well-formed TOML", () => {
     expect(layer.askForApproval).toBeUndefined();
     expect(layer.writableRoots).toBeUndefined();
   });
+
+  it("reads [[peers]] mesh endpoints", async () => {
+    const file = path.join(tmpDir, "config-peers.toml");
+    await writeFile(
+      file,
+      [
+        `[[peers]]`,
+        `id = "w1"`,
+        `endpoint = "127.0.0.1:18123"`,
+        `model = "deepseek-chat"`,
+        `capabilities = ["research"]`,
+        ``,
+      ].join("\n"),
+      "utf8",
+    );
+
+    const layer = await loadConfigFile(file);
+    expect(layer.peers).toEqual([
+      {
+        id: "w1",
+        endpoint: "127.0.0.1:18123",
+        model: "deepseek-chat",
+        capabilities: ["research"],
+      },
+    ]);
+  });
+
+  it("reads [[cordis_plugins]] Cordis plugin entries", async () => {
+    const file = path.join(tmpDir, "config-cordis.toml");
+    await writeFile(
+      file,
+      [
+        `[[cordis_plugins]]`,
+        `name = "jobs-local"`,
+        ``,
+        `[[cordis_plugins]]`,
+        `name = "skill-filesystem"`,
+        `[cordis_plugins.config]`,
+        `watch = false`,
+        ``,
+      ].join("\n"),
+      "utf8",
+    );
+
+    const layer = await loadConfigFile(file);
+    expect(layer.cordisPlugins).toEqual([
+      { name: "jobs-local" },
+      { name: "skill-filesystem", config: { watch: false } },
+    ]);
+  });
 });
 
 describe("loadConfigFile: missing file", () => {
@@ -154,6 +204,54 @@ describe("loadConfigFile: malformed input", () => {
     }
     expect(err).toBeInstanceOf(ConfigLoadError);
     expect((err as Error).message).toMatch(/permissionMode/);
+  });
+});
+
+// Phase B / Item 15.2: the `hooks` field round-trips
+// through the loader. We use the kebab-case form in
+// the TOML and expect the camelCase `hooks` in the
+// result.
+describe("loadConfigFile: hooks field (chunk 15.2)", () => {
+  it("round-trips a [[hooks]] array of tables", async () => {
+    const file = path.join(tmpDir, "hooks.toml");
+    await writeFile(
+      file,
+      [
+        `[[hooks]]`,
+        `event = "PreToolUse"`,
+        `command = "echo pre"`,
+        ``,
+        `  [hooks.match]`,
+        `  pattern = "bash"`,
+        ``,
+        `[[hooks]]`,
+        `event = "Stop"`,
+        `command = "echo stop"`,
+        ``,
+      ].join("\n"),
+      "utf8",
+    );
+    const layer = await loadConfigFile(file);
+    expect(layer.hooks).toEqual([
+      { event: "PreToolUse", command: "echo pre", match: { pattern: "bash" } },
+      { event: "Stop", command: "echo stop" },
+    ]);
+  });
+
+  it("rejects an unknown field inside [[hooks]] (strict schema)", async () => {
+    const file = path.join(tmpDir, "bad-hook.toml");
+    await writeFile(
+      file,
+      [
+        `[[hooks]]`,
+        `event = "PreToolUse"`,
+        `command = "echo pre"`,
+        `bogus = "field"`,
+        ``,
+      ].join("\n"),
+      "utf8",
+    );
+    await expect(loadConfigFile(file)).rejects.toThrow(/bogus/);
   });
 });
 

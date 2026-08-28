@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "envoy-harness-sdk"
+version = "0.0.0"
+description = "Python JSON-RPC client for envoy-harness ACP/SDK"
+readme = "README.md"
+requires-python = ">=3.10"
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: spawns envoy-harness --acp (requires monorepo + npx)",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["envoy_harness*"]

@@ -125,8 +125,8 @@ envoy --fork <source-id> "try a different approach"
 
 | Flag | Effect |
 |---|---|
-| `--provider <name>` | LLM provider: `openai` \| `anthropic` \| `deepseek` \| `ollama` (default: `deepseek`). |
-| `--model <id>` | Model identifier. Defaults per provider: `gpt-4o`, `claude-sonnet-4-6`, `deepseek-chat`, `llama3.1`. |
+| `--provider <name>` | LLM provider: `openai` \| `anthropic` \| `deepseek` \| `minimax` \| `glm` \| `qwen` \| `ollama` (default: `deepseek`). `zhipu` = GLM, `dashscope` = Qwen aliases. |
+| `--model <id>` | Model identifier. Defaults per provider: `gpt-4o`, `claude-sonnet-4-6`, `deepseek-chat`, `MiniMax-M3`, `glm-4-flash`, `qwen-plus`, `llama3.1`. |
 | `--sandbox <mode>` | Permission mode: `read-only` (default) \| `workspace-write` \| `danger-full-access`. |
 | `--approval <mode>` | Approval policy: `unless-trusted` \| `on-request` \| `granular` \| `never`. |
 | `--cwd <path>` | Override working directory (default: `process.cwd()`). |
@@ -228,9 +228,17 @@ The persistence layer is opt-in. By default, sessions are in-memory (the v0 beha
 | `openai` | `OPENAI_API_KEY` | Required. |
 | `anthropic` | `ANTHROPIC_API_KEY` | Required. |
 | `deepseek` | `DEEPSEEK_API_KEY` | Required. |
+| `minimax` | `MINIMAX_API_KEY` | Required. Base `https://api.minimax.io/v1`; override via `MINIMAX_BASE_URL`. |
+| `glm` / `zhipu` | `ZHIPU_API_KEY` | Required. Base `https://open.bigmodel.cn/api/paas/v4`; override via `GLM_BASE_URL` / `ZHIPU_BASE_URL`. |
+| `qwen` / `dashscope` | `DASHSCOPE_API_KEY` | Required. Base `https://dashscope.aliyuncs.com/compatible-mode/v1`; override via `QWEN_BASE_URL` / `DASHSCOPE_BASE_URL`. |
 | `ollama` | — | Keyless. Uses `http://localhost:11434/v1`; override via `OLLAMA_BASE_URL`. |
 
-Optional `OPENAI_BASE_URL` / `ANTHROPIC_BASE_URL` / `DEEPSEEK_BASE_URL` override the upstream endpoint (useful for proxies).
+MiniMax, GLM, and Qwen use the OpenAI-compatible wire format, so their
+tool-call responses are parsed exactly like OpenAI's (including the flat
+`{ name, arguments }` shape some of these providers emit).
+
+Optional `OPENAI_BASE_URL` / `ANTHROPIC_BASE_URL` / `DEEPSEEK_BASE_URL`
+override the upstream endpoint (useful for proxies).
 
 ### Profiles (TOML config)
 

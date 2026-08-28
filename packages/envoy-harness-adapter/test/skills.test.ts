@@ -24,24 +24,27 @@ import {
 } from "../src/skills.js";
 
 describe("ENVOY_HARNESS_SKILLS catalog", () => {
-  it("has exactly 8 skills (5 envoy-harness + 3 B-class)", () => {
+  it("has exactly 9 skills (5 envoy-harness + 4 B-class)", () => {
     // Phase 8 / Step 3 commit 2 — the catalog grew from
     // 5 to 8 with the addition of 3 B-class skills
-    // (setup-sponsor-friend / peer-list / relay-status).
+    // (setup-sponsor-friend / peer-list / relay-status);
+    // the distributed-collaboration round added
+    // `peer-cluster` (the model-facing peers tool).
     // Both runtimes advertise the same 3 B-class skills
     // per the "invoking-runtime tag" decision; see
     // `docs/agent-harness-integration-step3.md` §3.4
     // (EnvoyMesh monorepo) for the rationale.
-    expect(ENVOY_HARNESS_SKILLS).toHaveLength(8);
+    expect(ENVOY_HARNESS_SKILLS).toHaveLength(9);
   });
 
-  it("includes the 8 expected skill IDs", () => {
+  it("includes the 9 expected skill IDs", () => {
     const ids = ENVOY_HARNESS_SKILLS.map((s) => s.skillId).sort();
     expect(ids).toEqual([
       "bash-run",
       "code-edit",
       "code-review",
       "doc-search",
+      "peer-cluster",
       "peer-list",
       "plan",
       "relay-status",
@@ -84,6 +87,7 @@ describe("ENVOY_HARNESS_SKILLS catalog", () => {
       "setup-sponsor-friend": 1.0,
       "peer-list": 0.1,
       "relay-status": 0.1,
+      "peer-cluster": 0.1,
     });
   });
 });
@@ -108,6 +112,10 @@ describe("getToolsForSkill", () => {
 
   it("plan exposes only read_file", () => {
     expect(getToolsForSkill("plan")).toEqual(["read_file"]);
+  });
+
+  it("peer-cluster exposes only peers", () => {
+    expect(getToolsForSkill("peer-cluster")).toEqual(["peers"]);
   });
 
   it("unknown skill ID returns empty array (defensive)", () => {
@@ -148,9 +156,10 @@ describe("ENVOY_HARNESS_VERSION", () => {
 });
 
 describe("EnvoyHarnessSkillId literal union", () => {
-  it("matches the 8 catalog IDs", () => {
+  it("matches the 9 catalog IDs", () => {
     // Phase 8 / Step 3 commit 2 — the literal union
-    // grew to 8 (5 envoy-harness + 3 B-class).
+    // grew to 8 (5 envoy-harness + 3 B-class); the
+    // distributed-collaboration round added `peer-cluster`.
     // Note: `EnvoyHarnessSkillId` is the *adapter-
     // internal* union (for the tool-name mapping in
     // `getToolsForSkill`); the wire-side `skillId`
@@ -168,7 +177,8 @@ describe("EnvoyHarnessSkillId literal union", () => {
       "setup-sponsor-friend",
       "peer-list",
       "relay-status",
+      "peer-cluster",
     ];
-    expect(new Set(ids).size).toBe(8);
+    expect(new Set(ids).size).toBe(9);
   });
 });

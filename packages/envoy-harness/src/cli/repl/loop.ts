@@ -38,7 +38,20 @@ import {
   ToolRegistry,
   type Session,
   type SessionMetadata,
+  buildAgentSystemPrompt,
+  loadConfigStack,
+  systemPromptOptionsFromConfig,
 } from "../../index.js";
+import { wireEnvironmentTools } from "../../environment/index.js";
+import { wireCordisExtensions } from "../../cordis/wire-from-config.js";
+import { wireMcpClientsFromConfig } from "../../mcp/index.js";
+import {
+  createReplStdinProvider,
+  createUserQuestionService,
+  type UserQuestionService,
+} from "../../interaction/index.js";
+import { LocalMemoryStore } from "../../memories/index.js";
+import type { MemoryStore } from "../../memories/index.js";
 import { BUILTIN_COMMANDS } from "./commands.js";
 import { BUILTIN_INFO_COMMANDS } from "./commands-info.js";
 import { BUILTIN_TIER2_BATCH2_COMMANDS } from "./commands-tier2-batch2.js";
@@ -121,6 +134,25 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
   }
   const tools = new ToolRegistry();
   for (const t of BUILTIN_TOOLS) tools.register(t);
+  const { layer: configLayer } = await loadConfigStack({
+    cwd,
+    ...(opts.args.config !== undefined ? { filePath: opts.args.config } : {}),
+  });
+  const mcpWire = await wireMcpClientsFromConfig(
+    configLayer.mcpServers,
+    tools,
+  );
+  // Phase C: jobs / web / terminal (Cordis-free L3 ports).
+  const environment = wireEnvironmentTools(tools, {
+    ...(opts.skills !== undefined ? { skills: opts.skills } : {}),
+  });
+  const cordisWire = await wireCordisExtensions({
+    plugins: configLayer.cordisPlugins,
+    cwd,
+    tools,
+    environment,
+  });
+  const jobRegistry = cordisWire.jobs;
   const hooks = opts.hooks ?? new HookRegistry();
 
   const agentOptions: ConstructorParameters<typeof Agent>[0] = {
@@ -129,7 +161,27 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
     session,
     hooks,
     cwd,
+    jobRegistry,
+    terminalService: environment.terminals,
+    skills: environment.skills,
+    ...(mcpWire !== undefined ? { mcpClients: mcpWire.registry } : {}),
+    ...(configLayer.shellEnvironmentPolicy !== undefined
+      ? { shellEnvironmentPolicy: configLayer.shellEnvironmentPolicy }
+      : {}),
+    ...(configLayer.askForApproval !== undefined
+      ? { approval: configLayer.askForApproval }
+      : {}),
   };
+  // Phase G — the REPL's system prompt: AGENTS.md discovery + terminal
+  // guidance (the REPL wires terminal tools via wireEnvironmentTools).
+  agentOptions.systemPrompt = await buildAgentSystemPrompt({
+    cwd,
+    ...systemPromptOptionsFromConfig(configLayer),
+    permissionMode: session.metadata.permissionMode ?? "read-only",
+    ...(configLayer.askForApproval !== undefined
+      ? { askForApproval: configLayer.askForApproval }
+      : {}),
+  });
   if (opts.args.maxTurns !== undefined) {
     agentOptions.maxIterations = opts.args.maxTurns;
   }
@@ -158,6 +210,38 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
   } else {
     agentOptions.tracer = new NullTracer();
   }
+
+  // Phase A / Item 5: build a `UserQuestionService` +
+  // register the REPL stdin provider. The agent's
+  // constructor uses this to auto-register the
+  // `ask_user` tool + install the approval shim.
+  //
+  // The provider uses the SAME `process.stdin` /
+  // `process.stdout` as the main loop's readline. The
+  // Node `readline` package handles concurrent
+  // interfaces correctly (the second interface pauses
+  // the first; closing the second resumes the first),
+  // so the user prompt for `ask_user` interleaves
+  // cleanly with the main REPL prompt.
+  const userQuestions: UserQuestionService = opts.userQuestions ??
+    createUserQuestionService();
+  const disposeUserQuestionsProvider = userQuestions.registerProvider(
+    createReplStdinProvider(),
+  );
+  agentOptions.userQuestions = userQuestions;
+
+  // Phase A / Item 2: build the default memory store
+  // when the host didn't inject one. The default is
+  // `./memories` (relative to the REPL's cwd) or
+  // `$ENVOY_MEMORY_DIR` when set. The store is NOT
+  // created (just referenced) — the first `write`
+  // call creates the directory on demand. Tests
+  // inject a `LocalMemoryStore` rooted at a temp dir.
+  const memoryStore: MemoryStore = opts.memoryStore ??
+    new LocalMemoryStore({
+      memoryRoot: process.env["ENVOY_MEMORY_DIR"] ?? "./memories",
+    });
+  agentOptions.memoryStore = memoryStore;
 
   const agent = new Agent(agentOptions);
 
@@ -266,6 +350,7 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
           ...(subagentRegistry ? { subagentRegistry } : {}),
           ...(lastResponse !== undefined ? { lastResponse } : {}),
           ...(opts.reviewDiff ? { reviewDiff: opts.reviewDiff } : {}),
+          ...(memoryStore ? { memoryStore } : {}),
         };
         const result = await dispatchCommand(registry, parsed.name, parsed.args, ctx);
         switch (result.kind) {
@@ -327,6 +412,18 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
     // "error: ..." right at exit).
     if (historyPath) {
       await saveHistory(historyPath, history).catch(() => undefined);
+    }
+    // Phase A / Item 5: unregister the REPL stdin
+    // provider. The service itself is GC'd with the
+    // agent. Errors here are silent (we're at exit;
+    // a provider-disposal failure is not actionable).
+    disposeUserQuestionsProvider();
+    if (cordisWire.cordisDispose !== undefined) {
+      await cordisWire.cordisDispose().catch(() => undefined);
+    }
+    await environment.dispose().catch(() => undefined);
+    if (mcpWire !== undefined) {
+      await mcpWire.dispose().catch(() => undefined);
     }
   }
 

@@ -108,6 +108,8 @@ export interface ProfileRef {
  */
 export const SandboxBackendSchema = z.enum([
   "linux-landlock",
+  "darwin-sandbox",
+  "windows-sandbox",
   "process-fs-namespace",
   "none", // PermissionMode=DangerFullAccess only
 ]);

@@ -68,8 +68,10 @@ import {
   BUILTIN_TOOLS,
   HookRegistry,
   InMemorySession,
+  installToolPermissionAskHook,
   newSessionId,
   ToolRegistry,
+  type AskHandler,
   type MeshSubmitter,
   type ModelAdapter,
   type Session,
@@ -94,6 +96,14 @@ export type BuildAgentFn = (input: {
   objective: string;
   costCeilingUsd: number;
   signal: AbortSignal;
+  /**
+   * v1.16 — per-call model override hint (the wire
+   * `ExecuteInput.verifierModel`). Runtimes that support per-call
+   * model overrides (envoy-harness's host factory) use this to
+   * build an agent with a different model than the runtime default.
+   * Runtimes that don't support overrides ignore it.
+   */
+  providerHint?: string;
 }) => Agent;
 
 /** Sign an unsigned wire `AgentResult` with the node's owner key. */
@@ -220,6 +230,12 @@ export class EnvoyHarnessAdapter implements AgentAdapter {
       objective: prompt,
       costCeilingUsd: input.costCeilingUsd,
       signal: input.signal,
+      // v1.16 — forward the cross-model hint so the host's
+      // buildAgent factory can honor it (cross-verify on the same
+      // runtime with a different model).
+      ...(input.verifierModel !== undefined
+        ? { providerHint: input.verifierModel }
+        : {}),
     });
     const localResult = await agent.run(prompt);
     if (input.signal.aborted) {
@@ -392,6 +408,17 @@ export function defaultBuildAgentFactory(opts: {
    *  config / audit) and passes them in. Omit
    *  to disable B-class tools for this agent. */
   bClassTools?: ReadonlyArray<Tool>;
+  /**
+   * Phase G / 12b — optional live AskHandler (e.g. ACP →
+   * pi:proposal). Resolved per Agent construction so the
+   * host can swap the bridge between asks.
+   */
+  getAskHandler?: () => AskHandler | undefined;
+  /**
+   * When `getAskHandler` is set, PreToolUse asks only when
+   * this returns true. Default: ask for every tool.
+   */
+  shouldAskTool?: (toolName: string, args?: unknown) => boolean;
 }): BuildAgentFn {
   const cwd = opts.cwd ?? process.cwd();
   return ({ skillId, objective, costCeilingUsd, signal }) => {
@@ -422,16 +449,25 @@ export function defaultBuildAgentFactory(opts: {
     // see `list_peers` (not `sponsor_friend`).
     if (opts.bClassTools) {
       for (const t of opts.bClassTools) {
-        if (toolNames.has(t.name as "read_file" | "bash" | "sponsor_friend" | "list_peers" | "relay_status")) {
+        if (toolNames.has(t.name as "read_file" | "bash" | "sponsor_friend" | "list_peers" | "relay_status" | "peers")) {
           tools.register(t);
         }
       }
+    }
+    const hooks = new HookRegistry();
+    const askHandler = opts.getAskHandler?.();
+    if (askHandler !== undefined) {
+      installToolPermissionAskHook(hooks, {
+        ...(opts.shouldAskTool !== undefined
+          ? { shouldAsk: opts.shouldAskTool }
+          : {}),
+      });
     }
     return new Agent({
       model: opts.model,
       tools,
       session,
-      hooks: new HookRegistry(),
+      hooks,
       cwd,
       maxCostUsd: costCeilingUsd,
       // v0 set `systemPrompt: objective`, which duplicated the
@@ -445,6 +481,7 @@ export function defaultBuildAgentFactory(opts: {
       // Same DI shape as the sub-agent path in
       // `defaultBuildSubagentFactory` (Package 1).
       ...(opts.meshSubmitter ? { meshSubmitter: opts.meshSubmitter } : {}),
+      ...(askHandler !== undefined ? { askHandler } : {}),
     });
   };
 }
@@ -510,6 +547,15 @@ export interface BuildEnvoyHarnessAdapterWithCrossVerifyInput
    * on the cross adapter.
    */
   openClawAdapter: AgentAdapter;
+  /**
+   * v1.16 — optional per-call model override hint for the cross
+   * adapter (cross-model-on-same-runtime). When set, the factory's
+   * `defaultCrossVerify` forwards it as `ExecuteInput.verifierModel`
+   * so a same-runtime verifier (e.g. envoy-harness + claude-instant)
+   * can honor it. Optional and additive; omit for the v1.8
+   * cross-runtime behavior.
+   */
+  verifierProviderHint?: string;
 }
 
 export function buildEnvoyHarnessAdapterWithCrossVerify(
@@ -517,6 +563,10 @@ export function buildEnvoyHarnessAdapterWithCrossVerify(
 ): EnvoyHarnessAdapter {
   return new EnvoyHarnessAdapter({
     ...input,
-    crossVerifyWith: defaultCrossVerify(input.openClawAdapter),
+    crossVerifyWith: defaultCrossVerify(input.openClawAdapter, {
+      ...(input.verifierProviderHint !== undefined
+        ? { providerHint: input.verifierProviderHint }
+        : {}),
+    }),
   });
 }

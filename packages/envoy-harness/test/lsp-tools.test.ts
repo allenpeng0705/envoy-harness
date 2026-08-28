@@ -321,7 +321,13 @@ describe("AgentOptions.lspManager", () => {
     });
     const names = new Set(tools.list().map((t) => t.name));
     expect(names).toEqual(
-      new Set(["lsp_definition", "lsp_references", "lsp_hover", "lsp_diagnostics"]),
+      new Set([
+        "lsp_definition",
+        "lsp_references",
+        "lsp_hover",
+        "lsp_diagnostics",
+        "suggest_follow_ups",
+      ]),
     );
   });
 

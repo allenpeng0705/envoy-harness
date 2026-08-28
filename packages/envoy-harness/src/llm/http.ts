@@ -20,8 +20,7 @@
  * version bump; new fields are additive.
  */
 
-import type { Tool } from "../tools/index.js";
-import type { Message } from "../tools/index.js";
+import type { ContentBlock, Message, Tool } from "../tools/index.js";
 
 // ---------------------------------------------------------------------------
 // HttpRequest / HttpResponse / HttpClient
@@ -335,18 +334,27 @@ export function toolsToOpenAI(tools: ReadonlyArray<Tool>): OpenAIToolDefinition[
 // OpenAI-style message shapes
 // ---------------------------------------------------------------------------
 
+/** Multimodal user content (OpenAI vision). */
+export type OpenAIUserContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
+
 /** A message in OpenAI's wire format. */
 export type OpenAIMessage =
   | { role: "system"; content: string }
-  | { role: "user"; content: string }
+  | { role: "user"; content: string | OpenAIUserContentPart[] }
   | { role: "assistant"; content: string | null; tool_calls?: OpenAIToolCall[] }
   | { role: "tool"; tool_call_id: string; content: string };
 
 /** A tool call in an assistant message. */
 export interface OpenAIToolCall {
   id: string;
-  type: "function";
-  function: { name: string; arguments: string };
+  type?: "function";
+  function?: { name: string; arguments: string };
+  /** Flat-shape providers (MiniMax, local llama-server) omit the
+   *  `function` wrapper and send `name`/`arguments` at the top level. */
+  name?: string;
+  arguments?: string;
 }
 
 /**
@@ -357,6 +365,30 @@ export interface OpenAIToolCall {
  */
 export function messagesToOpenAI(messages: ReadonlyArray<Message>): OpenAIMessage[] {
   const out: OpenAIMessage[] = [];
+  // Providers require UNIQUE tool_call ids across the whole conversation.
+  // Some models (MiniMax, weaker local models) reuse an id across turns,
+  // which the API rejects with `400 duplicate tool_call id`. Remap repeats
+  // to fresh ids and rewrite the matching tool_result references.
+  const usedWireIds = new Set<string>();
+  const lastWireIdByOriginal = new Map<string, string>();
+  let generated = 0;
+  const nextWireId = (original: string): string => {
+    const source = original.trim();
+    if (source.length > 0 && !usedWireIds.has(source)) {
+      usedWireIds.add(source);
+      lastWireIdByOriginal.set(original, source);
+      return source;
+    }
+    generated += 1;
+    let candidate = `call_${generated}`;
+    while (usedWireIds.has(candidate)) {
+      generated += 1;
+      candidate = `call_${generated}`;
+    }
+    usedWireIds.add(candidate);
+    lastWireIdByOriginal.set(original, candidate);
+    return candidate;
+  };
   for (const m of messages) {
     if (m.role === "system") {
       const text = blocksToText(m.content);
@@ -364,6 +396,32 @@ export function messagesToOpenAI(messages: ReadonlyArray<Message>): OpenAIMessag
       continue;
     }
     if (m.role === "user") {
+      const images = m.content.filter(
+        (b): b is Extract<ContentBlock, { type: "image" }> => b.type === "image",
+      );
+      if (images.length > 0) {
+        const parts: Array<
+          | { type: "text"; text: string }
+          | { type: "image_url"; image_url: { url: string } }
+        > = [];
+        for (const b of m.content) {
+          if (b.type === "text" && b.text.length > 0) {
+            parts.push({ type: "text", text: b.text });
+          }
+          if (b.type === "image") {
+            parts.push({
+              type: "image_url",
+              image_url: {
+                url: `data:${b.mimeType};base64,${b.data}`,
+              },
+            });
+          }
+        }
+        if (parts.length > 0) {
+          out.push({ role: "user", content: parts });
+        }
+        continue;
+      }
       const text = blocksToText(m.content);
       if (text.length > 0) out.push({ role: "user", content: text });
       continue;
@@ -373,8 +431,9 @@ export function messagesToOpenAI(messages: ReadonlyArray<Message>): OpenAIMessag
       const toolCalls: OpenAIToolCall[] = [];
       for (const b of m.content) {
         if (b.type === "tool_call") {
+          const wireId = nextWireId(b.id);
           toolCalls.push({
-            id: b.id,
+            id: wireId,
             type: "function",
             function: {
               name: b.name,
@@ -402,7 +461,7 @@ export function messagesToOpenAI(messages: ReadonlyArray<Message>): OpenAIMessag
             : JSON.stringify(b.content);
           out.push({
             role: "tool",
-            tool_call_id: b.toolCallId,
+            tool_call_id: lastWireIdByOriginal.get(b.toolCallId) ?? b.toolCallId,
             content,
           });
         }

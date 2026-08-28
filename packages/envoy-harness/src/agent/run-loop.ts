@@ -47,6 +47,9 @@ import type { ContentBlock } from "../tools/index.js";
 import type { ModelResponse } from "../model.js";
 import type { Agent, AgentResult } from "../agent.js";
 import { MCP_TOOL_PREFIX } from "../mcp/types.js";
+import { injectEphemeralUserContext } from "../context/ephemeral-user-context.js";
+import { assembleTurnContext } from "../context/turn-context.js";
+import { stripThinking } from "../util/strip-thinking.js";
 
 /**
  * Run the agent's turn loop. Reads from the
@@ -66,11 +69,11 @@ import { MCP_TOOL_PREFIX } from "../mcp/types.js";
  *             only; the loop calls `agent.emit`,
  *             `agent.makeResult`, `agent.executor`,
  *             etc.)
- * @param prompt the user's prompt for this turn
+ * @param prompt the user's prompt for this turn (text or content blocks)
  */
 export async function runAgentLoop(
   agent: Agent,
-  prompt: string,
+  prompt: string | ReadonlyArray<ContentBlock>,
 ): Promise<AgentResult> {
   // System prompt goes first (idempotent: skip if a system
   // message is already present).
@@ -82,7 +85,37 @@ export async function runAgentLoop(
       { type: "text", text: agent.systemPrompt },
     ]);
   }
-  agent.session.appendMessage("user", [{ type: "text", text: prompt }]);
+
+  // DeepSeek/Codex: inject skill catalog + memory index + plan
+  // as a user-role fragment before the actual user prompt.
+  const plan =
+    typeof agent.session.getPlan === "function"
+      ? agent.session.getPlan()
+      : undefined;
+  const turnCtx = await assembleTurnContext({
+    cwd: agent.cwd,
+    signal: agent.abortSignal,
+    ...(agent.memoryStore !== undefined
+      ? { memoryStore: agent.memoryStore }
+      : {}),
+    ...(agent.skills !== undefined ? { skills: agent.skills } : {}),
+    ...(agent.skillCatalogDigest !== undefined
+      ? { skillCatalogDigest: agent.skillCatalogDigest }
+      : {}),
+    ...(plan !== undefined ? { plan } : {}),
+  });
+  agent.skillCatalogDigest = turnCtx.skillCatalogDigest;
+  // Do not persist turn context (skills / memory index / plan) — it is
+  // model-only and would show up as a phantom user bubble above the real
+  // human message in EH chat UIs.
+
+  if (typeof prompt === "string") {
+    agent.session.appendMessage("user", [{ type: "text", text: prompt }]);
+  } else {
+    agent.session.appendMessage("user", [...prompt]);
+  }
+
+  agent.clearTurnHints();
 
   // F9.4: emit agent_start. The model name is the best
   // guess we have (the agent doesn't know which model
@@ -111,6 +144,12 @@ export async function runAgentLoop(
   const mcpTools = agent.mcpClients
     ? await agent.mcpClients.collectTools()
     : [];
+  // Dedup: a tool registered in the ToolRegistry via the
+  // `registerMcpTools` bridge is already in the model's tool list
+  // (and governed by hooks/permissions); don't expose it twice.
+  const registryToolNames = new Set(
+    agent.tools.list().map((t) => t.name),
+  );
   const mcpToolDefinitions = mcpTools.map((t) => ({
     name: `${MCP_TOOL_PREFIX}${t.serverName}__${t.name}`,
     description: t.description,
@@ -120,9 +159,21 @@ export async function runAgentLoop(
         `MCP tool ${t.serverName}/${t.name}: execute() was called directly; the ToolExecutor should have routed this call.`,
       );
     },
-  }));
+  })).filter(
+    (def) => !registryToolNames.has(def.name),
+  );
 
   let iterations = 0;
+  // Self-healing: track how many consecutive times the model attempted
+  // the SAME failing tool call, so the loop can inject a corrective
+  // message and break an error spiral (weak providers often repeat a
+  // nameless/malformed call instead of adapting).
+  const toolFailureCounts = new Map<
+    string,
+    { count: number; lastError: string }
+  >();
+  let emptyResponseHinted = false;
+  let turnContextInjected = false;
   while (iterations < agent.maxIterations) {
     if (agent.abortController.signal.aborted) {
       return agent.makeResult([], "aborted", iterations);
@@ -132,15 +183,32 @@ export async function runAgentLoop(
     // 1. Call the model.
     let response: ModelResponse;
     try {
+      const messagesForModel =
+        !turnContextInjected && turnCtx.text.length > 0
+          ? injectEphemeralUserContext(
+              agent.session.messages,
+              turnCtx.text,
+            )
+          : agent.session.messages;
+      if (!turnContextInjected) turnContextInjected = true;
       response = await agent.model.complete({
-        messages: agent.session.messages,
+        messages: messagesForModel,
         tools: [...agent.tools.list(), ...mcpToolDefinitions],
         signal: agent.abortController.signal,
+        ...(agent.assistantStreamSink !== undefined
+          ? { onTextDelta: agent.assistantStreamSink }
+          : {}),
       });
     } catch (err) {
+      if (agent.abortController.signal.aborted) {
+        return agent.makeResult([], "aborted", iterations);
+      }
       // Model errors are surfaced as a synthetic assistant
       // message so the user sees the error in the transcript
-      // and the loop exits cleanly (no retry policy in v0).
+      // and the loop exits cleanly. (No retry here: a retry
+      // doubles the hang on bad configs / dead endpoints —
+      // the tool-loop + empty-response heals below cover the
+      // recoverable cases.)
       const message = (err as Error).message ?? String(err);
       agent.emit({
         kind: "error",
@@ -158,10 +226,31 @@ export async function runAgentLoop(
       );
     }
 
+    // Self-healing: an empty response (no text, no tools) is almost
+    // always a provider hiccup. Hint the model once and continue
+    // instead of ending the turn with nothing.
+    if (response.content.length === 0 && !emptyResponseHinted) {
+      emptyResponseHinted = true;
+      const hint =
+        "[system] Your previous response was empty. Please answer the user's request now — either reply directly or call a tool.";
+      agent.session.appendMessage("user", [{ type: "text", text: hint }]);
+      agent.emit({
+        kind: "error",
+        ts: new Date().toISOString(),
+        iteration: iterations,
+        message: "empty model response — retrying with a hint",
+      });
+      continue;
+    }
+
     // 1b. F7.1: cost attribution. The model reports usage; the
     // Agent attributes it to the right model (each model has
     // its own price). Unknown model + missing usage = 0 cost
     // (graceful default for FakeModel / local).
+    if (agent.abortController.signal.aborted) {
+      return agent.makeResult(response.content, "aborted", iterations);
+    }
+
     if (response.usage) {
       agent.costTracker.addUsage(
         {
@@ -209,17 +298,56 @@ export async function runAgentLoop(
       ...(response.usage ? { usage: response.usage } : {}),
     });
 
-    // 2. Append the assistant message.
-    agent.session.appendMessage("assistant", response.content);
+    // 2. Append the assistant message. Tool-call ids are normalized to
+    //    non-empty unique values BEFORE storage: some providers (MiniMax,
+    //    weaker local models) emit `id: ""` or reuse ids across turns,
+    //    which the API rejects (`400 duplicate tool_call id` / invalid
+    //    params) and which breaks tool_result attribution. Normalizing
+    //    here keeps the session + wire formats consistent.
+    const normalizedContent = normalizeToolCallIds(response.content);
+    agent.session.appendMessage("assistant", normalizedContent);
 
     // 3. Extract tool calls.
-    const toolCalls = response.content.filter(
+    const toolCalls = normalizedContent.filter(
       (b): b is Extract<ContentBlock, { type: "tool_call" }> =>
         b.type === "tool_call",
     );
 
-    // 4. No tool calls → done.
+    // 4. No tool calls → done — unless the reply is thinking-only
+    //    (models often end_turn inside `<think>` without writing the
+    //    user-facing answer). Treat that like an empty response and
+    //    ask once for a real reply. If it still won't produce visible
+    //    text, return an explicit fallback so hosts don't show a blank
+    //    bubble (and don't treat the turn as "success with no content").
     if (toolCalls.length === 0) {
+      const visible = visibleTextFromContent(normalizedContent);
+      if (visible.length === 0 && !emptyResponseHinted) {
+        emptyResponseHinted = true;
+        const hint =
+          "[system] Your previous response had no user-visible answer (only private reasoning, or it was empty). Please answer the user's request now in plain text — do not put the answer only inside thinking tags.";
+        agent.session.appendMessage("user", [{ type: "text", text: hint }]);
+        agent.emit({
+          kind: "error",
+          ts: new Date().toISOString(),
+          iteration: iterations,
+          message: "thinking-only model response — retrying with a hint",
+        });
+        continue;
+      }
+      if (visible.length === 0) {
+        const fallback: ContentBlock[] = [
+          {
+            type: "text",
+            text: "(No visible reply was produced after retrying. Please try again or rephrase.)",
+          },
+        ];
+        agent.session.appendMessage("assistant", fallback);
+        return agent.makeResult(
+          fallback,
+          normalizeStopReason(response.stopReason),
+          iterations,
+        );
+      }
       return agent.makeResult(
         response.content,
         normalizeStopReason(response.stopReason),
@@ -238,6 +366,38 @@ export async function runAgentLoop(
     // is the driver; the host doesn't opt in.
     await agent.executor.executeMany(toolCalls, iterations);
 
+    // 5b. Self-healing: detect repeated identical tool failures and
+    // inject a corrective message so the model changes approach instead
+    // of looping on the same error (e.g. a nameless bash call).
+    for (const call of toolCalls) {
+      const result = findToolResult(agent.session.messages, call.id);
+      const signature = `${call.name}\u0000${JSON.stringify(call.args)}`;
+      if (result === undefined || result.isError !== true) {
+        // A success (or an absent result) resets the failure streak.
+        toolFailureCounts.delete(signature);
+        continue;
+      }
+      const errorText =
+        typeof result.content === "string"
+          ? result.content
+          : JSON.stringify(result.content);
+      const prev = toolFailureCounts.get(signature);
+      const count = (prev?.count ?? 0) + 1;
+      toolFailureCounts.set(signature, { count, lastError: errorText });
+      if (count % 2 === 0) {
+        const corrective =
+          `[system] You attempted tool \`${call.name}\` with the same arguments ${count} times and it failed each time with: ${errorText}. ` +
+          `Do NOT repeat that exact call — change your approach (different arguments, a different tool, or answer directly).`;
+        agent.session.appendMessage("user", [{ type: "text", text: corrective }]);
+        agent.emit({
+          kind: "error",
+          ts: new Date().toISOString(),
+          iteration: iterations,
+          message: `tool call loop detected (${call.name}) — corrective hint injected`,
+        });
+      }
+    }
+
     // If model said "max_tokens" and we have tool calls, treat
     // as end-of-turn; the agent shouldn't loop on a truncated
     // response. The transcript still has the tool results, so
@@ -250,6 +410,26 @@ export async function runAgentLoop(
   throw new Error(
     `agent loop exceeded max iterations (${agent.maxIterations})`,
   );
+}
+
+/** Find the `tool_result` message for a tool call id (most recent first). */
+function findToolResult(
+  messages: ReadonlyArray<{ role: string; content: ReadonlyArray<ContentBlock> }>,
+  callId: string,
+): { content: unknown; isError: boolean } | undefined {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const m = messages[i];
+    if (m === undefined || m.role !== "tool") continue;
+    for (const b of m.content) {
+      if (
+        b.type === "tool_result" &&
+        b.toolCallId === callId
+      ) {
+        return { content: b.content, isError: b.isError };
+      }
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -269,4 +449,43 @@ function normalizeStopReason(
   modelReason: ModelResponse["stopReason"],
 ): AgentResult["stopReason"] {
   return modelReason;
+}
+
+/** Join text blocks and strip thinking wrappers → user-visible reply. */
+function visibleTextFromContent(
+  content: ReadonlyArray<ContentBlock>,
+): string {
+  const raw = content
+    .filter((b): b is Extract<ContentBlock, { type: "text" }> => b.type === "text")
+    .map((b) => b.text)
+    .join("\n");
+  return stripThinking(raw);
+}
+
+/**
+ * Rewrite tool-call ids to be non-empty and unique within one assistant
+ * message: empty ids become `call_N`, repeated ids become a fresh
+ * `call_N`. Non-empty unique ids are preserved.
+ */
+function normalizeToolCallIds(
+  content: ReadonlyArray<ContentBlock>,
+): ContentBlock[] {
+  const seen = new Set<string>();
+  let generated = 0;
+  return content.map((block) => {
+    if (block.type !== "tool_call") return block;
+    const rawId = typeof block.id === "string" ? block.id.trim() : "";
+    if (rawId.length > 0 && !seen.has(rawId)) {
+      seen.add(rawId);
+      return block;
+    }
+    generated += 1;
+    let candidate = `call_${generated}`;
+    while (seen.has(candidate)) {
+      generated += 1;
+      candidate = `call_${generated}`;
+    }
+    seen.add(candidate);
+    return { ...block, id: candidate };
+  });
 }

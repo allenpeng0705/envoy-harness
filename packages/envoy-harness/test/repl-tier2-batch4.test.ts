@@ -94,9 +94,10 @@ afterEach(async () => {
 // ---------------------------------------------------------------------------
 
 describe("BUILTIN_TIER2_BATCH4_COMMANDS", () => {
-  it("has the 2 expected commands", () => {
+  it("has the 3 expected commands", () => {
     expect(BUILTIN_TIER2_BATCH4_COMMANDS.map((c) => c.name).sort()).toEqual([
       "/export",
+      "/plan",
       "/review",
     ]);
   });
@@ -106,7 +107,7 @@ describe("BUILTIN_TIER2_BATCH4_COMMANDS", () => {
     for (const c of BUILTIN_TIER2_BATCH4_COMMANDS) {
       allNames.add(c.name);
     }
-    expect(allNames.size).toBe(2);
+    expect(allNames.size).toBe(3);
   });
 });
 

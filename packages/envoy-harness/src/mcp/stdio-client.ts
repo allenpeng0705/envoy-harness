@@ -29,6 +29,7 @@
 import { z } from "zod";
 
 import type {
+  McpCallToolOptions,
   McpCallToolResult,
   McpClient,
   McpTool,
@@ -72,6 +73,12 @@ interface JsonRpcResponse {
   error?: { code: number; message: string };
 }
 
+interface JsonRpcNotification {
+  jsonrpc: "2.0";
+  method: string;
+  params?: unknown;
+}
+
 interface McpServerTool {
   name: string;
   description?: string;
@@ -95,6 +102,7 @@ export class StdioMcpClient implements McpClient {
   private buffer = Buffer.alloc(0);
   private _initialized = false;
   private _closed = false;
+  private progressListener: ((text: string) => void) | undefined;
   private readonly dataListener: (chunk: Buffer | string) => void;
 
   constructor(options: StdioMcpClientOptions) {
@@ -149,19 +157,25 @@ export class StdioMcpClient implements McpClient {
   async callTool(
     name: string,
     args: unknown,
+    options?: McpCallToolOptions,
   ): Promise<McpCallToolResult> {
     this.assertInitialized();
-    const result = (await this.sendRequest("tools/call", {
-      name,
-      arguments: args,
-    })) as {
-      content?: McpCallToolResult["content"];
-      isError?: boolean;
-    };
-    return {
-      content: result?.content ?? [],
-      ...(result?.isError !== undefined ? { isError: result.isError } : {}),
-    };
+    this.progressListener = options?.onProgress;
+    try {
+      const result = (await this.sendRequest("tools/call", {
+        name,
+        arguments: args,
+      })) as {
+        content?: McpCallToolResult["content"];
+        isError?: boolean;
+      };
+      return {
+        content: result?.content ?? [],
+        ...(result?.isError !== undefined ? { isError: result.isError } : {}),
+      };
+    } finally {
+      this.progressListener = undefined;
+    }
   }
 
   async close(): Promise<void> {
@@ -273,14 +287,20 @@ export class StdioMcpClient implements McpClient {
       const body = this.buffer.subarray(headerEnd + 4, total).toString("utf8");
       this.buffer = this.buffer.subarray(total);
       try {
-        this.handleMessage(JSON.parse(body) as JsonRpcResponse);
+        this.handleMessage(
+          JSON.parse(body) as JsonRpcResponse | JsonRpcNotification,
+        );
       } catch (e) {
         this.log(`StdioMcpClient: parse error: ${(e as Error).message}`);
       }
     }
   }
 
-  private handleMessage(msg: JsonRpcResponse): void {
+  private handleMessage(msg: JsonRpcResponse | JsonRpcNotification): void {
+    if (!("id" in msg) || msg.id === undefined) {
+      this.handleNotification(msg as JsonRpcNotification);
+      return;
+    }
     const pending = this.pending.get(msg.id);
     if (!pending) {
       this.log(`StdioMcpClient: response for unknown id ${msg.id}`);
@@ -293,6 +313,25 @@ export class StdioMcpClient implements McpClient {
       );
     } else {
       pending.resolve(msg.result);
+    }
+  }
+
+  private handleNotification(msg: JsonRpcNotification): void {
+    if (
+      msg.method !== "notifications/progress" &&
+      msg.method !== "notifications/message"
+    ) {
+      return;
+    }
+    const params = msg.params as
+      | { message?: string; progress?: number; total?: number }
+      | undefined;
+    let text = params?.message ?? "";
+    if (text.length === 0 && params?.progress !== undefined) {
+      text = `progress ${params.progress}/${params.total ?? "?"}`;
+    }
+    if (text.length > 0) {
+      this.progressListener?.(text);
     }
   }
 }

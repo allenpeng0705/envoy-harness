@@ -43,7 +43,15 @@
  * constructor are additive.
  */
 
-import { Agent, HookRegistry, InMemorySession, newSessionId, ToolRegistry, type ModelAdapter } from "../index.js";
+import {
+  Agent,
+  buildAgentSystemPrompt,
+  HookRegistry,
+  InMemorySession,
+  newSessionId,
+  ToolRegistry,
+  type ModelAdapter,
+} from "../index.js";
 import type { AgentRunResult, AgentSpec, TeamConfig, TeamResult } from "./types.js";
 
 /** Options for `Team`. */
@@ -71,6 +79,13 @@ export interface TeamOptions {
    * string.
    */
   input?: string;
+  /**
+   * D4 — dispatch an agent whose `spec.host` is `"peer://<id>"`. The
+   * peer package (`@envoymesh/envoy-harness-peer`) provides the
+   * implementation (`createPeerTeamExecutor`); Package 1 only declares
+   * the seam. Absent → a peer-hosted agent fails with a clear error.
+   */
+  peerExecutor?: (spec: AgentSpec, prompt: string) => Promise<string>;
 }
 
 /** The runner. */
@@ -80,6 +95,9 @@ export class Team {
   private readonly cwd: string;
   private readonly optionsFor: ((spec: AgentSpec) => Partial<ConstructorParameters<typeof Agent>[0]>) | undefined;
   private readonly input: string;
+  private readonly peerExecutor:
+    | ((spec: AgentSpec, prompt: string) => Promise<string>)
+    | undefined;
 
   constructor(options: TeamOptions) {
     this.config = options.config;
@@ -87,6 +105,7 @@ export class Team {
     this.cwd = options.cwd ?? process.cwd();
     this.optionsFor = options.optionsFor;
     this.input = options.input ?? "";
+    this.peerExecutor = options.peerExecutor;
   }
 
   /**
@@ -163,6 +182,18 @@ export class Team {
     spec: AgentSpec,
     prompt: string,
   ): Promise<{ text: string; stopReason: string }> {
+    // D4 — peer-hosted agents dispatch through the host's peer executor
+    // (the peer package routes via PeerRegistry + PeerMeshSubmitter).
+    if (spec.host !== undefined && spec.host !== "local") {
+      if (this.peerExecutor === undefined) {
+        throw new Error(
+          `agent ${spec.id} host "${spec.host}" requires TeamOptions.peerExecutor ` +
+            "(provided by @envoymesh/envoy-harness-peer's createPeerTeamExecutor)",
+        );
+      }
+      const text = await this.peerExecutor(spec, prompt);
+      return { text, stopReason: "end_turn" };
+    }
     const session = new InMemorySession(newSessionId(), {
       cwd: this.cwd,
       permissionMode: "read-only",
@@ -177,7 +208,11 @@ export class Team {
       session,
       hooks,
       cwd: this.cwd,
-      systemPrompt: spec.systemPrompt,
+      // Phase G — when the team spec doesn't pin a system prompt, fall
+      // back to the default assembly (AGENTS.md discovery + guidance).
+      systemPrompt:
+        spec.systemPrompt ??
+        (await buildAgentSystemPrompt({ cwd: this.cwd })),
       ...partial,
     });
     const result = await agent.run(prompt);

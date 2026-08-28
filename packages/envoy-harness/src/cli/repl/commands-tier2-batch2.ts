@@ -15,12 +15,7 @@
  * tier). The two batches are distinct
  * (commit-wise) but live in the same directory.
  *
- * **`/undo` is DEFERRED to F17.7.** Action journal
- * scope is too big for v0 (a generic journaled
- * log is hard to test cleanly without a real
- * workload). The "testability wins on tie"
- * principle says don't ship features for
- * hypothetical use cases.
+ * **`/undo`** reverts the last `write` / `edit` tool change (action journal).
  *
  * **v0 limitations:**
  * - `/diff` runs `git diff` (no args; unstaged
@@ -193,6 +188,29 @@ const diffCommand: ReplCommand = {
   },
 };
 
+const undoCommand: ReplCommand = {
+  name: "/undo",
+  description: "revert the last write or edit tool change",
+  handler(_args, ctx) {
+    if (!ctx.agent.canUndo()) {
+      ctx.stdout.write("nothing to undo\n");
+      return;
+    }
+    void ctx.agent
+      .undoLastFileChange()
+      .then((result) => {
+        ctx.stdout.write(
+          `undone: ${result.action} ${result.path}\n`,
+        );
+      })
+      .catch((err: unknown) => {
+        ctx.stderr.write(
+          `undo failed: ${err instanceof Error ? err.message : String(err)}\n`,
+        );
+      });
+  },
+};
+
 // ---------------------------------------------------------------------------
 // Public surface
 // ---------------------------------------------------------------------------
@@ -217,4 +235,5 @@ const diffCommand: ReplCommand = {
 export const BUILTIN_TIER2_BATCH2_COMMANDS: ReadonlyArray<ReplCommand> = [
   agentsCommand,
   diffCommand,
+  undoCommand,
 ];

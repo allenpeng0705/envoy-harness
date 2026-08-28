@@ -145,9 +145,11 @@ const baseExecuteInput = {
 // ---------------------------------------------------------------------------
 
 describe("EnvoyHarnessAdapter.describeSkills", () => {
-  it("returns the 8-skill catalog (5 envoy-harness + 3 B-class)", () => {
+  it("returns the 9-skill catalog (5 envoy-harness + 4 B-class)", () => {
     // Phase 8 / Step 3 commit 2 — the catalog grew
-    // from 5 to 8 (5 envoy-harness + 3 B-class). The
+    // from 5 to 8 (5 envoy-harness + 3 B-class); the
+    // distributed-collaboration round added `peer-cluster`
+    // (9 total). The
     // test asserts the adapter returns the same list
     // as `ENVOY_HARNESS_SKILLS` (defensive against
     // accidental drift).
@@ -156,7 +158,7 @@ describe("EnvoyHarnessAdapter.describeSkills", () => {
       signResult: fakeSign("peer-1"),
       workerPeerId: "peer-1",
     });
-    expect(a.describeSkills()).toHaveLength(8);
+    expect(a.describeSkills()).toHaveLength(9);
     expect(a.describeSkills().map((s) => s.skillId).sort()).toEqual(
       [...ENVOY_HARNESS_SKILLS.map((s) => s.skillId)].sort(),
     );
@@ -174,7 +176,7 @@ describe("EnvoyHarnessAdapter.describeSkills", () => {
     // (5 envoy-harness + 3 B-class). The defensive copy
     // still holds: mutating the returned array doesn't
     // affect the adapter's internal catalog.
-    expect(a.describeSkills()).toHaveLength(8);
+    expect(a.describeSkills()).toHaveLength(9);
   });
 });
 
@@ -198,7 +200,7 @@ describe("EnvoyHarnessAdapter.buildManifest", () => {
     expect(m.runtimeVersion).toBe(ENVOY_HARNESS_SKILLS[0]?.description ? "0.0.0" : "0.0.0");
     expect(m.peerId).toBe("peer-1");
     expect(m.ownerId).toBe("owner-1");
-    expect(m.skills).toHaveLength(8);
+    expect(m.skills).toHaveLength(9);
     expect(m.reputationBySkill).toEqual({
       "code-edit": 0.9,
       "code-review": 0.8,
@@ -228,6 +230,44 @@ describe("EnvoyHarnessAdapter.buildManifest", () => {
 // ---------------------------------------------------------------------------
 
 describe("EnvoyHarnessAdapter.execute — text-only response", () => {
+  it("forwards input.verifierModel to buildAgent as providerHint (v1.16)", async () => {
+    let receivedHint: string | undefined = undefined;
+    const model = scriptedModel([
+      { content: [{ type: "text", text: "verifier output" }] },
+    ]);
+    const a = new EnvoyHarnessAdapter({
+      buildAgent: (args) => {
+        receivedHint = args.providerHint;
+        return buildAgentWith(model)(args);
+      },
+      signResult: fakeSign("peer-1"),
+      workerPeerId: "peer-1",
+    });
+    const signed = await a.execute({
+      ...baseExecuteInput,
+      verifierModel: "anthropic:claude-instant",
+    });
+    expect(receivedHint).toBe("anthropic:claude-instant");
+    expect(signed.content).toEqual([{ kind: "text", text: "verifier output" }]);
+  });
+
+  it("omits providerHint when input.verifierModel is absent (v1.16)", async () => {
+    let receivedHint: unknown = "sentinel";
+    const model = scriptedModel([
+      { content: [{ type: "text", text: "ok" }] },
+    ]);
+    const a = new EnvoyHarnessAdapter({
+      buildAgent: (args) => {
+        receivedHint = args.providerHint;
+        return buildAgentWith(model)(args);
+      },
+      signResult: fakeSign("peer-1"),
+      workerPeerId: "peer-1",
+    });
+    await a.execute({ ...baseExecuteInput });
+    expect(receivedHint).toBeUndefined();
+  });
+
   it("builds an Agent, runs the skill, signs the result", async () => {
     const model = scriptedModel([
       {

@@ -33,3 +33,18 @@ export type {
 export { NullTracer } from "./null-tracer.js";
 export { JsonLinesTracer, type WritableStream } from "./json-lines.js";
 export { VerboseTracer, formatVerbose, type VerboseStream } from "./verbose-tracer.js";
+export {
+  createJsonlTelemetrySink,
+  createNullTelemetrySink,
+  wrapTracerAsTelemetrySink,
+  type JsonlTelemetrySinkOptions,
+  type TelemetryCounters,
+  type TelemetrySink,
+} from "./telemetry.js";
+export {
+  assertRedactionInvariant,
+  assertTraceEventShape,
+  InvariantError,
+  type InvariantKind,
+  type RedactionInvariantOptions,
+} from "./invariants.js";

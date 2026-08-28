@@ -123,6 +123,30 @@ async function realSignedResult(
 // ---------------------------------------------------------------------------
 
 describe("defaultCrossVerify", () => {
+  it("forwards opts.providerHint as ExecuteInput.verifierModel (v1.16)", async () => {
+    let called: ExecuteInput | null = null;
+    const otherAdapter: EnvoyHarnessAdapter = buildAdapter({
+      model: scriptedModel("cross result"),
+      signResult: fakeSign(),
+      workerPeerId: "other",
+    });
+    const origExecute = otherAdapter.execute.bind(otherAdapter);
+    otherAdapter.execute = async (input: ExecuteInput) => {
+      called = input;
+      return origExecute(input);
+    };
+    const cross = defaultCrossVerify(otherAdapter, {
+      providerHint: "anthropic:claude-instant",
+    });
+    const signed = await realSignedResult(otherAdapter, "do the thing");
+    await cross({
+      result: signed,
+      objective: "do the thing",
+    });
+    expect(called).not.toBeNull();
+    expect(called!.verifierModel).toBe("anthropic:claude-instant");
+  });
+
   it("returns a function that calls otherAdapter.execute", async () => {
     let called: ExecuteInput | null = null;
     const otherAdapter: EnvoyHarnessAdapter = buildAdapter({

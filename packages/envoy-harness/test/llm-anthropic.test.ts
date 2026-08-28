@@ -224,6 +224,33 @@ describe("messagesToAnthropic", () => {
     ]);
   });
 
+  it("remaps duplicate tool_use ids across turns (Anthropic uniqueness guard)", () => {
+    const msgs = messagesToAnthropic([
+      assistantToolCall("t1", "bash", { command: "ls" }),
+      toolResult("t1", "ok"),
+      assistantToolCall("t1", "read_file", { path: "x" }),
+      toolResult("t1", "file"),
+    ]);
+    const toolUseIds = msgs
+      .filter((m) => m.role === "assistant")
+      .flatMap((m) =>
+        (m.content as Array<{ type: string; id?: string }>)
+          .filter((b) => b.type === "tool_use")
+          .map((b) => b.id),
+      );
+    expect(toolUseIds).toEqual(["t1", "call_1"]);
+    const resultIds = msgs
+      .flatMap((m) =>
+        Array.isArray(m.content)
+          ? (m.content as Array<{ type: string; tool_use_id?: string }>)
+              .filter((b) => b.type === "tool_result")
+              .map((b) => b.tool_use_id)
+          : [],
+      )
+      .filter((id): id is string => id !== undefined);
+    expect(resultIds).toEqual(["t1", "call_1"]);
+  });
+
   it("merges assistant text + tool call into a single content array", () => {
     const msg: Message = {
       role: "assistant",

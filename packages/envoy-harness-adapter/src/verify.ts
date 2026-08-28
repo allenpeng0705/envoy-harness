@@ -287,6 +287,15 @@ export type CrossVerifyFn = (input: VerifyInput) => Promise<WireVerdict[]>;
  */
 export function defaultCrossVerify(
   otherAdapter: AgentAdapter,
+  opts?: {
+    /**
+     * v1.16 — per-call model override hint for the cross adapter.
+     * Forwarded as `ExecuteInput.verifierModel` so a same-runtime
+     * cross-verify (worker on envoy-harness + model X → verifier on
+     * envoy-harness + model Y) can honor it.
+     */
+    providerHint?: string;
+  },
 ): CrossVerifyFn {
   return async (input) => {
     try {
@@ -298,6 +307,9 @@ export function defaultCrossVerify(
         deadlineMs: 30_000,
         correlationId: input.result.correlationId,
         signal: new AbortController().signal,
+        ...(opts?.providerHint !== undefined
+          ? { verifierModel: opts.providerHint }
+          : {}),
       } satisfies ExecuteInput);
       // Run the local verifier on the new result.
       return await runLocalVerifier({
