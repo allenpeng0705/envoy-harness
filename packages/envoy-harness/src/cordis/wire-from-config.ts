@@ -66,8 +66,9 @@ export async function wireCordisFromConfig(
 ): Promise<CordisWireResult | undefined> {
   if (options.plugins.length === 0) return undefined;
   try {
-    // Optional peer package — not a hard dependency of Package 1.
-    // @ts-expect-error optional workspace package
+    // @envoymesh/envoy-harness-cordis is an optional workspace peer. If
+    // the package is not installed at runtime, the catch below returns
+    // undefined and the harness runs without Cordis-backed plugins.
     const cordis = await import("@envoymesh/envoy-harness-cordis");
     const container = await cordis.createCordisContainer({
       plugins: options.plugins.map((p) => ({
