@@ -49,6 +49,7 @@ import type { Agent, AgentResult } from "../agent.js";
 import { MCP_TOOL_PREFIX } from "../mcp/types.js";
 import { injectEphemeralUserContext } from "../context/ephemeral-user-context.js";
 import { assembleTurnContext } from "../context/turn-context.js";
+import { collaborationModeBlockReason } from "../plan/tool-policy.js";
 import { stripThinking } from "../util/strip-thinking.js";
 
 /**
@@ -92,6 +93,7 @@ export async function runAgentLoop(
     typeof agent.session.getPlan === "function"
       ? agent.session.getPlan()
       : undefined;
+  const collaborationMode = agent.session.getCollaborationMode();
   const turnCtx = await assembleTurnContext({
     cwd: agent.cwd,
     signal: agent.abortSignal,
@@ -103,6 +105,7 @@ export async function runAgentLoop(
       ? { skillCatalogDigest: agent.skillCatalogDigest }
       : {}),
     ...(plan !== undefined ? { plan } : {}),
+    collaborationMode: collaborationMode.kind,
   });
   agent.skillCatalogDigest = turnCtx.skillCatalogDigest;
   // Do not persist turn context (skills / memory index / plan) — it is
@@ -191,9 +194,17 @@ export async function runAgentLoop(
             )
           : agent.session.messages;
       if (!turnContextInjected) turnContextInjected = true;
+      const modeKind = agent.session.getCollaborationMode().kind;
+      // R4.6: recompute each iteration — enter/exit_plan_mode can flip mid-turn.
+      const toolsForModel = [
+        ...agent.tools.list(),
+        ...mcpToolDefinitions,
+      ].filter(
+        (t) => collaborationModeBlockReason(modeKind, t.name) === undefined,
+      );
       response = await agent.model.complete({
         messages: messagesForModel,
-        tools: [...agent.tools.list(), ...mcpToolDefinitions],
+        tools: toolsForModel,
         signal: agent.abortController.signal,
         ...(agent.assistantStreamSink !== undefined
           ? { onTextDelta: agent.assistantStreamSink }

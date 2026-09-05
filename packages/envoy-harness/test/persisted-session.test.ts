@@ -293,7 +293,8 @@ describe("PersistedSession: formatVersion", () => {
     const lines = file.split("\n").filter((l) => l.length > 0);
     const header = JSON.parse(lines[0]!);
     expect(header._kind).toBe("header");
-    expect(header.formatVersion).toBe(1);
+    expect(header.formatVersion).toBe(2);
+    expect(header.generation).toBe(1);
   });
 
   it("open() accepts a v1 file (with formatVersion: 1)", async () => {

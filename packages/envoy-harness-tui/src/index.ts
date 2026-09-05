@@ -25,6 +25,8 @@ export {
   TuiSession,
   type PermissionRequest,
   type TuiSessionOptions,
+  type UserQuestionAnswer,
+  type UserQuestionRequest,
 } from "./session.js";
 
 export {

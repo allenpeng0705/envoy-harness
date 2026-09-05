@@ -124,6 +124,9 @@ export {
   indexSessionDirectory,
   indexSessionFile,
   isPathInside,
+  migrateSessionFile,
+  SessionFileBusyError,
+  PERSISTED_SESSION_FORMAT_VERSION,
   type SessionIndexEntry,
   type SessionIndexerOptions,
   type SessionQueryHit,
@@ -333,6 +336,9 @@ export {
   type MakeTaskToolOptions,
   type MeshSubmitter,
   type RoutingHint,
+  type ContinuableSubagentHandle,
+  type SubagentHandleId,
+  type SubmitContinuableOptions,
   type SubagentInput,
   type SubagentRecord,
   type SubagentResult,
@@ -540,6 +546,7 @@ export {
 // Chunk 5.2: ask_user tool + AskForApproval shim.
 export {
   createAskForApprovalShim,
+  createHostBridgeUserQuestionProvider,
   createReplStdinProvider,
   createUserQuestionService,
   DEFAULT_MULTILINE_SENTINEL,
@@ -553,6 +560,9 @@ export {
   type MakeSuggestFollowUpsToolOptions,
   type AskUserInput,
   type CreateAskForApprovalShimOptions,
+  type HostBridgeUserQuestionProviderOptions,
+  type HostUserQuestionAsk,
+  type HostUserQuestionRequest,
   type MakeAskUserToolOptions,
   type ReplStdinProviderOptions,
   type UserQuestionAnswer,
@@ -598,9 +608,16 @@ export {
   PlanTransitionError,
   applyTransition,
   buildPlanFragment,
+  collaborationModeBlockReason,
+  collaborationModePrompt,
+  createCollaborationModeState,
   createPlanState,
+  filterToolNamesForMode,
+  modeForcesReadOnly,
   renderPlanText,
   runReview,
+  type CollaborationModeState,
+  type ModeKind,
   type PlanReviewStatus,
   type PlanState,
   type PlanTransition,
@@ -708,6 +725,14 @@ export {
   type AssembleTurnContextOptions,
   type AssembledTurnContext,
 } from "./context/turn-context.js";
+
+export {
+  RetainedContextStore,
+  injectRetainedContext,
+  type AddRetainedOptions,
+  type RetainedFragment,
+  type RetainedKind,
+} from "./context/retained.js";
 
 export {
   isEphemeralUserContextText,
@@ -826,6 +851,8 @@ export {
   type ProtocolPeerInfo,
   type ProtocolPermissionDecision,
   type ProtocolPermissionRequest,
+  type ProtocolUserQuestionAnswer,
+  type ProtocolUserQuestionRequest,
   type ProtocolPromptResult,
   type ProtocolScoreboardEntry,
   type ProtocolSessionBackend,

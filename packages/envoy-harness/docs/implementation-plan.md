@@ -18,97 +18,75 @@ intentionally design-light — the executable chunking lives here.
 
 ## Distributed collaboration — the major feature
 
-> **Status:** DESIGNED (2026-08-22), not started. This is envoy-harness's
-> strategic differentiator: **distribution + collaboration** — agents on
-> different nodes/machines finishing jobs together, with **different
-> models**, verifier discipline, and reputation — versus sub-agents on one
-> machine (which other harnesses also do).
+> **Status:** Rounds 1–3 ✅ DONE (2026-08-22). **Round 4 PLANNED
+> (2026-09-05)** — refine local sub-agents + deepen multi-node ops.
 >
 > **Design:** [`docs/distributed-collaboration.md`](./distributed-collaboration.md)
-> (the canonical design: protocol, seams, scenarios, chunks, tests, risks).
+> (canonical: protocol, seams, scenarios, competitive landscape, Round 4).
+> **Round 4 plan:** [`docs/implementation-plan-round-4.md`](./implementation-plan-round-4.md).
 
-**The core decision — one contract, two transports.** Both scenarios
-speak the **MAP message contract** (`@envoymesh/protocol` schemas:
-`ExecuteInput`, `SignedAgentResult`, `VerifyInput`, `Verdict`,
+**Strategic framing:** envoy-harness is a **full harness with real local
+sub-agents** (`task` → `LocalMeshSubmitter` + fan-out + team
+`host: "local"`). The **differentiator** is that the *same* seams also
+reach **other nodes** (standalone peers + EnvoyMesh MAP) with model
+routing and cross-instance verify — which Codex and deepseek-harness do
+not ship as a coding mesh.
+
+**The core decision — one contract, two transports.** Both multi-node
+scenarios speak the **MAP message contract** (`@envoymesh/protocol`
+schemas: `ExecuteInput`, `SignedAgentResult`, `VerifyInput`, `Verdict`,
 `CapabilityManifest`):
 
-- **EnvoyMesh distribution** — MAP over libp2p + Ed25519 envelopes (the
-  mesh fabric; v2.2 transport planned).
-- **Standalone peers (no EnvoyMesh)** — MAP over JSON-RPC framing (reuse
-  the ACP/SDK codec). A new `@envoymesh/envoy-harness-peer` package owns
-  it (Package 1 stays EnvoyMesh-free).
+- **EnvoyMesh distribution** — MAP over libp2p + Ed25519 envelopes.
+- **Standalone peers (no EnvoyMesh)** — MAP over JSON-RPC framing
+  (`@envoymesh/envoy-harness-peer`; Package 1 stays EnvoyMesh-free).
 
-The existing seams make this tractable: `MeshSubmitter` (Local/Remote/
-**Peer**), `RemoteSubmitterTransport` (the injected transport junction),
-`EnvoyHarnessAdapter` (the one worker), `ChainSubtask` (the shared unit of
-work), `VerdictEntry` (shared verification), and v1.16's per-call model
-override (the "different models collaborate" mechanism).
+**Submitter ladder:** `LocalMeshSubmitter` → `PeerMeshSubmitter` →
+`RemoteMeshSubmitter` (libp2p). Combination patterns: (A) mesh chain
+delegates to a peer cluster; (B) same `ChainSubtask` shape on mesh or
+peer runner.
 
-**Combination patterns:** (A) a mesh node's chain worker delegates to a
-standalone peer cluster via `PeerMeshSubmitter` — the mesh orchestrates,
-the peers execute; (B) the same `ChainSubtask`-shaped job runs on the mesh
-chain or the standalone peer runner, promotable between them.
-
-### Chunk roadmap
+### Chunk roadmap (Rounds 1–3 — complete)
 
 | # | Chunk | Scope | Status |
 |---|---|---|---|
-| D1 | Adapter-driven chain worker | `createEnvoyHarnessChainSubtaskExecutor` uses `EnvoyHarnessAdapter.execute` (structured result + artifacts) instead of the legacy text-ask path — prerequisite for both scenarios | ✅ done (2026-08-22; `implementation-plan-chunk-d1.md`) |
-| D2 | Peer package + transport | `@envoymesh/envoy-harness-peer`; JSON-RPC transport + `PeerClient` + `PeerMeshSubmitter`; hermetic in-process pair + parity vs `LocalMeshSubmitter` | ✅ done (2026-08-22; `implementation-plan-chunk-d2.md`) |
-| D3 | Peer server + registry + model routing | `envoy-peer serve` CLI (adapter behind JSON-RPC; binary in `@envoymesh/envoy-harness-peer`, demo adapter without `--adapter`); `PeerRegistry` announcing `{ id, model, capabilities }`; route by model | ✅ done (2026-08-22; `implementation-plan-chunk-d3.md`) |
-| D4 | Distributed team runner | `TeamConfig` agents gain `host: "local" \| "peer://<id>"`; dispatch local vs peer over the shared subtask shape | ✅ done (2026-08-22; `implementation-plan-chunk-d4.md`) |
-| D5 | Cross-instance verification + scoreboard | `peer/verify` with a different model (reuse verifier + v1.16 hint); local scoreboards write `VerdictEntry` (federatable) | ✅ done (2026-08-22; `implementation-plan-chunk-d5.md`) |
-| D6 | EnvoyMesh combination | `RemoteSubmitterTransport` peer implementation (peer cluster as a mesh node's execution pool) + v2.2 libp2p transport | ✅ done (2026-08-22; `implementation-plan-chunk-d6.md`; v2.2 doc updated) |
-| D7 | Hardening + refinement | shared-token → Ed25519 envelopes; peer observability; static config → discovery; federation seams | ✅ done (2026-08-22; `implementation-plan-chunk-d7.md`) — **Round 1 complete** |
+| D1 | Adapter-driven chain worker | `createEnvoyHarnessChainSubtaskExecutor` uses `EnvoyHarnessAdapter.execute` | ✅ done (2026-08-22) |
+| D2 | Peer package + transport | `@envoymesh/envoy-harness-peer`; `PeerClient` + `PeerMeshSubmitter` | ✅ done (2026-08-22) |
+| D3 | Peer server + registry + model routing | `envoy-peer serve`; `PeerRegistry` | ✅ done (2026-08-22) |
+| D4 | Distributed team runner | `host: "local" \| "peer://<id>"` | ✅ done (2026-08-22) |
+| D5 | Cross-instance verification + scoreboard | `peer/verify`; `VerdictEntry` scoreboards | ✅ done (2026-08-22) |
+| D6 | EnvoyMesh combination | Peer `RemoteSubmitterTransport` + v2.2 libp2p fabric | ✅ done (2026-08-22) |
+| D7 | Hardening + refinement | Ed25519 envelopes; discovery/federation seams | ✅ done (2026-08-22) |
 
-**Rounds:** R1 = D1–D4 (the standalone primitive, demonstrable);
-R2 = D5–D6 (verification + mesh combination); R3 = D7 (hardening). Each
-chunk ships a sub-plan doc (`implementation-plan-chunk-d*.md`), code,
-tests, and a self-review commit per repo convention.
+**Rounds 1–3 notes:** R1 = D1–D4; R2 = D5–D6 + mesh-shaped fan-out +
+static discovery polish; R3 = D7 + `federatePeerScoreboard` + v2.2 fabric
+(mesh-side transport in EnvoyMesh). Success criteria (v1) met: standalone
+peer cluster with cross-instance verify; same job shape on mesh; Package 1
+EnvoyMesh-free.
 
-**Round 2 (mesh-shaped fan-out): ✅ DONE (2026-08-22)** —
-`connectPeerClient` (production TCP peer transport) +
-`CreateRealEnvoyHarnessRuntimeOptions.innerSubmitter` (injectable execution
-pool). An EnvoyMesh integration test proves a chain worker's `task` tool
-fans out to an in-process peer cluster and the worker result flows back
-(Pattern A, hermetic). EnvoyMesh 450 hermetic tests green; peer 21;
-full monorepo 1767.
+### Round 4 chunk roadmap (planned)
 
-**Round 2 polish + Round 3 (federation): ✅ DONE (2026-08-22)** —
-`connectPeerClients` (static discovery, fail-open) + `createPeerClusterSubmitter`
-(the dynamic pool), `PersistedNodeConfig.envoyHarnessPeers`, the node
-service's peer pool + `listEnvoyHarnessPeers()` management surface, and
-`federatePeerScoreboard` (standalone verdicts → mesh arbitration store).
-EnvoyMesh 454 hermetic tests green; peer 20; full monorepo 1766.
+> Full specs + **ROI coverage checklist**:
+> [`implementation-plan-round-4.md`](./implementation-plan-round-4.md).
+>
+> **Equal goals:** (0) single-instance ≈ Codex/dsh; (1) multi-node ops.
+> Most users run **one** instance — D-Refine ships first.
 
-**v2.2 libp2p fabric: ✅ DONE (2026-08-22)** — the mesh-side
-`RemoteSubmitterTransport` (Pattern B) is implemented:
-`task.harness.submit.request/response` protocol intents + payloads,
-the worker-side inbound handler (adapter-driven execute + signed
-reply / wire errors), and `createLibp2pRemoteSubmitterTransport`
-(expect-reply over the mesh, envelope verification, abort forwarding,
-self-submit). `connectPeerClients` also now connects concurrently
-(fail-open; a dead peer no longer delays the healthy ones). EnvoyMesh
-typecheck clean; peer 24 + fabric transport/inbound/protocol tests green.
-Chunk doc: [`implementation-plan-chunk-v22.md`](./implementation-plan-chunk-v22.md).
+| Phase | Chunks | Theme | Priority |
+|---|---|---|---|
+| **D-Refine** | R4.1–R4.6b, R4.8, R4.9a, R4.17 | Async ask, retained context, session format+lease, projections, hooks, presets, **collaboration modes**, skill fuzzy, continuable **local** sub-agents, parallel DAG, workflow `parallel`/`pipeline` | **P0–P1 (single-instance)** |
+| **D-Ops** | R4.7, R4.9b, R4.10–R4.11, R4.18 | Live `team/jobs` on peer path, continuable **peer** tasks, verify budgets, scoreboard pull, **dynamic discovery** | **P0–P2 (multi-node)** |
+| **D-Mesh** | R4.12–R4.14b | Mesh-remote jobs + terminals; unify job boards; optional exec-world | P1–P2 |
+| **D-Interop** | R4.15–R4.16 | Subagent provider registry; ACP/Codex/Claude as workers | P1–P3 |
 
-> **Where the v2.2 fabric ships:** the libp2p `RemoteSubmitterTransport`
-> implementation lives in **EnvoyMesh** (`apps/node/src/harness-submit-*`),
-> NOT envoy-harness — Pattern B is mesh-side by design. envoy-harness
-> contributes the seam (`RemoteSubmitterTransport`, exported by
-> `@envoymesh/envoy-harness-adapter`) and the protocol intents/payloads
-> (`@envoymesh/protocol`). A reader scanning the chunk table should not
-> expect `createLibp2pRemoteSubmitterTransport` to exist in this repo.
-> Same for the `peer serve` CLI: the binary is `envoy-peer` from
-> `@envoymesh/envoy-harness-peer`, not an `envoy-harness` subcommand
-> (Package 1 must not depend on the peer package).
+**Suggested first slices:** **A (single-instance)** R4.1 → R4.6 → R4.9a →
+R4.3 → R4.2; **B (multi-node, parallel)** R4.7 → R4.8 → R4.9b.
 
-**Success criteria (v1):** a standalone peer cluster (different machines,
-different models) completes a multi-agent job with cross-instance
-verification, no EnvoyMesh; the same job shape runs through the EnvoyMesh
-chain; a mesh node delegates subtasks to a peer cluster via the
-`RemoteSubmitterTransport` seam; Package 1 stays EnvoyMesh-free; all tests
-hermetic and both repos green.
+**Round 4 success (summary):** with peers **disabled**, async ask +
+modes + continuable local sub-agents + session lease/retained context +
+local parallel teams + workflow API work. With peers **enabled**,
+`team/jobs` + continuable peer + verify budgets + scoreboard pull;
+Package 1 still EnvoyMesh-free; hermetic CI.
 
 ## Envoy Harness UI — the second major feature
 

@@ -131,6 +131,31 @@ async function runPlain(options: RunInteractiveOptions): Promise<void> {
             return;
           }
         }
+        if (session.pendingUserQuestion !== undefined) {
+          const q = session.pendingUserQuestion;
+          const trimmed = line.trim();
+          if (q.options !== undefined && q.options.length > 0) {
+            const asNum = Number.parseInt(trimmed, 10);
+            if (
+              Number.isFinite(asNum) &&
+              asNum >= 1 &&
+              asNum <= q.options.length
+            ) {
+              const idx = asNum - 1;
+              session.answerUserQuestion({
+                value: q.options[idx]!,
+                optionIndex: idx,
+              });
+              flush();
+              prompt();
+              return;
+            }
+          }
+          session.answerUserQuestion({ value: line });
+          flush();
+          prompt();
+          return;
+        }
 
         const result = await session.submit(line);
         flush();
@@ -185,6 +210,9 @@ async function runInteractiveScreen(
   const inputPrefix = (): string => {
     if (session.pendingPermission !== undefined) {
       return "permission — allow/deny — ";
+    }
+    if (session.pendingUserQuestion !== undefined) {
+      return "question — ";
     }
     return session.busy ? "… " : "> ";
   };
@@ -447,6 +475,29 @@ async function runInteractiveScreen(
           await render();
           return;
         }
+        if (session.pendingUserQuestion !== undefined) {
+          const q = session.pendingUserQuestion;
+          const trimmed = line.trim();
+          if (q.options !== undefined && q.options.length > 0) {
+            const asNum = Number.parseInt(trimmed, 10);
+            if (
+              Number.isFinite(asNum) &&
+              asNum >= 1 &&
+              asNum <= q.options.length
+            ) {
+              const idx = asNum - 1;
+              session.answerUserQuestion({
+                value: q.options[idx]!,
+                optionIndex: idx,
+              });
+              await render();
+              return;
+            }
+          }
+          session.answerUserQuestion({ value: line });
+          await render();
+          return;
+        }
         const result = await session.submit(rawLine);
         if (result === "quit") {
           finish();
@@ -518,6 +569,8 @@ async function runInteractiveScreen(
             view = "chat";
           } else if (session.pendingPermission !== undefined) {
             session.answerPermission("deny");
+          } else if (session.pendingUserQuestion !== undefined) {
+            session.cancelUserQuestion();
           } else if (session.busy) {
             void session.cancel();
           } else if (composer.buffer.length > 0) {

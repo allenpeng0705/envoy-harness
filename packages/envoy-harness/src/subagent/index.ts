@@ -45,6 +45,13 @@ export {
 } from "./local-mesh-submitter.js";
 
 export {
+  ContinuableSubagentRegistry,
+  type ContinuableSubagentHandle,
+  type SubagentHandleId,
+  type SubmitContinuableOptions,
+} from "./continuable.js";
+
+export {
   TaskInputSchema,
   makeTaskTool,
   type MakeTaskToolOptions,

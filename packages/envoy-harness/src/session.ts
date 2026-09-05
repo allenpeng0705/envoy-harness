@@ -46,6 +46,12 @@ export interface SessionMetadata {
    */
   plan?: import("./plan/state.js").PlanState;
   /**
+   * R4.6 — collaboration mode (Plan / Default / Review).
+   * Orthogonal to `plan` document lifecycle. Controls tool
+   * policy + prompt guidance; see `plan/mode-kind.ts`.
+   */
+  collaborationMode?: import("./plan/mode-kind.js").CollaborationModeState;
+  /**
    * Phase D / Item 14b: cross-machine resume provenance.
    * Optional; local sessions omit it. Remote resume
    * (mesh adapter) stamps `originNode` / `resumedFrom`.
@@ -130,6 +136,14 @@ export interface Session {
    * `undefined` when no plan has been set.
    */
   getPlan(): import("./plan/state.js").PlanState | undefined;
+  /**
+   * R4.6 — set collaboration mode (Plan / Default / Review).
+   */
+  setCollaborationMode(
+    mode: import("./plan/mode-kind.js").CollaborationModeState,
+  ): void;
+  /** R4.6 — current collaboration mode (defaults to `default`). */
+  getCollaborationMode(): import("./plan/mode-kind.js").CollaborationModeState;
 }
 
 /**
@@ -201,6 +215,21 @@ export class InMemorySession implements Session {
   /** Phase A / Item 6: read the current plan state. */
   getPlan(): import("./plan/state.js").PlanState | undefined {
     return this.metadata.plan;
+  }
+
+  setCollaborationMode(
+    mode: import("./plan/mode-kind.js").CollaborationModeState,
+  ): void {
+    this.metadata.collaborationMode = mode;
+  }
+
+  getCollaborationMode(): import("./plan/mode-kind.js").CollaborationModeState {
+    return (
+      this.metadata.collaborationMode ?? {
+        kind: "default",
+        updatedAt: this.metadata.startedAt,
+      }
+    );
   }
 
   /** No-op: nothing to flush for an in-memory session. */

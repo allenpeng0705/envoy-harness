@@ -28,8 +28,6 @@ import {
   loadConfigStack,
   resolveAgentRuntimeConfig,
   systemPromptOptionsFromConfig,
-  createUserQuestionService,
-  createReplStdinProvider,
   type ProtocolSessionBackend,
 } from "../../index.js";
 import type { ParsedArgs } from "../argv.js";
@@ -212,14 +210,6 @@ async function resolveAcpBackend(
       askForApproval: runtime.askForApproval,
       plan: parsed.plan === true,
     });
-    const userQuestions = createUserQuestionService();
-    const disposeUserQuestionsProvider = userQuestions.registerProvider(
-      createReplStdinProvider({
-        input: (options.stdin ?? process.stdin) as Readable,
-        output: stderr as Writable,
-        name: "acp-stdin",
-      }),
-    );
     return {
       backend: await wireCluster(
         createAgentSessionBackend({
@@ -239,7 +229,13 @@ async function resolveAcpBackend(
               name: t.name,
               description: t.description,
             })),
-          createAgent: ({ sessionId, cwd, askHandler, session }) => {
+          createAgent: ({
+            sessionId,
+            cwd,
+            askHandler,
+            session,
+            userQuestions,
+          }) => {
             const sessionCwd = cwd ?? defaultCwd;
             const hooks = new HookRegistry();
             return new Agent({
@@ -275,6 +271,7 @@ async function resolveAcpBackend(
               ...(parsed.maxCostUsd !== undefined
                 ? { maxCostUsd: parsed.maxCostUsd }
                 : {}),
+              // R4.1 — host-bridged via session/user_question (TUI answers).
               userQuestions,
             });
           },
@@ -284,7 +281,6 @@ async function resolveAcpBackend(
         }),
       ),
       async dispose() {
-        disposeUserQuestionsProvider();
         if (mcpWire !== undefined) {
           await mcpWire.dispose().catch(() => undefined);
         }

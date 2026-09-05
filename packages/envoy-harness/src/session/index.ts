@@ -20,6 +20,23 @@ export { PersistedSession, type PersistedSessionCreateOptions } from "./persiste
 export { SessionStore, type SessionStoreOptions } from "./session-store.js";
 export { resolveSession } from "./resolve.js";
 export {
+  PERSISTED_SESSION_FORMAT_VERSION,
+  SUPPORTED_SESSION_FORMAT_VERSIONS,
+  buildCreateHeader,
+  resolveHeaderFormatVersion,
+  type PersistedHeader,
+} from "./format.js";
+export { migrateSessionFile, type MigrateSessionFileResult } from "./migrate.js";
+export {
+  SessionFileBusyError,
+  acquireSessionWriteLease,
+  defaultWriteLeaseProvider,
+  resetWriteLeaseProvider,
+  setWriteLeaseProvider,
+  type SessionWriteLease,
+  type WriteLeaseProvider,
+} from "./write-lease.js";
+export {
   indexSessionDirectory,
   indexSessionFile,
   isPathInside,

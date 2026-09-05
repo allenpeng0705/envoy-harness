@@ -60,52 +60,18 @@ import * as path from "node:path";
 
 import type { ContentBlock, Message, Role } from "../tools/types.js";
 import type { Session, SessionMetadata } from "../session.js";
+import {
+  PERSISTED_SESSION_FORMAT_VERSION,
+  buildCreateHeader,
+  resolveHeaderFormatVersion,
+  type PersistedHeader,
+} from "./format.js";
+import {
+  acquireSessionWriteLease,
+  type SessionWriteLease,
+} from "./write-lease.js";
 
-/**
- * The current JSONL format version. Bump when the
- * on-disk schema changes in a way that requires
- * a migration (vs. an additive change that old
- * readers can ignore).
- *
- * **v1 (F14.1):** initial format. Header line
- * `{_kind: "header", id, metadata, formatVersion: 1}`
- * + one `Message` per line.
- *
- * **Adding formatVersion** is the F14.2 / T1.2
- * pre-release cleanup. The check is in
- * `PersistedSession.open()`: a header with a
- * different `formatVersion` throws a clear error
- * (rather than silently loading a wrong-shape
- * file). Old files without `formatVersion` are
- * treated as v1 (we wrote them all this week; no
- * production data exists yet).
- */
-export const PERSISTED_SESSION_FORMAT_VERSION = 1 as const;
-
-/**
- * The JSONL header line. Distinct from a `Message`
- * (which has `role`, not `_kind`).
- *
- * **`formatVersion` is required on write** (the
- * header is built with the current
- * `PERSISTED_SESSION_FORMAT_VERSION`). On read,
- * the field is required for v2+; for v1 (the
- * initial format) it's optional for backward
- * compatibility (an old file without the field
- * loads as v1).
- */
-interface PersistedHeader {
-  _kind: "header";
-  id: string;
-  metadata: SessionMetadata;
-  /**
-   * The on-disk format version. Required for v2+
-   * (a missing field on a v2+ file is an error).
-   * Optional for v1 (old files without the field
-   * are treated as v1).
-   */
-  formatVersion?: number;
-}
+export { PERSISTED_SESSION_FORMAT_VERSION } from "./format.js";
 
 /**
  * Options for `PersistedSession.create()` (a new
@@ -142,11 +108,22 @@ export class PersistedSession implements Session {
   readonly metadata: SessionMetadata;
   private _messages: Message[] = [];
   private readonly filePath: string;
+  private lease: SessionWriteLease | undefined;
+  private formatVersion: number;
+  private generation: number;
 
-  private constructor(id: string, metadata: SessionMetadata, filePath: string) {
+  private constructor(
+    id: string,
+    metadata: SessionMetadata,
+    filePath: string,
+    formatVersion: number,
+    generation: number,
+  ) {
     this.id = id;
     this.metadata = { ...metadata };
     this.filePath = filePath;
+    this.formatVersion = formatVersion;
+    this.generation = generation;
   }
 
   get messages(): ReadonlyArray<Message> {
@@ -175,29 +152,49 @@ export class PersistedSession implements Session {
       }
       // ENOENT: file doesn't exist, proceed.
     }
-    const session = new PersistedSession(options.id, options.metadata, options.filePath);
-    // Write the header line. The formatVersion
-    // field is required on write so a future v2+
-    // reader can detect (and reject) old files.
-    const header: PersistedHeader = {
-      _kind: "header",
-      id: options.id,
-      metadata: options.metadata,
-      formatVersion: PERSISTED_SESSION_FORMAT_VERSION,
-    };
-    await fs.writeFile(options.filePath, JSON.stringify(header) + "\n", "utf-8");
-    return session;
+    const lease = await acquireSessionWriteLease(options.filePath);
+    try {
+      const header = buildCreateHeader(options.id, options.metadata);
+      await fs.writeFile(
+        options.filePath,
+        JSON.stringify(header) + "\n",
+        "utf-8",
+      );
+      const session = new PersistedSession(
+        options.id,
+        options.metadata,
+        options.filePath,
+        PERSISTED_SESSION_FORMAT_VERSION,
+        1,
+      );
+      session.lease = lease;
+      return session;
+    } catch (err) {
+      await lease.release();
+      throw err;
+    }
   }
 
   /**
-   * Open an existing `PersistedSession` from disk.
-   * Reads the file, validates the header, and
-   * populates the in-memory message list.
-   *
-   * Throws if the file doesn't exist or the header
-   * is invalid.
+   * Open an existing session for writing (acquires the write lease).
    */
   static async open(filePath: string): Promise<PersistedSession> {
+    return PersistedSession.openWithOptions(filePath, { readOnly: false });
+  }
+
+  /**
+   * Open without a write lease (inspectors / migrate / tests).
+   * Mutations still update memory + disk but MUST NOT be used
+   * concurrently with another writer — prefer {@link open}.
+   */
+  static async openReadOnly(filePath: string): Promise<PersistedSession> {
+    return PersistedSession.openWithOptions(filePath, { readOnly: true });
+  }
+
+  private static async openWithOptions(
+    filePath: string,
+    options: { readOnly: boolean },
+  ): Promise<PersistedSession> {
     let content: string;
     try {
       content = await fs.readFile(filePath, "utf-8");
@@ -229,36 +226,25 @@ export class PersistedSession implements Session {
         `PersistedSession.open: invalid header in ${filePath}: ${(err as Error).message}`,
       );
     }
-    // T1.2: validate the on-disk format version. The
-    // field is OPTIONAL on read (for backward
-    // compatibility with v1 files written before
-    // this commit) — a missing field means v1.
-    // A field with a non-numeric / non-1 value
-    // means the file is from a different version
-    // of the harness, and we reject it with a
-    // clear error.
-    if (header.formatVersion !== undefined) {
-      if (typeof header.formatVersion !== "number") {
-        throw new Error(
-          `PersistedSession.open: invalid formatVersion in ${filePath}: ` +
-            `expected a number, got ${typeof header.formatVersion}`,
-        );
-      }
-      if (header.formatVersion !== PERSISTED_SESSION_FORMAT_VERSION) {
-        throw new Error(
-          `PersistedSession.open: unsupported formatVersion ` +
-            `${header.formatVersion} in ${filePath} ` +
-            `(this build supports version ${PERSISTED_SESSION_FORMAT_VERSION})`,
-        );
-      }
+    let formatVersion: number;
+    try {
+      formatVersion = resolveHeaderFormatVersion(header);
+    } catch (err) {
+      throw new Error(
+        `PersistedSession.open: ${(err as Error).message} in ${filePath}`,
+      );
     }
-    // (When the field is undefined, treat as v1:
-    // this build is v1, the missing field matches.)
-    // The fact that we silently treat undefined as
-    // v1 is a forward-compat concession: v2+ must
-    // require the field. We enforce that when we
-    // bump the version.
-    const session = new PersistedSession(header.id, header.metadata, filePath);
+    const generation =
+      formatVersion >= 2
+        ? (header.generation as number)
+        : 1;
+    const session = new PersistedSession(
+      header.id,
+      header.metadata,
+      filePath,
+      formatVersion,
+      generation,
+    );
     // Lines 2..N: messages.
     for (let i = 1; i < lines.length; i++) {
       const line = lines[i]!;
@@ -278,6 +264,9 @@ export class PersistedSession implements Session {
           `PersistedSession.open: invalid message at line ${i + 1} in ${filePath}: ${(err as Error).message}`,
         );
       }
+    }
+    if (!options.readOnly) {
+      session.lease = await acquireSessionWriteLease(filePath);
     }
     return session;
   }
@@ -348,12 +337,13 @@ export class PersistedSession implements Session {
    */
   clear(): void {
     this._messages = [];
-    // Rewrite the file with just the header.
+    // Rewrite the file with just the header (preserve format).
     const header: PersistedHeader = {
       _kind: "header",
       id: this.id,
       metadata: this.metadata,
-      formatVersion: PERSISTED_SESSION_FORMAT_VERSION,
+      formatVersion: this.formatVersion,
+      ...(this.formatVersion >= 2 ? { generation: this.generation } : {}),
     };
     this.writeChain = this.writeChain.then(() =>
       fs
@@ -412,6 +402,22 @@ export class PersistedSession implements Session {
     return this.metadata.plan;
   }
 
+  setCollaborationMode(
+    mode: import("../plan/mode-kind.js").CollaborationModeState,
+  ): void {
+    this.metadata.collaborationMode = mode;
+    this.rewriteHeader();
+  }
+
+  getCollaborationMode(): import("../plan/mode-kind.js").CollaborationModeState {
+    return (
+      this.metadata.collaborationMode ?? {
+        kind: "default",
+        updatedAt: this.metadata.startedAt,
+      }
+    );
+  }
+
   /**
    * Rewrite the JSONL header (first line) without
    * touching the messages. Used by `setTitle` +
@@ -422,7 +428,8 @@ export class PersistedSession implements Session {
       _kind: "header",
       id: this.id,
       metadata: this.metadata,
-      formatVersion: PERSISTED_SESSION_FORMAT_VERSION,
+      formatVersion: this.formatVersion,
+      ...(this.formatVersion >= 2 ? { generation: this.generation } : {}),
     };
     const lines: string[] = [JSON.stringify(header)];
     for (const m of this._messages) {
@@ -450,6 +457,18 @@ export class PersistedSession implements Session {
    */
   async flush(): Promise<void> {
     await this.writeChain;
+  }
+
+  /**
+   * R4.3 — flush and release the write lease so another process
+   * can open the same file.
+   */
+  async close(): Promise<void> {
+    await this.flush();
+    if (this.lease !== undefined) {
+      await this.lease.release();
+      this.lease = undefined;
+    }
   }
 
   /**

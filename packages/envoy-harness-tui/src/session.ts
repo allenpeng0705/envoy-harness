@@ -31,6 +31,22 @@ export interface PermissionRequest {
   args: unknown;
 }
 
+/** R4.1 — structured ask_user / plan-mode question from the agent. */
+export interface UserQuestionRequest {
+  sessionId: string;
+  questionId: string;
+  prompt: string;
+  options?: ReadonlyArray<string>;
+  recommendedIndex?: number;
+  multiline?: boolean;
+}
+
+export interface UserQuestionAnswer {
+  value: string;
+  optionIndex?: number;
+  cancelled?: boolean;
+}
+
 export interface TuiSessionOptions {
   client: EnvoyHarnessClient;
   cwd?: string;
@@ -38,6 +54,9 @@ export interface TuiSessionOptions {
   initialAutoRun?: "safe-only" | "always-confirm" | "off";
   onTranscript?: (lines: readonly TranscriptLine[]) => void;
   onPermission?: (req: PermissionRequest) => Promise<"allow" | "deny">;
+  onUserQuestion?: (
+    req: UserQuestionRequest,
+  ) => Promise<UserQuestionAnswer>;
   transcriptFormat?: TranscriptFormatOptions;
 }
 
@@ -48,6 +67,9 @@ export class TuiSession {
   #onTranscript: ((lines: readonly TranscriptLine[]) => void) | undefined;
   readonly #onPermission:
     | ((req: PermissionRequest) => Promise<"allow" | "deny">)
+    | undefined;
+  readonly #onUserQuestion:
+    | ((req: UserQuestionRequest) => Promise<UserQuestionAnswer>)
     | undefined;
   readonly #lines: TranscriptLine[] = [];
   #sessionId: string | undefined;
@@ -75,6 +97,12 @@ export class TuiSession {
         resolve: (d: "allow" | "deny") => void;
       }
     | undefined;
+  #userQuestionWaiter:
+    | {
+        req: UserQuestionRequest;
+        resolve: (a: UserQuestionAnswer) => void;
+      }
+    | undefined;
   #turnHints: TurnHints | undefined;
   #transcriptFormat: TranscriptFormatOptions;
   /** Codex-shaped follow-ups typed while a turn is in flight. */
@@ -86,6 +114,7 @@ export class TuiSession {
     this.#initialAutoRun = options.initialAutoRun;
     this.#onTranscript = options.onTranscript;
     this.#onPermission = options.onPermission;
+    this.#onUserQuestion = options.onUserQuestion;
     this.#transcriptFormat = options.transcriptFormat ?? {};
     this.#removeSessionUpdate = this.#client.onNotification(
       "session/update",
@@ -150,6 +179,11 @@ export class TuiSession {
 
   get pendingPermission(): PermissionRequest | undefined {
     return this.#permissionWaiter?.req;
+  }
+
+  /** R4.1 — pending ask_user / plan question (composer answers this, not a new turn). */
+  get pendingUserQuestion(): UserQuestionRequest | undefined {
+    return this.#userQuestionWaiter?.req;
   }
 
   /** The last cluster snapshot (U2 cluster rail). */
@@ -221,6 +255,43 @@ export class TuiSession {
     this.#permissionWaiter = undefined;
     this.#push("status", `permission → ${decision}`);
     return true;
+  }
+
+  /** Used by EnvoyHarnessClient.onUserQuestionRequest. */
+  handleUserQuestionRequest(
+    req: UserQuestionRequest,
+  ): Promise<UserQuestionAnswer> {
+    if (this.#onUserQuestion !== undefined) {
+      return this.#onUserQuestion(req);
+    }
+    return new Promise<UserQuestionAnswer>((resolve) => {
+      this.#userQuestionWaiter = { req, resolve };
+      const opts =
+        req.options !== undefined && req.options.length > 0
+          ? `\n  options: ${req.options.map((o, i) => `${i + 1}. ${o}`).join(" · ")}`
+          : "";
+      this.#push(
+        "status",
+        `question — ${req.prompt}${opts}\n  (type answer + Enter · Esc cancels)`,
+      );
+    });
+  }
+
+  answerUserQuestion(answer: UserQuestionAnswer): boolean {
+    if (this.#userQuestionWaiter === undefined) return false;
+    this.#userQuestionWaiter.resolve(answer);
+    this.#userQuestionWaiter = undefined;
+    this.#push(
+      "status",
+      answer.cancelled === true
+        ? "question → cancelled"
+        : `question → ${answer.value.length > 80 ? `${answer.value.slice(0, 77)}…` : answer.value}`,
+    );
+    return true;
+  }
+
+  cancelUserQuestion(): boolean {
+    return this.answerUserQuestion({ value: "", cancelled: true });
   }
 
   async start(): Promise<void> {
@@ -349,6 +420,9 @@ export class TuiSession {
         case "plan":
           await this.runPlan(slash.action, slash.text, slash.reason);
           return "ok";
+        case "mode":
+          await this.runMode(slash.mode);
+          return "ok";
         case "review":
           await this.runReview(slash.staged);
           return "ok";
@@ -435,6 +509,9 @@ export class TuiSession {
   async cancel(): Promise<void> {
     if (this.#sessionId === undefined) return;
     this.#clearStreamingAssistant();
+    if (this.#userQuestionWaiter !== undefined) {
+      this.cancelUserQuestion();
+    }
     try {
       await this.#client.cancel(this.#sessionId);
       this.#push("status", "cancelled");
@@ -1129,6 +1206,26 @@ export class TuiSession {
       this.#push("status", out);
     } catch (err) {
       this.#push("status", `plan failed: ${(err as Error).message}`);
+    }
+  }
+
+  async runMode(mode?: "default" | "plan" | "review"): Promise<void> {
+    if (this.#sessionId === undefined) {
+      this.#push("status", "no active session");
+      return;
+    }
+    if (this.#busy) {
+      this.#push("status", "busy — /cancel first");
+      return;
+    }
+    try {
+      const next = await this.#client.setCollaborationMode(
+        this.#sessionId,
+        mode,
+      );
+      this.#push("status", `collaboration mode: ${next}`);
+    } catch (err) {
+      this.#push("status", `mode failed: ${(err as Error).message}`);
     }
   }
 

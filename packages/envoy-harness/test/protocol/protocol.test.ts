@@ -559,6 +559,119 @@ describe("createAgentSessionBackend", () => {
     expect(result.messages.some((m) => m.text === "denied")).toBe(true);
   });
 
+  it("requestUserQuestion parks ask_user until the host answers", async () => {
+    const backend = createAgentSessionBackend({
+      createAgent: ({ userQuestions }) => {
+        const mock = {
+          abort() {},
+          getMessageCount() {
+            return 0;
+          },
+          async run(_prompt: string) {
+            const answer = await userQuestions.ask({
+              prompt: "Which file?",
+              options: ["a.ts", "b.ts"],
+              signal: new AbortController().signal,
+            });
+            return {
+              messages: [
+                {
+                  role: "assistant",
+                  content: answer.cancelled
+                    ? "cancelled"
+                    : `chose:${answer.value}`,
+                },
+              ],
+              stopReason: "end_turn" as const,
+              costUsd: 0,
+              iterations: 1,
+            };
+          },
+        };
+        return mock as unknown as Agent;
+      },
+    });
+
+    const { sessionId } = await backend.createSession({});
+    let resolveHost!: (a: {
+      value: string;
+      optionIndex?: number;
+    }) => void;
+    const hostGate = new Promise<{
+      value: string;
+      optionIndex?: number;
+    }>((r) => {
+      resolveHost = r;
+    });
+    const promptPromise = backend.prompt({
+      sessionId,
+      prompt: { text: "ask" },
+      signal: new AbortController().signal,
+      requestPermission: async () => "allow",
+      requestUserQuestion: async (req) => {
+        expect(req.prompt).toBe("Which file?");
+        expect(req.options).toEqual(["a.ts", "b.ts"]);
+        return await hostGate;
+      },
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    resolveHost({ value: "b.ts", optionIndex: 1 });
+    const result = await promptPromise;
+    expect(result.messages.some((m) => m.text === "chose:b.ts")).toBe(true);
+  });
+
+  it("cancel unblocks an in-flight requestUserQuestion wait", async () => {
+    let questionStarted = false;
+    const backend = createAgentSessionBackend({
+      createAgent: ({ userQuestions }) => {
+        const mock = {
+          abort() {},
+          getMessageCount() {
+            return 0;
+          },
+          async run(_prompt: string) {
+            questionStarted = true;
+            const answer = await userQuestions.ask({
+              prompt: "stuck?",
+              signal: new AbortController().signal,
+            });
+            return {
+              messages: [
+                {
+                  role: "assistant",
+                  content: answer.cancelled ? "cancelled" : "answered",
+                },
+              ],
+              stopReason: "end_turn" as const,
+              costUsd: 0,
+              iterations: 1,
+            };
+          },
+        };
+        return mock as unknown as Agent;
+      },
+    });
+
+    const { sessionId } = await backend.createSession({});
+    const promptPromise = backend.prompt({
+      sessionId,
+      prompt: { text: "need-answer" },
+      signal: new AbortController().signal,
+      requestPermission: async () => "allow",
+      requestUserQuestion: () =>
+        new Promise(() => {
+          /* never resolves — cancel must unblock */
+        }),
+    });
+    for (let i = 0; i < 50 && !questionStarted; i++) {
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    expect(questionStarted).toBe(true);
+    backend.cancel(sessionId);
+    const result = await promptPromise;
+    expect(result.messages.some((m) => m.text === "cancelled")).toBe(true);
+  });
+
   it("evicts oldest sessions when maxSessions is exceeded", async () => {
     const backend = createAgentSessionBackend({
       maxSessions: 2,

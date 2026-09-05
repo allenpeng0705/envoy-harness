@@ -44,6 +44,19 @@ export interface EnvoyHarnessClientOptions {
     description: string;
     args: unknown;
   }) => Promise<"allow" | "deny">;
+  /** R4.1 — structured ask_user / plan-mode questions from the agent. */
+  onUserQuestionRequest?: (req: {
+    sessionId: string;
+    questionId: string;
+    prompt: string;
+    options?: ReadonlyArray<string>;
+    recommendedIndex?: number;
+    multiline?: boolean;
+  }) => Promise<{
+    value: string;
+    optionIndex?: number;
+    cancelled?: boolean;
+  }>;
   onEvent?: (event: { dialect: "acp" | "sdk"; params: unknown }) => void;
 }
 
@@ -73,6 +86,27 @@ export class EnvoyHarnessClient {
           const decision =
             (await options.onPermissionRequest?.(req)) ?? "deny";
           return { decision };
+        }
+        if (method === "session/user_question") {
+          const req = params as {
+            sessionId: string;
+            questionId: string;
+            prompt: string;
+            options?: ReadonlyArray<string>;
+            recommendedIndex?: number;
+            multiline?: boolean;
+          };
+          const answer = (await options.onUserQuestionRequest?.(req)) ?? {
+            value: "",
+            cancelled: true,
+          };
+          return {
+            value: answer.value,
+            ...(answer.optionIndex !== undefined
+              ? { optionIndex: answer.optionIndex }
+              : {}),
+            ...(answer.cancelled === true ? { cancelled: true } : {}),
+          };
         }
         throw new Error(`unexpected server request: ${method}`);
       },
@@ -444,6 +478,17 @@ export class EnvoyHarnessClient {
     return res.output;
   }
 
+  async setCollaborationMode(
+    sessionId: string,
+    mode?: "default" | "plan" | "review",
+  ): Promise<string> {
+    const res = (await this.#conn.request("session/set_mode", {
+      sessionId,
+      ...(mode !== undefined ? { mode } : {}),
+    })) as { mode: string };
+    return res.mode;
+  }
+
   async sessionMemory(
     sessionId: string,
     op: "list" | "read" | "add",
@@ -514,6 +559,7 @@ export interface SpawnAcpOptions {
   env?: NodeJS.ProcessEnv;
   stderr?: "inherit" | "pipe" | "ignore";
   onPermissionRequest?: EnvoyHarnessClientOptions["onPermissionRequest"];
+  onUserQuestionRequest?: EnvoyHarnessClientOptions["onUserQuestionRequest"];
   onEvent?: EnvoyHarnessClientOptions["onEvent"];
 }
 
@@ -538,6 +584,9 @@ export function spawnAcpServer(options: SpawnAcpOptions = {}): SpawnedAcp {
     output: child.stdin,
     ...(options.onPermissionRequest !== undefined
       ? { onPermissionRequest: options.onPermissionRequest }
+      : {}),
+    ...(options.onUserQuestionRequest !== undefined
+      ? { onUserQuestionRequest: options.onUserQuestionRequest }
       : {}),
     ...(options.onEvent !== undefined ? { onEvent: options.onEvent } : {}),
   });

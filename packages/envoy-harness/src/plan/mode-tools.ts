@@ -10,6 +10,7 @@ import { z } from "zod";
 
 import type { UserQuestionService } from "../interaction/user-questions.js";
 import type { Tool } from "../tools/types.js";
+import { createCollaborationModeState } from "./mode-kind.js";
 import {
   applyTransition,
   createPlanState,
@@ -20,6 +21,17 @@ const APPROVE = "Approve plan and continue";
 const KEEP = "Keep planning";
 const ENTER_YES = "Switch to plan mode";
 const ENTER_NO = "Stay in agent mode";
+
+function applyPlanCollaborationMode(
+  session: {
+    setCollaborationMode(
+      mode: import("./mode-kind.js").CollaborationModeState,
+    ): void;
+  },
+  kind: "default" | "plan",
+): void {
+  session.setCollaborationMode(createCollaborationModeState(kind));
+}
 
 export function makeEnterPlanModeTool(opts: {
   userQuestions: UserQuestionService;
@@ -68,6 +80,7 @@ export function makeEnterPlanModeTool(opts: {
       }
       const next = applyTransition(current, { kind: "enter" });
       ctx.session.setPlan(next);
+      applyPlanCollaborationMode(ctx.session, "plan");
       return {
         content:
           "Plan mode is now active. Investigate and produce a plan only — " +
@@ -153,6 +166,10 @@ export function makeExitPlanModeTool(opts: {
         current = applyTransition(current, { kind: "propose" });
         current = applyTransition(current, { kind: "approve" });
         ctx.session.setPlan(current);
+        // R4.6: leave collaboration plan mode so mutating tools
+        // are available to carry out the approved plan. PlanState
+        // stays active for fragment injection.
+        applyPlanCollaborationMode(ctx.session, "default");
       } catch (err) {
         return {
           content: `Failed to approve plan: ${(err as Error).message}`,
@@ -162,8 +179,9 @@ export function makeExitPlanModeTool(opts: {
 
       return {
         content:
-          "Plan approved — plan mode remains with an approved plan injected " +
-          "on the next turn. Carry out the plan starting with your next step. " +
+          "Plan approved — collaboration mode is default again so you can " +
+          "execute. The approved plan stays injected on the next turn. " +
+          "Carry out the plan starting with your next step. " +
           "The user can `/plan exit` when done.",
       };
     },

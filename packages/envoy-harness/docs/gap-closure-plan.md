@@ -1,7 +1,11 @@
 # Gap-closure plan — envoy-harness vs codex / deepseek-harness
 
-> **Status:** DRAFT v2 → progress updated 2026-08-22. Scheduled A–G gap items
-> are done; optional future work lives under Intentional deferrals.
+> **Status:** DRAFT v2 → progress updated 2026-08-22; **Round 4 pointer
+> added 2026-09-05**. Scheduled A–G gap items are done; optional future
+> work lives under Intentional deferrals. **Next major workstream:**
+> distributed Round 4 — refine local sub-agents + deepen multi-node ops
+> ([`implementation-plan-round-4.md`](./implementation-plan-round-4.md),
+> design §11 in [`distributed-collaboration.md`](./distributed-collaboration.md)).
 >
 > **Phase progress (as of 2026-08-22):**
 > - ✅ **Phase A** — Loop & context (items 1, 2, 5, 6) — **DONE**
@@ -809,7 +813,9 @@ is optional future work — not unfinished Package-1 gaps.
 | **Python SDK (11)** | EnvoyMesh nodes are TS; no Python consumer | A Python host appears |
 | **12c extra desktop/web host** | 12a + 12b cover hosts | A consumer needs a third host in this monorepo |
 | **Windows job-object sandbox (4)** | Linux/macOS backends shipped; Windows uses validators | Windows CI + demand |
-| **Mesh-remote JobHandle / terminal** | Local jobs/terminal done; remote needs mesh protocol | EnvoyMesh job/terminal protocol |
+| **Mesh-remote JobHandle / terminal** | Local jobs/terminal done; remote needs mesh protocol | **Round 4 D-Mesh** (R4.12–R4.13) when EnvoyMesh protocol lands — see [`implementation-plan-round-4.md`](./implementation-plan-round-4.md) |
+| **Async ask / retained context / session lease** | A–G closed local agent basics; Codex/dsh advanced patterns remain | **Round 4 D-Refine** (R4.1–R4.3) |
+| **Peer `team/jobs` + parallel DAG + continuable tasks** | D1–D7 shipped primitive; ops depth still thin | **Round 4 D-Ops** (R4.7–R4.9, P0) |
 
 **Resolved (removed from deferrals):** 12b per-tool `pi:proposal`; 13
 `createMeshCredentialsProvider`; 14b `loadRemoteSession`. Live mesh

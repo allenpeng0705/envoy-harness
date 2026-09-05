@@ -15,6 +15,7 @@ import { stripThinking } from "../util/strip-thinking.js";
 import { formatGitOutput, runGitDiff, runGitStatus } from "./git-runner.js";
 import { traceEventToCommittedMessage } from "./message-format.js";
 import {
+  ensurePlanDocumentActive,
   formatSubagentRecords,
   runMemoryOp,
   runPlanAction,
@@ -26,6 +27,12 @@ import {
 import { installToolPermissionAskHook } from "./permission-hook.js";
 import type { Session } from "../session.js";
 import { SessionStore } from "../session/session-store.js";
+import {
+  createUserQuestionService,
+  type UserQuestionAnswer,
+  type UserQuestionService,
+} from "../interaction/user-questions.js";
+import { createHostBridgeUserQuestionProvider } from "../interaction/providers/host-bridge.js";
 import {
   shouldAskUnderAutoRun,
   type AutoRunPolicy,
@@ -48,6 +55,12 @@ export interface AgentSessionBackendOptions {
     askHandler: AskHandler;
     /** When resuming, the persisted session instance (else in-memory). */
     session?: Session;
+    /**
+     * R4.1 — host-bridged user questions for `ask_user` / plan mode.
+     * Always provided by the agent backend; hosts answer via
+     * `session/user_question` JSON-RPC.
+     */
+    userQuestions: UserQuestionService;
   }) => Agent;
   /** When set, `loadSession` reads JSONL transcripts from disk. */
   sessionStore?: SessionStore;
@@ -96,11 +109,108 @@ interface LiveSession {
         args: unknown;
       }) => Promise<"allow" | "deny">)
     | undefined;
+  /**
+   * R4.1 — pending user-question waiters (questionId → resolve).
+   * Cancel / abort resolves all with a cancelled answer.
+   */
+  userQuestionWaits: Map<
+    string,
+    { resolve: (answer: UserQuestionAnswer) => void }
+  >;
+  requestUserQuestion:
+    | ((req: {
+        sessionId: string;
+        questionId: string;
+        prompt: string;
+        options?: ReadonlyArray<string>;
+        recommendedIndex?: number;
+        multiline?: boolean;
+      }) => Promise<UserQuestionAnswer>)
+    | undefined;
   createdAt: number;
   modelLabel?: string;
   providerLabel?: string;
   /** Session-level auto-run permission policy (TUI / ACP hosts). */
   autoRun?: AutoRunPolicy;
+}
+
+function cancelPendingUserQuestions(live: LiveSession): void {
+  for (const [, waiter] of live.userQuestionWaits) {
+    waiter.resolve({
+      value: "",
+      cancelled: true,
+      cancelledReason: "aborted",
+    });
+  }
+  live.userQuestionWaits.clear();
+}
+
+function abortAsUserQuestionCancel(
+  signal: AbortSignal,
+): Promise<UserQuestionAnswer> {
+  return new Promise((resolve) => {
+    if (signal.aborted) {
+      resolve({ value: "", cancelled: true, cancelledReason: "aborted" });
+      return;
+    }
+    signal.addEventListener(
+      "abort",
+      () =>
+        resolve({ value: "", cancelled: true, cancelledReason: "aborted" }),
+      { once: true },
+    );
+  });
+}
+
+function wireHostUserQuestions(
+  live: LiveSession,
+  sessionId: string,
+): UserQuestionService {
+  const userQuestions = createUserQuestionService();
+  userQuestions.registerProvider(
+    createHostBridgeUserQuestionProvider({
+      name: "acp-host",
+      getSessionId: () => sessionId,
+      getHostAsk: () => {
+        const host = live.requestUserQuestion;
+        if (host === undefined) return undefined;
+        return async (req) => {
+          if (live.abort?.signal.aborted) {
+            return {
+              value: "",
+              cancelled: true,
+              cancelledReason: "aborted",
+            };
+          }
+          const hostPromise = host(req);
+          const wrapped = new Promise<UserQuestionAnswer>((resolve) => {
+            live.userQuestionWaits.set(req.questionId, { resolve });
+            void hostPromise.then(
+              (answer) => {
+                live.userQuestionWaits.delete(req.questionId);
+                resolve(answer);
+              },
+              () => {
+                live.userQuestionWaits.delete(req.questionId);
+                resolve({
+                  value: "",
+                  cancelled: true,
+                  cancelledReason: "aborted",
+                });
+              },
+            );
+          });
+          const signal = live.abort?.signal;
+          if (signal === undefined) return await wrapped;
+          return await Promise.race([
+            wrapped,
+            abortAsUserQuestionCancel(signal),
+          ]);
+        };
+      },
+    }),
+  );
+  return userQuestions;
 }
 
 function messageText(content: unknown): string {
@@ -201,6 +311,7 @@ export function createAgentSessionBackend(
       sessions.delete(oldestId);
       doomed?.abort?.abort();
       doomed?.permissionWait?.resolve("deny");
+      if (doomed !== undefined) cancelPendingUserQuestions(doomed);
       doomed?.agent.abort("session evicted");
     }
   };
@@ -228,6 +339,8 @@ export function createAgentSessionBackend(
         abort: undefined,
         permissionWait: undefined,
         requestPermission: undefined,
+        userQuestionWaits: new Map(),
+        requestUserQuestion: undefined,
         createdAt: Date.now(),
       };
       const askHandler: AskHandler = async (req) => {
@@ -269,10 +382,12 @@ export function createAgentSessionBackend(
         }
         return { kind: "allow" };
       };
+      const userQuestions = wireHostUserQuestions(live, sessionId);
       live.agent = options.createAgent({
         sessionId,
         cwd,
         askHandler,
+        userQuestions,
         ...(persisted !== undefined ? { session: persisted } : {}),
       });
       // process-wide defaultRegistry when createAgent omits hooks.
@@ -309,6 +424,7 @@ export function createAgentSessionBackend(
       if (doomed !== undefined) {
         doomed.abort?.abort();
         doomed.permissionWait?.resolve("deny");
+        cancelPendingUserQuestions(doomed);
         doomed.agent.abort("session replaced");
         sessions.delete(sessionId);
       }
@@ -317,6 +433,8 @@ export function createAgentSessionBackend(
         abort: undefined,
         permissionWait: undefined,
         requestPermission: undefined,
+        userQuestionWaits: new Map(),
+        requestUserQuestion: undefined,
         createdAt: Date.now(),
       };
       const askHandler: AskHandler = async (req) => {
@@ -356,10 +474,12 @@ export function createAgentSessionBackend(
         }
         return { kind: "allow" };
       };
+      const userQuestions = wireHostUserQuestions(live, sessionId);
       live.agent = options.createAgent({
         sessionId,
         cwd,
         askHandler,
+        userQuestions,
         session: persisted,
       });
       const hooks = live.agent.hooks ?? new HookRegistry();
@@ -391,6 +511,22 @@ export function createAgentSessionBackend(
         throw new Error(`unknown session: ${params.sessionId}`);
       }
       live.requestPermission = params.requestPermission;
+      live.requestUserQuestion =
+        params.requestUserQuestion !== undefined
+          ? async (req) => {
+              const raw = await params.requestUserQuestion!(req);
+              return {
+                value: typeof raw.value === "string" ? raw.value : "",
+                ...(typeof raw.optionIndex === "number"
+                  ? { optionIndex: raw.optionIndex }
+                  : {}),
+                cancelled: raw.cancelled === true,
+                ...(raw.cancelled === true
+                  ? { cancelledReason: "aborted" as const }
+                  : {}),
+              };
+            }
+          : undefined;
       const ac = new AbortController();
       live.abort = ac;
       const onAbort = (): void => {
@@ -399,6 +535,7 @@ export function createAgentSessionBackend(
         ac.abort();
         live.permissionWait?.resolve("deny");
         live.permissionWait = undefined;
+        cancelPendingUserQuestions(live);
         // Agent.run() polls abortController; cancel must abort the Agent,
         // not only a local controller that nothing observes.
         live.agent.abort("session cancelled");
@@ -492,6 +629,8 @@ export function createAgentSessionBackend(
         live.abort = undefined;
         live.permissionWait = undefined;
         live.requestPermission = undefined;
+        live.requestUserQuestion = undefined;
+        cancelPendingUserQuestions(live);
       }
     },
 
@@ -501,6 +640,7 @@ export function createAgentSessionBackend(
       live.abort?.abort();
       live.permissionWait?.resolve("deny");
       live.permissionWait = undefined;
+      cancelPendingUserQuestions(live);
       live.agent.abort("session cancelled");
     },
 
@@ -673,7 +813,26 @@ export function createAgentSessionBackend(
         params.text,
         params.reason,
       );
+      // Keep Agent's collaboration helper in sync for /mode restore.
+      if (action === "enter") {
+        live.agent.setCollaborationMode("plan");
+      } else if (action === "exit" || action === "approve") {
+        live.agent.setCollaborationMode("default");
+      }
       return { output };
+    },
+
+    async setCollaborationMode(params) {
+      const live = requireLive(sessions, params.sessionId);
+      assertSessionIdle(live);
+      if (params.mode === undefined) {
+        return { mode: live.agent.getCollaborationMode() };
+      }
+      live.agent.setCollaborationMode(params.mode);
+      if (params.mode === "plan") {
+        ensurePlanDocumentActive(live.agent.getSession());
+      }
+      return { mode: live.agent.getCollaborationMode() };
     },
 
     async sessionMemory(params) {

@@ -71,6 +71,12 @@ import {
   compactMessagesWithSummary,
 } from "./agent/compact.js";
 import {
+  injectRetainedContext,
+  RetainedContextStore,
+  type AddRetainedOptions,
+  type RetainedFragment,
+} from "./context/retained.js";
+import {
   createAskForApprovalShim,
 } from "./interaction/ask-for-approval-shim.js";
 import { makeAskUserTool } from "./interaction/ask-user-tool.js";
@@ -85,6 +91,11 @@ import {
   makeEnterPlanModeTool,
   makeExitPlanModeTool,
 } from "./plan/mode-tools.js";
+import {
+  createCollaborationModeState,
+  modeForcesReadOnly,
+  type ModeKind,
+} from "./plan/index.js";
 import type { UserQuestionService } from "./interaction/user-questions.js";
 
 /** Default max iterations before the agent throws. */
@@ -544,6 +555,11 @@ export class Agent {
     | undefined;
   /** @internal Write/edit journal for `/undo`. */
   actionJournal: ActionJournal;
+  /**
+   * R4.2 — facts / answers that survive compaction.
+   * @internal Hosts use `retainContext` / `listRetainedContext`.
+   */
+  retainedContext: RetainedContextStore;
   /** @internal Follow-ups / deferrals collected during the current `run()`. */
   turnHints: TurnHints = emptyTurnHints();
   /**
@@ -615,6 +631,7 @@ export class Agent {
     this.assistantStreamSink = undefined;
     this.toolOutputSink = undefined;
     this.actionJournal = new ActionJournal();
+    this.retainedContext = new RetainedContextStore();
     this.turnHints = emptyTurnHints();
     this.tools.register(
       makeSuggestFollowUpsTool({
@@ -746,7 +763,15 @@ export class Agent {
       tools: this.tools,
       session: this.session,
       cwd: this.cwd,
-      getSandboxPolicy: () => this.sandboxPolicy,
+      getSandboxPolicy: () => {
+        // R4.6: plan/review force read-only for bash validators even
+        // when the host's configured sandbox is writeable.
+        const kind = this.session.getCollaborationMode().kind;
+        if (modeForcesReadOnly(kind)) {
+          return policyFromMode("read-only", this.cwd);
+        }
+        return this.sandboxPolicy;
+      },
       getSandboxExecutor: () =>
         this.sandboxExecutor ??
         resolveSandboxExecutor({ policy: this.sandboxPolicy }),
@@ -1008,6 +1033,36 @@ export class Agent {
   }
 
   /**
+   * R4.6 — set collaboration mode (Plan / Default / Review).
+   * Leaving plan/review restores `previousPermissionMode` when stored.
+   */
+  setCollaborationMode(kind: ModeKind): void {
+    const current = this.session.getCollaborationMode();
+    if (kind === "default") {
+      const restore = current.previousPermissionMode;
+      this.session.setCollaborationMode(createCollaborationModeState("default"));
+      if (restore !== undefined) {
+        this.setPermissionMode(restore);
+      }
+      return;
+    }
+    const previousPermissionMode: PermissionMode =
+      current.kind === "default"
+        ? this.sandboxPolicy.mode
+        : (current.previousPermissionMode ?? this.sandboxPolicy.mode);
+    this.session.setCollaborationMode({
+      kind,
+      updatedAt: new Date().toISOString(),
+      previousPermissionMode,
+    });
+  }
+
+  /** R4.6 — current collaboration mode kind. */
+  getCollaborationMode(): ModeKind {
+    return this.session.getCollaborationMode().kind;
+  }
+
+  /**
    * F17.2 / protocol: change approval policy and wire the
    * ask handler (mirrors REPL `/approval`).
    */
@@ -1069,7 +1124,27 @@ export class Agent {
     // No-op when there was nothing to drop (the function returns
     // the same transcript unchanged).
     if (next.length === this.session.messages.length) return;
-    // Clear + re-append.
+    this.replaceTranscript(injectRetainedContext(next, this.retainedContext));
+  }
+
+  /**
+   * R4.2 — record a fact / user answer that must survive compaction.
+   */
+  retainContext(options: AddRetainedOptions): RetainedFragment {
+    return this.retainedContext.add(options);
+  }
+
+  /** R4.2 — current retained fragments. */
+  listRetainedContext(): ReadonlyArray<RetainedFragment> {
+    return this.retainedContext.list();
+  }
+
+  /** R4.2 — clear retained fragments. */
+  clearRetainedContext(): void {
+    this.retainedContext.clear();
+  }
+
+  private replaceTranscript(next: ReadonlyArray<import("./tools/index.js").Message>): void {
     this.session.clear();
     for (const m of next) {
       this.session.appendMessage(m.role, m.content);
@@ -1111,10 +1186,7 @@ export class Agent {
     // reliable no-op signal — a one-for-one summary insertion keeps
     // the count equal while changing content.
     if (droppedCount === 0) return;
-    this.session.clear();
-    for (const m of next) {
-      this.session.appendMessage(m.role, m.content);
-    }
+    this.replaceTranscript(injectRetainedContext(next, this.retainedContext));
   }
 
   /**
@@ -1152,10 +1224,7 @@ export class Agent {
     if (droppedCount === 0) {
       return { totalTokensAfter, overBudget, droppedCount };
     }
-    this.session.clear();
-    for (const m of next) {
-      this.session.appendMessage(m.role, m.content);
-    }
+    this.replaceTranscript(injectRetainedContext(next, this.retainedContext));
     return { totalTokensAfter, overBudget, droppedCount };
   }
 

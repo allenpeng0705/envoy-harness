@@ -52,7 +52,6 @@ import { InMemorySession, newSessionId } from "../session.js";
 import { ToolRegistry } from "../tools/index.js";
 import type { ModelAdapter } from "../model.js";
 import type { PermissionMode } from "../types.js";
-import type { Verdict } from "../verifier/types.js";
 import type { Tracer } from "../trace/index.js";
 
 import type {
@@ -62,6 +61,11 @@ import type {
   SubagentResult,
 } from "./types.js";
 import type { SubagentResultSigner } from "./signer.js";
+import {
+  ContinuableSubagentRegistry,
+  type ContinuableSubagentHandle,
+  type SubmitContinuableOptions,
+} from "./continuable.js";
 
 /** Options for `LocalMeshSubmitter`. */
 export interface LocalMeshSubmitterOptions {
@@ -143,6 +147,14 @@ export interface LocalMeshSubmitterOptions {
    * `subagentOf` if needed.
    */
   parentTracer?: Tracer;
+  /**
+   * R4.9a — fired when a continuable (or blocking) sub-agent settles.
+   * Blocking `submit()` also invokes this once.
+   */
+  onSubagentSettle?: (
+    result: SubagentResult,
+    record: SubagentRecord,
+  ) => void;
 }
 
 /**
@@ -163,243 +175,63 @@ export interface LocalMeshSubmitterOptions {
 export class LocalMeshSubmitter implements MeshSubmitter {
   private readonly buildSubagent: (input: SubagentInput) => Agent;
   private readonly workerPeerId: string;
-  /**
-   * F10.3.1: optional signer. When set, every
-   * result is signed before returning. v0 (no
-   * signer) → empty signature (F10.1.2 behavior).
-   */
   private readonly signer: SubagentResultSigner | undefined;
-  /**
-   * F17.6: spawned sub-agent records. Each
-   * `submit()` call pushes a record; the record is
-   * updated on completion (status, cost, duration).
-   * The `listSubagents()` method returns this array
-   * (read-only view). The array is process-lifetime
-   * (the submitter doesn't reset on REPL turn or
-   * sub-agent completion).
-   *
-   * **Why not on each sub-agent's session:** the
-   * session lives inside the factory; the submitter
-   * doesn't own it. The submitter does own the
-   * `submit()` lifecycle, so it's the natural place
-   * for the record.
-   *
-   * **Memory:** the array grows with each spawn. v0
-   * is single-process / single-REPL; the upper bound
-   * is bounded by the parent's `maxSubagents` cap
-   * (default 8 per turn) × the number of turns. For
-   * a long REPL session (~1000 turns), that's ~8000
-   * records × ~200 bytes each = ~1.6 MB. Acceptable.
-   * Future: cap or evict (LRU).
-   */
+  private readonly onSubagentSettle:
+    | ((result: SubagentResult, record: SubagentRecord) => void)
+    | undefined;
   private readonly subagents: SubagentRecord[] = [];
+  private readonly continuable: ContinuableSubagentRegistry;
 
   constructor(options: LocalMeshSubmitterOptions) {
     this.buildSubagent = options.buildSubagent;
     this.workerPeerId = options.workerPeerId;
     this.signer = options.signer;
+    this.onSubagentSettle = options.onSubagentSettle;
+    this.continuable = new ContinuableSubagentRegistry({
+      buildSubagent: this.buildSubagent,
+      workerPeerId: this.workerPeerId,
+      ...(this.signer !== undefined ? { signer: this.signer } : {}),
+      records: this.subagents,
+    });
+  }
+
+  /**
+   * R4.9a — spawn a continuable local sub-agent. Returns immediately
+   * with a handle; the objective runs in the background.
+   */
+  submitContinuable(
+    input: SubagentInput,
+    options: SubmitContinuableOptions = {},
+  ): ContinuableSubagentHandle {
+    const onSettle = options.onSettle ?? this.onSubagentSettle;
+    return this.continuable.submitContinuable(input, {
+      ...options,
+      autoSettleAfterIdle: options.autoSettleAfterIdle ?? false,
+      ...(onSettle !== undefined ? { onSettle } : {}),
+    });
+  }
+
+  getHandle(id: string): ContinuableSubagentHandle | undefined {
+    return this.continuable.getHandle(id);
   }
 
   async submit(
     input: SubagentInput,
     signal: AbortSignal,
   ): Promise<SubagentResult> {
-    const agent = this.buildSubagent(input);
-    // F17.6: capture the sub-agent's session id (we
-    // need it BEFORE the agent runs — the record
-    // exists from the moment `submit()` is called,
-    // not from when the sub-agent finishes). The
-    // session id is stable for the sub-agent's
-    // lifetime (it's an `InMemorySession`).
-    const sessionId = agent.getSessionId();
-    const record: SubagentRecord = {
-      sessionId,
-      capabilityTag: input.capabilityTag,
-      objective: input.objective,
-      startedAt: new Date().toISOString(),
-      status: "running",
-    };
-    this.subagents.push(record);
-
-    // Wire the parent's signal to the sub-agent's
-    // abort. If the parent already aborted, fire
-    // immediately; otherwise listen for the abort
-    // event (once). The listener is removed in the
-    // `finally` block to avoid leaks.
-    const onAbort = (): void => {
-      agent.abort(signal.reason);
-    };
-    if (signal.aborted) {
-      agent.abort(signal.reason);
-    } else {
-      signal.addEventListener("abort", onAbort, { once: true });
-    }
-
-    const startedAt = Date.now();
-    // F-fix: enforce the deadline. v0 mentioned the deadline in
-    // the system prompt but never aborted the sub-agent when it
-    // elapsed. A hard timer races `agent.run` (abort alone can't
-    // interrupt a hanging model call), guaranteeing bounded
-    // execution.
-    let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      const result = await Promise.race([
-        agent.run(input.objective),
-        new Promise<never>((_resolve, reject) => {
-          deadlineTimer = setTimeout(() => {
-            agent.abort(
-              `sub-agent deadline exceeded (${input.deadlineMs}ms)`,
-            );
-            reject(
-              new Error(
-                `sub-agent deadline exceeded (${input.deadlineMs}ms)`,
-              ),
-            );
-          }, input.deadlineMs);
-        }),
-      ]);
-      const subagentResult = this.synthesizeSubagentResult(result, startedAt);
-      // F17.6: update the record with the final
-      // status + cost + duration. The record was
-      // pushed above with `status: "running"`; we
-      // mutate it in place (the array is private,
-      // safe to mutate).
-      record.status = subagentResult.status;
-      record.costUsd = subagentResult.costUsd;
-      record.durationMs = subagentResult.durationMs;
-      record.completedAt = new Date().toISOString();
-      return subagentResult;
-    } catch (err) {
-      // `agent.run` can throw (max iterations). Convert to a
-      // failed SubagentResult so the parent sees a normal
-      // tool_result and the /agents record completes.
-      const base: SubagentResult = {
-        status: "failed",
-        content: [
-          {
-            type: "text",
-            text: `sub-agent failed: ${(err as Error).message}`,
-          },
-        ],
-        workerPeerId: this.workerPeerId,
-        workerRuntime: "envoy-harness",
-        costUsd: 0,
-        durationMs: Date.now() - startedAt,
-        verdict: {
-          kind: "fail",
-          reason: "sub-agent threw",
-          rollback: false,
-        },
-        signature: "",
-      };
-      const failed: SubagentResult = this.signer
-        ? { ...base, signature: this.signer(base) }
-        : base;
-      record.status = "failed";
-      record.costUsd = 0;
-      record.durationMs = failed.durationMs;
-      record.completedAt = new Date().toISOString();
-      return failed;
-    } finally {
-      if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
-      signal.removeEventListener("abort", onAbort);
-    }
+    // Backward-compatible one-shot: continuable + auto-settle + wait.
+    const handle = this.continuable.submitContinuable(input, {
+      parentSignal: signal,
+      autoSettleAfterIdle: true,
+      ...(this.onSubagentSettle !== undefined
+        ? { onSettle: this.onSubagentSettle }
+        : {}),
+    });
+    return handle.waitSettle({ signal });
   }
 
-  /**
-   * F17.6: snapshot of the spawned sub-agents.
-   * Returns the live array as a read-only view
-   * (the contract says "snapshot at the time of
-   * the call", so a caller reading immediately
-   * gets a consistent view; subsequent `submit()`
-   * calls may add records to the same array).
-   *
-   * **No defensive copy:** the array is private
-   * and only the submitter mutates it. Returning
-   * the same reference is cheaper than copying
-   * (the array can grow to thousands of entries
-   * over a long session).
-   */
   listSubagents(): ReadonlyArray<SubagentRecord> {
     return this.subagents;
-  }
-
-  /**
-   * Build a `SubagentResult` from the agent's
-   * `AgentResult`. v0: simple stopReason-based
-   * verdict. Future: call `runLocalVerifier` for a
-   * proper verdict.
-   *
-   * **Status mapping:**
-   * - `end_turn` / `tool_use` → `status: "completed"`,
-   *   `verdict: pass` (placeholder; real verifier runs
-   *   the 6 rules).
-   * - `aborted` → `status: "failed"`,
-   *   `verdict: fail`.
-   * - `max_iterations` → `status: "failed"`,
-   *   `verdict: fail` (the sub-agent didn't converge).
-   * - `max_tokens` / `stop_sequence` →
-   *   `status: "partial"`, `verdict: partial`.
-   *
-   * **F10.3.1 signing:** when a `signer` was
-   * injected, the result is signed AFTER the
-   * status + verdict are computed (so the signer
-   * sees the full final result, not an
-   * intermediate). The signature replaces the
-   * default empty string.
-   */
-  private synthesizeSubagentResult(
-    result: import("../agent.js").AgentResult,
-    startedAt: number,
-  ): SubagentResult {
-    const verdict: Verdict = synthesizeVerdict(result);
-    const status: SubagentResult["status"] =
-      result.stopReason === "end_turn" || result.stopReason === "tool_use"
-        ? "completed"
-        : result.stopReason === "aborted" || result.stopReason === "max_iterations"
-          ? "failed"
-          : "partial";
-    const base: SubagentResult = {
-      status,
-      content: result.content,
-      workerPeerId: this.workerPeerId,
-      workerRuntime: "envoy-harness",
-      costUsd: result.metrics.costUsd,
-      durationMs: Date.now() - startedAt,
-      verdict,
-      signature: "", // v0 default: unsigned
-    };
-    // F10.3.1: when a signer is injected, sign the
-    // full result. The signer sees the same
-    // `SubagentResult` shape the parent will see
-    // (minus the signature, which is what they're
-    // computing).
-    if (this.signer) {
-      base.signature = this.signer(base);
-    }
-    return base;
-  }
-}
-
-/** v0 verdict synthesis. The score is a placeholder
- *  (real verification runs `runLocalVerifier`). */
-function synthesizeVerdict(
-  result: import("../agent.js").AgentResult,
-): Verdict {
-  switch (result.stopReason) {
-    case "aborted":
-      return { kind: "fail", reason: "sub-agent aborted", rollback: false };
-    case "max_iterations":
-      return {
-        kind: "fail",
-        reason: "sub-agent hit max iterations",
-        rollback: false,
-      };
-    case "end_turn":
-    case "tool_use":
-      return { kind: "pass", score: 0.5, confidence: "medium" };
-    default:
-      return { kind: "partial", score: 0.5, reason: "sub-agent partial" };
   }
 }
 

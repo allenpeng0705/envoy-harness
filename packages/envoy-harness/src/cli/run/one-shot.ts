@@ -169,6 +169,14 @@ export async function runAgent(
     ...(effectiveMode !== undefined ? { permissionMode: effectiveMode } : {}),
     startedAt: new Date().toISOString(),
     title: prompt.slice(0, 60),
+    ...(parsed.plan === true
+      ? {
+          collaborationMode: {
+            kind: "plan" as const,
+            updatedAt: new Date().toISOString(),
+          },
+        }
+      : {}),
   };
 
   // F14.1: resolve the session. Three modes:

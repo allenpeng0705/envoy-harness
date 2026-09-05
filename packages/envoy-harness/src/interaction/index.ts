@@ -25,6 +25,13 @@ export {
 } from "./providers/repl-stdin.js";
 
 export {
+  createHostBridgeUserQuestionProvider,
+  type HostBridgeUserQuestionProviderOptions,
+  type HostUserQuestionAsk,
+  type HostUserQuestionRequest,
+} from "./providers/host-bridge.js";
+
+export {
   makeAskUserTool,
   type AskUserInput,
   type MakeAskUserToolOptions,

@@ -144,6 +144,37 @@ export function attachAcpServer(options: AcpServerOptions): () => void {
                   : undefined;
               return decision === "allow" ? "allow" : "deny";
             },
+            requestUserQuestion: async (req) => {
+              const raw = await connection.request(
+                "session/user_question",
+                {
+                  sessionId: req.sessionId,
+                  questionId: req.questionId,
+                  prompt: req.prompt,
+                  ...(req.options !== undefined
+                    ? { options: [...req.options] }
+                    : {}),
+                  ...(req.recommendedIndex !== undefined
+                    ? { recommendedIndex: req.recommendedIndex }
+                    : {}),
+                  ...(req.multiline !== undefined
+                    ? { multiline: req.multiline }
+                    : {}),
+                },
+                5 * 60_000,
+              );
+              if (typeof raw !== "object" || raw === null) {
+                return { value: "", cancelled: true };
+              }
+              const obj = raw as Record<string, unknown>;
+              return {
+                value: typeof obj.value === "string" ? obj.value : "",
+                ...(typeof obj.optionIndex === "number"
+                  ? { optionIndex: obj.optionIndex }
+                  : {}),
+                cancelled: obj.cancelled === true,
+              };
+            },
             onUpdate: (msg) => {
               connection.notify("session/update", {
                 sessionId: p.sessionId,
@@ -388,6 +419,19 @@ export function attachAcpServer(options: AcpServerOptions): () => void {
           );
         }
         return await backend.sessionPlan(parseSessionPlanParams(params));
+      }
+
+      case "session/set_mode": {
+        assertInitialized(initialized);
+        if (backend.setCollaborationMode === undefined) {
+          throw new JsonRpcError(
+            "session/set_mode not supported",
+            JsonRpcErrorCode.METHOD_NOT_FOUND,
+          );
+        }
+        return await backend.setCollaborationMode(
+          parseSessionSetModeParams(params),
+        );
       }
 
       case "session/memory": {
@@ -763,6 +807,31 @@ function parseSessionPlanParams(params: unknown): {
     ...(text !== undefined ? { text } : {}),
     ...(reason !== undefined ? { reason } : {}),
   };
+}
+
+function parseSessionSetModeParams(params: unknown): {
+  sessionId: string;
+  mode?: "default" | "plan" | "review";
+} {
+  if (params === null || typeof params !== "object") {
+    throw new JsonRpcError("invalid params", JsonRpcErrorCode.INVALID_PARAMS);
+  }
+  const obj = params as { mode?: unknown };
+  const sessionId = readSessionId(params);
+  if (obj.mode === undefined) {
+    return { sessionId };
+  }
+  if (
+    obj.mode !== "default" &&
+    obj.mode !== "plan" &&
+    obj.mode !== "review"
+  ) {
+    throw new JsonRpcError(
+      "mode must be default|plan|review",
+      JsonRpcErrorCode.INVALID_PARAMS,
+    );
+  }
+  return { sessionId, mode: obj.mode };
 }
 
 function parseSessionMemoryParams(params: unknown): {

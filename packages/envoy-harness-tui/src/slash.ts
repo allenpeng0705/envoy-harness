@@ -34,6 +34,7 @@ export type SlashResult =
   | { kind: "agents" }
   | { kind: "memory"; op: "list" | "read" | "add"; name?: string; body?: string }
   | { kind: "plan"; action: string; text?: string; reason?: string }
+  | { kind: "mode"; mode?: "default" | "plan" | "review" }
   | { kind: "review"; staged?: boolean }
   | { kind: "init" }
   | { kind: "resume"; id?: string }
@@ -66,7 +67,8 @@ export const SLASH_COMMANDS: ReadonlyArray<{ name: string; description: string }
   { name: "mcp", description: "list MCP servers" },
   { name: "agents", description: "list spawned sub-agents" },
   { name: "memory", description: "memory: list | read <name> | add <name> <body>" },
-  { name: "plan", description: "plan mode: enter | show | edit | propose | approve | reject | exit" },
+  { name: "plan", description: "plan document: enter | show | edit | propose | approve | reject | exit" },
+  { name: "mode", description: "collaboration mode: default | plan | review" },
   { name: "review", description: "model code review of git diff (optional staged)" },
   { name: "init", description: "generate AGENTS.md via the model" },
   { name: "resume", description: "resume session: /resume or /resume <id>" },
@@ -314,6 +316,16 @@ export function parseSlash(line: string): SlashResult | null {
         action,
         ...(action === "edit" ? { text } : {}),
       };
+    }
+    case "mode": {
+      const raw = parts[1]?.toLowerCase();
+      if (raw === undefined || raw.length === 0) {
+        return { kind: "mode" };
+      }
+      if (raw !== "default" && raw !== "plan" && raw !== "review") {
+        return { kind: "unknown", command: "mode [default|plan|review]" };
+      }
+      return { kind: "mode", mode: raw };
     }
     case "review": {
       const staged = parts.includes("staged");

@@ -52,6 +52,7 @@ import type { MeshSubmitter } from "../subagent/index.js";
 // ever changes, the routing check stays in sync
 // with the name-construction in run-loop.ts:115.
 import { MCP_TOOL_PREFIX } from "../mcp/types.js";
+import { collaborationModeBlockReason } from "../plan/tool-policy.js";
 
 /**
  * The dependencies ToolExecutor reads from the
@@ -281,6 +282,31 @@ export class ToolExecutor {
       }
     }
     const tool = this.ctx.tools.get(call.name);
+
+    // R4.6 — collaboration mode hard-deny before hooks / execution.
+    {
+      const modeKind = this.ctx.session.getCollaborationMode().kind;
+      const blocked = collaborationModeBlockReason(modeKind, call.name);
+      if (blocked !== undefined) {
+        this.ctx.emit({
+          kind: "tool_call",
+          ts: new Date().toISOString(),
+          iteration,
+          call,
+        });
+        this.appendToolResult(call.id, blocked, true);
+        this.ctx.emit({
+          kind: "tool_result",
+          ts: new Date().toISOString(),
+          iteration,
+          callId: call.id,
+          toolName: call.name,
+          result: { content: blocked, isError: true },
+          durationMs: 0,
+        });
+        return;
+      }
+    }
 
     // Unknown tool (not an MCP-routed call): surface the error directly
     // instead of pausing on a permission prompt for a tool that cannot

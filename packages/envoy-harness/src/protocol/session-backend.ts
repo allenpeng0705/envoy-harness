@@ -11,6 +11,25 @@ export interface ProtocolPermissionRequest {
 
 export type ProtocolPermissionDecision = "allow" | "deny";
 
+/**
+ * R4.1 — server → client user question (mirrors permission requests).
+ * The client returns a {@link ProtocolUserQuestionAnswer}.
+ */
+export interface ProtocolUserQuestionRequest {
+  sessionId: string;
+  questionId: string;
+  prompt: string;
+  options?: ReadonlyArray<string>;
+  recommendedIndex?: number;
+  multiline?: boolean;
+}
+
+export interface ProtocolUserQuestionAnswer {
+  value: string;
+  optionIndex?: number;
+  cancelled?: boolean;
+}
+
 export interface ProtocolCommittedMessage {
   role: "user" | "assistant" | "tool" | "system";
   text: string;
@@ -184,6 +203,14 @@ export interface ProtocolSessionBackend {
     requestPermission: (
       req: ProtocolPermissionRequest,
     ) => Promise<ProtocolPermissionDecision>;
+    /**
+     * R4.1 — ask the host a structured question without blocking the
+     * host's input queue (JSON-RPC request to the client). Optional for
+     * backends that never wire `ask_user`.
+     */
+    requestUserQuestion?: (
+      req: ProtocolUserQuestionRequest,
+    ) => Promise<ProtocolUserQuestionAnswer>;
     onUpdate?: (msg: ProtocolCommittedMessage) => void;
     onActivity?: (activity: ProtocolActivityEvent) => void;
     onToken?: (token: ProtocolToken) => void;
@@ -292,6 +319,11 @@ export interface ProtocolSessionBackend {
     text?: string;
     reason?: string;
   }): Promise<ProtocolGitResult>;
+  /** R4.6 — collaboration mode (`/mode`). */
+  setCollaborationMode?(params: {
+    sessionId: string;
+    mode?: "default" | "plan" | "review";
+  }): Promise<{ mode: string }>;
   /** Memory store ops (`/memory`). */
   sessionMemory?(params: {
     sessionId: string;

@@ -15,6 +15,10 @@ import {
   type PlanState,
   type PlanTransition,
 } from "../plan/index.js";
+import {
+  createCollaborationModeState,
+  type ModeKind,
+} from "../plan/mode-kind.js";
 import type { ContentBlock, Message } from "../tools/types.js";
 import type { SubagentRecord } from "../subagent/types.js";
 import type { Session } from "../session.js";
@@ -172,6 +176,7 @@ export function runPlanAction(
       case "enter": {
         const next = applyTransition(current, { kind: "enter" });
         session.setPlan(next);
+        session.setCollaborationMode(createCollaborationModeState("plan"));
         return `plan mode: entered (status: ${next.reviewStatus})`;
       }
       case "show": {
@@ -209,7 +214,8 @@ export function runPlanAction(
       case "approve": {
         const next = applyTransition(current, { kind: "approve" });
         session.setPlan(next);
-        return "plan approved (injected on next model call)";
+        session.setCollaborationMode(createCollaborationModeState("default"));
+        return "plan approved (injected on next model call; collaboration mode default)";
       }
       case "reject": {
         const transition: PlanTransition =
@@ -225,6 +231,7 @@ export function runPlanAction(
       case "exit": {
         const next = applyTransition(current, { kind: "exit" });
         session.setPlan(next);
+        session.setCollaborationMode(createCollaborationModeState("default"));
         return "plan mode: exited (plan preserved for audit)";
       }
       default:
@@ -235,6 +242,39 @@ export function runPlanAction(
       throw new Error(err.message);
     }
     throw err;
+  }
+}
+
+/** R4.6 — collaboration mode switch (Plan / Default / Review). */
+export function runCollaborationModeAction(
+  session: Session,
+  kind?: ModeKind | string,
+): string {
+  if (kind === undefined || kind.length === 0) {
+    const current = session.getCollaborationMode();
+    return `collaboration mode: ${current.kind} (updated ${current.updatedAt})`;
+  }
+  if (kind !== "default" && kind !== "plan" && kind !== "review") {
+    throw new Error("usage: /mode <default|plan|review>");
+  }
+  session.setCollaborationMode(createCollaborationModeState(kind));
+  if (kind === "plan") {
+    const plan = session.getPlan() ?? createPlanState();
+    if (!plan.active) {
+      session.setPlan(applyTransition(plan, { kind: "enter" }));
+    }
+  } else if (kind === "default" || kind === "review") {
+    // Leaving plan collaboration mode does not clear PlanState —
+    // use /plan exit for that. Review is tool-policy only.
+  }
+  return `collaboration mode: ${kind}`;
+}
+
+/** Ensure plan document is active without resetting collaboration mode. */
+export function ensurePlanDocumentActive(session: Session): void {
+  const plan = session.getPlan() ?? createPlanState();
+  if (!plan.active) {
+    session.setPlan(applyTransition(plan, { kind: "enter" }));
   }
 }
 

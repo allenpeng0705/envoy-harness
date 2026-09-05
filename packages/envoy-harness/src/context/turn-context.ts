@@ -5,12 +5,18 @@
 
 import {
   assembleFragments,
+  createBoundedFragment,
   type ContextualUserFragment,
 } from "./fragment.js";
+import { estimateMessageTokens } from "./budget.js";
 import { buildMemoryIndex } from "../memories/inject.js";
 import type { MemoryStore } from "../memories/store.js";
 import { buildPlanFragment } from "../plan/inject.js";
 import type { PlanState } from "../plan/state.js";
+import {
+  collaborationModePrompt,
+  type ModeKind,
+} from "../plan/mode-kind.js";
 import {
   createSkillCatalogFragment,
   nextCatalogMessage,
@@ -26,6 +32,8 @@ export interface AssembleTurnContextOptions {
   /** Previous skill catalog digest (stable KV-cache prefix). */
   skillCatalogDigest?: string;
   plan?: PlanState;
+  /** R4.6 — collaboration mode for prompt guidance. */
+  collaborationMode?: ModeKind;
   /** Token budget for assembled fragments (default 40_000). */
   budget?: number;
 }
@@ -47,6 +55,23 @@ export async function assembleTurnContext(
 ): Promise<AssembledTurnContext> {
   const fragments: ContextualUserFragment[] = [];
   let nextDigest = options.skillCatalogDigest;
+
+  const modePrompt = collaborationModePrompt(
+    options.collaborationMode ?? "default",
+  );
+  if (modePrompt !== undefined) {
+    fragments.push(
+      createBoundedFragment({
+        id: "collaboration-mode",
+        owner: "collaboration-mode",
+        priority: 950,
+        estimatedTokens: estimateMessageTokens({
+          role: "user",
+          content: [{ type: "text", text: modePrompt }],
+        }),        text: modePrompt,
+      }),
+    );
+  }
 
   if (options.plan !== undefined) {
     fragments.push(...buildPlanFragment(options.plan));

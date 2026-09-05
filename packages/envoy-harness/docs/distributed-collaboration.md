@@ -1,24 +1,47 @@
 # Distributed collaboration — envoy-harness's major feature
 
-> **Status:** DESIGN (2026-08-22). The strategic differentiator: an agent
-> harness whose native execution model is **distribution + collaboration**,
-> not local loops. This doc is the design; the chunked roadmap lives in
-> `implementation-plan.md` (section "Distributed collaboration"). Refined
-> round by round.
+> **Status:** DESIGN (2026-08-22) → **Round 4 planned (2026-09-05,
+> revised)**. Differentiator = multi-node MAP; **default product** = one
+> instance with Codex/dsh-class power. Local sub-agents are mandatory.
+> Roadmap: [`implementation-plan.md`](./implementation-plan.md) +
+> [`implementation-plan-round-4.md`](./implementation-plan-round-4.md).
 
 ## 1. Goal and strategic position
 
-envoy-harness differentiates from other agent harnesses (codex,
-deepseek-harness) on two axes:
+envoy-harness is a **full harness** (local agent loop + sub-agents +
+tools + TUI/EHUI) whose **product edge** is distribution — but the
+**default deployment is one instance**:
 
-1. **Distribution** — agents run on different nodes/machines and finish a
-   job together, not just sub-agents on one machine.
-2. **Collaboration** — agents with **different models** work together
-   (route subtasks by model, cross-verify across models), with a
-   verifier/reputation discipline over the results.
+0. **Single-instance (primary audience)** — zero peers, zero mesh. One
+   `envoy-harness` process must match Codex / deepseek-harness power for
+   everyday coding (sub-agents, modes, async ask, session durability,
+   skills, hooks, presets). **Most users will never run multi-nodes.**
+1. **Local sub-agents (baseline, required)** — parent `task` tool →
+   `MeshSubmitter` → `LocalMeshSubmitter` (new session / specialist on
+   this machine), plus capability fan-out and continuable tasks. Codex
+   and deepseek also do local multi-agent; we must stay at parity.
+2. **Distribution (differentiator)** — the *same* `task` / team /
+   submitter seams route work to **other nodes/machines** (standalone
+   peers or EnvoyMesh) without a second API.
+3. **Collaboration** — agents with **different models** work together
+   (route by model, cross-verify across models), with verifier /
+   reputation discipline over results.
 
-Two scenarios share this core:
+**One ladder, three rungs** (same `MeshSubmitter` contract):
 
+```
+LocalMeshSubmitter  →  PeerMeshSubmitter  →  RemoteMeshSubmitter (libp2p)
+   (sub-agent)            (standalone)              (EnvoyMesh)
+```
+
+Hosts never teach the model a different tool when work moves off-box —
+only the injected submitter changes. With no peers configured, the
+ladder stops at rung one — and that rung alone must be excellent.
+
+**Deployment scenarios:**
+
+- **Scenario 0 — Single instance (default):** one process, local
+  sub-agents only. Round 4 **D-Refine** targets Codex/dsh parity here.
 - **Scenario A — EnvoyMesh distribution:** envoy-harness nodes in the
   EnvoyMesh P2P mesh, driven by the chain orchestrator (bids, trust,
   budget, cross-verify, 3-tuple reputation).
@@ -42,6 +65,31 @@ One contract, two transports, one worker implementation, one verification
 schema. Scenario B is a **subset** of Scenario A minus the mesh fabric —
 an upgrade path exists by swapping the transport.
 
+### 1.1 Competitive landscape (refresh 2026-09-05)
+
+Reviewed latest **Codex** (Guardian V2, multi-agent v2, async questions,
+exec-server) and **deepseek-harness 0.1.3-alpha.1** (session v2, write
+leases, agent teams, workflow, file upload).
+
+| | Codex | deepseek-harness | envoy-harness |
+|---|---|---|---|
+| Local sub-agents | In-process forks (multi-agent v2) | Provider registry + continuable background | `task` + `LocalMeshSubmitter` + fan-out ✅ |
+| Multi-node coding mesh | No (exec-server / cloud tasks ≠ peer mesh) | No (E2B POC; Host↔Client RPC only) | **Peers + EnvoyMesh MAP** ✅ |
+| Session durability | Rollout + retained context | Format v2 + write lease + projections | Strong; lease/projection Round 4 |
+| Safety UX | Guardian V2, collaboration modes | Permission presets, plan mode | Policy + plan; async-ask Round 4 |
+
+**Porting rule:** borrow *patterns* (hooks merge, retained context,
+continuable tasks, parallel DAG), not runtimes (Rust Guardian, full
+Cordis rewrite). Ecosystem reuse stays L0/L4 as in
+[`reuse-deepseek-tools-skills.md`](./reuse-deepseek-tools-skills.md).
+
+**What we deliberately keep shipping that they also have:** local
+sub-agents, skills, MCP, hooks, plan mode, sandbox, ACP/SDK hosts —
+and Round 4 **closes remaining single-instance gaps** so a lone
+instance is not a “lite” product.
+**What only we ship as product:** multi-node MAP + model routing +
+cross-instance verify + federatable scoreboards.
+
 ## 2. The seams (already shipped — this is why it's tractable)
 
 | Seam | Where | Role |
@@ -64,7 +112,7 @@ lives in a **new peer package**, mirroring the adapter:
 EnvoyMesh ── @envoymesh/protocol (MAP schemas — the shared contract)
      │
      ├── @envoymesh/envoy-harness-adapter  (mesh path: adapter + RemoteMeshSubmitter)
-     └── @envoymesh/envoy-harness-peer     (NEW: standalone path: peer server +
+     └── @envoymesh/envoy-harness-peer     (standalone path: peer server +
                                            PeerMeshSubmitter + PeerRegistry)
 envoy-harness (Package 1) stays clean; the peer package depends on it.
 ```
@@ -272,18 +320,19 @@ Routing guidance: use the placeholder only for smoke/demo; use
 `verifyAfterExecute` for rule-based verifiers; use D5 for
 cost-sensitive or high-stakes routing.
 
-## 10. Round-by-round refinement
+## 10. Round-by-round refinement (R1–R3 complete)
 
 - **Round 1 (D1–D4):** the primitive — peer transport, server, registry,
-  distributed team runner; the feature is demonstrable standalone.
+  distributed team runner; the feature is demonstrable standalone. ✅
 - **Round 2 (D5–D6):** cross-instance verification + EnvoyMesh
-  combination (peer cluster as a mesh execution pool).
+  combination (peer cluster as a mesh execution pool). ✅
 - **Round 3 (D7):** hardening — signatures, discovery, observability,
-  federation seams.
+  federation seams. ✅
+- **Round 4:** see §11 and [`implementation-plan-round-4.md`](./implementation-plan-round-4.md).
 
-Each round ships with tests and keeps the design doc updated. The
-differentiator is the protocol (MAP at two scales), not a UI or a cloud —
-distribution and collaboration are the product.
+Each completed round kept this design doc updated. The differentiator is
+the protocol (MAP at two scales) **plus** a real local sub-agent stack —
+not a UI or a cloud alone.
 
 **Round 2 status (2026-08-22): ✅ DONE** — `connectPeerClient` (TCP
 transport) + the runtime's injectable `innerSubmitter` (execution pool). An
@@ -309,3 +358,107 @@ self-submit via the local adapter). A mesh node's `RemoteMeshSubmitter`
 can now target ANOTHER mesh node's envoy-harness worker directly
 (Pattern B) — the seam's second implementation alongside the peer
 JSON-RPC transport (Pattern A).
+
+## 11. Round 4 — Single-instance parity + deepen distribution (2026-09-05)
+
+> **Status:** PLANNED (revised 2026-09-05). Executable chunks:
+> [`implementation-plan-round-4.md`](./implementation-plan-round-4.md).
+> D1–D7 / R1–R3 remain the foundation. Round 4 has **two equal goals:**
+> (0) one instance ≈ Codex/dsh power; (1) multi-node ops production-ready.
+
+### 11.1 Design invariants (Round 4)
+
+1. **Scenario 0 first.** Features that matter for everyday coding must
+   work with **zero peers**. Multi-node reuses the same APIs; it does
+   not replace local power.
+2. **Sub-agents are not optional.** Package 1 keeps `task`,
+   `LocalMeshSubmitter`, fan-out, continuable local tasks, and team
+   `host: "local"`. Continuable peer tasks share the same lifecycle.
+3. **One submitter ladder.** New backends (ACP/Codex/Claude workers)
+   register as providers on `MeshSubmitter`, never as a second `task` tool.
+4. **Think vs execute may split.** Optional: coordinator keeps the
+   model loop local while FS/shell run on a worker peer (Codex
+   exec-server *idea*, MAP transport).
+5. **Ops completeness over protocol novelty.** Prefer live `team/jobs`,
+   parallel DAG, verify budgets, discovery, and scoreboard pull over
+   new dialects.
+
+### 11.2 Single-instance stack (Codex/dsh parity — D-Refine)
+
+| Piece | Today | Round 4 target |
+|---|---|---|
+| Async user input | Sync ask-user | Non-blocking ask-while-busy (R4.1) |
+| Compaction | Budget + remote-history | Retained context across compact (R4.2) |
+| Session | JSONL + query | Format generation path + write lease (R4.3) |
+| Turn outline | Replay-heavy | Projections / turn rail (R4.4) |
+| Hooks | Runner exists | Refresh + deny > ask > allow (R4.5a) |
+| Permissions | Separate knobs | Presets = sandbox + approval (R4.5b) |
+| Collaboration modes | Plan tools | Plan / Default / Review as state + tool policy (R4.6) |
+| Skills | Catalog + tools | Fuzzy ranker for `/` (R4.6b) |
+| Local sub-agents | `task` + fan-out | Continuable inbox/interrupt/settle (R4.9a) |
+| Local teams | Sequential DAG | Parallel ready-set stages (R4.8) |
+| Workflow | Capability fan-out | Explicit `parallel` / `pipeline` API (R4.17) |
+
+### 11.3 Multi-node ops stack (differentiator — D-Ops / D-Mesh)
+
+| Piece | Today | Round 4 target |
+|---|---|---|
+| `team/jobs` ACP | Empty on standalone peer UI | Peer registry fills same schema (R4.7) |
+| Peer task lifecycle | Fire-and-forget `peer/submit` | Continuable peer (R4.9b) |
+| Verify cost | No session budget | Caps + skip telemetry (R4.10) |
+| Scoreboard | `LocalPeerSource` stub | Peer pull (R4.11) |
+| Discovery | Static `--peers` + connect | Pluggable mDNS / mesh feed (R4.18) |
+| Remote jobs / PTY | `NOOP_REMOTE_*` | Adapter transports (R4.12–13) |
+| Job board unify | Mesh-only live data | Chain ↔ peer same ACP type (R4.14) |
+| Exec-world | — | Think local / tools on peer (R4.14b) |
+| Heterogeneous backends | Local / peer / mesh | Provider registry + ACP/Codex/Claude (R4.15–16) |
+
+### 11.4 Round 4 phases (summary)
+
+| Phase | Theme | Outcome |
+|---|---|---|
+| **D-Refine** | Single-instance Codex/dsh parity | Ask, modes, session, local continuable, workflow — **ship first** |
+| **D-Ops** | Multi-node operational depth | `teamJobs`, peer continuable, verify budgets, discovery, scoreboard |
+| **D-Mesh** | EnvoyMesh depth | Remote job/terminal; unify boards; optional exec-world |
+| **D-Interop** | Heterogeneous workers | Named backends (ACP/Codex/Claude) |
+
+Full ROI → chunk checklist lives at the top of
+`implementation-plan-round-4.md` (every item from the 2026-09-05 review
+is mapped; R4.17 workflow + R4.18 discovery were added when the plan
+was audited against that list).
+
+### 11.5 Success criteria (Round 4)
+
+**Single-instance (must pass with peers disabled):**
+
+- Async ask-while-busy; collaboration modes change tool policy;
+  continuable local sub-agents; session lease + retained context;
+  parallel all-`local` team DAG; workflow `parallel`/`pipeline` local.
+
+**Multi-node:**
+
+- Peer `team/jobs` non-empty; continuable peer tasks; verify budgets;
+  scoreboard pull; Package 1 stays EnvoyMesh-free; hermetic CI.
+
+### 11.6 Non-goals (Round 4)
+
+- Porting Codex Guardian ML / Windows MXC / voice / Code mode V8.
+- Rewriting the harness as all-Cordis; E2B; Typert codegen.
+- Building a DHT or replacing EnvoyMesh libp2p.
+- EnvoyGo chat attachments (product polish elsewhere).
+
+## 12. Round-by-round history (index)
+
+- **Round 1 (D1–D4):** peer transport, server, registry, distributed
+  team runner — ✅
+- **Round 2 (D5–D6):** cross-instance verify + EnvoyMesh combination — ✅
+- **Round 3 (D7 + polish):** signatures, discovery, federation seams,
+  v2.2 fabric — ✅
+- **Round 4 (D-Refine / D-Ops / D-Mesh / D-Interop):** **Scenario 0
+  single-instance parity** + multi-node ops — **PLANNED (2026-09-05,
+  revised for full ROI coverage + Scenario 0 first)**
+
+Each round ships with tests and keeps this design doc updated. The
+differentiator remains the protocol (MAP at two scales) plus a real
+local sub-agent stack — distribution and collaboration are the product,
+sub-agents are the foundation.

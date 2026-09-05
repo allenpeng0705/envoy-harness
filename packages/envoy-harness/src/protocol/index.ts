@@ -44,6 +44,8 @@ export {
   type ProtocolCommittedMessage,
   type ProtocolPermissionDecision,
   type ProtocolPermissionRequest,
+  type ProtocolUserQuestionAnswer,
+  type ProtocolUserQuestionRequest,
   type ProtocolPromptResult,
   type ProtocolSessionBackend,
   type ProtocolToolInfo,

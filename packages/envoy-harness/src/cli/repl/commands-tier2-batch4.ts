@@ -478,6 +478,7 @@ const planCommand: ReplCommand = {
         case "enter": {
           const next = applyTransition(current, { kind: "enter" });
           session.setPlan(next);
+          ctx.agent.setCollaborationMode("plan");
           ctx.stdout.write(
             `plan mode: entered (status: ${next.reviewStatus})\n`,
           );
@@ -535,9 +536,10 @@ const planCommand: ReplCommand = {
         case "approve": {
           const next = applyTransition(current, { kind: "approve" });
           session.setPlan(next);
+          ctx.agent.setCollaborationMode("default");
           ctx.stdout.write(
             "plan approved (will be injected as a top-priority " +
-              "fragment on the next model call)\n",
+              "fragment on the next model call; collaboration mode default)\n",
           );
           return;
         }
@@ -562,6 +564,7 @@ const planCommand: ReplCommand = {
         case "exit": {
           const next = applyTransition(current, { kind: "exit" });
           session.setPlan(next);
+          ctx.agent.setCollaborationMode("default");
           ctx.stdout.write(
             "plan mode: exited (plan text + status preserved for audit)\n",
           );
@@ -588,6 +591,40 @@ const planCommand: ReplCommand = {
           : (err as Error).message;
       ctx.stderr.write(`error: ${message}\n`);
     }
+  },
+};
+
+/**
+ * R4.6 — `/mode [default|plan|review]` collaboration modes.
+ * Orthogonal to `/plan` document lifecycle: mode controls tool
+ * policy; `/plan` still owns plan text / approve / reject.
+ */
+const modeCommand: ReplCommand = {
+  name: "/mode",
+  description:
+    "collaboration mode. Args: default | plan | review " +
+    "(omit to show current).",
+  handler(args, ctx) {
+    const kind = (args[0] ?? "").trim().toLowerCase();
+    if (kind.length === 0) {
+      ctx.stdout.write(
+        `collaboration mode: ${ctx.agent.getCollaborationMode()}\n`,
+      );
+      return;
+    }
+    if (kind !== "default" && kind !== "plan" && kind !== "review") {
+      ctx.stderr.write("usage: /mode [default|plan|review]\n");
+      return;
+    }
+    ctx.agent.setCollaborationMode(kind);
+    if (kind === "plan") {
+      const session = ctx.agent.getSession();
+      const current = session.getPlan() ?? createPlanState();
+      if (!current.active) {
+        session.setPlan(applyTransition(current, { kind: "enter" }));
+      }
+    }
+    ctx.stdout.write(`collaboration mode: ${kind}\n`);
   },
 };
 
@@ -621,4 +658,5 @@ export const BUILTIN_TIER2_BATCH4_COMMANDS: ReadonlyArray<ReplCommand> = [
   reviewCommand,
   exportCommand,
   planCommand,
+  modeCommand,
 ];

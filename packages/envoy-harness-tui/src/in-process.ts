@@ -43,6 +43,12 @@ export function createInProcessTui(
       if (sessionRef === undefined) return "deny";
       return sessionRef.handlePermissionRequest(req);
     },
+    onUserQuestionRequest: async (req) => {
+      if (sessionRef === undefined) {
+        return { value: "", cancelled: true };
+      }
+      return sessionRef.handleUserQuestionRequest(req);
+    },
   });
 
   const session = new TuiSession({
