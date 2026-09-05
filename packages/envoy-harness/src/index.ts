@@ -352,6 +352,8 @@ export {
   makeTaskTool,
   FanOutRegistry,
   aggregateFanOutResults,
+  parallel,
+  pipeline,
   type DefaultBuildSubagentFactoryOptions,
   type FanOutSpec,
   type LocalMeshSubmitterOptions,
@@ -367,6 +369,9 @@ export {
   type SubagentResultSigner,
   type TaskInput,
   type TaskResult,
+  type WorkflowParallelResult,
+  type WorkflowRunOptions,
+  type WorkflowTask,
 } from "./subagent/index.js";
 
 // Re-export the scoreboard (§13 of the design doc)

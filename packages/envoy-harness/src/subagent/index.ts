@@ -64,3 +64,11 @@ export {
   aggregateFanOutResults,
   type FanOutSpec,
 } from "./fan-out.js";
+
+export {
+  parallel,
+  pipeline,
+  type WorkflowParallelResult,
+  type WorkflowRunOptions,
+  type WorkflowTask,
+} from "./workflow.js";

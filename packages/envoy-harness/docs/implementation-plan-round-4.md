@@ -304,7 +304,7 @@ Named providers: `local` | `peer` | future — one `MeshSubmitter` / `task` surf
 | R4.6b Skill fuzzy ranker | D-Refine | P2 | single | planned |
 | R4.8 Parallel team DAG | D-Refine + D-Ops | **P0** | both | **done** |
 | R4.9a Continuable local | D-Refine | **P0** | single | **done** |
-| R4.17 Workflow fan-out API | D-Refine + D-Ops | P1 | both | planned |
+| R4.17 Workflow fan-out API | D-Refine + D-Ops | P1 | both | **done** |
 | R4.7 `team/jobs` peer path | D-Ops | **P0** | multi | **done** |
 | R4.9b Continuable peer | D-Ops | **P0** | multi | **done** |
 | R4.10 Verify budget | D-Ops | P1 | multi | planned |
