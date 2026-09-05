@@ -276,8 +276,12 @@ export {
   outputMatchesObjectiveRule,
   runVerifierRules,
   sandboxRespectedRule,
+  VerifySessionBudget,
   type Verdict,
   type VerifierRule,
+  type VerifyBudgetDecision,
+  type VerifyBudgetSkip,
+  type VerifySessionBudgetOptions,
 } from "./verifier/index.js";
 
 // Re-export the LSP integration (F9.2, §22 Phase 4)

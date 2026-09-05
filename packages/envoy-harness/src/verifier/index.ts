@@ -34,3 +34,10 @@ export {
   outputMatchesObjectiveRule,
   sandboxRespectedRule,
 } from "./rules/index.js";
+
+export {
+  VerifySessionBudget,
+  type VerifyBudgetDecision,
+  type VerifyBudgetSkip,
+  type VerifySessionBudgetOptions,
+} from "./budget.js";

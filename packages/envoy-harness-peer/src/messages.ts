@@ -38,6 +38,11 @@ export const PEER_WAIT_SETTLE_METHOD = "peer/waitSettle";
 export interface PeerSubmitResponse {
   result: SignedAgentResult;
   verdict?: Verdict;
+  /**
+   * R4.10 — present when verify was skipped due to budget (or similar).
+   * Callers should treat missing `verdict` + this field as an intentional skip.
+   */
+  verifySkipped?: { reason: string };
 }
 
 /** `peer/ping` response body. */

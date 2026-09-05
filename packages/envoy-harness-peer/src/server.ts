@@ -13,6 +13,7 @@
 import type {
   RequestHandler,
 } from "@envoymesh/envoy-harness";
+import { VerifySessionBudget } from "@envoymesh/envoy-harness";
 import type {
   AgentAdapter,
   BuildManifestInput,
@@ -60,13 +61,21 @@ export interface PeerServerOptions {
    */
   verifyAfterExecute?: boolean;
   /**
-   * Optional cap on how many `verifyAfterExecute` verifications run per
-   * server lifetime. Once the cap is reached, subsequent submits skip
-   * the automatic verify (the response carries no verdict — the client
-   * falls back to its v1 placeholder). This bounds the 2× cost an LLM
-   * verifier imposes on every submit. `undefined` = no cap.
+   * Optional cap on how many verifications run per server/session
+   * lifetime (R4.10 `maxVerificationsPerSession`). Applies to
+   * `verifyAfterExecute` and `peer/verify`. Alias of the older
+   * `maxVerifyAfterExecute` name.
+   */
+  maxVerificationsPerSession?: number;
+  /**
+   * @deprecated Prefer {@link maxVerificationsPerSession}.
    */
   maxVerifyAfterExecute?: number;
+  /**
+   * R4.10 — shared budget instance (host-owned session). When set,
+   * overrides max* numeric options.
+   */
+  verifyBudget?: import("@envoymesh/envoy-harness").VerifySessionBudget;
   /** R4.9b — settled continuable-task retention (default 60s). `0` = immediate GC. */
   settledTaskTtlMs?: number;
 }
@@ -76,13 +85,21 @@ export function createPeerServerHandler(
   options: PeerServerOptions,
 ): RequestHandler {
   const { adapter, identity } = options;
-  const verifyCount = { value: 0 };
+  const max =
+    options.maxVerificationsPerSession ?? options.maxVerifyAfterExecute;
+  const verifyBudget =
+    options.verifyBudget ??
+    (max !== undefined
+      ? new VerifySessionBudget({
+          maxVerificationsPerSession: max,
+          scopeLabel: `peer:${identity.peerId}`,
+        })
+      : undefined);
   const continuable = new PeerContinuableTaskRegistry({
     adapter,
     peerId: identity.peerId,
     verifyAfterExecute: options.verifyAfterExecute,
-    maxVerifyAfterExecute: options.maxVerifyAfterExecute,
-    verifyCount,
+    verifyBudget,
     settledTtlMs: options.settledTaskTtlMs,
   });
   const unwrap = <T>(method: string, params: unknown): T => {
@@ -115,30 +132,36 @@ export function createPeerServerHandler(
               const response: PeerSubmitResponse = { result: executeResult };
               return response;
             }
-            if (
-              options.maxVerifyAfterExecute !== undefined &&
-              verifyCount.value >= options.maxVerifyAfterExecute
-            ) {
-              // Budget exhausted: skip the verifier rather than charging
-              // the host another LLM call. The client's placeholder
-              // verdict applies (same shape as verifyAfterExecute: false).
-              const response: PeerSubmitResponse = { result: executeResult };
-              return response;
+            if (verifyBudget !== undefined) {
+              const decision = verifyBudget.tryReserve();
+              if (!decision.allowed) {
+                options.onEvent?.({
+                  type: "peer.response",
+                  method,
+                  peerId: identity.peerId,
+                  ok: true,
+                  durationMs: Date.now() - startedAt,
+                  error: decision.skip.reason,
+                });
+                const response: PeerSubmitResponse = {
+                  result: executeResult,
+                  verifySkipped: { reason: decision.skip.reason },
+                };
+                return response;
+              }
             }
             try {
               const verdicts = await adapter.verify({
                 result: executeResult,
                 objective: input.objective,
               });
-              verifyCount.value += 1;
+              verifyBudget?.consume();
               const response: PeerSubmitResponse = {
                 result: executeResult,
                 verdict: combinePeerVerdicts(verdicts),
               };
               return response;
             } catch (err) {
-              // A verifier hiccup must not discard a completed result:
-              // return it without a verdict (client placeholder applies).
               options.onEvent?.({
                 type: "peer.response",
                 method,
@@ -183,8 +206,19 @@ export function createPeerServerHandler(
               body.timeoutMs ?? 120_000,
             );
           }
-          case PEER_VERIFY_METHOD:
-            return adapter.verify(unwrap<VerifyInput>(method, params));
+          case PEER_VERIFY_METHOD: {
+            if (verifyBudget !== undefined) {
+              const decision = verifyBudget.tryReserve();
+              if (!decision.allowed) {
+                throw new Error(decision.skip.reason);
+              }
+            }
+            const verdicts = await adapter.verify(
+              unwrap<VerifyInput>(method, params),
+            );
+            verifyBudget?.consume();
+            return verdicts;
+          }
           case PEER_MANIFEST_METHOD: {
             const input = (unwrap<Partial<BuildManifestInput>>(method, params ?? {}) ??
               {}) as Partial<BuildManifestInput>;

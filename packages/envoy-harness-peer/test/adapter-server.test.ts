@@ -190,6 +190,7 @@ describe("adapter-backed peer server (MAP-over-JSON-RPC)", () => {
     // not charged again and no verdict is attached.
     expect(second.result.correlationId).toBe("corr-budget-2");
     expect(second.verdict).toBeUndefined();
+    expect(second.verifySkipped?.reason).toMatch(/verify budget exhausted/);
     expect(verifyCalls).toBe(1);
     pair.close();
   });

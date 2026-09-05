@@ -43,9 +43,8 @@ export interface PeerContinuableTaskRegistryOptions {
   adapter: AgentAdapter;
   peerId: string;
   verifyAfterExecute?: boolean;
-  maxVerifyAfterExecute?: number;
-  /** Mutable counter shared with blocking submit path (optional). */
-  verifyCount?: { value: number };
+  /** R4.10 — shared verify budget (optional). */
+  verifyBudget?: import("@envoymesh/envoy-harness").VerifySessionBudget;
   /** Override settled-task retention (tests). Default 60s. */
   settledTtlMs?: number;
 }
@@ -268,20 +267,22 @@ export class PeerContinuableTaskRegistry {
     if (!this.opts.verifyAfterExecute) {
       return { result: executeResult };
     }
-    const counter = this.opts.verifyCount;
-    if (
-      this.opts.maxVerifyAfterExecute !== undefined &&
-      counter !== undefined &&
-      counter.value >= this.opts.maxVerifyAfterExecute
-    ) {
-      return { result: executeResult };
+    const budget = this.opts.verifyBudget;
+    if (budget !== undefined) {
+      const decision = budget.tryReserve();
+      if (!decision.allowed) {
+        return {
+          result: executeResult,
+          verifySkipped: { reason: decision.skip.reason },
+        };
+      }
     }
     try {
       const verdicts = await this.opts.adapter.verify({
         result: executeResult,
         objective,
       });
-      if (counter !== undefined) counter.value += 1;
+      budget?.consume();
       return {
         result: executeResult,
         verdict: combinePeerVerdicts(verdicts),
