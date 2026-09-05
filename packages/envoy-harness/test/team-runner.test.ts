@@ -451,4 +451,34 @@ describe("Team.runOnce — R4.8 parallel DAG", () => {
     expect(result.agents[0]?.finalText).toBe("recovered");
     expect(calls).toBe(2);
   });
+
+  it("records onAgentFinish and agent row when run throws", async () => {
+    const finished: string[] = [];
+    const model: ModelAdapter = {
+      async complete(): Promise<ModelResponse> {
+        throw new Error("hard fail");
+      },
+    };
+    const team = new Team({
+      config: teamConfig([
+        {
+          id: "solo",
+          role: "r",
+          systemPrompt: "sp",
+          objective: "o",
+          dependsOn: [],
+        },
+      ]),
+      model,
+      onAgentFinish({ spec, result }) {
+        finished.push(`${spec.id}:${result.stopReason}`);
+      },
+    });
+    const result = await team.runOnce();
+    expect(result.status).toBe("failed");
+    expect(result.agents).toHaveLength(1);
+    expect(result.agents[0]?.id).toBe("solo");
+    expect(result.agents[0]?.stopReason).toBe("aborted");
+    expect(finished).toEqual(["solo:aborted"]);
+  });
 });

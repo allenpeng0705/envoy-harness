@@ -33,12 +33,17 @@ interrupt, and status without blocking the parent on spawn.
 | `peer/close` | No more inbox; settle after drain |
 | `peer/interrupt` | Abort in-flight execute; settle failed |
 | `peer/status` | Lifecycle + optional settled `PeerSubmitResponse` |
+| `peer/waitSettle` | Block until settled (or timeout) — preferred over status polling |
+| `autoSettleAfterIdle` | Optional on submitContinuable; matches local R4.9a |
 | Blocking `peer/submit` | Unchanged |
+
+Settled tasks are retained for 60s (`SETTLED_TASK_TTL_MS`) then GC'd.
 
 ## Tests
 
-- `test/continuable-peer.test.ts` — send+close round-trip, interrupt,
-  correlationId idempotency, blocking submit regression
+- `test/continuable-peer.test.ts` — send+close round-trip, interrupt
+  (control queue), autoSettleAfterIdle, correlationId idempotency,
+  blocking submit regression, settled-task GC
 
 ## Accept
 
@@ -51,4 +56,3 @@ interrupt, and status without blocking the parent on spawn.
 
 - Model-facing `task` background mode / `task_continue`
 - ACP `session/subagent/*` methods
-- Push notify for settle (client polls `peer/status`)

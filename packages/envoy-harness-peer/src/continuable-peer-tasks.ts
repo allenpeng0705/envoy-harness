@@ -14,6 +14,9 @@ import type {
   WireExecuteInput,
 } from "./messages.js";
 
+/** How long settled tasks stay queryable before GC. */
+export const SETTLED_TASK_TTL_MS = 60_000;
+
 interface RunningPeerTask {
   correlationId: string;
   sessionId: string;
@@ -22,12 +25,18 @@ interface RunningPeerTask {
   abort: AbortController;
   closed: boolean;
   settled: boolean;
+  autoSettleAfterIdle: boolean;
   status: PeerTaskStatusResult["status"];
   result: PeerSubmitResponse | undefined;
   startedAt: string;
   completedAt: string | undefined;
   workWaiters: Array<() => void>;
+  settleWaiters: Array<{
+    resolve: () => void;
+    reject: (err: unknown) => void;
+  }>;
   pump: Promise<void>;
+  gcTimer: ReturnType<typeof setTimeout> | undefined;
 }
 
 export interface PeerContinuableTaskRegistryOptions {
@@ -37,14 +46,23 @@ export interface PeerContinuableTaskRegistryOptions {
   maxVerifyAfterExecute?: number;
   /** Mutable counter shared with blocking submit path (optional). */
   verifyCount?: { value: number };
+  /** Override settled-task retention (tests). Default 60s. */
+  settledTtlMs?: number;
 }
 
 export class PeerContinuableTaskRegistry {
   private readonly tasks = new Map<string, RunningPeerTask>();
   private readonly opts: PeerContinuableTaskRegistryOptions;
+  private readonly settledTtlMs: number;
 
   constructor(opts: PeerContinuableTaskRegistryOptions) {
     this.opts = opts;
+    this.settledTtlMs = opts.settledTtlMs ?? SETTLED_TASK_TTL_MS;
+  }
+
+  /** Test / ops: number of retained tasks (including settled). */
+  size(): number {
+    return this.tasks.size;
   }
 
   start(params: PeerSubmitContinuableParams): PeerSubmitContinuableResult {
@@ -70,12 +88,15 @@ export class PeerContinuableTaskRegistry {
       abort,
       closed: false,
       settled: false,
+      autoSettleAfterIdle: params.autoSettleAfterIdle === true,
       status: "running",
       result: undefined,
       startedAt: new Date().toISOString(),
       completedAt: undefined,
       workWaiters: [],
+      settleWaiters: [],
       pump: Promise.resolve(),
+      gcTimer: undefined,
     };
     this.tasks.set(params.correlationId, task);
     task.pump = this.pump(task);
@@ -111,6 +132,52 @@ export class PeerContinuableTaskRegistry {
 
   status(correlationId: string): PeerTaskStatusResult {
     const task = this.require(correlationId);
+    return this.snapshot(task);
+  }
+
+  /**
+   * Block until the task settles or `timeoutMs` elapses.
+   * Prefer this over client-side status polling.
+   */
+  async waitSettle(
+    correlationId: string,
+    timeoutMs: number,
+  ): Promise<PeerTaskStatusResult> {
+    const task = this.require(correlationId);
+    if (task.settled) return this.snapshot(task);
+
+    await new Promise<void>((resolve, reject) => {
+      let done = false;
+      const finish = (fn: () => void) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        fn();
+      };
+      const entry = {
+        resolve: () => finish(() => resolve()),
+        reject: (err: unknown) => finish(() => reject(err)),
+      };
+      const timer = setTimeout(() => {
+        const idx = task.settleWaiters.indexOf(entry);
+        if (idx >= 0) task.settleWaiters.splice(idx, 1);
+        finish(() =>
+          reject(new Error(`waitSettle timed out after ${timeoutMs}ms`)),
+        );
+      }, timeoutMs);
+      task.settleWaiters.push(entry);
+      // Re-check in case settle raced with waiter registration.
+      if (task.settled) {
+        const idx = task.settleWaiters.indexOf(entry);
+        if (idx >= 0) task.settleWaiters.splice(idx, 1);
+        finish(() => resolve());
+      }
+    });
+    // Use the local task ref — TTL 0 may have already deleted the map entry.
+    return this.snapshot(task);
+  }
+
+  private snapshot(task: RunningPeerTask): PeerTaskStatusResult {
     return {
       correlationId: task.correlationId,
       sessionId: task.sessionId,
@@ -146,51 +213,51 @@ export class PeerContinuableTaskRegistry {
 
   private async pump(task: RunningPeerTask): Promise<void> {
     let last: PeerSubmitResponse | undefined;
-    try {
-      while (!task.settled) {
-        const next = task.inbox.shift();
-        if (next === undefined) {
-          if (task.abort.signal.aborted) {
-            this.settle(task, last, "failed");
-            return;
-          }
-          if (task.closed) {
-            this.settle(task, last, last !== undefined ? "completed" : "failed");
-            return;
-          }
-          await new Promise<void>((resolve) => {
-            task.workWaiters.push(resolve);
-          });
-          continue;
-        }
+    while (!task.settled) {
+      const next = task.inbox.shift();
+      if (next === undefined) {
         if (task.abort.signal.aborted) {
           this.settle(task, last, "failed");
           return;
         }
-        const input: ExecuteInput = {
-          skillId: task.wire.skillId,
-          objective: next,
-          inputArtifacts:
-            task.wire.inputArtifacts as ExecuteInput["inputArtifacts"],
-          costCeilingUsd: task.wire.costCeilingUsd,
-          deadlineMs: task.wire.deadlineMs,
-          correlationId: task.correlationId,
-          signal: task.abort.signal,
-        };
-        try {
-          const executeResult = await this.opts.adapter.execute(input);
-          if (task.abort.signal.aborted) {
-            this.settle(task, last, "failed");
-            return;
-          }
-          last = await this.maybeVerify(executeResult, next);
-        } catch {
+        if (task.closed || task.autoSettleAfterIdle) {
+          this.settle(
+            task,
+            last,
+            last !== undefined ? "completed" : "failed",
+          );
+          return;
+        }
+        await new Promise<void>((resolve) => {
+          task.workWaiters.push(resolve);
+        });
+        continue;
+      }
+      if (task.abort.signal.aborted) {
+        this.settle(task, last, "failed");
+        return;
+      }
+      const input: ExecuteInput = {
+        skillId: task.wire.skillId,
+        objective: next,
+        inputArtifacts:
+          task.wire.inputArtifacts as ExecuteInput["inputArtifacts"],
+        costCeilingUsd: task.wire.costCeilingUsd,
+        deadlineMs: task.wire.deadlineMs,
+        correlationId: task.correlationId,
+        signal: task.abort.signal,
+      };
+      try {
+        const executeResult = await this.opts.adapter.execute(input);
+        if (task.abort.signal.aborted) {
           this.settle(task, last, "failed");
           return;
         }
+        last = await this.maybeVerify(executeResult, next);
+      } catch {
+        this.settle(task, last, "failed");
+        return;
       }
-    } finally {
-      // no-op — settle always happens on exit paths above
     }
   }
 
@@ -235,5 +302,17 @@ export class PeerContinuableTaskRegistry {
     task.result = last;
     task.completedAt = new Date().toISOString();
     this.wake(task);
+    for (const w of task.settleWaiters.splice(0)) w.resolve();
+    if (this.settledTtlMs <= 0) {
+      this.tasks.delete(task.correlationId);
+      return;
+    }
+    task.gcTimer = setTimeout(() => {
+      this.tasks.delete(task.correlationId);
+    }, this.settledTtlMs);
+    // Allow process to exit in tests without waiting for GC.
+    if (typeof task.gcTimer === "object" && "unref" in task.gcTimer) {
+      task.gcTimer.unref();
+    }
   }
 }

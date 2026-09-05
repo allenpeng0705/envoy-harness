@@ -292,6 +292,18 @@ export class Team {
         if (attempt + 1 >= attempts) break;
       }
     }
+    const failedResult: AgentRunResult = {
+      id: spec.id,
+      finalText: lastError?.message ?? "unknown",
+      stopReason: "aborted",
+      durationMs: Date.now() - startedAt,
+    };
+    results.set(spec.id, failedResult);
+    this.onAgentFinish?.({
+      teamName: this.config.name,
+      spec,
+      result: failedResult,
+    });
     return {
       kind: "failed",
       result: {

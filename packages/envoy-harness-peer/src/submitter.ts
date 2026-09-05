@@ -26,6 +26,7 @@ import {
   subagentInputToExecuteInput,
   signedResultToSubagentResult,
 } from "./mapping.js";
+import type { PeerTaskStatusResult } from "./messages.js";
 
 export interface PeerMeshSubmitterOptions {
   /** The typed peer client (connection + dialect). */
@@ -57,6 +58,17 @@ function failedPeerResult(
     durationMs: 0,
     verdict: { kind: "fail", reason, rollback: false },
   };
+}
+
+function applyStatusToRecord(
+  record: SubagentRecord,
+  st: PeerTaskStatusResult,
+): void {
+  record.sessionId = st.sessionId;
+  record.status = st.status;
+  if (st.completedAt !== undefined) record.completedAt = st.completedAt;
+  if (st.costUsd !== undefined) record.costUsd = st.costUsd;
+  if (st.durationMs !== undefined) record.durationMs = st.durationMs;
 }
 
 export class PeerMeshSubmitter implements MeshSubmitter {
@@ -100,6 +112,10 @@ export class PeerMeshSubmitter implements MeshSubmitter {
   /**
    * R4.9b — non-blocking spawn over `peer/submitContinuable`.
    * Blocking `submit()` is unchanged.
+   *
+   * `autoSettleAfterIdle` is forwarded to the peer (default false).
+   * `interrupt` / `close` enqueue RPCs; `send` / `waitSettle` drain
+   * that queue so control is ordered before observe.
    */
   submitContinuable(
     input: SubagentInput,
@@ -114,6 +130,7 @@ export class PeerMeshSubmitter implements MeshSubmitter {
       ...executeInput,
       correlationId,
     });
+    const autoSettleAfterIdle = options.autoSettleAfterIdle === true;
 
     const record: SubagentRecord = {
       sessionId: `pending-${correlationId.slice(0, 8)}`,
@@ -125,40 +142,44 @@ export class PeerMeshSubmitter implements MeshSubmitter {
     this.#spawned.push(record);
 
     let settledResult: SubagentResult | undefined;
-    let settleWaiters: Array<{
-      resolve: (r: SubagentResult) => void;
-      reject: (e: unknown) => void;
-    }> = [];
     let startPromise: Promise<void> | undefined;
     let sessionId = record.sessionId;
     let closedLocally = false;
+    /** Serializes interrupt/close RPCs; send/waitSettle await it. */
+    let controlQueue: Promise<void> = Promise.resolve();
 
-    const syncRecordFromStatus = async (): Promise<void> => {
-      const st = await this.#client.taskStatus({ correlationId });
-      sessionId = st.sessionId;
-      record.sessionId = st.sessionId;
-      record.status = st.status;
-      if (st.completedAt !== undefined) record.completedAt = st.completedAt;
-      if (st.costUsd !== undefined) record.costUsd = st.costUsd;
-      if (st.durationMs !== undefined) record.durationMs = st.durationMs;
-      if (st.settled) {
-        const result =
-          st.result !== undefined
-            ? signedResultToSubagentResult(st.result.result, st.result.verdict)
-            : failedPeerResult(
-                this.#workerPeerId,
-                st.status === "failed"
-                  ? "peer task interrupted or failed"
-                  : "peer task settled with no result",
-              );
-        if (settledResult === undefined) {
-          settledResult = result;
-          record.status = result.status;
-          this.#onSubagentSettle?.(result, { ...record });
-          options.onSettle?.(result, { ...record });
-          for (const w of settleWaiters.splice(0)) w.resolve(result);
-        }
+    const enqueueControl = (fn: () => Promise<void>): Promise<void> => {
+      const next = controlQueue.then(fn, fn);
+      controlQueue = next.then(
+        () => undefined,
+        () => undefined,
+      );
+      return next;
+    };
+
+    const markSettled = (result: SubagentResult): void => {
+      if (settledResult !== undefined) return;
+      settledResult = result;
+      record.status = result.status;
+      if (record.completedAt === undefined) {
+        record.completedAt = new Date().toISOString();
       }
+      this.#onSubagentSettle?.(result, { ...record });
+      options.onSettle?.(result, { ...record });
+    };
+
+    const resultFromStatus = (st: PeerTaskStatusResult): SubagentResult => {
+      applyStatusToRecord(record, st);
+      sessionId = st.sessionId;
+      if (st.result !== undefined) {
+        return signedResultToSubagentResult(st.result.result, st.result.verdict);
+      }
+      return failedPeerResult(
+        this.#workerPeerId,
+        st.status === "failed"
+          ? "peer task interrupted or failed"
+          : "peer task settled with no result",
+      );
     };
 
     const ensureStarted = (): Promise<void> => {
@@ -167,44 +188,39 @@ export class PeerMeshSubmitter implements MeshSubmitter {
           const started = await this.#client.submitContinuable({
             correlationId,
             input: wireInput,
+            autoSettleAfterIdle,
           });
           sessionId = started.sessionId;
           record.sessionId = started.sessionId;
           if (started.status !== "running") {
-            await syncRecordFromStatus();
+            const st = await this.#client.taskStatus({ correlationId });
+            if (st.settled) markSettled(resultFromStatus(st));
           }
         })().catch((err) => {
-          settledResult = failedPeerResult(
-            this.#workerPeerId,
-            err instanceof Error ? err.message : String(err),
+          markSettled(
+            failedPeerResult(
+              this.#workerPeerId,
+              err instanceof Error ? err.message : String(err),
+            ),
           );
-          record.status = "failed";
-          record.completedAt = new Date().toISOString();
-          for (const w of settleWaiters.splice(0)) {
-            w.resolve(settledResult!);
-          }
-          throw err;
+          // Do not rethrow — void kickoff must not become unhandled rejection.
         });
       }
       return startPromise;
     };
 
-    // Kick off immediately (non-blocking for caller).
     void ensureStarted();
 
     if (options.parentSignal !== undefined) {
       const onParentAbort = () => {
-        void (async () => {
-          try {
-            await ensureStarted();
-            await this.#client.interruptTask({
-              correlationId,
-              reason: "parent aborted",
-            });
-          } catch {
-            // ignore
-          }
-        })();
+        void enqueueControl(async () => {
+          await ensureStarted();
+          if (settledResult !== undefined) return;
+          await this.#client.interruptTask({
+            correlationId,
+            reason: "parent aborted",
+          });
+        });
       };
       if (options.parentSignal.aborted) onParentAbort();
       else {
@@ -226,6 +242,10 @@ export class PeerMeshSubmitter implements MeshSubmitter {
           throw new Error(`peer task ${correlationId} already settled`);
         }
         await ensureStarted();
+        await controlQueue;
+        if (settledResult !== undefined) {
+          throw new Error(`peer task ${correlationId} already settled`);
+        }
         await this.#client.sendTask({
           correlationId,
           message: messageToText(message),
@@ -234,70 +254,48 @@ export class PeerMeshSubmitter implements MeshSubmitter {
       interrupt: (reason) => {
         if (settledResult !== undefined) return;
         closedLocally = true;
-        void (async () => {
-          try {
-            await ensureStarted();
-            await this.#client.interruptTask({
-              correlationId,
-              reason: reason ?? "interrupted",
-            });
-          } catch {
-            // ignore — waitSettle will surface failure
-          }
-        })();
+        void enqueueControl(async () => {
+          await ensureStarted();
+          if (settledResult !== undefined) return;
+          await this.#client.interruptTask({
+            correlationId,
+            reason: reason ?? "interrupted",
+          });
+        });
       },
       close: () => {
         if (settledResult !== undefined || closedLocally) return;
         closedLocally = true;
-        void (async () => {
-          try {
-            await ensureStarted();
-            await this.#client.closeTask({ correlationId });
-          } catch {
-            // ignore
-          }
-        })();
+        void enqueueControl(async () => {
+          await ensureStarted();
+          if (settledResult !== undefined) return;
+          await this.#client.closeTask({ correlationId });
+        });
       },
       waitSettle: async (opts) => {
         if (settledResult !== undefined) return settledResult;
         await ensureStarted();
+        await controlQueue;
+        if (settledResult !== undefined) return settledResult;
+
         const timeoutMs = opts?.timeoutMs ?? 120_000;
-        const deadline = Date.now() + timeoutMs;
-        return new Promise<SubagentResult>((resolve, reject) => {
-          const onAbort = () => reject(new Error("waitSettle aborted"));
-          opts?.signal?.addEventListener("abort", onAbort, { once: true });
-          settleWaiters.push({
-            resolve: (r) => {
-              opts?.signal?.removeEventListener("abort", onAbort);
-              resolve(r);
-            },
-            reject: (e) => {
-              opts?.signal?.removeEventListener("abort", onAbort);
-              reject(e);
-            },
-          });
-          const poll = async () => {
-            while (settledResult === undefined) {
-              if (opts?.signal?.aborted) {
-                reject(new Error("waitSettle aborted"));
-                return;
-              }
-              if (Date.now() > deadline) {
-                reject(new Error("waitSettle timed out"));
-                return;
-              }
-              try {
-                await syncRecordFromStatus();
-              } catch (err) {
-                reject(err);
-                return;
-              }
-              if (settledResult !== undefined) return;
-              await new Promise((r) => setTimeout(r, 20));
-            }
-          };
-          void poll();
-        });
+        if (opts?.signal?.aborted) {
+          throw new Error("waitSettle aborted");
+        }
+
+        try {
+          const st = await this.#client.waitTaskSettle(
+            { correlationId, timeoutMs },
+            opts?.signal,
+          );
+          if (settledResult !== undefined) return settledResult;
+          const result = resultFromStatus(st);
+          markSettled(result);
+          return result;
+        } catch (err) {
+          if (settledResult !== undefined) return settledResult;
+          throw err;
+        }
       },
       status: () => ({ ...record }),
     };

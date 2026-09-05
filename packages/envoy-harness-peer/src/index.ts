@@ -59,6 +59,7 @@ export {
   PEER_INTERRUPT_METHOD,
   PEER_CLOSE_METHOD,
   PEER_STATUS_METHOD,
+  PEER_WAIT_SETTLE_METHOD,
   type PeerPingResult,
   type PeerSubmitResponse,
   type PeerSubmitContinuableParams,
@@ -67,7 +68,7 @@ export {
   type PeerTaskStatusResult,
   type WireExecuteInput,
 } from "./messages.js";
-export { PeerContinuableTaskRegistry } from "./continuable-peer-tasks.js";
+export { PeerContinuableTaskRegistry, SETTLED_TASK_TTL_MS } from "./continuable-peer-tasks.js";
 export {
   wrapEnvelope,
   unwrapEnvelope,

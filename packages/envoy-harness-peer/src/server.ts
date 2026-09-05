@@ -33,6 +33,7 @@ import {
   PEER_SUBMIT_CONTINUABLE_METHOD,
   PEER_SUBMIT_METHOD,
   PEER_VERIFY_METHOD,
+  PEER_WAIT_SETTLE_METHOD,
   type PeerSubmitContinuableParams,
   type PeerSubmitResponse,
   type PeerTaskControlParams,
@@ -66,6 +67,8 @@ export interface PeerServerOptions {
    * verifier imposes on every submit. `undefined` = no cap.
    */
   maxVerifyAfterExecute?: number;
+  /** R4.9b — settled continuable-task retention (default 60s). `0` = immediate GC. */
+  settledTaskTtlMs?: number;
 }
 
 /** Build a JSON-RPC request handler for the peer dialect. */
@@ -80,6 +83,7 @@ export function createPeerServerHandler(
     verifyAfterExecute: options.verifyAfterExecute,
     maxVerifyAfterExecute: options.maxVerifyAfterExecute,
     verifyCount,
+    settledTtlMs: options.settledTaskTtlMs,
   });
   const unwrap = <T>(method: string, params: unknown): T => {
     if (options.verifier !== undefined) {
@@ -171,6 +175,13 @@ export function createPeerServerHandler(
           case PEER_STATUS_METHOD: {
             const body = unwrap<PeerTaskControlParams>(method, params);
             return continuable.status(body.correlationId);
+          }
+          case PEER_WAIT_SETTLE_METHOD: {
+            const body = unwrap<PeerTaskControlParams>(method, params);
+            return continuable.waitSettle(
+              body.correlationId,
+              body.timeoutMs ?? 120_000,
+            );
           }
           case PEER_VERIFY_METHOD:
             return adapter.verify(unwrap<VerifyInput>(method, params));

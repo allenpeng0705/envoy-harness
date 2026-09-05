@@ -9,7 +9,8 @@
  *                     (`{ result, verdict? }` — the verdict is present
  *                     when the server ran `adapter.verify` after execute)
  * - `peer/submitContinuable` / `peer/send` / `peer/interrupt` /
- *   `peer/close` / `peer/status` — R4.9b continuable tasks
+ *   `peer/close` / `peer/status` / `peer/waitSettle` — R4.9b
+ *   continuable tasks
  * - `peer/verify`   → `VerifyInput` → `Verdict[]` (MAP verify)
  * - `peer/manifest` → `BuildManifestInput` → `CapabilityManifest`
  */
@@ -26,6 +27,8 @@ export const PEER_SEND_METHOD = "peer/send";
 export const PEER_INTERRUPT_METHOD = "peer/interrupt";
 export const PEER_CLOSE_METHOD = "peer/close";
 export const PEER_STATUS_METHOD = "peer/status";
+/** Block until a continuable task settles (or timeout). */
+export const PEER_WAIT_SETTLE_METHOD = "peer/waitSettle";
 
 /**
  * `peer/submit` response body. `verdict` is additive: present when the
@@ -58,6 +61,12 @@ export type WireExecuteInput = {
 export interface PeerSubmitContinuableParams {
   correlationId: string;
   input: WireExecuteInput;
+  /**
+   * When true, settle as soon as the inbox is empty after a run
+   * (matches local `autoSettleAfterIdle`). Default false — stay open
+   * until `close` / `interrupt`.
+   */
+  autoSettleAfterIdle?: boolean;
 }
 
 export interface PeerSubmitContinuableResult {
@@ -72,6 +81,8 @@ export interface PeerTaskControlParams {
   correlationId: string;
   reason?: string;
   message?: string;
+  /** For `peer/waitSettle` — max wait before error. Default 120s. */
+  timeoutMs?: number;
 }
 
 export interface PeerTaskStatusResult {

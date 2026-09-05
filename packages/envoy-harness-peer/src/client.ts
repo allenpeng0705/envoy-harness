@@ -30,6 +30,7 @@ import {
   PEER_SUBMIT_CONTINUABLE_METHOD,
   PEER_SUBMIT_METHOD,
   PEER_VERIFY_METHOD,
+  PEER_WAIT_SETTLE_METHOD,
   type PeerSubmitContinuableParams,
   type PeerSubmitContinuableResult,
   type PeerSubmitResponse,
@@ -195,6 +196,21 @@ export class PeerClient {
       this.#requestTimeoutMs,
       signal,
       "peer status aborted",
+    ) as Promise<PeerTaskStatusResult>;
+  }
+
+  /** R4.9b — block until settled (server-side wait, not client poll). */
+  async waitTaskSettle(
+    params: PeerTaskControlParams,
+    signal?: AbortSignal,
+  ): Promise<PeerTaskStatusResult> {
+    const timeoutMs = params.timeoutMs ?? 120_000;
+    return this.#send(
+      PEER_WAIT_SETTLE_METHOD,
+      { ...params, timeoutMs },
+      timeoutMs + this.#submitResponseBufferMs,
+      signal,
+      "peer waitSettle aborted",
     ) as Promise<PeerTaskStatusResult>;
   }
 

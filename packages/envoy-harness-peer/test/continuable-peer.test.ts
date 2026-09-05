@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import {
   createInProcessPeerPair,
   createPeerServerHandler,
+  PeerContinuableTaskRegistry,
   PeerMeshSubmitter,
 } from "../src/index.js";
 import { signedResult, stubAdapter } from "./helpers.js";
@@ -54,7 +55,7 @@ describe("R4.9b continuable peer tasks", () => {
     pair.close();
   });
 
-  it("interrupt aborts in-flight execute", async () => {
+  it("interrupt aborts in-flight execute (control queue drained before wait)", async () => {
     let release: (() => void) | undefined;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
@@ -78,14 +79,38 @@ describe("R4.9b continuable peer tasks", () => {
     );
     const submitter = new PeerMeshSubmitter({ client: pair.client });
     const handle = submitter.submitContinuable(baseInput);
-    // Let execute park on the gate, then interrupt over the wire before release.
     await new Promise((r) => setTimeout(r, 30));
     handle.interrupt("stop now");
-    await new Promise((r) => setTimeout(r, 30));
+    const settled = handle.waitSettle({ timeoutMs: 5_000 });
+    // waitSettle drains interrupt RPC first; then release so execute sees abort.
+    await new Promise((r) => setTimeout(r, 20));
     release?.();
-    const result = await handle.waitSettle({ timeoutMs: 5_000 });
+    const result = await settled;
     expect(result.status).toBe("failed");
     expect(sawAbort).toBe(true);
+    pair.close();
+  });
+
+  it("autoSettleAfterIdle settles without explicit close", async () => {
+    const adapter = stubAdapter({
+      execute: async (input) =>
+        signedResult({
+          correlationId: input.correlationId,
+          content: [{ kind: "text", text: "one-shot" }],
+        }),
+    });
+    const pair = createInProcessPeerPair(
+      createPeerServerHandler({
+        adapter,
+        identity: { peerId: "peer-1" },
+      }),
+    );
+    const submitter = new PeerMeshSubmitter({ client: pair.client });
+    const handle = submitter.submitContinuable(baseInput, {
+      autoSettleAfterIdle: true,
+    });
+    const result = await handle.waitSettle({ timeoutMs: 5_000 });
+    expect(result.status).toBe("completed");
     pair.close();
   });
 
@@ -128,12 +153,10 @@ describe("R4.9b continuable peer tasks", () => {
     expect(second.idempotent).toBe(true);
     expect(second.sessionId).toBe(first.sessionId);
     await pair.client.closeTask({ correlationId: "corr-idem" });
-    // Drain
-    for (let i = 0; i < 50; i++) {
-      const st = await pair.client.taskStatus({ correlationId: "corr-idem" });
-      if (st.settled) break;
-      await new Promise((r) => setTimeout(r, 20));
-    }
+    await pair.client.waitTaskSettle({
+      correlationId: "corr-idem",
+      timeoutMs: 5_000,
+    });
     pair.close();
   });
 
@@ -152,5 +175,33 @@ describe("R4.9b continuable peer tasks", () => {
     );
     expect(result.status).toBe("completed");
     pair.close();
+  });
+
+  it("GC removes settled tasks after TTL", async () => {
+    const adapter = stubAdapter({
+      execute: async (input) =>
+        signedResult({ correlationId: input.correlationId }),
+    });
+    const registry = new PeerContinuableTaskRegistry({
+      adapter,
+      peerId: "peer-1",
+      settledTtlMs: 30,
+    });
+    registry.start({
+      correlationId: "corr-gc",
+      input: {
+        skillId: "research",
+        objective: "x",
+        inputArtifacts: [],
+        costCeilingUsd: 1,
+        deadlineMs: 5_000,
+        correlationId: "corr-gc",
+      },
+      autoSettleAfterIdle: true,
+    });
+    await registry.waitSettle("corr-gc", 5_000);
+    expect(registry.size()).toBe(1);
+    await new Promise((r) => setTimeout(r, 60));
+    expect(registry.size()).toBe(0);
   });
 });
