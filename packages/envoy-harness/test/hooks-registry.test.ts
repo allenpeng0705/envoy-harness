@@ -213,7 +213,7 @@ describe("HookRegistry: middleware", () => {
 });
 
 describe("HookRegistry: decision composition", () => {
-  it("first block short-circuits the chain", async () => {
+  it("deny wins and later handlers still run (R4.5a)", async () => {
     const r = new HookRegistry();
     let secondCalled = false;
     r.on("PreToolUse", async () => ({ kind: "block", reason: "first" }));
@@ -223,7 +223,7 @@ describe("HookRegistry: decision composition", () => {
     });
     const d = await r.fire("PreToolUse", {});
     expect(d).toEqual({ kind: "block", reason: "first" });
-    expect(secondCalled).toBe(false);
+    expect(secondCalled).toBe(true);
   });
 
   it("concatenates multiple add-context with newlines", async () => {

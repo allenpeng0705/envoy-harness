@@ -21,6 +21,8 @@ export {
   type HookMiddleware,
 } from "./registry.js";
 
+export { mergeHookDecisions } from "./merge.js";
+
 export { runShellHandler, runModuleHandler } from "./runner.js";
 
 // Phase B / Item 15.2: register a list of `HookHandlerSpec`

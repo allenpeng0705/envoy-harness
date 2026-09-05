@@ -2,6 +2,8 @@
  * HookRegistry — the in-memory store of hook handlers.
  *
  * **Design doc:** `docs/design.md` §8.2.
+ * **R4.5a:** deny > ask > allow merge; fire() snapshots handlers so
+ * refresh mid-turn does not drop an in-flight composition.
  *
  * **Three layers of composition (in order):**
  *
@@ -10,10 +12,9 @@
  *    audit logging, rate limiting, debug traces.
  *
  * 2. **Handlers** (added via `on()`). Matched against the event payload
- *    by `matchHandler`. Matched handlers run in registration order.
- *    First `block` wins; otherwise, all `add-context` are concatenated;
- *    otherwise, last `modify` wins (PostToolUse only); otherwise,
- *    `continue`.
+ *    by `matchHandler`. Matched handlers **all run** (registration
+ *    order); decisions merge via {@link mergeHookDecisions}
+ *    (`block`/`deny` > `ask` > `continue`/`allow`).
  *
  * 3. **Default** — if no handler fires, return `continue`. The
  *    orchestrator proceeds.
@@ -24,8 +25,8 @@
  *   imports a TS module. Useful for config-driven hooks.
  *
  * **Stability:** the public API is `on`, `use`, `fire`, `unregister`,
- * `clear`. New decision kinds require a schema version bump; new
- * matchers are additive.
+ * `refresh`, `clear`. New decision kinds require a schema version bump;
+ * new matchers are additive.
  */
 
 import type {
@@ -35,6 +36,7 @@ import type {
   HookFn,
   HookHandler,
 } from "../types.js";
+import { mergeHookDecisions } from "./merge.js";
 
 /** A middleware runs before handlers and can short-circuit. */
 export type HookMiddleware = (
@@ -177,28 +179,38 @@ export class HookRegistry {
   }
 
   /**
+   * R4.5a — clear handlers/middlewares and run `reconfigure` to
+   * re-register. In-flight {@link fire} calls keep their snapshotted
+   * handler lists, so a mid-turn refresh does not drop the current
+   * composition.
+   */
+  refresh(reconfigure: (registry: HookRegistry) => void): void {
+    this.clear();
+    reconfigure(this);
+  }
+
+  /**
    * Fire an event. Returns the composed decision.
    *
-   * Composition rules (in order):
-   * - First `block` (from middleware or handler) short-circuits.
-   * - All `add-context` are concatenated with `\n\n`.
-   * - Last `modify` wins (PostToolUse only; for other events, `modify`
-   *   is treated as `continue` since there's no payload to modify
-   *   before the model sees it).
-   * - Otherwise, `continue`.
+   * Composition rules (R4.5a):
+   * - Middleware `block` still short-circuits (before handlers).
+   * - All matched handlers run; merge is deny > ask > allow
+   *   ({@link mergeHookDecisions}).
+   * - Handler list is snapshotted at start (refresh-safe).
    */
   async fire(
     eventName: HookEventName,
     payload: unknown,
   ): Promise<HookDecision> {
-    // Middlewares first. They can short-circuit.
-    for (const middleware of this.middlewares) {
+    // Snapshot so refresh()/clear() mid-fire cannot drop this turn.
+    const middlewares = this.middlewares.slice();
+    const handlers = (this.handlers.get(eventName) ?? []).slice();
+
+    for (const middleware of middlewares) {
       let decision: HookDecision;
       try {
         decision = await middleware(eventName, payload);
       } catch (err) {
-        // A throwing middleware is a hook failure, not a runtime
-        // crash. Convert to a block so the agent loop can react.
         return {
           kind: "block",
           reason: `hook middleware threw: ${(err as Error).message}`,
@@ -207,62 +219,21 @@ export class HookRegistry {
       if (decision.kind === "block") return decision;
     }
 
-    // Matched handlers, in registration order.
-    const handlers = this.handlers.get(eventName) ?? [];
     const matched = handlers.filter((h) => this.matchHandler(h, payload));
-
-    let lastModify: Extract<HookDecision, { kind: "modify" }> | null = null;
-    let lastAsk: Extract<HookDecision, { kind: "ask" }> | null = null;
-    const contexts: string[] = [];
+    const decisions: HookDecision[] = [];
 
     for (const handler of matched) {
-      let decision: HookDecision;
       try {
-        decision = await handler.run({ name: eventName, payload });
+        decisions.push(await handler.run({ name: eventName, payload }));
       } catch (err) {
-        // Inline HookFn handlers can throw (module/shell runners
-        // already convert to block). A throw is a hook failure —
-        // surface it as a block instead of crashing the run.
-        return {
+        decisions.push({
           kind: "block",
           reason: `hook threw: ${(err as Error).message}`,
-        };
-      }
-      if (decision.kind === "block") return decision;
-      if (decision.kind === "modify") {
-        if (eventName === "PostToolUse" || eventName === "PreToolUse") {
-          // PostToolUse modifies the result; PreToolUse modifies the
-          // tool call's args (the agent re-validates against the
-          // tool's zod schema).
-          lastModify = decision;
-        }
-        // For other events, treat modify as continue (no payload to
-        // modify before the model sees it).
-      }
-      if (decision.kind === "add-context") {
-        contexts.push(decision.content);
-      }
-      if (decision.kind === "ask") {
-        // F9.1: ask is PreToolUse only. Stash the last ask;
-        // if no block came first, return the ask at the end
-        // (after the loop) so multiple handlers compose: a
-        // block wins; otherwise the last ask wins.
-        if (eventName === "PreToolUse") {
-          lastAsk = decision;
-        }
+        });
       }
     }
 
-    // Precedence for PreToolUse: an `ask` (approval) must not be
-    // suppressed by a concurrent `add-context` from another handler
-    // (add-context isn't actionable at PreToolUse anyway). A
-    // `modify` is returned for the agent to apply.
-    if (lastAsk) return lastAsk;
-    if (contexts.length > 0) {
-      return { kind: "add-context", content: contexts.join("\n\n") };
-    }
-    if (lastModify) return lastModify;
-    return { kind: "continue" };
+    return mergeHookDecisions(eventName, decisions);
   }
 
   /** List registered events (for diagnostics). */
@@ -279,7 +250,7 @@ export class HookRegistry {
 
   /**
    * Remove all handlers and middlewares. Test-only utility;
-   * production code should not call this in normal flow.
+   * production code should prefer {@link refresh}.
    */
   clear(): void {
     this.handlers.clear();

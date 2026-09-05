@@ -75,6 +75,7 @@ export { discoverAgentsMd, type DiscoveryOptions } from "./agents-md/index.js";
 export {
   HookRegistry,
   defaultRegistry,
+  mergeHookDecisions,
   registerHooksFromConfig,
   runModuleHandler,
   runShellHandler,

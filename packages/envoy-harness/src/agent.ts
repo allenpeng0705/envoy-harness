@@ -1324,6 +1324,16 @@ export class Agent {
   }
 
   /**
+   * R4.5a — clear and re-register hooks (e.g. after plugin/config
+   * reload). In-flight `hooks.fire()` calls keep their snapshotted
+   * handler lists, so a mid-turn refresh does not drop the current
+   * composition.
+   */
+  refreshHooks(reconfigure: (hooks: HookRegistry) => void): void {
+    this.hooks.refresh(reconfigure);
+  }
+
+  /**
    * Run the agent loop with the given prompt. Returns the final
    * assistant content blocks and metadata about the run.
    *
