@@ -478,7 +478,9 @@ export async function runSponsorFriendBridge(
         // "Not started yet" with no actionable hint.
         deps.mesh.assertOnline();
         trace(1, "PASS", "searching for sponsor peer", { ownerId: ownerId.slice(0, 20) });
-        const peers = await deps.mesh.searchPeers({ peerId: ownerId });
+        // DHT / relay.lookup need the libp2p peer id — ownerId (`envoy:owner:…`) never matches.
+        const lookupPeerId = resolved.peerId?.trim() || ownerId;
+        const peers = await deps.mesh.searchPeers({ peerId: lookupPeerId });
         const peer = peers[0];
         if (!peer) {
           // Lenient: empty peer list is not a hard failure. The
@@ -490,10 +492,15 @@ export async function runSponsorFriendBridge(
           // observability and continue.
           trace(1, "WAIT", "sponsor peer not found in mesh — continuing with bundled dial hints", {
             ownerId: ownerId.slice(0, 20),
+            lookupPeerId: lookupPeerId.slice(0, 20),
           });
         }
         trace(2, "PASS", "applying sponsor join token", { attempt });
-        await deps.mesh.applyWanJoinInvite(resolved.joinToken ?? "");
+        if (resolved.joinToken?.trim()) {
+          await deps.mesh.applyWanJoinInvite(resolved.joinToken);
+        } else {
+          trace(2, "WAIT", "no join token — skipping applyWanJoinInvite", { attempt });
+        }
 
         // Pick address filter (host's `pickAddressFilterForPeer`).
         let dialHints: string[] | undefined;
