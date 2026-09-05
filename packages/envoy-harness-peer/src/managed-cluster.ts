@@ -15,6 +15,7 @@ import {
   type PeerHealthInfo,
 } from "./status.js";
 import { connectPeerClient } from "./tcp.js";
+import { TeamJobRegistry } from "./team-jobs.js";
 
 export interface ManagedPeerClusterOptions {
   connectTimeoutMs?: number;
@@ -22,6 +23,8 @@ export interface ManagedPeerClusterOptions {
   onEvent?: PeerEventSink;
   onFailure?: (id: string, err: Error) => void;
   connect?: typeof connectPeerClient;
+  /** R4.7 — shared team/jobs board (defaults to a new registry). */
+  teamJobRegistry?: TeamJobRegistry;
 }
 
 export interface ConnectPeerResult {
@@ -34,11 +37,13 @@ export class ManagedPeerCluster implements ConnectResultLike {
   readonly registry = new PeerRegistry();
   readonly connected: string[] = [];
   readonly failed: Array<{ id: string; error: string }> = [];
+  readonly teamJobRegistry: TeamJobRegistry;
   readonly #closers = new Map<string, () => void>();
   readonly #options: ManagedPeerClusterOptions;
 
   constructor(options: ManagedPeerClusterOptions = {}) {
     this.#options = options;
+    this.teamJobRegistry = options.teamJobRegistry ?? new TeamJobRegistry();
   }
 
   /** Connect every configured peer (fail-open per peer). */
@@ -132,6 +137,7 @@ export class ManagedPeerCluster implements ConnectResultLike {
       registry: this.registry,
       connected: this.connected,
       failed: this.failed,
+      teamJobRegistry: this.teamJobRegistry,
       ...(healthProvider !== undefined ? { healthProvider } : {}),
       ...(this.#options.onEvent !== undefined
         ? { onEvent: this.#options.onEvent }

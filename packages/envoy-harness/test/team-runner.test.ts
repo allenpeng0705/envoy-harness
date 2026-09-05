@@ -358,3 +358,97 @@ describe("Team.runOnce — per-agent failure", () => {
     expect(result.agents[1]?.stopReason).toBe("aborted");
   });
 });
+
+describe("Team.runOnce — R4.8 parallel DAG", () => {
+  it("runs diamond mid-tier (B∥C) concurrently", async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const model: ModelAdapter = {
+      async complete(input): Promise<ModelResponse> {
+        inFlight++;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise((r) => setTimeout(r, 40));
+        inFlight--;
+        const lastUser = [...input.messages]
+          .reverse()
+          .find((m) => m.role === "user");
+        const block = lastUser?.content[0];
+        const text =
+          block && block.type === "text" ? block.text.slice(0, 20) : "ok";
+        return {
+          content: [{ type: "text", text }],
+          stopReason: "end_turn",
+        };
+      },
+    };
+    const team = new Team({
+      config: teamConfig([
+        {
+          id: "a",
+          role: "r",
+          systemPrompt: "sp",
+          objective: "root",
+          dependsOn: [],
+        },
+        {
+          id: "b",
+          role: "r",
+          systemPrompt: "sp",
+          objective: "left",
+          dependsOn: ["a"],
+        },
+        {
+          id: "c",
+          role: "r",
+          systemPrompt: "sp",
+          objective: "right",
+          dependsOn: ["a"],
+        },
+        {
+          id: "d",
+          role: "r",
+          systemPrompt: "sp",
+          objective: "merge",
+          dependsOn: ["b", "c"],
+        },
+      ]),
+      model,
+      parallel: true,
+    });
+    const result = await team.runOnce();
+    expect(result.status).toBe("completed");
+    expect(result.agents).toHaveLength(4);
+    expect(maxInFlight).toBeGreaterThanOrEqual(2);
+  });
+
+  it("retries a failed agent when maxRetries > 0", async () => {
+    let calls = 0;
+    const model: ModelAdapter = {
+      async complete(): Promise<ModelResponse> {
+        calls++;
+        if (calls === 1) throw new Error("transient");
+        return {
+          content: [{ type: "text", text: "recovered" }],
+          stopReason: "end_turn",
+        };
+      },
+    };
+    const team = new Team({
+      config: teamConfig([
+        {
+          id: "solo",
+          role: "r",
+          systemPrompt: "sp",
+          objective: "o",
+          dependsOn: [],
+        },
+      ]),
+      model,
+      maxRetries: 1,
+    });
+    const result = await team.runOnce();
+    expect(result.status).toBe("completed");
+    expect(result.agents[0]?.finalText).toBe("recovered");
+    expect(calls).toBe(2);
+  });
+});

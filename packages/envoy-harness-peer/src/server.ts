@@ -21,13 +21,21 @@ import type {
 } from "@envoymesh/agent-adapter";
 import type { CapabilityManifest } from "@envoymesh/protocol";
 
+import { PeerContinuableTaskRegistry } from "./continuable-peer-tasks.js";
 import { combinePeerVerdicts } from "./scoreboard.js";
 import {
+  PEER_CLOSE_METHOD,
+  PEER_INTERRUPT_METHOD,
   PEER_MANIFEST_METHOD,
   PEER_PING_METHOD,
+  PEER_SEND_METHOD,
+  PEER_STATUS_METHOD,
+  PEER_SUBMIT_CONTINUABLE_METHOD,
   PEER_SUBMIT_METHOD,
   PEER_VERIFY_METHOD,
+  type PeerSubmitContinuableParams,
   type PeerSubmitResponse,
+  type PeerTaskControlParams,
 } from "./messages.js";
 import { unwrapEnvelope, type PeerVerifier } from "./envelope.js";
 import type { PeerEventSink } from "./events.js";
@@ -65,7 +73,14 @@ export function createPeerServerHandler(
   options: PeerServerOptions,
 ): RequestHandler {
   const { adapter, identity } = options;
-  let verifyAfterExecuteCount = 0;
+  const verifyCount = { value: 0 };
+  const continuable = new PeerContinuableTaskRegistry({
+    adapter,
+    peerId: identity.peerId,
+    verifyAfterExecute: options.verifyAfterExecute,
+    maxVerifyAfterExecute: options.maxVerifyAfterExecute,
+    verifyCount,
+  });
   const unwrap = <T>(method: string, params: unknown): T => {
     if (options.verifier !== undefined) {
       return unwrapEnvelope(
@@ -98,7 +113,7 @@ export function createPeerServerHandler(
             }
             if (
               options.maxVerifyAfterExecute !== undefined &&
-              verifyAfterExecuteCount >= options.maxVerifyAfterExecute
+              verifyCount.value >= options.maxVerifyAfterExecute
             ) {
               // Budget exhausted: skip the verifier rather than charging
               // the host another LLM call. The client's placeholder
@@ -111,7 +126,7 @@ export function createPeerServerHandler(
                 result: executeResult,
                 objective: input.objective,
               });
-              verifyAfterExecuteCount += 1;
+              verifyCount.value += 1;
               const response: PeerSubmitResponse = {
                 result: executeResult,
                 verdict: combinePeerVerdicts(verdicts),
@@ -133,6 +148,29 @@ export function createPeerServerHandler(
               const response: PeerSubmitResponse = { result: executeResult };
               return response;
             }
+          }
+          case PEER_SUBMIT_CONTINUABLE_METHOD: {
+            const body = unwrap<PeerSubmitContinuableParams>(method, params);
+            return continuable.start(body);
+          }
+          case PEER_SEND_METHOD: {
+            const body = unwrap<PeerTaskControlParams>(method, params);
+            continuable.send(body.correlationId, body.message ?? "");
+            return { ok: true as const };
+          }
+          case PEER_CLOSE_METHOD: {
+            const body = unwrap<PeerTaskControlParams>(method, params);
+            continuable.close(body.correlationId);
+            return { ok: true as const };
+          }
+          case PEER_INTERRUPT_METHOD: {
+            const body = unwrap<PeerTaskControlParams>(method, params);
+            continuable.interrupt(body.correlationId, body.reason);
+            return { ok: true as const };
+          }
+          case PEER_STATUS_METHOD: {
+            const body = unwrap<PeerTaskControlParams>(method, params);
+            return continuable.status(body.correlationId);
           }
           case PEER_VERIFY_METHOD:
             return adapter.verify(unwrap<VerifyInput>(method, params));

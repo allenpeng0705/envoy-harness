@@ -29,6 +29,7 @@ import {
   type PeerHealthInfo,
   peerToInfo,
 } from "../status.js";
+import { TeamJobRegistry } from "../team-jobs.js";
 
 export interface PeerUiPeerArg {
   id: string;
@@ -182,6 +183,12 @@ export interface PeerUiBackendOptions {
    * `peer.disconnected`) are forwarded to discovery subscribers.
    */
   onEvent?: PeerEventSink;
+  /**
+   * R4.7 — live `team/jobs` board. Defaults to a fresh empty registry
+   * so ACP always exposes the method (TUI `/team` no longer looks
+   * unsupported).
+   */
+  teamJobRegistry?: TeamJobRegistry;
 }
 
 export interface PeerUiBackend {
@@ -190,6 +197,8 @@ export interface PeerUiBackend {
   emitDiscoveryEvent(event: ProtocolDiscoveryEvent): void;
   /** Teardown: emit disconnects + close sockets (idempotent). */
   close(): void;
+  /** R4.7 — shared job board (same instance as `backend.teamJobs`). */
+  teamJobRegistry: TeamJobRegistry;
 }
 
 /** Build the ACP backend for the cluster console. */
@@ -197,6 +206,7 @@ export function createPeerUiBackend(
   options: PeerUiBackendOptions,
 ): PeerUiBackend {
   const scoreboard = options.scoreboard ?? new PeerScoreboard();
+  const teamJobRegistry = options.teamJobRegistry ?? new TeamJobRegistry();
   const listeners = new Set<(event: ProtocolDiscoveryEvent) => void>();
   let closed = false;
 
@@ -305,6 +315,7 @@ export function createPeerUiBackend(
     },
     scoreboardSummary: (): ProtocolScoreboardEntry[] =>
       aggregateScoreboard(scoreboard),
+    teamJobs: () => teamJobRegistry.list(),
     subscribeDiscovery: (listener) => {
       listeners.add(listener);
       const at = new Date().toISOString();
@@ -328,6 +339,7 @@ export function createPeerUiBackend(
   return {
     backend,
     emitDiscoveryEvent,
+    teamJobRegistry,
     close() {
       if (closed) return;
       closed = true;

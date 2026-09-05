@@ -21,11 +21,21 @@ import type {
 } from "@envoymesh/protocol";
 
 import {
+  PEER_CLOSE_METHOD,
+  PEER_INTERRUPT_METHOD,
   PEER_MANIFEST_METHOD,
   PEER_PING_METHOD,
+  PEER_SEND_METHOD,
+  PEER_STATUS_METHOD,
+  PEER_SUBMIT_CONTINUABLE_METHOD,
   PEER_SUBMIT_METHOD,
   PEER_VERIFY_METHOD,
+  type PeerSubmitContinuableParams,
+  type PeerSubmitContinuableResult,
   type PeerSubmitResponse,
+  type PeerTaskControlParams,
+  type PeerTaskStatusResult,
+  type WireExecuteInput,
 } from "./messages.js";
 import {
   signedResultToSubagentResult,
@@ -116,6 +126,88 @@ export class PeerClient {
     signal?: AbortSignal,
   ): Promise<SignedAgentResult> {
     return (await this.executeWithVerdict(input, signal)).result;
+  }
+
+  /** R4.9b — `peer/submitContinuable` (non-blocking spawn). */
+  async submitContinuable(
+    params: PeerSubmitContinuableParams,
+    signal?: AbortSignal,
+  ): Promise<PeerSubmitContinuableResult> {
+    return this.#send(
+      PEER_SUBMIT_CONTINUABLE_METHOD,
+      params,
+      this.#requestTimeoutMs,
+      signal,
+      "peer submitContinuable aborted",
+    ) as Promise<PeerSubmitContinuableResult>;
+  }
+
+  /** R4.9b — enqueue a follow-up message for a continuable task. */
+  async sendTask(
+    params: PeerTaskControlParams,
+    signal?: AbortSignal,
+  ): Promise<{ ok: true }> {
+    return this.#send(
+      PEER_SEND_METHOD,
+      params,
+      this.#requestTimeoutMs,
+      signal,
+      "peer send aborted",
+    ) as Promise<{ ok: true }>;
+  }
+
+  /** R4.9b — mark no further inbox messages. */
+  async closeTask(
+    params: PeerTaskControlParams,
+    signal?: AbortSignal,
+  ): Promise<{ ok: true }> {
+    return this.#send(
+      PEER_CLOSE_METHOD,
+      params,
+      this.#requestTimeoutMs,
+      signal,
+      "peer close aborted",
+    ) as Promise<{ ok: true }>;
+  }
+
+  /** R4.9b — abort in-flight execute for a continuable task. */
+  async interruptTask(
+    params: PeerTaskControlParams,
+    signal?: AbortSignal,
+  ): Promise<{ ok: true }> {
+    return this.#send(
+      PEER_INTERRUPT_METHOD,
+      params,
+      this.#requestTimeoutMs,
+      signal,
+      "peer interrupt aborted",
+    ) as Promise<{ ok: true }>;
+  }
+
+  /** R4.9b — poll lifecycle + optional settled result. */
+  async taskStatus(
+    params: PeerTaskControlParams,
+    signal?: AbortSignal,
+  ): Promise<PeerTaskStatusResult> {
+    return this.#send(
+      PEER_STATUS_METHOD,
+      params,
+      this.#requestTimeoutMs,
+      signal,
+      "peer status aborted",
+    ) as Promise<PeerTaskStatusResult>;
+  }
+
+  /** Helper: strip AbortSignal for wire transport. */
+  static toWireExecuteInput(input: ExecuteInput): WireExecuteInput {
+    return {
+      skillId: input.skillId,
+      objective: input.objective,
+      inputArtifacts: input.inputArtifacts as unknown[],
+      costCeilingUsd: input.costCeilingUsd,
+      deadlineMs: input.deadlineMs,
+      correlationId: input.correlationId,
+    };
   }
 
   /** `peer/verify` — ask the peer to verify a result. */

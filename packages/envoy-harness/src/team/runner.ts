@@ -86,6 +86,32 @@ export interface TeamOptions {
    * the seam. Absent → a peer-hosted agent fails with a clear error.
    */
   peerExecutor?: (spec: AgentSpec, prompt: string) => Promise<string>;
+  /**
+   * R4.7 — optional lifecycle callbacks for live `team/jobs` boards
+   * (standalone peer path / hosts). Fired around `runOnce()`.
+   */
+  onTeamStart?: (ctx: {
+    teamName: string;
+    agents: ReadonlyArray<AgentSpec>;
+  }) => void;
+  onAgentStart?: (ctx: { teamName: string; spec: AgentSpec }) => void;
+  onAgentFinish?: (ctx: {
+    teamName: string;
+    spec: AgentSpec;
+    result: AgentRunResult;
+  }) => void;
+  onTeamFinish?: (ctx: { result: TeamResult }) => void;
+  /**
+   * R4.8 — when true (default), agents whose dependencies are
+   * satisfied run concurrently in waves. When false, run the
+   * classic sequential topological order.
+   */
+  parallel?: boolean;
+  /**
+   * R4.8 — retry a failed agent this many extra times before
+   * failing the team. Default 0 (no retries).
+   */
+  maxRetries?: number;
 }
 
 /** The runner. */
@@ -98,6 +124,12 @@ export class Team {
   private readonly peerExecutor:
     | ((spec: AgentSpec, prompt: string) => Promise<string>)
     | undefined;
+  private readonly onTeamStart: TeamOptions["onTeamStart"];
+  private readonly onAgentStart: TeamOptions["onAgentStart"];
+  private readonly onAgentFinish: TeamOptions["onAgentFinish"];
+  private readonly onTeamFinish: TeamOptions["onTeamFinish"];
+  private readonly parallel: boolean;
+  private readonly maxRetries: number;
 
   constructor(options: TeamOptions) {
     this.config = options.config;
@@ -106,6 +138,12 @@ export class Team {
     this.optionsFor = options.optionsFor;
     this.input = options.input ?? "";
     this.peerExecutor = options.peerExecutor;
+    this.onTeamStart = options.onTeamStart;
+    this.onAgentStart = options.onAgentStart;
+    this.onAgentFinish = options.onAgentFinish;
+    this.onTeamFinish = options.onTeamFinish;
+    this.parallel = options.parallel !== false;
+    this.maxRetries = Math.max(0, options.maxRetries ?? 0);
   }
 
   /**
@@ -125,54 +163,143 @@ export class Team {
    * failure are still in the result.
    */
   async runOnce(): Promise<TeamResult> {
-    // 1. Validate + topological sort.
+    // Validate graph (missing deps / cycles) via topological sort.
     const order = topologicalSort(this.config.agents);
+    const byId = new Map(order.map((a) => [a.id, a]));
     const results = new Map<string, AgentRunResult>();
+    this.onTeamStart?.({
+      teamName: this.config.name,
+      agents: order,
+    });
 
-    // 2. Run each agent in order.
+    if (!this.parallel) {
+      return this.runSequential(order, results);
+    }
+    return this.runParallelWaves(byId, results);
+  }
+
+  private async runSequential(
+    order: ReadonlyArray<AgentSpec>,
+    results: Map<string, AgentRunResult>,
+  ): Promise<TeamResult> {
     for (const spec of order) {
-      const startedAt = Date.now();
-      const upstreamContext = this.buildUpstreamContext(spec, results);
-      const objective = substituteInput(spec.objective, this.input);
-      const prompt = upstreamContext
-        ? `${objective}\n\nContext from upstream agents:\n${upstreamContext}`
-        : objective;
+      const outcome = await this.runOneAgent(spec, results);
+      if (outcome.kind === "failed") {
+        this.onTeamFinish?.({ result: outcome.result });
+        return outcome.result;
+      }
+    }
+    const completed: TeamResult = {
+      teamName: this.config.name,
+      agents: Array.from(results.values()),
+      status: "completed",
+    };
+    this.onTeamFinish?.({ result: completed });
+    return completed;
+  }
+
+  private async runParallelWaves(
+    byId: Map<string, AgentSpec>,
+    results: Map<string, AgentRunResult>,
+  ): Promise<TeamResult> {
+    const remaining = new Set(byId.keys());
+    while (remaining.size > 0) {
+      const ready = [...remaining]
+        .map((id) => byId.get(id)!)
+        .filter((spec) =>
+          spec.dependsOn.every((dep) => results.has(dep)),
+        );
+      if (ready.length === 0) {
+        throw new Error(
+          "team runner: no ready agents while remaining work exists (internal)",
+        );
+      }
+      const wave = await Promise.all(
+        ready.map((spec) => this.runOneAgent(spec, results)),
+      );
+      for (const outcome of wave) {
+        if (outcome.kind === "failed") {
+          this.onTeamFinish?.({ result: outcome.result });
+          return outcome.result;
+        }
+        remaining.delete(outcome.specId);
+      }
+    }
+    const completed: TeamResult = {
+      teamName: this.config.name,
+      agents: Array.from(results.values()),
+      status: "completed",
+    };
+    this.onTeamFinish?.({ result: completed });
+    return completed;
+  }
+
+  private async runOneAgent(
+    spec: AgentSpec,
+    results: Map<string, AgentRunResult>,
+  ): Promise<
+    | { kind: "ok"; specId: string }
+    | { kind: "failed"; result: TeamResult }
+  > {
+    const startedAt = Date.now();
+    this.onAgentStart?.({ teamName: this.config.name, spec });
+    const upstreamContext = this.buildUpstreamContext(spec, results);
+    const objective = substituteInput(spec.objective, this.input);
+    const prompt = upstreamContext
+      ? `${objective}\n\nContext from upstream agents:\n${upstreamContext}`
+      : objective;
+
+    let lastError: Error | undefined;
+    const attempts = 1 + this.maxRetries;
+    for (let attempt = 0; attempt < attempts; attempt++) {
       try {
         const { text, stopReason } = await this.runAgent(spec, prompt);
-        // Record the agent's output even when it failed (the
-        // transcript / error text is useful context).
-        results.set(spec.id, {
+        const agentResult: AgentRunResult = {
           id: spec.id,
           finalText: text,
           stopReason,
           durationMs: Date.now() - startedAt,
-        });
+        };
         if (stopReason === "aborted") {
-          // The agent's run caught an internal error
-          // (e.g. a model error) and returned an
-          // "aborted" result instead of throwing.
-          // Treat it as a per-agent failure.
-          return {
+          if (attempt + 1 < attempts) {
+            continue;
+          }
+          results.set(spec.id, agentResult);
+          this.onAgentFinish?.({
             teamName: this.config.name,
-            agents: Array.from(results.values()),
-            status: "failed",
-            error: `agent ${spec.id} aborted (see transcript for details)`,
+            spec,
+            result: agentResult,
+          });
+          return {
+            kind: "failed",
+            result: {
+              teamName: this.config.name,
+              agents: Array.from(results.values()),
+              status: "failed",
+              error: `agent ${spec.id} aborted (see transcript for details)`,
+            },
           };
         }
-      } catch (err) {
-        return {
+        results.set(spec.id, agentResult);
+        this.onAgentFinish?.({
           teamName: this.config.name,
-          agents: Array.from(results.values()),
-          status: "failed",
-          error: `agent ${spec.id} failed: ${(err as Error).message}`,
-        };
+          spec,
+          result: agentResult,
+        });
+        return { kind: "ok", specId: spec.id };
+      } catch (err) {
+        lastError = err as Error;
+        if (attempt + 1 >= attempts) break;
       }
     }
-
     return {
-      teamName: this.config.name,
-      agents: Array.from(results.values()),
-      status: "completed",
+      kind: "failed",
+      result: {
+        teamName: this.config.name,
+        agents: Array.from(results.values()),
+        status: "failed",
+        error: `agent ${spec.id} failed: ${lastError?.message ?? "unknown"}`,
+      },
     };
   }
 

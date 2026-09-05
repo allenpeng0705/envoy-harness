@@ -14,6 +14,7 @@ import type { PeerEventSink } from "./events.js";
 import type { PeerSigner } from "./envelope.js";
 import { PeerMeshSubmitter } from "./submitter.js";
 import { PeerRegistry } from "./registry.js";
+import type { TeamJobRegistry } from "./team-jobs.js";
 
 export interface PeerEndpointConfig {
   /** Stable peer id. */
@@ -169,6 +170,8 @@ export interface PeerClusterSubmitterOptions {
   defaultCostCeilingUsd?: number;
   /** Default deadline (ms). Default 60s. */
   defaultDeadlineMs?: number;
+  /** R4.7 — record each submit on the team/jobs board. */
+  teamJobRegistry?: TeamJobRegistry;
 }
 
 /**
@@ -191,19 +194,40 @@ export function createPeerClusterSubmitter(
       if (entry === undefined) {
         throw new Error("peer cluster: no peer available");
       }
+      const jobId = options.teamJobRegistry?.startPeerSubmitJob({
+        objective: input.objective,
+        capabilityTag: input.capabilityTag,
+        peerId: entry.id,
+        ...(entry.model !== undefined ? { model: entry.model } : {}),
+      });
       const submitter = new PeerMeshSubmitter({
         client: entry.client,
         workerPeerId: entry.id,
       });
-      return submitter.submit(
-        {
-          ...input,
-          costCeilingUsd:
-            input.costCeilingUsd ?? options.defaultCostCeilingUsd ?? 1,
-          deadlineMs: input.deadlineMs ?? options.defaultDeadlineMs ?? 60_000,
-        },
-        signal,
-      );
+      try {
+        const result = await submitter.submit(
+          {
+            ...input,
+            costCeilingUsd:
+              input.costCeilingUsd ?? options.defaultCostCeilingUsd ?? 1,
+            deadlineMs: input.deadlineMs ?? options.defaultDeadlineMs ?? 60_000,
+          },
+          signal,
+        );
+        if (jobId !== undefined && options.teamJobRegistry !== undefined) {
+          options.teamJobRegistry.finishPeerSubmitJob(
+            jobId,
+            result.status === "failed" ? "failed" : "completed",
+            result.costUsd,
+          );
+        }
+        return result;
+      } catch (err) {
+        if (jobId !== undefined && options.teamJobRegistry !== undefined) {
+          options.teamJobRegistry.finishPeerSubmitJob(jobId, "failed");
+        }
+        throw err;
+      }
     },
   };
 }

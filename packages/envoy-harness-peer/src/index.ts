@@ -54,9 +54,20 @@ export {
   PEER_VERIFY_METHOD,
   PEER_MANIFEST_METHOD,
   PEER_SUBMIT_METHOD,
+  PEER_SUBMIT_CONTINUABLE_METHOD,
+  PEER_SEND_METHOD,
+  PEER_INTERRUPT_METHOD,
+  PEER_CLOSE_METHOD,
+  PEER_STATUS_METHOD,
   type PeerPingResult,
   type PeerSubmitResponse,
+  type PeerSubmitContinuableParams,
+  type PeerSubmitContinuableResult,
+  type PeerTaskControlParams,
+  type PeerTaskStatusResult,
+  type WireExecuteInput,
 } from "./messages.js";
+export { PeerContinuableTaskRegistry } from "./continuable-peer-tasks.js";
 export {
   wrapEnvelope,
   unwrapEnvelope,
@@ -116,3 +127,10 @@ export {
   type PeerUiIo,
   type PeerUiPeerArg,
 } from "./cli/ui.js";
+export {
+  TeamJobRegistry,
+  hostLabel,
+  type StartPeerSubmitJobInput,
+  type StartTeamJobInput,
+} from "./team-jobs.js";
+export { createTeamJobTracker } from "./team-job-tracker.js";
