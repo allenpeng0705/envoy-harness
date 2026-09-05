@@ -46,6 +46,7 @@ export {
 } from "./peers-config.js";
 
 export { parseSlash, type SlashResult, MESH_SLASH_COMMANDS, SLASH_COMMANDS } from "./slash.js";
+export { matchingSkillSuggestions } from "./skill-suggest.js";
 
 export {
   formatTranscriptLine,

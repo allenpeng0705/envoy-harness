@@ -839,6 +839,11 @@ export {
   nextCatalogMessage,
   createSkillCatalogFragment,
   type SkillCatalogOptions,
+  isSubsequenceMatch,
+  rankSkills,
+  type RankSkillsOptions,
+  type RankedSkill,
+  type SkillRankTier,
 } from "./skills/index.js";
 
 // Phase E / Items 10–11 — ACP + SDK protocol

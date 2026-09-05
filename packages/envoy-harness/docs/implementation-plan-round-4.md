@@ -301,7 +301,7 @@ Named providers: `local` | `peer` | future — one `MeshSubmitter` / `task` surf
 | R4.5a Hook refresh + merge | D-Refine | P1 | single | **done** |
 | R4.5b Permission presets | D-Refine | P1 | single | **done** |
 | R4.6 Collaboration modes | D-Refine | **P0** | single | **done** |
-| R4.6b Skill fuzzy ranker | D-Refine | P2 | single | planned |
+| R4.6b Skill fuzzy ranker | D-Refine | P2 | single | **done** |
 | R4.8 Parallel team DAG | D-Refine + D-Ops | **P0** | both | **done** |
 | R4.9a Continuable local | D-Refine | **P0** | single | **done** |
 | R4.17 Workflow fan-out API | D-Refine + D-Ops | P1 | both | **done** |

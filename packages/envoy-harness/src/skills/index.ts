@@ -46,3 +46,10 @@ export {
   makeSkillTool,
   registerSkillTools,
 } from "./tool-skill.js";
+export {
+  isSubsequenceMatch,
+  rankSkills,
+  type RankSkillsOptions,
+  type RankedSkill,
+  type SkillRankTier,
+} from "./ranker.js";
