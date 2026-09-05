@@ -4,6 +4,8 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+pnpmfileChecksum: sha256-nheQ1q2yaG2MThY2dgfPdDT2ADRZWEU7WsjPUmeDQNI=
+
 importers:
 
   .:
@@ -27,6 +29,9 @@ importers:
         specifier: ^3.23.8
         version: 3.25.76
     devDependencies:
+      '@envoymesh/envoy-harness-cordis':
+        specifier: file:../envoy-harness-cordis
+        version: link:../envoy-harness-cordis
       '@types/node':
         specifier: ^22.10.0
         version: 22.20.1
@@ -43,6 +48,15 @@ importers:
       '@deepseek-ai/node-addon-landlock-run':
         specifier: ^0.1.1
         version: 0.1.1
+      '@envoymesh/envoy-harness-peer':
+        specifier: file:../envoy-harness-peer
+        version: link:../envoy-harness-peer
+      '@envoymesh/envoy-harness-tui':
+        specifier: file:../envoy-harness-tui
+        version: link:../envoy-harness-tui
+      '@envoymesh/envoy-sandbox-win':
+        specifier: file:../envoy-sandbox-win
+        version: link:../envoy-sandbox-win
       node-pty:
         specifier: ^1.0.0
         version: 1.1.0
@@ -50,20 +64,23 @@ importers:
   packages/envoy-harness-adapter:
     dependencies:
       '@envoymesh/agent-adapter':
-        specifier: link:../../../EnvoyMesh/packages/agent-adapter
-        version: link:../../../EnvoyMesh/packages/agent-adapter
+        specifier: file:D:/mygithub/EnvoyMesh/packages/agent-adapter
+        version: file:../EnvoyMesh/packages/agent-adapter
       '@envoymesh/envoy-harness':
-        specifier: link:../envoy-harness
+        specifier: file:../envoy-harness
         version: link:../envoy-harness
       '@envoymesh/envoy-harness-peer':
-        specifier: link:../envoy-harness-peer
+        specifier: file:../envoy-harness-peer
         version: link:../envoy-harness-peer
       '@envoymesh/identity':
-        specifier: link:../../../EnvoyMesh/packages/identity
-        version: link:../../../EnvoyMesh/packages/identity
+        specifier: file:D:/mygithub/EnvoyMesh/packages/identity
+        version: file:../EnvoyMesh/packages/identity
       '@envoymesh/protocol':
-        specifier: link:../../../EnvoyMesh/packages/protocol
-        version: link:../../../EnvoyMesh/packages/protocol
+        specifier: file:D:/mygithub/EnvoyMesh/packages/protocol
+        version: file:../EnvoyMesh/packages/protocol
+      zod:
+        specifier: ^3.23.8
+        version: 3.25.76
     devDependencies:
       '@types/node':
         specifier: ^22.10.0
@@ -78,7 +95,7 @@ importers:
   packages/envoy-harness-client:
     dependencies:
       '@envoymesh/envoy-harness':
-        specifier: link:../envoy-harness
+        specifier: file:../envoy-harness
         version: link:../envoy-harness
     devDependencies:
       '@types/node':
@@ -151,7 +168,7 @@ importers:
         specifier: 0.1.1-rc.2
         version: 0.1.1-rc.2(4d65c586044315fcd7f47af594e84ac5)
       '@envoymesh/envoy-harness':
-        specifier: link:../envoy-harness
+        specifier: file:../envoy-harness
         version: link:../envoy-harness
     devDependencies:
       '@types/node':
@@ -164,20 +181,36 @@ importers:
         specifier: ^2.1.0
         version: 2.1.9(@types/node@22.20.1)
 
+  packages/envoy-harness-ehui:
+    dependencies:
+      '@envoymesh/envoy-harness-client':
+        specifier: file:../envoy-harness-client
+        version: link:../envoy-harness-client
+    devDependencies:
+      '@types/react':
+        specifier: ^18.3.0
+        version: 18.3.31
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+      typescript:
+        specifier: ^5.6.0
+        version: 5.9.3
+
   packages/envoy-harness-peer:
     dependencies:
       '@envoymesh/agent-adapter':
-        specifier: link:../../../EnvoyMesh/packages/agent-adapter
-        version: link:../../../EnvoyMesh/packages/agent-adapter
+        specifier: file:D:/mygithub/EnvoyMesh/packages/agent-adapter
+        version: file:../EnvoyMesh/packages/agent-adapter
       '@envoymesh/envoy-harness':
-        specifier: link:../envoy-harness
+        specifier: file:../envoy-harness
         version: link:../envoy-harness
       '@envoymesh/envoy-harness-tui':
-        specifier: link:../envoy-harness-tui
+        specifier: file:../envoy-harness-tui
         version: link:../envoy-harness-tui
       '@envoymesh/protocol':
-        specifier: link:../../../EnvoyMesh/packages/protocol
-        version: link:../../../EnvoyMesh/packages/protocol
+        specifier: file:D:/mygithub/EnvoyMesh/packages/protocol
+        version: file:../EnvoyMesh/packages/protocol
       zod:
         specifier: ^3.23.8
         version: 3.25.76
@@ -195,11 +228,30 @@ importers:
   packages/envoy-harness-tui:
     dependencies:
       '@envoymesh/envoy-harness':
-        specifier: link:../envoy-harness
+        specifier: file:../envoy-harness
         version: link:../envoy-harness
       '@envoymesh/envoy-harness-client':
-        specifier: link:../envoy-harness-client
+        specifier: file:../envoy-harness-client
         version: link:../envoy-harness-client
+      '@envoymesh/envoy-harness-peer':
+        specifier: file:../envoy-harness-peer
+        version: link:../envoy-harness-peer
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.1
+      typescript:
+        specifier: ^5.6.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@22.20.1)
+
+  packages/envoy-sandbox-win:
+    dependencies:
+      '@envoymesh/envoy-harness':
+        specifier: file:../envoy-harness
+        version: link:../envoy-harness
     devDependencies:
       '@types/node':
         specifier: ^22.10.0
@@ -430,6 +482,15 @@ packages:
 
   '@deepseek-ai/schemastery@3.18.1':
     resolution: {integrity: sha512-Qn0FCSwCQnpnj6SB31I6i2sIKgKWnkbJM8O0EU91Gv2UsYVvtZTl6IA0sCwk2e2MZf5S8w5hpq9QkeVvK9qwxg==}
+
+  '@envoymesh/agent-adapter@file:../EnvoyMesh/packages/agent-adapter':
+    resolution: {directory: ../EnvoyMesh/packages/agent-adapter, type: directory}
+
+  '@envoymesh/identity@file:../EnvoyMesh/packages/identity':
+    resolution: {directory: ../EnvoyMesh/packages/identity, type: directory}
+
+  '@envoymesh/protocol@file:../EnvoyMesh/packages/protocol':
+    resolution: {directory: ../EnvoyMesh/packages/protocol, type: directory}
 
   '@esbuild/aix-ppc64@0.21.5':
     resolution: {integrity: sha512-1SDgH6ZSPTlggy1yI6+Dbkiz8xzpHJEVAlF/AM1tHPLsf5STom9rwtjE4hKAF20FfXXNTFqEYXyJNWh1GiZedQ==}
@@ -808,7 +869,6 @@ packages:
     engines: {node: ^22.20 || ^24.12 || >=25}
     cpu: [x64]
     os: [linux]
-    libc: [glibc]
 
   '@rollup/rollup-android-arm-eabi@4.62.4':
     resolution: {integrity: sha512-RrPokAb7dmbxFoeO3TloqHyOjgye8RkBhSqmp4aJMIex4c9r46ZstPnleDQOq1t46VOVjwIuwNogIqbodV1Vvg==}
@@ -844,79 +904,66 @@ packages:
     resolution: {integrity: sha512-81wiiX3v7aqy+T+bT61TJ78yJjRquqFFTTbAPt08imfQQzkPIW8t6aJbkTagtCCrXMNc9D66+geqlK7ydLPNqA==}
     cpu: [arm]
     os: [linux]
-    libc: [glibc]
 
   '@rollup/rollup-linux-arm-musleabihf@4.62.4':
     resolution: {integrity: sha512-9kmDIvNZqdoHOBZgNtpTBeLWYO/LVipM3H/j62P8848/l/VPEQL6N3uxU9pvP1oZAsXyC2MEnFP3ovRjo7WYNQ==}
     cpu: [arm]
     os: [linux]
-    libc: [musl]
 
   '@rollup/rollup-linux-arm64-gnu@4.62.4':
     resolution: {integrity: sha512-CcnXHWnXg69g+DX5VWL3FHts3qMRN2uVEHX+BZvGLdd07/gXkn3ePjYtO1LDJvxkGKVHMclKBRa1QUTH+6toYQ==}
     cpu: [arm64]
     os: [linux]
-    libc: [glibc]
 
   '@rollup/rollup-linux-arm64-musl@4.62.4':
     resolution: {integrity: sha512-iFOibiHnTRuhrWLlRsOQFdZJJIa7S8OwkneJr4ocALP16u5yk6lWLINFwhHaEqBFMsKDUZofLkGos7+CPzGB3g==}
     cpu: [arm64]
     os: [linux]
-    libc: [musl]
 
   '@rollup/rollup-linux-loong64-gnu@4.62.4':
     resolution: {integrity: sha512-XnWYMI7euHlb5a871xPja+Gm7DRCFU+FGRrtS2sMq9N8FvqtpagUy6gD4YOemC5MRk9xbh8+jYMEJbigFQwsgA==}
     cpu: [loong64]
     os: [linux]
-    libc: [glibc]
 
   '@rollup/rollup-linux-loong64-musl@4.62.4':
     resolution: {integrity: sha512-qGDAlO0U8xedCcsdRm9oaoQY8DAx/QT7uIxJWhCdx0ceIWX783UC9QSYkdpzAe29wNiVfp24+bZdQmn49o45SQ==}
     cpu: [loong64]
     os: [linux]
-    libc: [musl]
 
   '@rollup/rollup-linux-ppc64-gnu@4.62.4':
     resolution: {integrity: sha512-ru4H6ezD7ysA5EiEK6qkkaEb4modH8CTej6kUy/gQi20u3kB3G7Zn8snXXkeJSCOFKG/rbPPtM/+9Wgas1961w==}
     cpu: [ppc64]
     os: [linux]
-    libc: [glibc]
 
   '@rollup/rollup-linux-ppc64-musl@4.62.4':
     resolution: {integrity: sha512-2W4MO5WQVJnbJaZdvDb9rhBDuFU1nKIepPFpJUBsTh2k1YY2g+ODViaWuyOAjQ5cOP7NvrvLzt3wvHOoiAvc7w==}
     cpu: [ppc64]
     os: [linux]
-    libc: [musl]
 
   '@rollup/rollup-linux-riscv64-gnu@4.62.4':
     resolution: {integrity: sha512-+fxjfuoAmVMCYV5QyjoIpu0cp5DOiOTeqYFk1AVaxGr+/ravWLX89XfQmptsoWcaVy/TGf2hexzbUOrCQIL1CQ==}
     cpu: [riscv64]
     os: [linux]
-    libc: [glibc]
 
   '@rollup/rollup-linux-riscv64-musl@4.62.4':
     resolution: {integrity: sha512-jTn8JfHGL4djjFxPuM06LmNUJDsst2jeVlsd9OmIH6zc5sC9K6rIuO4YajXatLUpBmBKl6b35ro1QZocLi+tcA==}
     cpu: [riscv64]
     os: [linux]
-    libc: [musl]
 
   '@rollup/rollup-linux-s390x-gnu@4.62.4':
     resolution: {integrity: sha512-oCJCJL4pXsoDcP2QZ+JVlPTIRc6266zsIaeJJsWImmF7HO0W8nb6HuSgZlMWxJwaPf8ehbSw8yo0EUw925hKsA==}
     cpu: [s390x]
     os: [linux]
-    libc: [glibc]
 
   '@rollup/rollup-linux-x64-gnu@4.62.4':
     resolution: {integrity: sha512-W69hukhZ3KKNRCaMIEzKvcFye42hh0FE1+YoYaf5+Ikacuftoco6yO/xouz0hc5d5W/s3yBro5jRiuEE/Q5vUw==}
     cpu: [x64]
     os: [linux]
-    libc: [glibc]
 
   '@rollup/rollup-linux-x64-musl@4.62.4':
     resolution: {integrity: sha512-qiXbGG2jkjXhzXpsFZSR2Xpb8DN/UaxYsbb/STbuR/6fpaDgRmmaq1B/LmtF2wQFOFOSsK2jdE0RZ3a0zHn4QA==}
     cpu: [x64]
     os: [linux]
-    libc: [musl]
 
   '@rollup/rollup-openbsd-x64@4.62.4':
     resolution: {integrity: sha512-nWeM//hxv8mIo6jD7Hu4o48DVmV9pbV6gsKaWU+4NFyqHoPKwrkRiZGLKUhOBk8qNmDmpwFtPKg80Bo/Tn4xiQ==}
@@ -956,6 +1003,12 @@ packages:
 
   '@types/node@22.20.1':
     resolution: {integrity: sha512-EANqOCF9QFyra+4pfxUcX9STKJpCLjMbObVzljIJomAWSnuSIEAvyzEU53GaajbXJEgdh0iEcPL+DGvpUd4k1Q==}
+
+  '@types/prop-types@15.7.15':
+    resolution: {integrity: sha512-F6bEyamV9jKGAFBEmlQnesRPGOQqS2+Uwi0Em15xenOxHaf2hv6L8YCVn3rPdPJOiJfPiCnLIRyvwVaqMY3MIw==}
+
+  '@types/react@18.3.31':
+    resolution: {integrity: sha512-vfEqpXTvwT91yhmwdfouStN2hSKwTvyRs8qpLfADyrq/kxDw0hZM7Wk9Ug1FELj8hIby+S/+kQCSRFF32nv2Qw==}
 
   '@vitest/expect@2.1.9':
     resolution: {integrity: sha512-UJCIkTBenHeKT1TTlKMJWy1laZewsRIzYighyYiJKZreqtdxSos/S1t+ktRMQWu2CKqaarrkeszJx1cgC5tGZw==}
@@ -1010,6 +1063,9 @@ packages:
     resolution: {integrity: sha512-TQMmc3w+5AxjpL8iIiwebF73dRDF4fBIieAqGn9RGCWaEVwQ6Fb2cGe31Yns0RRIzii5goJ1Y7xbMwo1TxMplw==}
     engines: {node: '>= 20.19.0'}
 
+  csstype@3.2.3:
+    resolution: {integrity: sha512-z1HGKcYy2xA8AGQfwrn0PAy+PB7X/GSj3UVJW9qKyn43xWa+gl5nXmU4qqLMRzWVLFC8KusUX8T/0kCiOYpAIQ==}
+
   debug@4.4.3:
     resolution: {integrity: sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA==}
     engines: {node: '>=6.0'}
@@ -1048,8 +1104,15 @@ packages:
     engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
     os: [darwin]
 
+  js-tokens@4.0.0:
+    resolution: {integrity: sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ==}
+
   koffi@3.1.6:
     resolution: {integrity: sha512-ln60chEb3o7Du1ayjwl6BFiNN1wZK+3cTM2wWGiHLEzCY/FdTIN1ER5VWDwHq7J/j4tSnnrHaH5ABS1EO6+6ag==}
+
+  loose-envify@1.4.0:
+    resolution: {integrity: sha512-lyuxPGr/Wfhrlem2CL/UcnUc1zcqKAImBDzukY7Y5F/yQiNdko6+fRLevlw1HgMySw7f611UIY408EtxRSoK3Q==}
+    hasBin: true
 
   loupe@3.2.1:
     resolution: {integrity: sha512-CdzqowRJCeLU72bHvWqwRBBlLcMEtIvGrlvef74kMnV2AolS9Y8xUv1I0U/MNAWMhBlKIoyuEgoJ0t/bbwHbLQ==}
@@ -1084,6 +1147,10 @@ packages:
   postcss@8.5.26:
     resolution: {integrity: sha512-u82N74LFzG8ca+dD8puPnplTXoGH4fTPpVGuIbt36G3qvNlkvfD0lEAZSxaly3KX8TS/L1A1gsCEmvKmBcVbkQ==}
     engines: {node: ^10 || ^12 || >=14}
+
+  react@18.3.1:
+    resolution: {integrity: sha512-wS+hAgJShR0KhEvPJArfuPVN1+Hz1t0Y6n5jLrGQbkb4urgPE/0Rve+1kMB1v/oWgHgm4WIcV+i7F2pTVj+2iQ==}
+    engines: {node: '>=0.10.0'}
 
   readdirp@4.1.2:
     resolution: {integrity: sha512-GDhwkLfywWL2s6vEjyhri+eXmfH6j1L7JE27WhqLeYzoh/A3DBaYGEj2H/HFZCn/kMfim73FXxEJTw06WtxQwg==}
@@ -1219,6 +1286,9 @@ packages:
 
   zod@3.25.76:
     resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
+
+  zod@4.4.3:
+    resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
 
 snapshots:
 
@@ -1420,6 +1490,18 @@ snapshots:
     dependencies:
       '@deepseek-ai/cosmokit': 1.8.2
       '@standard-schema/spec': 1.1.0
+
+  '@envoymesh/agent-adapter@file:../EnvoyMesh/packages/agent-adapter':
+    dependencies:
+      '@envoymesh/protocol': file:../EnvoyMesh/packages/protocol
+
+  '@envoymesh/identity@file:../EnvoyMesh/packages/identity':
+    dependencies:
+      '@envoymesh/protocol': file:../EnvoyMesh/packages/protocol
+
+  '@envoymesh/protocol@file:../EnvoyMesh/packages/protocol':
+    dependencies:
+      zod: 4.4.3
 
   '@esbuild/aix-ppc64@0.21.5':
     optional: true
@@ -1701,6 +1783,13 @@ snapshots:
     dependencies:
       undici-types: 6.21.0
 
+  '@types/prop-types@15.7.15': {}
+
+  '@types/react@18.3.31':
+    dependencies:
+      '@types/prop-types': 15.7.15
+      csstype: 3.2.3
+
   '@vitest/expect@2.1.9':
     dependencies:
       '@vitest/spy': 2.1.9
@@ -1762,6 +1851,8 @@ snapshots:
   chokidar@5.0.0:
     dependencies:
       readdirp: 5.1.1
+
+  csstype@3.2.3: {}
 
   debug@4.4.3:
     dependencies:
@@ -1835,6 +1926,8 @@ snapshots:
   fsevents@2.3.3:
     optional: true
 
+  js-tokens@4.0.0: {}
+
   koffi@3.1.6:
     optionalDependencies:
       '@koromix/koffi-darwin-arm64': 3.1.6
@@ -1852,6 +1945,10 @@ snapshots:
       '@koromix/koffi-win32-arm64': 3.1.6
       '@koromix/koffi-win32-ia32': 3.1.6
       '@koromix/koffi-win32-x64': 3.1.6
+
+  loose-envify@1.4.0:
+    dependencies:
+      js-tokens: 4.0.0
 
   loupe@3.2.1: {}
 
@@ -1882,6 +1979,10 @@ snapshots:
       nanoid: 3.3.18
       picocolors: 1.1.1
       source-map-js: 1.2.1
+
+  react@18.3.1:
+    dependencies:
+      loose-envify: 1.4.0
 
   readdirp@4.1.2: {}
 
@@ -2019,3 +2120,5 @@ snapshots:
   yaml@2.9.0: {}
 
   zod@3.25.76: {}
+
+  zod@4.4.3: {}
