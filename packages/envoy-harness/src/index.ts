@@ -144,12 +144,17 @@ export {
   migrateSessionFile,
   SessionFileBusyError,
   PERSISTED_SESSION_FORMAT_VERSION,
+  TurnOutlineRegistry,
+  buildTurnOutlineFromMessages,
+  loadTurnOutlineFromFile,
   type SessionIndexEntry,
   type SessionIndexerOptions,
   type SessionQueryHit,
   type SessionQueryRequest,
   type SessionQueryService,
   type SessionQueryServiceOptions,
+  type TurnOutline,
+  type TurnOutlineEntry,
 } from "./session/index.js";
 
 // Re-export the agent loop (§3.4 of the design doc)

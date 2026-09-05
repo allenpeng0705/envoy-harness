@@ -29,6 +29,7 @@ import {
   matchPermissionPreset,
   resolvePermissionPreset,
 } from "../permissions/presets.js";
+import { buildTurnOutlineFromMessages } from "../session/turn-outline.js";
 import type { Session } from "../session.js";
 import { SessionStore } from "../session/session-store.js";
 import {
@@ -804,6 +805,14 @@ export function createAgentSessionBackend(
         outputTokens: cost.outputTokens,
         costUsd: cost.costUsd,
       };
+    },
+
+    async getTurnOutline(params) {
+      const live = requireLive(sessions, params.sessionId);
+      return buildTurnOutlineFromMessages(
+        live.agent.session.id,
+        live.agent.session.messages,
+      );
     },
 
     async listSessionHooks(params) {

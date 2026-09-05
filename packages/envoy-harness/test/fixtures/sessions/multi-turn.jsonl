@@ -1,0 +1,12 @@
+{"_kind":"header","id":"sess-r4-4-fixture","formatVersion":2,"generation":1,"metadata":{"cwd":"/tmp/proj","permissionMode":"workspace-write","startedAt":"2026-09-05T00:00:00.000Z"}}
+{"role":"user","content":[{"type":"text","text":"list files in src"}]}
+{"role":"assistant","content":[{"type":"text","text":"I'll list them."},{"type":"tool_call","id":"c1","name":"bash","args":{"command":"ls src"}}]}
+{"role":"tool","content":[{"type":"tool_result","tool_use_id":"c1","content":"a.ts\nb.ts","is_error":false}]}
+{"role":"assistant","content":[{"type":"text","text":"Found a.ts and b.ts."}]}
+{"role":"user","content":[{"type":"text","text":"read a.ts"}]}
+{"role":"assistant","content":[{"type":"tool_call","id":"c2","name":"read_file","args":{"path":"src/a.ts"}},{"type":"tool_call","id":"c3","name":"bash","args":{"command":"wc -l src/a.ts"}}]}
+{"role":"tool","content":[{"type":"tool_result","tool_use_id":"c2","content":"export const a = 1;","is_error":false}]}
+{"role":"tool","content":[{"type":"tool_result","tool_use_id":"c3","content":"1","is_error":false}]}
+{"role":"assistant","content":[{"type":"text","text":"a.ts exports a constant."}]}
+{"role":"user","content":[{"type":"text","text":"thanks"}]}
+{"role":"assistant","content":[{"type":"text","text":"You're welcome."}]}

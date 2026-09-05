@@ -297,7 +297,7 @@ Named providers: `local` | `peer` | future — one `MeshSubmitter` / `task` surf
 | R4.1 Async ask | D-Refine | **P0** | single | ✅ done (2026-09-05; `implementation-plan-chunk-r4-1.md`) |
 | R4.2 Retained context | D-Refine | **P0** | single | **done** |
 | R4.3 Session format + lease | D-Refine | **P0** | single | **done** |
-| R4.4 Projections / turn outline | D-Refine | P1 | single | planned |
+| R4.4 Projections / turn outline | D-Refine | P1 | single | **done** |
 | R4.5a Hook refresh + merge | D-Refine | P1 | single | **done** |
 | R4.5b Permission presets | D-Refine | P1 | single | **done** |
 | R4.6 Collaboration modes | D-Refine | **P0** | single | **done** |

@@ -306,6 +306,10 @@ export interface ProtocolSessionBackend {
     outputTokens: number;
     costUsd: number;
   }>;
+  /** R4.4 — turn outline for the session transcript. */
+  getTurnOutline?(params: {
+    sessionId: string;
+  }): Promise<import("../session/turn-outline.js").TurnOutline>;
   /** Registered hooks (`/hooks`). */
   listSessionHooks?(params: {
     sessionId: string;

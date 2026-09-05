@@ -370,6 +370,19 @@ export function attachAcpServer(options: AcpServerOptions): () => void {
         });
       }
 
+      case "session/outline": {
+        assertInitialized(initialized);
+        if (backend.getTurnOutline === undefined) {
+          throw new JsonRpcError(
+            "session/outline not supported",
+            JsonRpcErrorCode.METHOD_NOT_FOUND,
+          );
+        }
+        return await backend.getTurnOutline({
+          sessionId: readSessionId(params),
+        });
+      }
+
       case "session/hooks": {
         assertInitialized(initialized);
         if (backend.listSessionHooks === undefined) {

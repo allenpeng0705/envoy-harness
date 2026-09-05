@@ -52,3 +52,10 @@ export {
   type SessionQueryService,
   type SessionQueryServiceOptions,
 } from "./query.js";
+export {
+  TurnOutlineRegistry,
+  buildTurnOutlineFromMessages,
+  loadTurnOutlineFromFile,
+  type TurnOutline,
+  type TurnOutlineEntry,
+} from "./turn-outline.js";

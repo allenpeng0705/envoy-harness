@@ -231,6 +231,18 @@ export function attachSdkServer(options: SdkServerOptions): () => void {
         });
       }
 
+      case "session/outline": {
+        if (backend.getTurnOutline === undefined) {
+          throw new JsonRpcError(
+            "session/outline not supported",
+            JsonRpcErrorCode.METHOD_NOT_FOUND,
+          );
+        }
+        return await backend.getTurnOutline({
+          sessionId: readSessionId(params),
+        });
+      }
+
       case "session/hooks": {
         if (backend.listSessionHooks === undefined) {
           throw new JsonRpcError(
