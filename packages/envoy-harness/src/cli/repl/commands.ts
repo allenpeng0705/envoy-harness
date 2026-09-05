@@ -1,8 +1,8 @@
 /**
  * F17.2 — Built-in slash commands.
  *
- * The REPL ships with 9 slash commands that operate on
- * local state (no model call):
+ * The REPL ships with core slash commands that operate on
+ * local state (no model call), including R4.5b `/preset`:
  *
  * | Command            | Effect                                                |
  * |--------------------|-------------------------------------------------------|
@@ -11,6 +11,7 @@
  * | `/provider <name>` | Swap via `createProviderAdapter` (env-driven).        |
  * | `/sandbox <mode>`  | Change permission mode (rebuilds the policy).         |
  * | `/approval <mode>` | Change the per-call approval policy.                  |
+ * | `/preset <name>`   | One-knob sandbox + approval (+ auto-run label).       |
  * | `/clear`           | Reset the session transcript (keep AGENTS.md).        |
  * | `/cost`            | Print accumulated cost + token usage.                 |
  * | `/status`          | Print current model / sandbox / turn count.           |
@@ -209,6 +210,39 @@ const approvalCommand: ReplCommand = {
 };
 
 /**
+ * `/preset <name>` — R4.5b one-knob policy (sandbox + approval).
+ * Valid: `safe` | `ask-all` | `approve-all`.
+ */
+const presetCommand: ReplCommand = {
+  name: "/preset",
+  description: "permission preset (safe | ask-all | approve-all)",
+  handler(args, ctx) {
+    const VALID = new Set(["safe", "ask-all", "approve-all"]);
+    if (args.length === 0) {
+      const current = ctx.agent.getPermissionPreset() ?? "(custom)";
+      ctx.stdout.write(`current preset: ${current}\n`);
+      ctx.stdout.write("usage: /preset <safe | ask-all | approve-all>\n");
+      return;
+    }
+    const name = args[0];
+    if (name === undefined || !VALID.has(name)) {
+      ctx.stderr.write(
+        `error: invalid preset: ${name} (expected safe | ask-all | approve-all)\n`,
+      );
+      return;
+    }
+    const preset = ctx.agent.setPermissionPreset(
+      name as "safe" | "ask-all" | "approve-all",
+    );
+    ctx.args.sandbox = preset.permissionMode;
+    ctx.args.approval = preset.askForApproval;
+    ctx.stdout.write(
+      `preset: ${preset.name} (sandbox=${preset.permissionMode}, approval=${preset.askForApproval}, auto-run=${preset.autoRun})\n`,
+    );
+  },
+};
+
+/**
  * `/clear` — reset the session transcript. The next turn
  * starts a clean transcript (the AGENTS.md and the
  * agent's tool/hook/permission state are preserved).
@@ -254,8 +288,10 @@ const statusCommand: ReplCommand = {
     const lines: string[] = [];
     const sandbox = ctx.args.sandbox ?? "read-only";
     const approval = ctx.args.approval ?? "(none)";
+    const preset = ctx.agent.getPermissionPreset() ?? "(custom)";
     lines.push(`sandbox:   ${sandbox}`);
     lines.push(`approval:  ${approval}`);
+    lines.push(`preset:    ${preset}`);
     lines.push(`turns:     ${ctx.turns}`);
     lines.push(`cost:      $${ctx.totalCostUsd.toFixed(4)}`);
     const cwd = ctx.args.cwd ?? "(default)";
@@ -283,7 +319,7 @@ const quitCommand: ReplCommand = {
 };
 
 /**
- * F17.2: list of the 9 built-in slash commands. The
+ * F17.2: list of the built-in slash commands. The
  * registry picks this up by default. Hosts that want a
  * different set can pass `customCommands` instead (the
  * runner then ignores the built-ins).
@@ -301,6 +337,7 @@ export const BUILTIN_COMMANDS: ReadonlyArray<ReplCommand> = [
   providerCommand,
   sandboxCommand,
   approvalCommand,
+  presetCommand,
   clearCommand,
   costCommand,
   statusCommand,

@@ -99,6 +99,21 @@ export const ConfigLayerSchema = z
     permissionMode: PermissionModeSchema.optional(),
     /** Mirrors `AskForApproval`. */
     askForApproval: AskForApprovalSchema.optional(),
+    /**
+     * R4.5b — one-knob preset (`safe` | `ask-all` | `approve-all`).
+     * Expands to permissionMode + askForApproval + autoRun unless
+     * those fields are also set explicitly (explicit wins).
+     */
+    permissionPreset: z
+      .enum(["safe", "ask-all", "approve-all"])
+      .optional(),
+    /**
+     * R4.5b / ACP auto-run policy companion to AskForApproval.
+     * `always-confirm` | `safe-only` | `off`.
+     */
+    autoRun: z
+      .enum(["always-confirm", "safe-only", "off"])
+      .optional(),
     /** Mirrors `SandboxBackend`. */
     sandboxBackend: SandboxBackendSchema.optional(),
     /** If true, network is allowed in workspace-write mode. */

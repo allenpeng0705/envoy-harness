@@ -25,6 +25,10 @@ import {
   type PlanAction,
 } from "./session-ops.js";
 import { installToolPermissionAskHook } from "./permission-hook.js";
+import {
+  matchPermissionPreset,
+  resolvePermissionPreset,
+} from "../permissions/presets.js";
 import type { Session } from "../session.js";
 import { SessionStore } from "../session/session-store.js";
 import {
@@ -720,7 +724,23 @@ export function createAgentSessionBackend(
         throw new Error(`unknown session: ${params.sessionId}`);
       }
       assertSessionIdle(live);
-      const out: { sandbox?: string; approval?: string; autoRun?: string } = {};
+      const out: {
+        sandbox?: string;
+        approval?: string;
+        autoRun?: string;
+        preset?: string;
+      } = {};
+      if (params.preset !== undefined) {
+        const preset = resolvePermissionPreset(params.preset);
+        live.agent.setPermissionMode(preset.permissionMode);
+        live.agent.setApprovalPolicy(preset.askForApproval);
+        live.autoRun = preset.autoRun;
+        out.preset = preset.name;
+        out.sandbox = preset.permissionMode;
+        out.approval = preset.askForApproval;
+        out.autoRun = preset.autoRun;
+        return out;
+      }
       if (params.sandbox !== undefined) {
         live.agent.setPermissionMode(params.sandbox);
         out.sandbox = params.sandbox;
@@ -741,10 +761,18 @@ export function createAgentSessionBackend(
       if (live === undefined) {
         throw new Error(`unknown session: ${params.sessionId}`);
       }
-      return {
-        sandbox: live.agent.getPermissionMode(),
-        approval: live.agent.getApprovalPolicy(),
+      const sandbox = live.agent.getPermissionMode();
+      const approval = live.agent.getApprovalPolicy();
+      const preset = matchPermissionPreset({
+        permissionMode: sandbox,
+        askForApproval: approval,
         ...(live.autoRun !== undefined ? { autoRun: live.autoRun } : {}),
+      });
+      return {
+        sandbox,
+        approval,
+        ...(live.autoRun !== undefined ? { autoRun: live.autoRun } : {}),
+        ...(preset !== undefined ? { preset } : {}),
       };
     },
 

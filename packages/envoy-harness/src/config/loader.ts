@@ -343,6 +343,12 @@ function mapKebabToCamel(obj: unknown): Record<string, unknown> {
       case "ask_for_approval":
         out["askForApproval"] = v;
         break;
+      case "permission_preset":
+        out["permissionPreset"] = v;
+        break;
+      case "auto_run":
+        out["autoRun"] = v;
+        break;
       case "sandbox_backend":
         out["sandboxBackend"] = v;
         break;

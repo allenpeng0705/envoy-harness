@@ -54,6 +54,12 @@ import type {
 import { CostTracker } from "./cost.js";
 import { applyShellEnvironmentPolicy } from "./config/shell-env.js";
 import { policyFromMode } from "./permissions/policy.js";
+import {
+  matchPermissionPreset,
+  resolvePermissionPreset,
+  type PermissionPresetName,
+  type PermissionPresetResolved,
+} from "./permissions/presets.js";
 import { resolveSandboxExecutor } from "./sandbox/resolve.js";
 import type { SandboxExecutor } from "./sandbox/types.js";
 import type { LspManager } from "./lsp/index.js";
@@ -1083,6 +1089,27 @@ export class Agent {
   /** Current approval policy label. */
   getApprovalPolicy(): import("./types.js").AskForApproval {
     return this.approval;
+  }
+
+  /**
+   * R4.5b — apply a named permission preset (sandbox + approval).
+   * Hosts that track auto-run should also apply `preset.autoRun`.
+   */
+  setPermissionPreset(name: PermissionPresetName): PermissionPresetResolved {
+    const preset = resolvePermissionPreset(name);
+    this.setPermissionMode(preset.permissionMode);
+    this.setApprovalPolicy(preset.askForApproval);
+    return preset;
+  }
+
+  /**
+   * R4.5b — matched preset for the live sandbox + approval, if any.
+   */
+  getPermissionPreset(): PermissionPresetName | undefined {
+    return matchPermissionPreset({
+      permissionMode: this.getPermissionMode(),
+      askForApproval: this.getApprovalPolicy(),
+    });
   }
 
   /**

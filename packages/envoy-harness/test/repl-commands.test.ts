@@ -106,7 +106,7 @@ describe("ReplCommandRegistry", () => {
     expect(visible.map((c) => c.name)).toEqual(["/alpha", "/zebra"]);
   });
 
-  it("BUILTIN_COMMANDS has the 9 expected commands", () => {
+  it("BUILTIN_COMMANDS has the expected core commands", () => {
     const names = new Set(BUILTIN_COMMANDS.map((c) => c.name));
     expect(names).toEqual(
       new Set([
@@ -115,6 +115,7 @@ describe("ReplCommandRegistry", () => {
         "/provider",
         "/sandbox",
         "/approval",
+        "/preset",
         "/clear",
         "/cost",
         "/status",

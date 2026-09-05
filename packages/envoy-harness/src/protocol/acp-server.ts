@@ -714,6 +714,7 @@ function parseSetPolicyParams(params: unknown): {
   sandbox?: "read-only" | "workspace-write" | "danger-full-access";
   approval?: "unless-trusted" | "on-request" | "granular" | "never";
   autoRun?: "always-confirm" | "safe-only" | "off";
+  preset?: "safe" | "ask-all" | "approve-all";
 } {
   if (params === null || typeof params !== "object") {
     throw new JsonRpcError("invalid params", JsonRpcErrorCode.INVALID_PARAMS);
@@ -723,8 +724,16 @@ function parseSetPolicyParams(params: unknown): {
     sandbox?: unknown;
     approval?: unknown;
     autoRun?: unknown;
+    preset?: unknown;
   };
   const sessionId = readSessionId(params);
+  const preset =
+    typeof obj.preset === "string" &&
+    (obj.preset === "safe" ||
+      obj.preset === "ask-all" ||
+      obj.preset === "approve-all")
+      ? (obj.preset as "safe" | "ask-all" | "approve-all")
+      : undefined;
   const sandbox =
     typeof obj.sandbox === "string" && SANDBOX_MODES.has(obj.sandbox)
       ? (obj.sandbox as "read-only" | "workspace-write" | "danger-full-access")
@@ -740,14 +749,20 @@ function parseSetPolicyParams(params: unknown): {
       obj.autoRun === "off")
       ? (obj.autoRun as "always-confirm" | "safe-only" | "off")
       : undefined;
-  if (sandbox === undefined && approval === undefined && autoRun === undefined) {
+  if (
+    preset === undefined &&
+    sandbox === undefined &&
+    approval === undefined &&
+    autoRun === undefined
+  ) {
     throw new JsonRpcError(
-      "sandbox, approval, or autoRun required",
+      "preset, sandbox, approval, or autoRun required",
       JsonRpcErrorCode.INVALID_PARAMS,
     );
   }
   return {
     sessionId,
+    ...(preset !== undefined ? { preset } : {}),
     ...(sandbox !== undefined ? { sandbox } : {}),
     ...(approval !== undefined ? { approval } : {}),
     ...(autoRun !== undefined ? { autoRun } : {}),

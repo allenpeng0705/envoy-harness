@@ -68,6 +68,22 @@ export {
 
 export { hasUnbalancedQuotes, containsBackticks } from "./permissions/bash/semantics.js";
 
+export {
+  AUTO_RUN_SAFE_TOOLS,
+  isAutoRunSafeBashCommand,
+  shouldAskUnderAutoRun,
+  policyFromMode,
+  PERMISSION_PRESETS,
+  PermissionPresetNameSchema,
+  isPermissionPresetName,
+  matchPermissionPreset,
+  permissionPresetToConfigFields,
+  resolvePermissionPreset,
+  type AutoRunPolicy,
+  type PermissionPresetName,
+  type PermissionPresetResolved,
+} from "./permissions/index.js";
+
 // Re-export AGENTS.md discovery (§9 of the design doc)
 export { discoverAgentsMd, type DiscoveryOptions } from "./agents-md/index.js";
 

@@ -67,6 +67,8 @@ export interface ProtocolSetPolicyResult {
   sandbox?: string;
   approval?: string;
   autoRun?: string;
+  /** R4.5b — named preset when set or matched. */
+  preset?: string;
 }
 
 export interface ProtocolGitResult {
@@ -280,6 +282,8 @@ export interface ProtocolSessionBackend {
     sandbox?: "read-only" | "workspace-write" | "danger-full-access";
     approval?: "unless-trusted" | "on-request" | "granular" | "never";
     autoRun?: "always-confirm" | "safe-only" | "off";
+    /** R4.5b — one-knob preset; expands sandbox + approval + autoRun. */
+    preset?: "safe" | "ask-all" | "approve-all";
   }): Promise<ProtocolSetPolicyResult>;
   /** Read the current sandbox / approval / auto-run policy for a session. */
   getPolicy?(params: {

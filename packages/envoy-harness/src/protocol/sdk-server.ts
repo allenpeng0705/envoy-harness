@@ -581,12 +581,26 @@ function parseSdkSetPolicyParams(params: unknown): {
   sessionId: string;
   sandbox?: "read-only" | "workspace-write" | "danger-full-access";
   approval?: "unless-trusted" | "on-request" | "granular" | "never";
+  autoRun?: "always-confirm" | "safe-only" | "off";
+  preset?: "safe" | "ask-all" | "approve-all";
 } {
   if (params === null || typeof params !== "object") {
     throw new JsonRpcError("invalid params", JsonRpcErrorCode.INVALID_PARAMS);
   }
-  const obj = params as { sandbox?: unknown; approval?: unknown };
+  const obj = params as {
+    sandbox?: unknown;
+    approval?: unknown;
+    autoRun?: unknown;
+    preset?: unknown;
+  };
   const sessionId = readSessionId(params);
+  const preset =
+    typeof obj.preset === "string" &&
+    (obj.preset === "safe" ||
+      obj.preset === "ask-all" ||
+      obj.preset === "approve-all")
+      ? (obj.preset as "safe" | "ask-all" | "approve-all")
+      : undefined;
   const sandbox =
     typeof obj.sandbox === "string" && SDK_SANDBOX.has(obj.sandbox)
       ? (obj.sandbox as "read-only" | "workspace-write" | "danger-full-access")
@@ -595,16 +609,30 @@ function parseSdkSetPolicyParams(params: unknown): {
     typeof obj.approval === "string" && SDK_APPROVAL.has(obj.approval)
       ? (obj.approval as "unless-trusted" | "on-request" | "granular" | "never")
       : undefined;
-  if (sandbox === undefined && approval === undefined) {
+  const autoRun =
+    typeof obj.autoRun === "string" &&
+    (obj.autoRun === "always-confirm" ||
+      obj.autoRun === "safe-only" ||
+      obj.autoRun === "off")
+      ? (obj.autoRun as "always-confirm" | "safe-only" | "off")
+      : undefined;
+  if (
+    preset === undefined &&
+    sandbox === undefined &&
+    approval === undefined &&
+    autoRun === undefined
+  ) {
     throw new JsonRpcError(
-      "sandbox or approval required",
+      "preset, sandbox, approval, or autoRun required",
       JsonRpcErrorCode.INVALID_PARAMS,
     );
   }
   return {
     sessionId,
+    ...(preset !== undefined ? { preset } : {}),
     ...(sandbox !== undefined ? { sandbox } : {}),
     ...(approval !== undefined ? { approval } : {}),
+    ...(autoRun !== undefined ? { autoRun } : {}),
   };
 }
 
