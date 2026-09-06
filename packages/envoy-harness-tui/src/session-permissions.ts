@@ -10,6 +10,7 @@ import type {
 } from "./session-types.js";
 import type { PushFn } from "./session-context.js";
 import {
+  clampPermissionPreviewOffset,
   formatPermissionBlock,
   type TranscriptFormatOptions,
 } from "./transcript.js";
@@ -17,6 +18,8 @@ import {
 export type PermissionWaiter = {
   req: PermissionRequest;
   resolve: (d: "allow" | "deny") => void;
+  preview?: string;
+  previewOffset: number;
 };
 
 export type UserQuestionWaiter = {
@@ -32,26 +35,60 @@ export function handlePermissionRequestImpl(
     cwd: string | undefined;
     transcriptFormat: TranscriptFormatOptions;
     setWaiter: (w: PermissionWaiter | undefined) => void;
+    getWaiter: () => PermissionWaiter | undefined;
   },
 ): Promise<"allow" | "deny"> {
   if (opts.onPermission !== undefined) {
     return opts.onPermission(req);
   }
   return new Promise<"allow" | "deny">((resolve) => {
-    opts.setWaiter({ req, resolve });
+    opts.setWaiter({ req, resolve, previewOffset: 0 });
     opts.push(
       "status",
       formatPermissionBlock(req, undefined, opts.transcriptFormat),
     );
     void buildPermissionPreview(req, opts.cwd).then((preview) => {
+      const waiter = opts.getWaiter();
+      if (waiter === undefined || waiter.req !== req) return;
       if (preview !== undefined && preview.trim().length > 0) {
+        waiter.preview = preview;
         opts.push(
           "status",
-          formatPermissionBlock(req, preview, opts.transcriptFormat),
+          formatPermissionBlock(req, preview, {
+            ...opts.transcriptFormat,
+            previewOffset: waiter.previewOffset,
+          }),
         );
       }
     });
   });
+}
+
+/** U6a.4 — scroll the permission diff preview window. */
+export function scrollPermissionPreviewImpl(
+  delta: number,
+  opts: {
+    getWaiter: () => PermissionWaiter | undefined;
+    push: PushFn;
+    transcriptFormat: TranscriptFormatOptions;
+  },
+): boolean {
+  const waiter = opts.getWaiter();
+  if (waiter === undefined || waiter.preview === undefined) return false;
+  const next = clampPermissionPreviewOffset(
+    waiter.preview,
+    waiter.previewOffset + delta,
+  );
+  if (next === waiter.previewOffset) return false;
+  waiter.previewOffset = next;
+  opts.push(
+    "status",
+    formatPermissionBlock(waiter.req, waiter.preview, {
+      ...opts.transcriptFormat,
+      previewOffset: next,
+    }),
+  );
+  return true;
 }
 
 export function answerPermissionImpl(

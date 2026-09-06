@@ -31,6 +31,7 @@ const RUN_FLAGS = new Set([
   "--plugin-config",
   "--peers",
   "--peer",
+  "--discovery",
   "--connect-timeout-ms",
   "--plan",
   "--repl",
@@ -61,6 +62,7 @@ const RUN_VALUED_FLAGS = new Set([
   "--plugin-config",
   "--peers",
   "--peer",
+  "--discovery",
   "--connect-timeout-ms",
 ]);
 
@@ -96,6 +98,7 @@ export function parseRunArgs(argv: ReadonlyArray<string>): RunParsedArgs {
     repl: false,
     acp: false,
     peers: [],
+    discovery: "static",
     peerConnectTimeoutMs: undefined,
     noColor: false,
     verbose: false,
@@ -240,6 +243,15 @@ export function parseRunArgs(argv: ReadonlyArray<string>): RunParsedArgs {
             } catch (err) {
               throw new ArgvError((err as Error).message);
             }
+            break;
+          }
+          case "--discovery": {
+            if (value !== "static" && value !== "mdns" && value !== "none") {
+              throw new ArgvError(
+                `invalid --discovery: ${value} (expected static|mdns|none)`,
+              );
+            }
+            out.discovery = value;
             break;
           }
           case "--connect-timeout-ms": {

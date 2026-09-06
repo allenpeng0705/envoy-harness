@@ -16,6 +16,7 @@ export interface WireClusterBackendOptions {
   peers: ReadonlyArray<ResolvedPeerEndpoint>;
   connectTimeoutMs?: number;
   enableRuntimeConnect?: boolean;
+  discovery?: "static" | "mdns" | "none";
   base?: ProtocolSessionBackend;
   onFailure?: (id: string, err: Error) => void;
 }
@@ -38,6 +39,7 @@ export async function wireClusterBackend(
     ...(options.enableRuntimeConnect === true
       ? { enableRuntimeConnect: true }
       : {}),
+    ...(options.discovery !== undefined ? { discovery: options.discovery } : {}),
     ...(options.onFailure !== undefined ? { onFailure: options.onFailure } : {}),
   });
 

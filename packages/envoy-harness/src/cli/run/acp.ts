@@ -142,6 +142,7 @@ async function resolveAcpBackend(
     try {
       const wired = await wirePeerCluster({
         peers: peerEndpoints,
+        discovery: parsed.discovery,
         ...(parsed.peerConnectTimeoutMs !== undefined
           ? { connectTimeoutMs: parsed.peerConnectTimeoutMs }
           : {}),

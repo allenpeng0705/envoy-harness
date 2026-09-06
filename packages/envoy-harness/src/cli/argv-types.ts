@@ -139,6 +139,11 @@ export interface RunParsedArgs {
    * `ENVOY_PEERS` when no CLI peers are given.
    */
   peers: Array<{ id: string; endpoint: string }>;
+  /**
+   * R5.3 — `--discovery static|mdns|none` (default `static`).
+   * How `--peers` enter the managed cluster.
+   */
+  discovery: "static" | "mdns" | "none";
   /** `--connect-timeout-ms <n>`: per-peer TCP connect timeout. */
   peerConnectTimeoutMs: number | undefined;
   /** `--no-color`: disable ANSI colors. */

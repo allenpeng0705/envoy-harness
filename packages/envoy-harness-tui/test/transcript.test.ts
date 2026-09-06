@@ -66,7 +66,7 @@ describe("formatPermissionBlock", () => {
     expect(block).toContain("└");
   });
 
-  it("truncates long previews with scroll hint", () => {
+  it("truncates long previews with scroll window and hint", () => {
     const preview = Array.from({ length: 15 }, (_, i) => `line ${i}`).join("\n");
     const block = formatPermissionBlock(
       {
@@ -76,8 +76,26 @@ describe("formatPermissionBlock", () => {
       },
       preview,
     );
-    expect(block).toContain("more line(s)");
+    expect(block).toContain("lines 1–10 of 15");
+    expect(block).toContain("j/k");
     expect(block).not.toContain("line 14");
+  });
+
+  it("U6a.4 — previewOffset scrolls the window", () => {
+    const preview = Array.from({ length: 15 }, (_, i) => `line ${i}`).join("\n");
+    const block = formatPermissionBlock(
+      {
+        toolName: "write",
+        description: "Write file?",
+        args: {},
+      },
+      preview,
+      { previewOffset: 5 },
+    );
+    expect(block).toContain("line 5");
+    expect(block).toContain("line 14");
+    expect(block).toContain("lines 6–15 of 15");
+    expect(block).not.toContain("line 0");
   });
 });
 

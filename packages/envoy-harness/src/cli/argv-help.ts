@@ -35,6 +35,8 @@ export function formatHelp(version: string): string {
     "  --plugin <name>        load a plugin (repeatable; must be in the curated whitelist)",
     "  --plugin-config <spec> per-plugin config (repeatable; '<name>.<key>=<value>')",
     "  --peers <id>@<host:port>  mesh peer endpoint (repeatable; also ENVOY_PEERS)",
+    "  --discovery <mode>        peer discovery: static|mdns|none (default static)",
+    "  --connect-timeout-ms <n>  per-peer TCP connect timeout",
     "  --connect-timeout-ms <n>  per-peer connect timeout (default 10000)",
     "  --plan                 read + plan only, no writes",
     "  --repl                 interactive REPL (no positional prompt)",

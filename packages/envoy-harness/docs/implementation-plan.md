@@ -18,12 +18,13 @@ intentionally design-light — the executable chunking lives here.
 
 ## Distributed collaboration — the major feature
 
-> **Status:** Rounds 1–3 ✅ DONE (2026-08-22). **Round 4 PLANNED
-> (2026-09-05)** — refine local sub-agents + deepen multi-node ops.
+> **Status:** Rounds 1–5 ✅ DONE. Round 5 (2026-09-06): live peer jobs/exec RPC,
+> discovery CLI rail, adapter transports, U6a.4–5 TUI polish.
 >
 > **Design:** [`docs/distributed-collaboration.md`](./distributed-collaboration.md)
-> (canonical: protocol, seams, scenarios, competitive landscape, Round 4).
-> **Round 4 plan:** [`docs/implementation-plan-round-4.md`](./implementation-plan-round-4.md).
+> (canonical: protocol, seams, scenarios, competitive landscape).
+> **Round 4 plan:** [`docs/implementation-plan-round-4.md`](./implementation-plan-round-4.md) (IMPLEMENTED).
+> **Round 5 plan:** [`docs/implementation-plan-round-5.md`](./implementation-plan-round-5.md).
 
 **Strategic framing:** envoy-harness is a **full harness with real local
 sub-agents** (`task` → `LocalMeshSubmitter` + fan-out + team
@@ -64,13 +65,13 @@ static discovery polish; R3 = D7 + `federatePeerScoreboard` + v2.2 fabric
 peer cluster with cross-instance verify; same job shape on mesh; Package 1
 EnvoyMesh-free.
 
-### Round 4 chunk roadmap (planned)
+### Round 4 chunk roadmap (IMPLEMENTED)
 
 > Full specs + **ROI coverage checklist**:
 > [`implementation-plan-round-4.md`](./implementation-plan-round-4.md).
 >
 > **Equal goals:** (0) single-instance ≈ Codex/dsh; (1) multi-node ops.
-> Most users run **one** instance — D-Refine ships first.
+> Most users run **one** instance — D-Refine shipped first.
 
 | Phase | Chunks | Theme | Priority |
 |---|---|---|---|
@@ -79,14 +80,23 @@ EnvoyMesh-free.
 | **D-Mesh** | R4.12–R4.14b | Mesh-remote jobs + terminals; unify job boards; optional exec-world | P1–P2 |
 | **D-Interop** | R4.15–R4.16 | Subagent provider registry; ACP/Codex/Claude as workers | P1–P3 |
 
-**Suggested first slices:** **A (single-instance)** R4.1 → R4.6 → R4.9a →
-R4.3 → R4.2; **B (multi-node, parallel)** R4.7 → R4.8 → R4.9b.
-
 **Round 4 success (summary):** with peers **disabled**, async ask +
 modes + continuable local sub-agents + session lease/retained context +
 local parallel teams + workflow API work. With peers **enabled**,
 `team/jobs` + continuable peer + verify budgets + scoreboard pull;
-Package 1 still EnvoyMesh-free; hermetic CI.
+Package 1 still EnvoyMesh-free; hermetic CI. Live `jobs/*` / `exec/*`
+RPC and CLI discovery flags deferred to Round 5.
+
+### Round 5 chunk roadmap (IMPLEMENTED)
+
+> Full specs: [`implementation-plan-round-5.md`](./implementation-plan-round-5.md).
+>
+> **Theme:** make R4 transports live on the wire + finish U6a shell.
+
+| Phase | Chunks | Theme | Priority |
+|---|---|---|---|
+| **R5-Wire** | R5.1–R5.4 | Peer `jobs/*` / `exec/*` RPC; discovery CLI rail; adapter transport factories | **P0–P1** |
+| **R5-Shell** | R5.5–R5.6 | U6a.4 permission scroll; U6a.5 resume + image hint | P1 |
 
 ## Envoy Harness UI — the second major feature
 

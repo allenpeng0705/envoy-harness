@@ -10,6 +10,7 @@ import {
   renderGitDiffView,
   renderMemoryView,
   renderPlanView,
+  renderResumeView,
 } from "../src/views.js";
 
 describe("buildViewTabLine", () => {
@@ -41,6 +42,20 @@ describe("U6 panel renderers", () => {
   it("renderPlanView and renderMemoryView include section headers", () => {
     expect(renderPlanView("step 1").join("\n")).toContain("Plan");
     expect(renderMemoryView("mem-1").join("\n")).toContain("Memory");
+  });
+
+  it("U6a.5 — renderResumeView lists sessions for picker", () => {
+    const lines = renderResumeView([
+      {
+        id: "sess-abc",
+        mtimeMs: 1,
+        title: "demo",
+        messageCount: 3,
+      },
+    ]);
+    expect(lines.join("\n")).toContain("Resume session");
+    expect(lines.join("\n")).toContain("sess-abc");
+    expect(lines.join("\n")).toContain("demo");
   });
 });
 

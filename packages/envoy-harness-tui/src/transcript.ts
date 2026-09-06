@@ -198,6 +198,13 @@ function formatAssistantBody(
   return out.join("\n");
 }
 
+export interface PermissionBlockOptions extends TranscriptFormatOptions {
+  /** 0-based start line into the preview body (U6a.4 scroll). */
+  previewOffset?: number;
+  /** Visible preview lines (default 10). */
+  previewWindow?: number;
+}
+
 export function formatPermissionBlock(
   req: {
     toolName: string;
@@ -205,7 +212,7 @@ export function formatPermissionBlock(
     args: unknown;
   },
   preview?: string,
-  options?: TranscriptFormatOptions,
+  options?: PermissionBlockOptions,
 ): string {
   const inner: string[] = [
     `Allow tool ${req.toolName}?`,
@@ -217,18 +224,35 @@ export function formatPermissionBlock(
   }
   if (preview !== undefined && preview.trim().length > 0) {
     const previewLines = preview.split("\n");
-    if (previewLines.length > MAX_PERMISSION_PREVIEW_LINES) {
+    const window = options?.previewWindow ?? MAX_PERMISSION_PREVIEW_LINES;
+    const maxOffset = Math.max(0, previewLines.length - window);
+    const offset = Math.min(
+      Math.max(0, options?.previewOffset ?? 0),
+      maxOffset,
+    );
+    const slice = previewLines.slice(offset, offset + window);
+    inner.push("--- preview ---", ...slice);
+    if (previewLines.length > window) {
+      const end = Math.min(offset + window, previewLines.length);
       inner.push(
-        "--- preview ---",
-        ...previewLines.slice(0, MAX_PERMISSION_PREVIEW_LINES),
-        `… ${previewLines.length - MAX_PERMISSION_PREVIEW_LINES} more line(s) — scroll transcript`,
+        `… lines ${offset + 1}–${end} of ${previewLines.length} · j/k or PgDn/PgUp to scroll`,
       );
-    } else {
-      inner.push("--- preview ---", preview);
     }
   }
   inner.push("Type allow or deny (a/y / d/n)");
   return boxLines(inner, options);
+}
+
+/** Clamp a preview scroll offset for a given preview body. */
+export function clampPermissionPreviewOffset(
+  preview: string | undefined,
+  offset: number,
+  window = MAX_PERMISSION_PREVIEW_LINES,
+): number {
+  if (preview === undefined || preview.trim().length === 0) return 0;
+  const lines = preview.split("\n").length;
+  const maxOffset = Math.max(0, lines - window);
+  return Math.min(Math.max(0, offset), maxOffset);
 }
 
 function boxLines(

@@ -32,6 +32,17 @@ export const PEER_WAIT_SETTLE_METHOD = "peer/waitSettle";
 /** R4.11 — list VerdictEntry records for federation pull. */
 export const PEER_SCOREBOARD_LIST_METHOD = "peer/scoreboard/list";
 
+/** R5.1 — remote job board over JSON-RPC. */
+export const PEER_JOBS_FETCH_METHOD = "peer/jobs/fetch";
+export const PEER_JOBS_READ_METHOD = "peer/jobs/read";
+export const PEER_JOBS_KILL_METHOD = "peer/jobs/kill";
+export const PEER_JOBS_LIST_METHOD = "peer/jobs/list";
+
+/** R5.2 — remote exec-world over JSON-RPC. */
+export const PEER_EXEC_READ_METHOD = "peer/exec/read";
+export const PEER_EXEC_WRITE_METHOD = "peer/exec/write";
+export const PEER_EXEC_SHELL_METHOD = "peer/exec/shell";
+
 /**
  * `peer/submit` response body. `verdict` is additive: present when the
  * server-side `verifyAfterExecute` is enabled, absent otherwise (the
@@ -104,4 +115,33 @@ export interface PeerTaskStatusResult {
   completedAt?: string;
   costUsd?: number;
   durationMs?: number;
+}
+
+/** R5.1 — `peer/jobs/*` params. */
+export interface PeerJobsFetchParams {
+  jobId: string;
+}
+
+export interface PeerJobsKillParams {
+  jobId: string;
+  reason?: string;
+}
+
+/** R5.2 — `peer/exec/*` params. */
+export interface PeerExecReadParams {
+  path: string;
+  maxBytes?: number;
+}
+
+export interface PeerExecWriteParams {
+  path: string;
+  content: string;
+  createDirectories?: boolean;
+}
+
+export interface PeerExecShellParams {
+  command: string;
+  cwd: string;
+  env?: Record<string, string>;
+  timeoutMs?: number;
 }

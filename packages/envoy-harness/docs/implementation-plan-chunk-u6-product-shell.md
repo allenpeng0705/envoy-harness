@@ -1,7 +1,7 @@
 # Implementation plan — U6 product shell + Windows sandbox + IDE bridge
 
-> **Status:** U6a (TUI tab strip + colored panels) **in progress** on branch.
-> Windows F2 and IDE U6b–c are **planned** below.
+> **Status:** U6a.1–U6a.5 **done** (U6a.4–5 via Round 5 R5.5/R5.6).
+> Windows F2 and IDE U6b–c remain **planned** below.
 
 Targets the gaps vs Codex / Claude Code the team flagged:
 
@@ -12,24 +12,24 @@ Targets the gaps vs Codex / Claude Code the team flagged:
 | Windows sandbox | Job objects + `windows-sandbox-rs` FS isolation | Phased: job lifecycle → FS sidecar |
 | Visual richness | Native/Rust UI | ANSI theme layer (no framework creep) |
 
-## U6a — TUI product shell (this repo) ✅ partial
+## U6a — TUI product shell (this repo) ✅ partial → Round 5
 
-**Shipped / shipping:**
+**Shipped:**
 
 - View tab strip: `Chat  Plan  Memory  Diff  Mesh` with active `[tab]` + accent
 - Status bar shows `view <name>` when not in chat
-- Plan / Memory / Diff panels: section headers, dim hints, colored git diff (`+` green, `-` red, `@@` cyan)
+- Plan / Memory / Diff panels: section headers, dim hints, colored git diff
 - `theme.ts` — small SGR helpers; hermetic tests strip ANSI
-- Esc returns to chat (existing); slash opens panels (`/plan show`, `/memory list`, `/diff`)
+- Esc returns to chat; slash opens panels (`/plan show`, `/memory list`, `/diff`)
+- **U6a.2** Default accent in `bin.ts` (cyan); `--no-color` flag
+- **U6a.3** Transcript tool lines: dim + icon prefixes (`⚙ bash`, `✓ read_file`)
 
-**Next U6a slices (small):**
+**Remaining (Round 5):**
 
-| Slice | Scope |
-|-------|--------|
-| U6a.2 | Default accent in `bin.ts` (cyan); `--no-color` flag |
-| U6a.3 | Transcript tool lines: dim + icon prefixes (`⚙ bash`, `✓ read_file`) |
-| U6a.4 | Permission modal: bordered box + diff preview scroll |
-| U6a.5 | `/resume` picker panel; image blocks in composer hint |
+| Slice | Round 5 | Scope |
+|-------|---------|--------|
+| U6a.4 | **R5.5** | Permission modal: bordered box + diff preview scroll |
+| U6a.5 | **R5.6** | `/resume` picker panel; image blocks in composer hint |
 
 **Out of scope for U6a:** Ink/Blessed, mouse support, pixel parity with Codex Rust TUI.
 

@@ -13,7 +13,11 @@
 import type {
   RequestHandler,
 } from "@envoymesh/envoy-harness";
-import { VerifySessionBudget } from "@envoymesh/envoy-harness";
+import {
+  VerifySessionBudget,
+  type ExecWorld,
+  type JobRegistry,
+} from "@envoymesh/envoy-harness";
 import type {
   AgentAdapter,
   BuildManifestInput,
@@ -26,7 +30,14 @@ import { PeerContinuableTaskRegistry } from "./continuable-peer-tasks.js";
 import { combinePeerVerdicts } from "./scoreboard.js";
 import {
   PEER_CLOSE_METHOD,
+  PEER_EXEC_READ_METHOD,
+  PEER_EXEC_SHELL_METHOD,
+  PEER_EXEC_WRITE_METHOD,
   PEER_INTERRUPT_METHOD,
+  PEER_JOBS_FETCH_METHOD,
+  PEER_JOBS_KILL_METHOD,
+  PEER_JOBS_LIST_METHOD,
+  PEER_JOBS_READ_METHOD,
   PEER_MANIFEST_METHOD,
   PEER_PING_METHOD,
   PEER_SEND_METHOD,
@@ -36,6 +47,11 @@ import {
   PEER_VERIFY_METHOD,
   PEER_WAIT_SETTLE_METHOD,
   PEER_SCOREBOARD_LIST_METHOD,
+  type PeerExecReadParams,
+  type PeerExecShellParams,
+  type PeerExecWriteParams,
+  type PeerJobsFetchParams,
+  type PeerJobsKillParams,
   type PeerSubmitContinuableParams,
   type PeerSubmitResponse,
   type PeerTaskControlParams,
@@ -82,6 +98,17 @@ export interface PeerServerOptions {
   settledTaskTtlMs?: number;
   /** R4.11 — local scoreboard exposed via `peer/scoreboard/list`. */
   scoreboard?: PeerScoreboard;
+  /**
+   * R5.1 — local job board for `peer/jobs/*`. When unset, job methods
+   * throw (submit/verify still work).
+   */
+  jobRegistry?: JobRegistry;
+  /** Optional owner id used when fencing job reads/kills. */
+  jobViewer?: string;
+  /**
+   * R5.2 — exec-world for `peer/exec/*`. When unset, exec methods throw.
+   */
+  execWorld?: ExecWorld;
 }
 
 /** Build a JSON-RPC request handler for the peer dialect. */
@@ -241,6 +268,85 @@ export function createPeerServerHandler(
           }
           case PEER_SCOREBOARD_LIST_METHOD: {
             return options.scoreboard?.list() ?? [];
+          }
+          case PEER_JOBS_FETCH_METHOD: {
+            const registry = options.jobRegistry;
+            if (registry === undefined) {
+              throw new Error("peer/jobs/fetch: job registry not configured");
+            }
+            const body = unwrap<PeerJobsFetchParams>(method, params);
+            return registry.get(body.jobId, options.jobViewer);
+          }
+          case PEER_JOBS_READ_METHOD: {
+            const registry = options.jobRegistry;
+            if (registry === undefined) {
+              throw new Error("peer/jobs/read: job registry not configured");
+            }
+            const body = unwrap<PeerJobsFetchParams>(method, params);
+            return registry.read(body.jobId, options.jobViewer);
+          }
+          case PEER_JOBS_KILL_METHOD: {
+            const registry = options.jobRegistry;
+            if (registry === undefined) {
+              throw new Error("peer/jobs/kill: job registry not configured");
+            }
+            const body = unwrap<PeerJobsKillParams>(method, params);
+            return registry.kill(body.jobId, options.jobViewer, body.reason);
+          }
+          case PEER_JOBS_LIST_METHOD: {
+            const registry = options.jobRegistry;
+            if (registry === undefined) {
+              throw new Error("peer/jobs/list: job registry not configured");
+            }
+            return registry.list(options.jobViewer);
+          }
+          case PEER_EXEC_READ_METHOD: {
+            const world = options.execWorld;
+            if (world === undefined) {
+              throw new Error("peer/exec/read: exec world not configured");
+            }
+            const body = unwrap<PeerExecReadParams>(method, params);
+            return world.readFile(
+              body.path,
+              { ...(body.maxBytes !== undefined ? { maxBytes: body.maxBytes } : {}) },
+              new AbortController().signal,
+            );
+          }
+          case PEER_EXEC_WRITE_METHOD: {
+            const world = options.execWorld;
+            if (world === undefined) {
+              throw new Error("peer/exec/write: exec world not configured");
+            }
+            const body = unwrap<PeerExecWriteParams>(method, params);
+            await world.writeFile(
+              body.path,
+              body.content,
+              {
+                ...(body.createDirectories !== undefined
+                  ? { createDirectories: body.createDirectories }
+                  : {}),
+              },
+              new AbortController().signal,
+            );
+            return { ok: true as const };
+          }
+          case PEER_EXEC_SHELL_METHOD: {
+            const world = options.execWorld;
+            if (world === undefined) {
+              throw new Error("peer/exec/shell: exec world not configured");
+            }
+            const body = unwrap<PeerExecShellParams>(method, params);
+            return world.runShell(
+              {
+                command: body.command,
+                cwd: body.cwd,
+                ...(body.env !== undefined ? { env: body.env } : {}),
+                ...(body.timeoutMs !== undefined
+                  ? { timeoutMs: body.timeoutMs }
+                  : {}),
+              },
+              new AbortController().signal,
+            );
           }
           default:
             throw new Error(`unknown peer method: ${method}`);

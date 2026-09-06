@@ -94,6 +94,14 @@ export {
   createPeerRemoteSubmitterTransport,
 } from "./peer-transport.js";
 
+// R5.4 — peer-backed job + exec transports (EnvoyMesh hosts swap Fake → these).
+export {
+  createPeerRemoteJobTransportFromRegistry,
+} from "./peer-jobs-transport.js";
+export {
+  createPeerRemoteExecTransportFromRegistry,
+} from "./peer-exec-transport.js";
+
 // Phase 8 Step 2 — cross-runtime (same-node) `MeshSubmitter`
 // for sub-agents that should run on a different local runtime
 // (Built-in OpenClaw today; future runtimes slot into

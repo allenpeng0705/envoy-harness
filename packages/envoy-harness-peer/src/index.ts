@@ -67,15 +67,36 @@ export {
   PEER_STATUS_METHOD,
   PEER_WAIT_SETTLE_METHOD,
   PEER_SCOREBOARD_LIST_METHOD,
+  PEER_JOBS_FETCH_METHOD,
+  PEER_JOBS_READ_METHOD,
+  PEER_JOBS_KILL_METHOD,
+  PEER_JOBS_LIST_METHOD,
+  PEER_EXEC_READ_METHOD,
+  PEER_EXEC_WRITE_METHOD,
+  PEER_EXEC_SHELL_METHOD,
   type PeerPingResult,
   type PeerSubmitResponse,
   type PeerSubmitContinuableParams,
   type PeerSubmitContinuableResult,
   type PeerTaskControlParams,
   type PeerTaskStatusResult,
+  type PeerJobsFetchParams,
+  type PeerJobsKillParams,
+  type PeerExecReadParams,
+  type PeerExecWriteParams,
+  type PeerExecShellParams,
   type WireExecuteInput,
 } from "./messages.js";
 export { PeerContinuableTaskRegistry, SETTLED_TASK_TTL_MS } from "./continuable-peer-tasks.js";
+export {
+  createPeerRemoteJobTransport,
+  peerJobRef,
+  type PeerRemoteJobTransportOptions,
+} from "./jobs-rpc.js";
+export {
+  createPeerRemoteExecTransport,
+  type PeerRemoteExecTransportOptions,
+} from "./exec-rpc.js";
 export {
   wrapEnvelope,
   unwrapEnvelope,

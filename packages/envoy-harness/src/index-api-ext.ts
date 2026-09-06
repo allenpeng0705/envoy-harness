@@ -392,6 +392,7 @@ export {
   mergeClusterSeams,
   wirePeerCluster,
   type ClusterSeams,
+  type PeerDiscoveryMode,
   type WirePeerClusterOptions,
   type WirePeerClusterResult,
 } from "./peers/wire-cluster.js";

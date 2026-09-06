@@ -558,6 +558,21 @@ async function runInteractiveScreen(
           return;
         }
       }
+      // U6a.4 — scroll permission diff preview while parked.
+      if (session.pendingPermission !== undefined) {
+        if (key.name === "j" || key.name === "pagedown" || ch === "j") {
+          if (session.scrollPermissionPreview(key.name === "pagedown" ? 5 : 1)) {
+            void render();
+            return;
+          }
+        }
+        if (key.name === "k" || key.name === "pageup" || ch === "k") {
+          if (session.scrollPermissionPreview(key.name === "pageup" ? -5 : -1)) {
+            void render();
+            return;
+          }
+        }
+      }
       const action = composer.handleKey(ch, key);
       switch (action.type) {
         case "submit": {

@@ -6,6 +6,11 @@
 
 import {
   JsonRpcConnection,
+  type ExecReadResult,
+  type ExecShellRequest,
+  type ExecShellResult,
+  type JobRead,
+  type JobSnapshot,
   type SubagentInput,
   type SubagentResult,
 } from "@envoymesh/envoy-harness";
@@ -23,7 +28,14 @@ import type {
 
 import {
   PEER_CLOSE_METHOD,
+  PEER_EXEC_READ_METHOD,
+  PEER_EXEC_SHELL_METHOD,
+  PEER_EXEC_WRITE_METHOD,
   PEER_INTERRUPT_METHOD,
+  PEER_JOBS_FETCH_METHOD,
+  PEER_JOBS_KILL_METHOD,
+  PEER_JOBS_LIST_METHOD,
+  PEER_JOBS_READ_METHOD,
   PEER_MANIFEST_METHOD,
   PEER_PING_METHOD,
   PEER_SEND_METHOD,
@@ -262,6 +274,115 @@ export class PeerClient {
       signal,
       "peer scoreboard/list aborted",
     ) as Promise<VerdictEntry[]>;
+  }
+
+  /** R5.1 — `peer/jobs/fetch`. */
+  async jobsFetch(jobId: string, signal?: AbortSignal): Promise<JobSnapshot> {
+    return this.#send(
+      PEER_JOBS_FETCH_METHOD,
+      { jobId },
+      this.#requestTimeoutMs,
+      signal,
+      "peer jobs/fetch aborted",
+    ) as Promise<JobSnapshot>;
+  }
+
+  /** R5.1 — `peer/jobs/read`. */
+  async jobsRead(jobId: string, signal?: AbortSignal): Promise<JobRead> {
+    return this.#send(
+      PEER_JOBS_READ_METHOD,
+      { jobId },
+      this.#requestTimeoutMs,
+      signal,
+      "peer jobs/read aborted",
+    ) as Promise<JobRead>;
+  }
+
+  /** R5.1 — `peer/jobs/kill`. */
+  async jobsKill(
+    jobId: string,
+    signal?: AbortSignal,
+    reason?: string,
+  ): Promise<"requested" | "already-finished"> {
+    return this.#send(
+      PEER_JOBS_KILL_METHOD,
+      { jobId, ...(reason !== undefined ? { reason } : {}) },
+      this.#requestTimeoutMs,
+      signal,
+      "peer jobs/kill aborted",
+    ) as Promise<"requested" | "already-finished">;
+  }
+
+  /** R5.1 — `peer/jobs/list`. */
+  async jobsList(signal?: AbortSignal): Promise<JobSnapshot[]> {
+    return this.#send(
+      PEER_JOBS_LIST_METHOD,
+      {},
+      this.#requestTimeoutMs,
+      signal,
+      "peer jobs/list aborted",
+    ) as Promise<JobSnapshot[]>;
+  }
+
+  /** R5.2 — `peer/exec/read`. */
+  async execRead(
+    path: string,
+    options: { maxBytes?: number },
+    signal?: AbortSignal,
+  ): Promise<ExecReadResult> {
+    return this.#send(
+      PEER_EXEC_READ_METHOD,
+      {
+        path,
+        ...(options.maxBytes !== undefined ? { maxBytes: options.maxBytes } : {}),
+      },
+      this.#requestTimeoutMs,
+      signal,
+      "peer exec/read aborted",
+    ) as Promise<ExecReadResult>;
+  }
+
+  /** R5.2 — `peer/exec/write`. */
+  async execWrite(
+    path: string,
+    content: string,
+    options: { createDirectories?: boolean },
+    signal?: AbortSignal,
+  ): Promise<{ ok: true }> {
+    return this.#send(
+      PEER_EXEC_WRITE_METHOD,
+      {
+        path,
+        content,
+        ...(options.createDirectories !== undefined
+          ? { createDirectories: options.createDirectories }
+          : {}),
+      },
+      this.#requestTimeoutMs,
+      signal,
+      "peer exec/write aborted",
+    ) as Promise<{ ok: true }>;
+  }
+
+  /** R5.2 — `peer/exec/shell`. */
+  async execShell(
+    request: ExecShellRequest,
+    signal?: AbortSignal,
+  ): Promise<ExecShellResult> {
+    return this.#send(
+      PEER_EXEC_SHELL_METHOD,
+      {
+        command: request.command,
+        cwd: request.cwd,
+        ...(request.env !== undefined ? { env: request.env } : {}),
+        ...(request.timeoutMs !== undefined
+          ? { timeoutMs: request.timeoutMs }
+          : {}),
+      },
+      (request.timeoutMs ?? 30_000) + this.#submitResponseBufferMs,
+      signal,
+      "peer exec/shell aborted",
+    ) as Promise<ExecShellResult>;
   }
 
   async #send<T>(

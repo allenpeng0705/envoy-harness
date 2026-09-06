@@ -46,6 +46,7 @@ import {
   answerUserQuestionImpl,
   handlePermissionRequestImpl,
   handleUserQuestionRequestImpl,
+  scrollPermissionPreviewImpl,
   type PermissionWaiter,
   type UserQuestionWaiter,
 } from "./session-permissions.js";
@@ -378,6 +379,7 @@ export class TuiSession {
       cwd: opts.cwd,
       transcriptFormat: opts.transcriptFormat,
       setWaiter: opts.setWaiter,
+      getWaiter: opts.getWaiter,
     });
   }
 
@@ -388,6 +390,11 @@ export class TuiSession {
       setWaiter: opts.setWaiter,
       push: opts.push,
     });
+  }
+
+  /** U6a.4 — scroll permission diff preview (j/k / PgDn/PgUp). */
+  scrollPermissionPreview(delta: number): boolean {
+    return scrollPermissionPreviewImpl(delta, this.#permissionOpts());
   }
 
   handleUserQuestionRequest(
