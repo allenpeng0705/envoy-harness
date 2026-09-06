@@ -167,4 +167,89 @@ describe("R4.18 discovery rail", () => {
     rail.stop();
     pair.close();
   });
+
+  it("keeps peer connected when only one of two sources revokes", async () => {
+    const pair = createInProcessPeerPair(
+      createPeerServerHandler({
+        adapter: stubAdapter({}),
+        identity: { peerId: "shared" },
+      }),
+    );
+    const endpoints = new Map([
+      ["127.0.0.1:19003", { client: pair.client, close: () => undefined }],
+    ]);
+    const cluster = new ManagedPeerCluster({
+      connect: inProcessConnect(endpoints),
+    });
+    const a = new FakeDiscoverySource();
+    const b = new FakeDiscoverySource();
+    const rail = createDiscoveryRail({
+      cluster,
+      sources: [new CompositeDiscoverySource([a, b])],
+    });
+    await rail.start();
+    a.publish({ id: "shared", endpoint: "127.0.0.1:19003" });
+    b.publish({ id: "shared", endpoint: "127.0.0.1:19003" });
+    await vi.waitFor(() => {
+      expect(cluster.connected).toEqual(["shared"]);
+    });
+    a.revoke("shared");
+    // Give the serial queue a tick — must stay connected.
+    await new Promise((r) => setTimeout(r, 20));
+    expect(cluster.connected).toEqual(["shared"]);
+    b.revoke("shared");
+    await vi.waitFor(() => {
+      expect(cluster.connected).toEqual([]);
+    });
+    rail.stop();
+    pair.close();
+  });
+
+  it("allows retry after a failed start", async () => {
+    const good = new FakeDiscoverySource();
+    const bad: import("../src/discovery.js").DiscoverySource = {
+      kind: "fake",
+      start() {
+        throw new Error("boom");
+      },
+      stop() {
+        /* noop */
+      },
+    };
+    const cluster = new ManagedPeerCluster({
+      connect: inProcessConnect(new Map()),
+    });
+    const rail = createDiscoveryRail({
+      cluster,
+      sources: [good, bad],
+    });
+    await expect(rail.start()).rejects.toThrow(/boom/);
+    expect(rail.running).toBe(false);
+
+    const pair = createInProcessPeerPair(
+      createPeerServerHandler({
+        adapter: stubAdapter({}),
+        identity: { peerId: "retry" },
+      }),
+    );
+    const endpoints = new Map([
+      ["127.0.0.1:19004", { client: pair.client, close: () => undefined }],
+    ]);
+    const cluster2 = new ManagedPeerCluster({
+      connect: inProcessConnect(endpoints),
+    });
+    const ok = new FakeDiscoverySource();
+    const rail2 = createDiscoveryRail({
+      cluster: cluster2,
+      sources: [ok],
+    });
+    await rail2.start();
+    expect(rail2.running).toBe(true);
+    ok.publish({ id: "retry", endpoint: "127.0.0.1:19004" });
+    await vi.waitFor(() => {
+      expect(cluster2.connected).toEqual(["retry"]);
+    });
+    rail2.stop();
+    pair.close();
+  });
 });

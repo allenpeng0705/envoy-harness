@@ -179,17 +179,18 @@ export class MdnsDiscoverySource implements DiscoverySource {
 /** Fan-in several sources into one listener. */
 export class CompositeDiscoverySource implements DiscoverySource {
   readonly kind: DiscoverySourceKind;
-  readonly #sources: ReadonlyArray<DiscoverySource>;
+  /** Child sources (rail flattens these for lost/found refcounting). */
+  readonly sources: ReadonlyArray<DiscoverySource>;
   readonly #stops: Array<() => void> = [];
 
   constructor(sources: ReadonlyArray<DiscoverySource>) {
-    this.#sources = sources;
+    this.sources = sources;
     // Prefer first source's kind for labeling; composite is multi-kind.
     this.kind = sources[0]?.kind ?? "static";
   }
 
   async start(listener: DiscoveryListener): Promise<void> {
-    for (const source of this.#sources) {
+    for (const source of this.sources) {
       await source.start(listener);
       this.#stops.push(() => source.stop());
     }

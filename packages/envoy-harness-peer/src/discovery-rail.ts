@@ -4,10 +4,11 @@
  */
 
 import type { PeerEndpointConfig } from "./cluster.js";
-import type {
-  DiscoveryAnnouncement,
-  DiscoverySource,
-  DiscoveredPeer,
+import {
+  CompositeDiscoverySource,
+  type DiscoveryAnnouncement,
+  type DiscoverySource,
+  type DiscoveredPeer,
 } from "./discovery.js";
 import type { ManagedPeerCluster } from "./managed-cluster.js";
 
@@ -17,6 +18,8 @@ export interface DiscoveryRailOptions {
   /**
    * When true (default), `lost` disconnects the peer if still registered.
    * Static sources never emit lost.
+   * Disconnect only runs when **no** attached source still advertises
+   * the peer (composite refcount).
    */
   disconnectOnLost?: boolean;
   /** Optional hook after each announcement is handled. */
@@ -43,6 +46,21 @@ function toEndpoint(peer: DiscoveredPeer): PeerEndpointConfig {
   };
 }
 
+/** Flatten composites so lost/found refcounting is per leaf source. */
+function flattenSources(
+  sources: ReadonlyArray<DiscoverySource>,
+): DiscoverySource[] {
+  const out: DiscoverySource[] = [];
+  for (const source of sources) {
+    if (source instanceof CompositeDiscoverySource) {
+      out.push(...flattenSources(source.sources));
+    } else {
+      out.push(source);
+    }
+  }
+  return out;
+}
+
 /**
  * Attach discovery sources to a managed cluster. Found peers are
  * connected via `cluster.connectPeer` (fail-open / already-connected safe).
@@ -53,6 +71,9 @@ export function createDiscoveryRail(
   const disconnectOnLost = options.disconnectOnLost !== false;
   let running = false;
   const started: DiscoverySource[] = [];
+  /** peerId → sources currently advertising it (object identity). */
+  const advertisers = new Map<string, Set<DiscoverySource>>();
+  const leafSources = flattenSources(options.sources);
 
   const handle = async (event: DiscoveryAnnouncement): Promise<void> => {
     options.onAnnouncement?.(event);
@@ -73,23 +94,55 @@ export function createDiscoveryRail(
     });
   };
 
+  const listenFor = (
+    source: DiscoverySource,
+  ): ((event: DiscoveryAnnouncement) => void) => {
+    return (event) => {
+      if (event.kind === "found") {
+        let set = advertisers.get(event.peer.id);
+        if (set === undefined) {
+          set = new Set();
+          advertisers.set(event.peer.id, set);
+        }
+        set.add(source);
+        enqueue(event);
+        return;
+      }
+      const set = advertisers.get(event.peerId);
+      set?.delete(source);
+      if (set === undefined || set.size === 0) {
+        advertisers.delete(event.peerId);
+        enqueue(event);
+      }
+      // else: another source still advertises — keep the connection
+    };
+  };
+
   return {
     get running() {
       return running;
     },
     async start() {
       if (running) return;
-      running = true;
-      for (const source of options.sources) {
-        await source.start(enqueue);
-        started.push(source);
+      try {
+        for (const source of leafSources) {
+          await source.start(listenFor(source));
+          started.push(source);
+        }
+        running = true;
+        await chain;
+      } catch (err) {
+        for (const source of started.splice(0)) source.stop();
+        advertisers.clear();
+        running = false;
+        throw err;
       }
-      await chain;
     },
     stop() {
-      if (!running) return;
+      if (!running && started.length === 0) return;
       running = false;
       for (const source of started.splice(0)) source.stop();
+      advertisers.clear();
     },
   };
 }
