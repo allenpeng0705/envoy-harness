@@ -7,6 +7,12 @@
 
 import { formatActivityLine, type ActivityLike } from "./activity.js";
 import {
+  mergePromptRows,
+  parseSessionTokenDelta,
+  parseSessionUpdateMessage,
+  rowsFromPromptResult,
+} from "./acp-notifications.js";
+import {
   type AcpHostState,
   type ChatRole,
   type SessionSummary,
@@ -329,17 +335,12 @@ export class AcpHost {
     });
 
     client.onNotification("session/update", (params) => {
-      const p = params as {
-        sessionUpdate?: string;
-        content?: { type?: string; text?: string };
-        text?: string;
-        toolName?: string;
-      };
-      if (p.sessionUpdate === "agent_message_chunk" || p.content?.text) {
-        const text = p.content?.text ?? p.text ?? "";
-        if (text) this.#appendAssistantChunk(text);
-      } else if (p.toolName) {
-        this.#pushMessage("tool", `tool: ${p.toolName}`);
+      const row = parseSessionUpdateMessage(params, this.#state.sessionId);
+      if (row === undefined) return;
+      if (row.role === "assistant") {
+        this.#finalizeAssistant(row.text);
+      } else {
+        this.#pushMessage(row.role, row.text);
       }
     });
 
@@ -374,6 +375,12 @@ export class AcpHost {
     });
 
     client.onNotification("session/token", (params) => {
+      const delta = parseSessionTokenDelta(params, this.#state.sessionId);
+      if (delta !== undefined) {
+        this.#appendAssistantChunk(delta);
+        return;
+      }
+      // Optional model id on some hosts (non-ACP).
       const p = params as { model?: string };
       if (p.model) this.#patch({ model: p.model });
     });
@@ -478,6 +485,19 @@ export class AcpHost {
     }
   }
 
+  /** Replace (or create) the trailing assistant bubble with the final text. */
+  #finalizeAssistant(text: string): void {
+    const msgs = this.#state.messages;
+    const last = msgs[msgs.length - 1];
+    if (last !== undefined && last.role === "assistant") {
+      const updated = [...msgs];
+      updated[updated.length - 1] = { ...last, text };
+      this.#patch({ messages: updated });
+    } else {
+      this.#pushMessage("assistant", text);
+    }
+  }
+
   async prompt(text: string): Promise<void> {
     const client = this.#client;
     const sessionId = this.#state.sessionId;
@@ -494,16 +514,30 @@ export class AcpHost {
         stopReason?: string;
         messages?: Array<{ role?: string; text?: string }>;
       };
-      const assistantTexts =
-        res.messages
-          ?.filter((m) => m.role === "assistant" && m.text)
-          .map((m) => m.text!) ?? [];
-      if (assistantTexts.length > 0) {
-        const combined = assistantTexts.join("\n");
-        const last = this.#state.messages[this.#state.messages.length - 1];
-        if (!(last?.role === "assistant")) {
-          this.#pushMessage("assistant", combined);
-        }
+      const rows = rowsFromPromptResult(res.messages);
+      if (rows.length > 0) {
+        const merged = mergePromptRows(
+          this.#state.messages.map((m) => ({ role: m.role, text: m.text })),
+          rows,
+        );
+        // Rebuild only when merge changed trailing content length/roles.
+        const rebuilt = merged.map((m, i) => {
+          const prev = this.#state.messages[i];
+          if (
+            prev !== undefined &&
+            prev.role === m.role &&
+            prev.text === m.text
+          ) {
+            return prev;
+          }
+          return {
+            id: prev?.id ?? nextMsgId(),
+            role: m.role,
+            text: m.text,
+            at: prev?.at ?? Date.now(),
+          };
+        });
+        this.#patch({ messages: rebuilt });
       }
       void this.refreshMesh();
     } catch (err) {
