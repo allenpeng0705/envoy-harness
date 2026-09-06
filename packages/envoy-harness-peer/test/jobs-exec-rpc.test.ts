@@ -91,6 +91,27 @@ describe("R5.1 peer jobs RPC", () => {
     expect((await transport.fetchJob(ref, signal)).status).toBe("killed");
     pair.close();
   });
+
+  it("assertPeer rejects refs for a different peerId", async () => {
+    const pair = createInProcessPeerPair(
+      createPeerServerHandler({
+        adapter: stubAdapter({}),
+        identity: { peerId: "worker-a" },
+        jobRegistry: createLocalJobRegistry(),
+        jobViewer: "s1",
+      }),
+    );
+    const transport = createPeerRemoteJobTransport({
+      peerId: "worker-a",
+      client: pair.client,
+    });
+    const signal = new AbortController().signal;
+    const foreign = formatRemoteJobRef("worker-b", "job-1");
+    await expect(transport.fetchJob(foreign, signal)).rejects.toThrow(
+      /bound to worker-a/,
+    );
+    pair.close();
+  });
 });
 
 describe("R5.2 peer exec RPC", () => {
@@ -133,5 +154,24 @@ describe("R5.2 peer exec RPC", () => {
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
     }
+  });
+
+  it("assertPeer rejects exec calls for a different peerId", async () => {
+    const pair = createInProcessPeerPair(
+      createPeerServerHandler({
+        adapter: stubAdapter({}),
+        identity: { peerId: "worker-b" },
+        execWorld: createLocalExecWorld(),
+      }),
+    );
+    const transport = createPeerRemoteExecTransport({
+      peerId: "worker-b",
+      client: pair.client,
+    });
+    const signal = new AbortController().signal;
+    await expect(
+      transport.readFile("worker-a", "/tmp/x", {}, signal),
+    ).rejects.toThrow(/bound to worker-b/);
+    pair.close();
   });
 });

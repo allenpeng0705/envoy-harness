@@ -464,7 +464,7 @@ transport factories, remaining U6a TUI polish.
 - **Round 4 (D-Refine / D-Ops / D-Mesh / D-Interop):** Scenario 0
   single-instance parity + multi-node ops — IMPLEMENTED (2026-09-06)
 - **Round 5 (R5-Wire / R5-Shell):** live jobs/exec RPC, discovery CLI,
-  adapter transports, U6a remainder — IN PROGRESS (2026-09-06)
+  adapter transports, U6a remainder — IMPLEMENTED (2026-09-06)
 
 Each round ships with tests and keeps this design doc updated. The
 differentiator remains the protocol (MAP at two scales) plus a real

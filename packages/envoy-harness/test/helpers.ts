@@ -243,6 +243,7 @@ export function makeArgs(
     importFrom: undefined,
     peers: [],
     peerConnectTimeoutMs: undefined,
+    discovery: "static",
     plan: false,
     repl: options.repl ?? false,
     acp: false,
