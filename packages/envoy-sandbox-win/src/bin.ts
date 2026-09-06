@@ -69,6 +69,8 @@ async function handle(req: SidecarRequest): Promise<SidecarResponse> {
 
 async function main(): Promise<void> {
   const rl = readline.createInterface({ input: process.stdin });
+  // Readline advances while `handle()` promises run — cancel can arrive
+  // mid-execute without waiting for the prior request to finish.
   for await (const line of rl) {
     const trimmed = line.trim();
     if (trimmed.length === 0) continue;

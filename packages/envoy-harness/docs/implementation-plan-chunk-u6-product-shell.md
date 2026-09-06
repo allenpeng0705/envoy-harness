@@ -63,6 +63,10 @@ envoy-harness stays **protocol-first**; IDE polish lives in hosts.
 **Today:** Linux landlock + macOS seatbelt; Windows job + optional sidecar
 scaffold; Round 6 closes process-tree kill gaps.
 
+**`killProcessTree`:** lives in `@envoymesh/envoy-process` and is imported by
+both Package 1 and `envoy-sandbox-win` (avoids mirroring across the
+harness ↔ sandbox-win optional dependency edge).
+
 **Codex reference:** `codex-rs/windows-sandbox-rs` sidecar for FS ACL isolation + job objects for process-tree lifecycle (`windows-sandbox-rs/src/bin/command_runner/win.rs`).
 
 ### F2 phases

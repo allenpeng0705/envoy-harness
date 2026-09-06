@@ -5,9 +5,10 @@
 
 ## Delivered
 
-- `src/process/kill-tree.ts` — win32 `taskkill /PID /T /F`; else `SIGKILL`
+- `src/process/kill-tree.ts` — re-exports `@envoymesh/envoy-process`
+  (`taskkill /PID /T /F` on win32; else `SIGKILL`)
 - Wired into bash default path, `process-provider` cancel, local exec-world shell, hook runner timeout
-- Hermetic tests in `test/kill-tree.test.ts`
+- Hermetic tests in `packages/envoy-process/test/kill-tree.test.ts` (real child on win32)
 
 ## Accept
 

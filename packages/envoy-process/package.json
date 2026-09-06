@@ -1,29 +1,27 @@
 {
-  "name": "@envoymesh/envoy-sandbox-win",
+  "name": "@envoymesh/envoy-process",
   "version": "0.0.0",
-  "description": "Windows sandbox sidecar (F2b) — stdio IPC for FS-scoped command execution.",
+  "description": "Shared process helpers for envoy-harness and envoy-sandbox-win (killProcessTree).",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "bin": {
-    "envoy-sandbox-win": "./dist/bin.js"
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
   },
   "files": ["dist", "README.md"],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "start": "tsx src/bin.ts",
     "clean": "rm -rf dist *.tsbuildinfo"
   },
   "engines": {
     "node": ">=22.19"
   },
   "license": "Apache-2.0",
-  "dependencies": {
-    "@envoymesh/envoy-harness": "file:../envoy-harness",
-    "@envoymesh/envoy-process": "file:../envoy-process"
-  },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "typescript": "^5.6.0",

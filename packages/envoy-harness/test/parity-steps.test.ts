@@ -10,7 +10,10 @@ import { describe, expect, it } from "vitest";
 
 import { ActionJournal } from "../src/action-journal.js";
 import { policyFromMode } from "../src/permissions/policy.js";
-import { runDoctorChecks } from "../src/cli/run/doctor.js";
+import {
+  runDoctorChecks,
+  windowsSandboxDoctorCheck,
+} from "../src/cli/run/doctor.js";
 import { writeTool } from "../src/tools/builtin/write.js";
 import { InMemorySession, newSessionId } from "../src/session.js";
 
@@ -62,5 +65,66 @@ describe("runDoctorChecks", () => {
     });
     expect(checks.some((c) => c.name === "node" && c.ok)).toBe(true);
     expect(checks.some((c) => c.name === "pty")).toBe(true);
+  });
+
+  it("reports windows_sandbox skipped off win32", async () => {
+    if (process.platform === "win32") return;
+    const checks = await runDoctorChecks({
+      subcommand: "doctor",
+      help: false,
+      version: false,
+    });
+    expect(checks.find((c) => c.name === "windows_sandbox")).toEqual({
+      name: "windows_sandbox",
+      ok: true,
+      detail: "skipped (not win32)",
+    });
+  });
+});
+
+describe("windowsSandboxDoctorCheck", () => {
+  it("labels F2b when the sidecar is available", () => {
+    expect(
+      windowsSandboxDoctorCheck({
+        probeOk: true,
+        sidecarAvailable: true,
+        stderr: "",
+        exitCode: 0,
+      }),
+    ).toEqual({
+      name: "windows_sandbox",
+      ok: true,
+      detail: "F2b sidecar probe ok (echo)",
+    });
+  });
+
+  it("labels F2a when the sidecar is not built", () => {
+    expect(
+      windowsSandboxDoctorCheck({
+        probeOk: true,
+        sidecarAvailable: false,
+        stderr: "",
+        exitCode: 0,
+      }),
+    ).toEqual({
+      name: "windows_sandbox",
+      ok: true,
+      detail: "F2a job-object probe ok (echo)",
+    });
+  });
+
+  it("surfaces stderr on probe failure", () => {
+    expect(
+      windowsSandboxDoctorCheck({
+        probeOk: false,
+        sidecarAvailable: false,
+        stderr: "boom\n",
+        exitCode: 1,
+      }),
+    ).toEqual({
+      name: "windows_sandbox",
+      ok: false,
+      detail: "boom",
+    });
   });
 });

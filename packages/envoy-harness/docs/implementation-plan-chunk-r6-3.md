@@ -14,3 +14,10 @@
 ## Accept
 
 Abort one request; second request succeeds on the same sidecar process.
+
+## Review follow-up
+
+- Fake sidecar fixture is `fake-sandbox-sidecar.js` only (`.mjs` duplicate removed).
+- `killProcessTree` lives in `@envoymesh/envoy-process` (shared by harness + sandbox-win).
+- `cancelSoftFailMs` configures the sidecar cancel soft-fail timer.
+- `envoy-process` tests exercise a real child on win32 (`taskkill` on windows-latest).

@@ -13,7 +13,7 @@ export interface ProcessJobOptions {
   env?: NodeJS.ProcessEnv;
   /** Soft cap on retained output bytes (default 256 KiB). */
   outputLimitBytes?: number;
-  /** Grace period before SIGKILL after cancel (default 2s). */
+  /** Grace period before SIGKILL after cancel (default 2s; Unix only). */
   killGraceMs?: number;
   /** Live combined stdout/stderr chunks (UTF-8). */
   onOutput?: (chunk: string) => void;
@@ -105,6 +105,8 @@ export function createProcessJobHooks(options: ProcessJobOptions): JobHooks {
       if (settled || cancelled) return;
       cancelled = true;
       if (child === undefined || child.killed) return;
+      // Win32: taskkill /T is final — no grace. Unix: SIGTERM first, then
+      // SIGKILL via killProcessTree after `killGraceMs` so shells can clean up.
       if (process.platform === "win32") {
         killProcessTree(child.pid);
         finish({

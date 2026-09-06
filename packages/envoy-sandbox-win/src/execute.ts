@@ -10,8 +10,8 @@
  */
 
 import type { ChildProcess } from "node:child_process";
-import { spawnSync } from "node:child_process";
 
+import { killProcessTree } from "@envoymesh/envoy-process";
 import type { SandboxPolicy } from "@envoymesh/envoy-harness";
 
 import type { SidecarExecuteResult } from "./protocol.js";
@@ -24,29 +24,6 @@ export interface ExecuteOptions {
   policy: SandboxPolicy;
   maxOutputBytes?: number;
   signal?: AbortSignal;
-}
-
-/** Local kill-tree (mirrors Package-1 `killProcessTree`). */
-function killProcessTree(pid: number | undefined | null): void {
-  if (pid === undefined || pid === null || !Number.isFinite(pid) || pid <= 0) {
-    return;
-  }
-  if (process.platform === "win32") {
-    try {
-      spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], {
-        windowsHide: true,
-        stdio: "ignore",
-      });
-    } catch {
-      // ignore
-    }
-    return;
-  }
-  try {
-    process.kill(pid, "SIGKILL");
-  } catch {
-    // ignore
-  }
 }
 
 export async function executeSandboxed(

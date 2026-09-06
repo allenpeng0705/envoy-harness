@@ -24,6 +24,29 @@ export interface DoctorCheck {
   detail: string;
 }
 
+/** Format the win32 `windows_sandbox` doctor row (F2a vs F2b detail). */
+export function windowsSandboxDoctorCheck(opts: {
+  probeOk: boolean;
+  sidecarAvailable: boolean;
+  stderr: string;
+  exitCode: number;
+}): DoctorCheck {
+  if (opts.probeOk) {
+    return {
+      name: "windows_sandbox",
+      ok: true,
+      detail: opts.sidecarAvailable
+        ? "F2b sidecar probe ok (echo)"
+        : "F2a job-object probe ok (echo)",
+    };
+  }
+  return {
+    name: "windows_sandbox",
+    ok: false,
+    detail: opts.stderr.trim() || `exit ${opts.exitCode}`,
+  };
+}
+
 export async function runDoctorChecks(
   parsed: Extract<ParsedArgs, { subcommand: "doctor" }>,
 ): Promise<DoctorCheck[]> {
@@ -140,16 +163,14 @@ export async function runDoctorChecks(
       signal: new AbortController().signal,
     });
     const sidecar = isWindowsSidecarAvailable();
-    checks.push({
-      name: "windows_sandbox",
-      ok: probe.exitCode === 0 && !probe.isError,
-      detail:
-        probe.exitCode === 0 && !probe.isError
-          ? sidecar
-            ? "F2b sidecar probe ok (echo)"
-            : "F2a job-object probe ok (echo)"
-          : probe.stderr.trim() || `exit ${probe.exitCode}`,
-    });
+    checks.push(
+      windowsSandboxDoctorCheck({
+        probeOk: probe.exitCode === 0 && !probe.isError,
+        sidecarAvailable: sidecar,
+        stderr: probe.stderr,
+        exitCode: probe.exitCode,
+      }),
+    );
   } else {
     checks.push({
       name: "windows_sandbox",

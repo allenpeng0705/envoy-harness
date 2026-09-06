@@ -38,6 +38,10 @@ for await (const line of rl) {
     const cmd = String(req.params?.command ?? "");
     void (async () => {
       try {
+        // Soft-fail fixture: never respond; cancel ack does not abort.
+        if (cmd.includes("HANG_IGNORE_CANCEL")) {
+          return;
+        }
         if (cmd.includes("SLEEP_LONG")) {
           await new Promise((resolve) => {
             const t = setTimeout(resolve, 30_000);

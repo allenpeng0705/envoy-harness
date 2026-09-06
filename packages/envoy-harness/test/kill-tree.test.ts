@@ -1,34 +1,14 @@
 /**
- * R6.1 — killProcessTree unit tests (hermetic).
+ * R6.1 — Package-1 re-exports `@envoymesh/envoy-process` killProcessTree.
+ * Full coverage (incl. win32 taskkill) lives in packages/envoy-process/test.
  */
 
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
-describe("killProcessTree", () => {
-  it("no-ops for invalid pids without throwing", async () => {
+describe("killProcessTree (re-export)", () => {
+  it("is exported from Package 1", async () => {
     const { killProcessTree } = await import("../src/process/kill-tree.js");
+    expect(typeof killProcessTree).toBe("function");
     expect(() => killProcessTree(undefined)).not.toThrow();
-    expect(() => killProcessTree(null)).not.toThrow();
-    expect(() => killProcessTree(0)).not.toThrow();
-    expect(() => killProcessTree(-1)).not.toThrow();
-  });
-
-  it("on non-win32 sends SIGKILL via process.kill", async () => {
-    if (process.platform === "win32") return;
-    const spy = vi.spyOn(process, "kill").mockImplementation(() => true);
-    const { killProcessTree } = await import("../src/process/kill-tree.js");
-    killProcessTree(12_345);
-    expect(spy).toHaveBeenCalledWith(12_345, "SIGKILL");
-    spy.mockRestore();
-  });
-
-  it("on non-win32 swallows ESRCH from process.kill", async () => {
-    if (process.platform === "win32") return;
-    const spy = vi.spyOn(process, "kill").mockImplementation(() => {
-      throw Object.assign(new Error("ESRCH"), { code: "ESRCH" });
-    });
-    const { killProcessTree } = await import("../src/process/kill-tree.js");
-    expect(() => killProcessTree(99_999)).not.toThrow();
-    spy.mockRestore();
   });
 });

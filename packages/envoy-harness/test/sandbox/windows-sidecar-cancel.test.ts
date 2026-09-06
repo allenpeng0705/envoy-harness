@@ -56,4 +56,24 @@ describe("WindowsSidecarSandboxExecutor cancel IPC", () => {
     expect(second.exitCode).toBe(0);
     expect(second.stdout).toContain("sidecar-ok");
   }, 10_000);
+
+  it("soft-fails via cancelSoftFailMs when cancel never settles", async () => {
+    const exec = new WindowsSidecarSandboxExecutor({
+      command: FIXTURE,
+      cancelSoftFailMs: 50,
+    });
+    const ac = new AbortController();
+    const hung = exec.execute("HANG_IGNORE_CANCEL", {
+      cwd: process.cwd(),
+      policy: POLICY,
+      signal: ac.signal,
+    });
+    await new Promise((r) => setTimeout(r, 30));
+    const started = Date.now();
+    ac.abort();
+    const result = await hung;
+    expect(Date.now() - started).toBeLessThan(1_500);
+    expect(result.isError).toBe(true);
+    expect(result.stderr).toMatch(/aborted/i);
+  }, 5_000);
 });

@@ -26,6 +26,11 @@ export interface WindowsSidecarSandboxExecutorOptions {
   /** Sidecar argv prefix (default: `[sidecarBin]`). */
   args?: string[];
   onUnusable?: "noop" | "error";
+  /**
+   * After sending cancel IPC, wait this many ms for the execute to settle
+   * before rejecting with `aborted` (default 2000).
+   */
+  cancelSoftFailMs?: number;
 }
 
 export function resolveWindowsSidecarBin(): string | undefined {
@@ -57,6 +62,7 @@ export class WindowsSidecarSandboxExecutor implements SandboxExecutor {
   readonly #command: string | undefined;
   readonly #args: string[] | undefined;
   readonly #onUnusable: "noop" | "error";
+  readonly #cancelSoftFailMs: number;
   readonly #fallback = new WindowsJobSandboxExecutor({ onUnusable: "noop" });
   #child: ChildProcessWithoutNullStreams | undefined;
   #pending:
@@ -74,6 +80,7 @@ export class WindowsSidecarSandboxExecutor implements SandboxExecutor {
     this.#command = options.command;
     this.#args = options.args;
     this.#onUnusable = options.onUnusable ?? "error";
+    this.#cancelSoftFailMs = options.cancelSoftFailMs ?? 2_000;
   }
 
   async execute(
@@ -215,7 +222,7 @@ export class WindowsSidecarSandboxExecutor implements SandboxExecutor {
               pending.delete(req.id);
               still.reject(new Error("aborted"));
             }
-          }, 2_000);
+          }, this.#cancelSoftFailMs);
         }
       };
       if (signal?.aborted) {

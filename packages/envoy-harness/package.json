@@ -50,6 +50,7 @@
     "ai"
   ],
   "dependencies": {
+    "@envoymesh/envoy-process": "file:../envoy-process",
     "smol-toml": "^1.8.0",
     "yaml": "^2.6.0",
     "zod": "^3.23.8"

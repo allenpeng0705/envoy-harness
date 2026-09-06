@@ -19,6 +19,9 @@ importers:
 
   packages/envoy-harness:
     dependencies:
+      '@envoymesh/envoy-process':
+        specifier: file:../envoy-process
+        version: link:../envoy-process
       smol-toml:
         specifier: ^1.8.0
         version: 1.8.0
@@ -250,11 +253,26 @@ importers:
         specifier: ^2.1.0
         version: 2.1.9(@types/node@22.20.1)
 
+  packages/envoy-process:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.1
+      typescript:
+        specifier: ^5.6.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@22.20.1)
+
   packages/envoy-sandbox-win:
     dependencies:
       '@envoymesh/envoy-harness':
         specifier: file:../envoy-harness
         version: link:../envoy-harness
+      '@envoymesh/envoy-process':
+        specifier: file:../envoy-process
+        version: link:../envoy-process
     devDependencies:
       '@types/node':
         specifier: ^22.10.0
