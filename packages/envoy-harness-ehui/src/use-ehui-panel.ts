@@ -57,14 +57,14 @@ export function useEhuiPanel(options: UseEhuiPanelOptions) {
       } else if (panel === "git-status") {
         text = await dataSource.gitStatus();
       } else if (panel === "mesh") {
-        // Mesh is onboarding + live counts; peer endpoints are not on
-        // clusterStatus / listPeers (id/model/caps only) — do not mislabel
-        // model as an endpoint. Hosts with real configs can pass
-        // configuredPeers into formatMesh themselves later.
-        const c = await dataSource.clusterStatus();
+        const [c, configuredPeers] = await Promise.all([
+          dataSource.clusterStatus(),
+          dataSource.listConfiguredPeers(),
+        ]);
         text = formatMesh({
           connected: c.connected,
           failed: c.failed,
+          ...(configuredPeers.length > 0 ? { configuredPeers } : {}),
         });
       } else if (panel === "cluster") {
         text = formatCluster(await dataSource.clusterStatus());

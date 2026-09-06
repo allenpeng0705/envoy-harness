@@ -38,6 +38,7 @@ export function clusterStatusFromConnect(
     ...(entry.capabilities !== undefined
       ? { capabilities: entry.capabilities }
       : {}),
+    ...(entry.endpoint !== undefined ? { endpoint: entry.endpoint } : {}),
     health: health?.get(entry.id) ?? { ok: true },
   }));
   const failedPeers = result.failed.map((f) => ({
@@ -55,6 +56,7 @@ export function peerToInfo(entry: {
   id: string;
   model?: string;
   capabilities?: ReadonlyArray<string>;
+  endpoint?: string;
 }): ProtocolPeerInfo {
   return {
     id: entry.id,
@@ -62,6 +64,7 @@ export function peerToInfo(entry: {
     ...(entry.capabilities !== undefined
       ? { capabilities: entry.capabilities }
       : {}),
+    ...(entry.endpoint !== undefined ? { endpoint: entry.endpoint } : {}),
   };
 }
 

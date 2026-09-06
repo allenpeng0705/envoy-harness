@@ -241,6 +241,21 @@ export class EnvoyHarnessClient {
     return res.peers;
   }
 
+  /**
+   * Peers that include a TCP endpoint (Mesh configured-endpoints panel).
+   * Filters `peers/list` — no extra RPC.
+   */
+  async listConfiguredPeers(): Promise<Array<{ id: string; endpoint: string }>> {
+    const peers = await this.listPeers();
+    const out: Array<{ id: string; endpoint: string }> = [];
+    for (const p of peers) {
+      if (p.endpoint !== undefined && p.endpoint.trim().length > 0) {
+        out.push({ id: p.id, endpoint: p.endpoint });
+      }
+    }
+    return out;
+  }
+
   /** U1 — the host's cluster status (`cluster/status`, both dialects). */
   async clusterStatus(): Promise<ClientClusterStatus> {
     const res = (await this.#conn.request("cluster/status", {})) as {
@@ -531,6 +546,7 @@ export function createEhuiDataSource(
     gitStatus: () => client.gitStatus(sessionId),
     clusterStatus: () => client.clusterStatus(),
     listPeers: () => client.listPeers(),
+    listConfiguredPeers: () => client.listConfiguredPeers(),
     teamJobs: () => client.teamJobs(),
     scoreboardSummary: () => client.scoreboardSummary(),
     listSessions: () => client.listSessions(),

@@ -5,8 +5,11 @@
 
 export interface ClientPeerInfo {
   id: string;
+  /** Advertised model id (routing), when known. */
   model?: string;
   capabilities?: readonly string[];
+  /** `"host:port"` TCP endpoint when the host knows it (standalone peers). */
+  endpoint?: string;
 }
 
 export interface ClientClusterStatus {
@@ -14,6 +17,7 @@ export interface ClientClusterStatus {
     id: string;
     model?: string;
     capabilities?: readonly string[];
+    endpoint?: string;
     health: { ok: boolean; rttMs?: number; lastPingAt?: string; error?: string };
   }>;
   connected: number;
@@ -98,6 +102,12 @@ export interface EhuiDataSource {
   gitStatus(): Promise<string>;
   clusterStatus(): Promise<ClientClusterStatus>;
   listPeers(): Promise<ClientPeerInfo[]>;
+  /**
+   * Peers with a known TCP endpoint (for Mesh onboarding / config display).
+   * Distinct from live health (`clusterStatus`) — only returns rows that
+   * include a non-empty `endpoint`.
+   */
+  listConfiguredPeers(): Promise<Array<{ id: string; endpoint: string }>>;
   teamJobs(): Promise<ClientTeamJob[]>;
   scoreboardSummary(): Promise<ClientScoreboardEntry[]>;
   listSessions(): Promise<ClientSessionSummary[]>;

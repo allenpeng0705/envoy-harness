@@ -64,7 +64,12 @@ describe("EnvoyHarnessClient", () => {
       backend: createFakeSessionBackend({
         peers: [
           { id: "p1", model: "deepseek-chat" },
-          { id: "p2", model: "claude-instant", capabilities: ["research"] },
+          {
+            id: "p2",
+            model: "claude-instant",
+            capabilities: ["research"],
+            endpoint: "127.0.0.1:18123",
+          },
         ],
       }),
     });
@@ -72,7 +77,15 @@ describe("EnvoyHarnessClient", () => {
     const peers = await pair.client.listPeers();
     expect(peers).toEqual([
       { id: "p1", model: "deepseek-chat" },
-      { id: "p2", model: "claude-instant", capabilities: ["research"] },
+      {
+        id: "p2",
+        model: "claude-instant",
+        capabilities: ["research"],
+        endpoint: "127.0.0.1:18123",
+      },
+    ]);
+    expect(await pair.client.listConfiguredPeers()).toEqual([
+      { id: "p2", endpoint: "127.0.0.1:18123" },
     ]);
     pair.close();
   });

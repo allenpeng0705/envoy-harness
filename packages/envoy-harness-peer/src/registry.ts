@@ -19,6 +19,8 @@ export interface PeerEntry {
   model?: string;
   /** Capability tags the peer can run. */
   capabilities?: ReadonlyArray<string>;
+  /** `"host:port"` TCP endpoint used to connect (when known). */
+  endpoint?: string;
 }
 
 export class PeerRegistry {

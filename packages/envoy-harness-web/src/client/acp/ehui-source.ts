@@ -64,6 +64,19 @@ export function createBrowserEhuiDataSource(
       };
       return res.peers ?? [];
     },
+    async listConfiguredPeers() {
+      const res = (await host.request("peers/list", {})) as {
+        peers: ClientPeerInfo[];
+      };
+      const peers = res.peers ?? [];
+      const out: Array<{ id: string; endpoint: string }> = [];
+      for (const p of peers) {
+        if (p.endpoint !== undefined && p.endpoint.trim().length > 0) {
+          out.push({ id: p.id, endpoint: p.endpoint });
+        }
+      }
+      return out;
+    },
     async teamJobs() {
       const res = (await host.request("team/jobs", {})) as {
         jobs: ClientTeamJob[];

@@ -16,6 +16,7 @@ import {
   parsePeerUiArgs,
   PeerRegistry,
   PeerScoreboard,
+  peerToInfo,
 } from "../src/index.js";
 import { stubAdapter } from "./helpers.js";
 
@@ -63,7 +64,12 @@ describe("clusterStatusFromConnect", () => {
   it("maps connected peers + failed entries with health", () => {
     const pair = pairFor("p1", "deepseek-chat");
     const registry = new PeerRegistry();
-    registry.register({ id: "p1", client: pair.client, model: "deepseek-chat" });
+    registry.register({
+      id: "p1",
+      client: pair.client,
+      model: "deepseek-chat",
+      endpoint: "127.0.0.1:8100",
+    });
     const status = clusterStatusFromConnect(
       {
         registry,
@@ -77,6 +83,7 @@ describe("clusterStatusFromConnect", () => {
         {
           id: "p1",
           model: "deepseek-chat",
+          endpoint: "127.0.0.1:8100",
           health: { ok: true, rttMs: 12 },
         },
         { id: "p2", health: { ok: false, error: "connect refused" } },
@@ -85,6 +92,18 @@ describe("clusterStatusFromConnect", () => {
       failed: 1,
     });
     pair.close();
+  });
+});
+
+describe("peerToInfo", () => {
+  it("includes endpoint when present", () => {
+    expect(
+      peerToInfo({
+        id: "p1",
+        model: "m",
+        endpoint: "10.0.0.2:4000",
+      }),
+    ).toEqual({ id: "p1", model: "m", endpoint: "10.0.0.2:4000" });
   });
 });
 

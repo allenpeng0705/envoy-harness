@@ -134,6 +134,7 @@ export async function connectPeerClients(
       registry.register({
         id: peer.id,
         client: attempt.client,
+        endpoint: peer.endpoint,
         ...(peer.model !== undefined ? { model: peer.model } : {}),
         ...(peer.capabilities !== undefined
           ? { capabilities: peer.capabilities }

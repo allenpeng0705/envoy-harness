@@ -108,6 +108,8 @@ export interface ProtocolPeerInfo {
   id: string;
   model?: string;
   capabilities?: readonly string[];
+  /** `"host:port"` when the host wired a TCP peer endpoint. */
+  endpoint?: string;
 }
 
 /** U1 — per-peer health snapshot for the cluster rail. */
@@ -124,6 +126,7 @@ export interface ProtocolClusterStatus {
     id: string;
     model?: string;
     capabilities?: readonly string[];
+    endpoint?: string;
     health: ProtocolPeerHealth;
   }>;
   connected: number;

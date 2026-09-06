@@ -87,6 +87,7 @@ export class ManagedPeerCluster implements ConnectResultLike {
       const unregister = this.registry.register({
         id: peer.id,
         client,
+        endpoint: peer.endpoint,
         ...(peer.model !== undefined ? { model: peer.model } : {}),
         ...(peer.capabilities !== undefined
           ? { capabilities: peer.capabilities }

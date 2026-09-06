@@ -10,7 +10,24 @@ import {
   formatPeers,
   formatScoreboard,
   formatTeamJobs,
+  peerLabel,
 } from "../src/ehui-format.js";
+
+describe("peerLabel", () => {
+  it("formats id alone", () => {
+    expect(peerLabel({ id: "w1" })).toBe("w1");
+  });
+
+  it("appends model and capabilities", () => {
+    expect(
+      peerLabel({
+        id: "w1",
+        model: "gpt",
+        capabilities: ["code", "research"],
+      }),
+    ).toBe("w1 gpt caps=code,research");
+  });
+});
 
 describe("formatMesh", () => {
   it("is an onboarding guide distinct from cluster", () => {

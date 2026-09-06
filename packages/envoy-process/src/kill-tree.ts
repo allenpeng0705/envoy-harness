@@ -1,8 +1,12 @@
 /**
  * Kill a process and its descendants.
  *
- * Single source of truth for Package 1 and `envoy-sandbox-win` (the old
- * mirrored copy in `envoy-sandbox-win/src/execute.ts` was removed).
+ * **Single source of truth** for the monorepo. Consumers:
+ * - `@envoymesh/envoy-harness` (re-exports via `src/process/kill-tree.ts`)
+ * - `@envoymesh/envoy-sandbox-win`
+ *
+ * Do not reintroduce a private copy (the former duplicate in
+ * `envoy-sandbox-win/src/execute.ts` was deleted in the R6 review pass).
  *
  * On Windows, Node's `ChildProcess.kill` / `process.kill(pid)` only
  * terminates the direct child. Nested `cmd.exe` / shell grandchildren
