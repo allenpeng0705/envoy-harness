@@ -9,9 +9,9 @@ import * as path from "node:path";
 
 import { loadConfig, resolveConfigPath } from "../../config/index.js";
 import {
-  isWindowsSandboxAvailable,
   isWindowsSidecarAvailable,
   LandlockSandboxExecutor,
+  resolveSandboxExecutor,
   SeatbeltSandboxExecutor,
 } from "../../sandbox/index.js";
 import { isPtyAvailable } from "../../terminal/pty-backend.js";
@@ -122,13 +122,33 @@ export async function runDoctorChecks(
   }
 
   if (process.platform === "win32") {
+    const winPolicy = {
+      mode: "read-only" as const,
+      approval: "on-request" as const,
+      backend: "windows-sandbox" as const,
+      writableRoots: [] as string[],
+      networkAccess: false,
+      slashTmpWritable: true,
+    };
+    const exec = resolveSandboxExecutor({
+      policy: winPolicy,
+      force: "windows-sandbox",
+    });
+    const probe = await exec.execute("echo ok", {
+      policy: winPolicy,
+      cwd: process.cwd(),
+      signal: new AbortController().signal,
+    });
     const sidecar = isWindowsSidecarAvailable();
     checks.push({
       name: "windows_sandbox",
-      ok: isWindowsSandboxAvailable(),
-      detail: sidecar
-        ? "F2b sidecar available (envoy-sandbox-win); FS ACL when fsIsolation=true"
-        : "F2a job-object scaffold (install @envoymesh/envoy-sandbox-win for F2b)",
+      ok: probe.exitCode === 0 && !probe.isError,
+      detail:
+        probe.exitCode === 0 && !probe.isError
+          ? sidecar
+            ? "F2b sidecar probe ok (echo)"
+            : "F2a job-object probe ok (echo)"
+          : probe.stderr.trim() || `exit ${probe.exitCode}`,
     });
   } else {
     checks.push({

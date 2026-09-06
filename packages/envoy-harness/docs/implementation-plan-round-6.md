@@ -1,6 +1,7 @@
 # Round 6 — Windows sandbox lifecycle (F2 harden)
 
-> **Status:** IN PROGRESS (2026-09-06).
+> **Status:** IMPLEMENTED (2026-09-06). R6.1–R6.4 landed (process-tree
+> kill, spawnCapture abort, sidecar cancel, doctor probe).
 > **Design:** [`implementation-plan-chunk-u6-product-shell.md`](./implementation-plan-chunk-u6-product-shell.md) §F2.
 > **Master index:** [`implementation-plan.md`](./implementation-plan.md).
 > **Prior round:** [`implementation-plan-round-5.md`](./implementation-plan-round-5.md) (IMPLEMENTED).
@@ -42,7 +43,7 @@ backend. No Rust FS isolation.
 | R6.1 killProcessTree | **done** |
 | R6.2 spawnCapture abort | **done** |
 | R6.3 sidecar cancel | **done** |
-| R6.4 doctor + docs | pending |
+| R6.4 doctor + docs | **done** |
 
 ## Success criteria
 

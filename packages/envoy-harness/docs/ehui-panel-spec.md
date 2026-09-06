@@ -97,13 +97,13 @@ envoy-harness tui --spawn --provider openai --model gpt-4o
 
 This delegates to `@envoymesh/envoy-harness-tui` with `--spawn` (live agent).
 
-## Windows sandbox (F2a)
+## Windows sandbox (F2a + R6)
 
 `sandbox_backend = "windows-sandbox"` and `--sandbox-executor windows-sandbox`
-activate the F2a scaffold (`cmd.exe` + job-object lifecycle). FS isolation
-(Codex `windows-sandbox-rs` pattern) is **F2b** — not required for EHUI hosts.
-
-`envoy-harness doctor` reports `windows_sandbox` on win32.
+activate the Windows executor (job-object scaffold + optional sidecar).
+`envoy-harness doctor` runs an `echo ok` probe on win32. Process-tree
+cancel uses `taskkill /T` (Round 6). FS isolation (`fsIsolation: true`)
+remains deferred.
 
 ## Versioning
 

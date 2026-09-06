@@ -1,8 +1,9 @@
 # Implementation plan — U6 product shell + Windows sandbox + IDE bridge
 
-> **Status:** U6a.1–U6a.5 **done**. F2 lifecycle **Round 6**
-> ([`implementation-plan-round-6.md`](./implementation-plan-round-6.md)).
-> IDE U6b–c remain **planned** (EnvoyMesh / EnvoyGo).
+> **Status:** U6a.1–U6a.5 **done**. F2 lifecycle **done** via Round 6
+> ([`implementation-plan-round-6.md`](./implementation-plan-round-6.md));
+> FS isolation (`fsIsolation: true`) still deferred. IDE U6b–c remain
+> **planned** (EnvoyMesh / EnvoyGo).
 
 Targets the gaps vs Codex / Claude Code the team flagged:
 

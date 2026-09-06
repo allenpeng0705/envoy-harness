@@ -48,7 +48,7 @@ describe("WindowsSidecarSandboxExecutor cancel IPC", () => {
     const second = await exec.execute("echo ok", {
       cwd: process.cwd(),
       policy: POLICY,
-      signal: undefined,
+      signal: new AbortController().signal,
     });
     expect(second.stderr, `second failed: ${second.stderr}`).not.toMatch(
       /not found|exited|aborted/i,

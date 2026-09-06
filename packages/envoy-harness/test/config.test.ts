@@ -76,6 +76,18 @@ describe("loadConfigFile: well-formed TOML", () => {
     });
   });
 
+  it("reads sandbox_backend = windows-sandbox (F2c)", async () => {
+    const file = path.join(tmpDir, "config-win.toml");
+    await writeFile(
+      file,
+      [`sandbox_backend = "windows-sandbox"`, ``].join("\n"),
+      "utf8",
+    );
+
+    const layer = await loadConfigFile(file);
+    expect(layer.sandboxBackend).toBe("windows-sandbox");
+  });
+
   it("accepts a partial file (only some fields set)", async () => {
     const file = path.join(tmpDir, "config.toml");
     await writeFile(

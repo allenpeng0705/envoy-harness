@@ -18,14 +18,14 @@ intentionally design-light — the executable chunking lives here.
 
 ## Distributed collaboration — the major feature
 
-> **Status:** Rounds 1–5 ✅ DONE. **Round 6 IN PROGRESS (2026-09-06)** —
-> Windows sandbox lifecycle (F2 harden: process-tree kill, sidecar cancel, doctor probe).
+> **Status:** Rounds 1–6 ✅ DONE. Round 6 (2026-09-06): Windows sandbox
+> lifecycle (process-tree kill, sidecar cancel, doctor probe).
 >
 > **Design:** [`docs/distributed-collaboration.md`](./distributed-collaboration.md)
 > (canonical: protocol, seams, scenarios, competitive landscape).
 > **Round 4 plan:** [`docs/implementation-plan-round-4.md`](./implementation-plan-round-4.md) (IMPLEMENTED).
 > **Round 5 plan:** [`docs/implementation-plan-round-5.md`](./implementation-plan-round-5.md) (IMPLEMENTED).
-> **Round 6 plan:** [`docs/implementation-plan-round-6.md`](./implementation-plan-round-6.md).
+> **Round 6 plan:** [`docs/implementation-plan-round-6.md`](./implementation-plan-round-6.md) (IMPLEMENTED).
 
 **Strategic framing:** envoy-harness is a **full harness with real local
 sub-agents** (`task` → `LocalMeshSubmitter` + fan-out + team
@@ -99,7 +99,7 @@ RPC and CLI discovery flags deferred to Round 5.
 | **R5-Wire** | R5.1–R5.4 | Peer `jobs/*` / `exec/*` RPC; discovery CLI rail; adapter transport factories | **P0–P1** |
 | **R5-Shell** | R5.5–R5.6 | U6a.4 permission scroll; U6a.5 resume + image hint | P1 |
 
-### Round 6 chunk roadmap (in progress)
+### Round 6 chunk roadmap (IMPLEMENTED)
 
 > Full specs: [`implementation-plan-round-6.md`](./implementation-plan-round-6.md).
 >
