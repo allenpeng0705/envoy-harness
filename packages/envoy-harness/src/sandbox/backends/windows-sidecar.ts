@@ -192,10 +192,31 @@ export class WindowsSidecarSandboxExecutor implements SandboxExecutor {
     return new Promise<SandboxResult>((resolve, reject) => {
       pending.set(req.id, { resolve, reject });
       const onAbort = (): void => {
-        pending.delete(req.id);
-        child.kill();
-        this.#resetChild();
-        reject(new Error("aborted"));
+        // R6.3 — cancel the in-flight execute; keep the sidecar alive.
+        try {
+          child.stdin.write(
+            JSON.stringify({
+              id: randomUUID(),
+              method: "cancel",
+              params: { id: req.id },
+            }) + "\n",
+          );
+        } catch {
+          // stdin may be closed; fall through to reject
+        }
+        // Wait for the execute response (aborted child close) if still
+        // pending; otherwise reject immediately if already removed.
+        const waiter = pending.get(req.id);
+        if (waiter !== undefined) {
+          // Soft-fail path: if cancel response never maps, reject soon.
+          setTimeout(() => {
+            const still = pending.get(req.id);
+            if (still !== undefined) {
+              pending.delete(req.id);
+              still.reject(new Error("aborted"));
+            }
+          }, 2_000);
+        }
       };
       if (signal?.aborted) {
         onAbort();

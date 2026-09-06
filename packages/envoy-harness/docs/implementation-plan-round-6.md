@@ -41,7 +41,7 @@ backend. No Rust FS isolation.
 | R6.0 Plan artifacts | **done** |
 | R6.1 killProcessTree | **done** |
 | R6.2 spawnCapture abort | **done** |
-| R6.3 sidecar cancel | pending |
+| R6.3 sidecar cancel | **done** |
 | R6.4 doctor + docs | pending |
 
 ## Success criteria

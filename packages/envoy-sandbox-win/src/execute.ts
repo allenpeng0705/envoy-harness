@@ -4,7 +4,13 @@
  * **Scaffold:** validates cwd against writable roots, runs via
  * `cmd.exe /c` on Windows (job-object lifecycle). Full Codex-class
  * FS ACL isolation (`windows-sandbox-rs`) swaps in behind this API.
+ *
+ * R6.3: honors `signal` with process-tree kill so cancel IPC aborts
+ * nested shells without killing the sidecar process.
  */
+
+import type { ChildProcess } from "node:child_process";
+import { spawnSync } from "node:child_process";
 
 import type { SandboxPolicy } from "@envoymesh/envoy-harness";
 
@@ -18,6 +24,29 @@ export interface ExecuteOptions {
   policy: SandboxPolicy;
   maxOutputBytes?: number;
   signal?: AbortSignal;
+}
+
+/** Local kill-tree (mirrors Package-1 `killProcessTree`). */
+function killProcessTree(pid: number | undefined | null): void {
+  if (pid === undefined || pid === null || !Number.isFinite(pid) || pid <= 0) {
+    return;
+  }
+  if (process.platform === "win32") {
+    try {
+      spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], {
+        windowsHide: true,
+        stdio: "ignore",
+      });
+    } catch {
+      // ignore
+    }
+    return;
+  }
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {
+    // ignore
+  }
 }
 
 export async function executeSandboxed(
@@ -73,6 +102,7 @@ async function executeWin32(
     }),
     maxOutputBytes,
     { fsIsolation: false },
+    signal,
   );
 }
 
@@ -91,21 +121,38 @@ async function executeSh(
     }),
     maxOutputBytes,
     { fsIsolation: false },
+    signal,
   );
 }
 
 function captureSpawn(
-  child: import("node:child_process").ChildProcess,
+  child: ChildProcess,
   cap: number,
   meta: { fsIsolation: boolean },
+  signal?: AbortSignal,
 ): Promise<SidecarExecuteResult> {
   return new Promise((resolve) => {
+    const onAbort = (): void => {
+      killProcessTree(child.pid);
+    };
+    if (signal !== undefined) {
+      if (signal.aborted) {
+        onAbort();
+      } else {
+        signal.addEventListener("abort", onAbort, { once: true });
+      }
+    }
+
     const outChunks: Buffer[] = [];
     const errChunks: Buffer[] = [];
     let outTotal = 0;
     let errTotal = 0;
     let outTruncated = false;
     let errTruncated = false;
+
+    const cleanup = (): void => {
+      signal?.removeEventListener("abort", onAbort);
+    };
 
     const onOut = (chunk: Buffer): void => {
       if (outTotal >= cap) {
@@ -131,6 +178,7 @@ function captureSpawn(
     child.stdout?.on("data", onOut);
     child.stderr?.on("data", onErr);
     child.on("error", (err) => {
+      cleanup();
       resolve({
         stdout: "",
         stderr: err.message,
@@ -142,6 +190,7 @@ function captureSpawn(
       });
     });
     child.on("close", (code) => {
+      cleanup();
       const stdout = Buffer.concat(outChunks).toString("utf8");
       const stderr = Buffer.concat(errChunks).toString("utf8");
       const exitCode = code ?? 1;

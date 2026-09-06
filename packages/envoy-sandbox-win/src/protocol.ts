@@ -11,6 +11,11 @@ export interface SidecarExecuteParams {
   maxOutputBytes?: number;
 }
 
+export interface SidecarCancelParams {
+  /** Id of the in-flight `execute` request to abort. */
+  id: string;
+}
+
 export interface SidecarExecuteResult {
   stdout: string;
   stderr: string;
@@ -24,13 +29,16 @@ export interface SidecarExecuteResult {
 
 export interface SidecarRequest {
   id: string;
-  method: "execute" | "ping";
-  params?: SidecarExecuteParams;
+  method: "execute" | "ping" | "cancel";
+  params?: SidecarExecuteParams | SidecarCancelParams;
 }
 
 export interface SidecarResponse {
   id: string;
   ok: boolean;
-  result?: SidecarExecuteResult | { pong: true; platform: string };
+  result?:
+    | SidecarExecuteResult
+    | { pong: true; platform: string }
+    | { cancelled: boolean };
   error?: string;
 }

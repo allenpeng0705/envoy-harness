@@ -1,12 +1,27 @@
 #!/usr/bin/env node
 /**
  * `envoy-sandbox-win` — long-lived sidecar (newline JSON on stdin/stdout).
+ *
+ * R6.3: requests are handled concurrently so `cancel` can arrive while
+ * an `execute` is in flight. Each execute owns an AbortController keyed
+ * by request id.
  */
 
 import * as readline from "node:readline";
 
 import { executeSandboxed } from "./execute.js";
-import type { SidecarRequest, SidecarResponse } from "./protocol.js";
+import type {
+  SidecarCancelParams,
+  SidecarExecuteParams,
+  SidecarRequest,
+  SidecarResponse,
+} from "./protocol.js";
+
+const inFlight = new Map<string, AbortController>();
+
+function writeResponse(res: SidecarResponse): void {
+  process.stdout.write(JSON.stringify(res) + "\n");
+}
 
 async function handle(req: SidecarRequest): Promise<SidecarResponse> {
   if (req.method === "ping") {
@@ -16,19 +31,38 @@ async function handle(req: SidecarRequest): Promise<SidecarResponse> {
       result: { pong: true, platform: process.platform },
     };
   }
+  if (req.method === "cancel") {
+    const params = req.params as SidecarCancelParams | undefined;
+    if (params?.id === undefined || params.id.length === 0) {
+      return { id: req.id, ok: false, error: "cancel requires params.id" };
+    }
+    const ac = inFlight.get(params.id);
+    if (ac !== undefined) {
+      ac.abort();
+    }
+    return { id: req.id, ok: true, result: { cancelled: true } };
+  }
   if (req.method === "execute") {
-    if (req.params === undefined) {
+    const params = req.params as SidecarExecuteParams | undefined;
+    if (params === undefined) {
       return { id: req.id, ok: false, error: "execute requires params" };
     }
-    const result = await executeSandboxed({
-      command: req.params.command,
-      cwd: req.params.cwd,
-      policy: req.params.policy,
-      ...(req.params.maxOutputBytes !== undefined
-        ? { maxOutputBytes: req.params.maxOutputBytes }
-        : {}),
-    });
-    return { id: req.id, ok: true, result };
+    const ac = new AbortController();
+    inFlight.set(req.id, ac);
+    try {
+      const result = await executeSandboxed({
+        command: params.command,
+        cwd: params.cwd,
+        policy: params.policy,
+        ...(params.maxOutputBytes !== undefined
+          ? { maxOutputBytes: params.maxOutputBytes }
+          : {}),
+        signal: ac.signal,
+      });
+      return { id: req.id, ok: true, result };
+    } finally {
+      inFlight.delete(req.id);
+    }
   }
   return { id: req.id, ok: false, error: `unknown method: ${req.method}` };
 }
@@ -42,27 +76,22 @@ async function main(): Promise<void> {
     try {
       req = JSON.parse(trimmed) as SidecarRequest;
     } catch {
-      process.stdout.write(
-        JSON.stringify({
-          id: "",
-          ok: false,
-          error: "invalid JSON",
-        }) + "\n",
-      );
+      writeResponse({
+        id: "",
+        ok: false,
+        error: "invalid JSON",
+      });
       continue;
     }
-    try {
-      const res = await handle(req);
-      process.stdout.write(JSON.stringify(res) + "\n");
-    } catch (err) {
-      process.stdout.write(
-        JSON.stringify({
+    void handle(req)
+      .then((res) => writeResponse(res))
+      .catch((err) => {
+        writeResponse({
           id: req.id,
           ok: false,
           error: err instanceof Error ? err.message : String(err),
-        }) + "\n",
-      );
-    }
+        });
+      });
   }
 }
 
