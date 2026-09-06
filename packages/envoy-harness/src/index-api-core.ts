@@ -576,3 +576,5 @@ export {
   type ResolveSandboxExecutorOptions,
 } from "./sandbox/index.js";
 
+export { killProcessTree } from "./process/kill-tree.js";
+

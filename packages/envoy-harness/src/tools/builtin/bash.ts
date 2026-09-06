@@ -35,6 +35,7 @@ import { spawn } from "node:child_process";
 
 import { z } from "zod";
 
+import { killProcessTree } from "../../process/kill-tree.js";
 import {
   createProcessJobHooks,
   type JobRegistry,
@@ -283,12 +284,12 @@ async function runBash(
 
     const timer = setTimeout(() => {
       killed = true;
-      child.kill("SIGKILL");
+      killProcessTree(child.pid);
     }, timeout);
 
     const onAbort = () => {
       killed = true;
-      child.kill("SIGKILL");
+      killProcessTree(child.pid);
     };
     if (ctx.abortSignal.aborted) {
       onAbort();

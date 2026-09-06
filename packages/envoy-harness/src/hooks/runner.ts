@@ -62,6 +62,7 @@
 
 import { spawn } from "node:child_process";
 
+import { killProcessTree } from "../process/kill-tree.js";
 import type { HookDecision, HookEventName } from "../types.js";
 
 /** Default timeout for shell handlers, in milliseconds. */
@@ -111,7 +112,7 @@ export async function runShellHandler(
 
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill("SIGKILL");
+      killProcessTree(child.pid);
     }, timeoutMs);
 
     if (child.stdout) {

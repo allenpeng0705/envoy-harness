@@ -4,6 +4,7 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 
+import { killProcessTree } from "../process/kill-tree.js";
 import type { JobHooks, JobOutcome } from "./types.js";
 
 export interface ProcessJobOptions {
@@ -104,17 +105,22 @@ export function createProcessJobHooks(options: ProcessJobOptions): JobHooks {
       if (settled || cancelled) return;
       cancelled = true;
       if (child === undefined || child.killed) return;
+      if (process.platform === "win32") {
+        killProcessTree(child.pid);
+        finish({
+          status: "killed",
+          detail: reason ?? "taskkill",
+          output: buffer.toString("utf8"),
+        });
+        return;
+      }
       try {
         child.kill("SIGTERM");
       } catch {
         // ignore
       }
       killTimer = setTimeout(() => {
-        try {
-          child?.kill("SIGKILL");
-        } catch {
-          // ignore
-        }
+        killProcessTree(child?.pid);
         finish({
           status: "killed",
           detail: reason ?? "SIGKILL",

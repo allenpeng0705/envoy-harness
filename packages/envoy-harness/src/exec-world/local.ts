@@ -6,6 +6,7 @@ import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { spawn } from "node:child_process";
 
+import { killProcessTree } from "../process/kill-tree.js";
 import type {
   ExecShellResult,
   ExecWorld,
@@ -74,11 +75,11 @@ export function createLocalExecWorld(): ExecWorld {
 
         const timer = setTimeout(() => {
           timedOut = true;
-          child.kill("SIGKILL");
+          killProcessTree(child.pid);
         }, timeout);
 
         const onAbort = () => {
-          child.kill("SIGKILL");
+          killProcessTree(child.pid);
           clearTimeout(timer);
           reject(new ExecWorldError("exec-world aborted", "TRANSPORT"));
         };
