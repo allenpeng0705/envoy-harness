@@ -37,7 +37,16 @@ without fighting stdin.
 ## Tests
 
 - `test/interaction/host-bridge.test.ts` — no-host, forward, abort.
-- `test/protocol/protocol.test.ts` — park until host answers; cancel unblocks.
+- `test/protocol/protocol.test.ts` — park until host answers; cancel unblocks;
+  ACP + SDK `session/user_question` round-trips (fake backend).
+- `envoy-harness-tui/test/user-question.test.ts` — answer / cancel waiters.
+
+## Review follow-ups (2026-09-06)
+
+- Split `agent-backend-host.ts`, `acp-params.ts`, `host-request.ts` (module-size).
+- Shared ACP/SDK host permission + user-question helpers.
+- TUI surfaces `recommendedIndex` as `(recommended)` on options.
+- Fixed pre-existing `repl-tier2` compact count (3, not 4) + command table size.
 
 ## Accept
 

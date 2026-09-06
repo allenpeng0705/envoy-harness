@@ -268,7 +268,13 @@ export class TuiSession {
       this.#userQuestionWaiter = { req, resolve };
       const opts =
         req.options !== undefined && req.options.length > 0
-          ? `\n  options: ${req.options.map((o, i) => `${i + 1}. ${o}`).join(" · ")}`
+          ? `\n  options: ${req.options
+              .map((o, i) => {
+                const mark =
+                  req.recommendedIndex === i ? " (recommended)" : "";
+                return `${i + 1}. ${o}${mark}`;
+              })
+              .join(" · ")}`
           : "";
       this.#push(
         "status",

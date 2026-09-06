@@ -157,6 +157,44 @@ describe("ACP server", () => {
     pair.close();
   });
 
+  it("session/user_question round-trip", async () => {
+    const pair = createInProcessJsonRpcPair();
+    const backend = createFakeSessionBackend({
+      userQuestion: {
+        prompt: "Continue?",
+        options: ["yes", "no"],
+        recommendedIndex: 0,
+      },
+    });
+    attachAcpServer({ connection: pair.server, backend });
+
+    pair.client.setRequestHandler(async (method, params) => {
+      if (method === "session/user_question") {
+        expect(params).toMatchObject({
+          prompt: "Continue?",
+          options: ["yes", "no"],
+          recommendedIndex: 0,
+        });
+        return { value: "yes", optionIndex: 0, cancelled: false };
+      }
+      throw new Error(`unexpected ${method}`);
+    });
+
+    await pair.client.request("initialize", {});
+    const { sessionId } = (await pair.client.request("session/new", {})) as {
+      sessionId: string;
+    };
+    const result = (await pair.client.request("session/prompt", {
+      sessionId,
+      prompt: { text: "ask me" },
+    })) as { stopReason: string };
+    expect(result.stopReason).toBe("end_turn");
+    expect(backend.userAnswers).toEqual([
+      { value: "yes", optionIndex: 0, cancelled: false },
+    ]);
+    pair.close();
+  });
+
   it("session/cancel aborts an in-flight prompt", async () => {
     const pair = createInProcessJsonRpcPair();
     const backend = createFakeSessionBackend();
@@ -229,6 +267,33 @@ describe("SDK server", () => {
     })) as { stopReason: string };
     expect(result.stopReason).toBe("end_turn");
     expect(events.length).toBeGreaterThanOrEqual(1);
+    pair.close();
+  });
+
+  it("session/user_question round-trip", async () => {
+    const pair = createInProcessJsonRpcPair();
+    const backend = createFakeSessionBackend({
+      userQuestion: { prompt: "Ship it?", options: ["y", "n"] },
+    });
+    attachSdkServer({ connection: pair.server, backend });
+
+    pair.client.setRequestHandler(async (method, params) => {
+      if (method === "session/user_question") {
+        expect(params).toMatchObject({ prompt: "Ship it?" });
+        return { value: "y", optionIndex: 0, cancelled: false };
+      }
+      throw new Error(`unexpected ${method}`);
+    });
+
+    const { sessionId } = (await pair.client.request("session/create", {})) as {
+      sessionId: string;
+    };
+    const result = (await pair.client.request("session/prompt", {
+      sessionId,
+      prompt: { text: "go" },
+    })) as { stopReason: string };
+    expect(result.stopReason).toBe("end_turn");
+    expect(backend.userAnswers[0]?.value).toBe("y");
     pair.close();
   });
 });

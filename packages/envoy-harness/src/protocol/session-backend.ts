@@ -353,6 +353,15 @@ export function createFakeSessionBackend(options?: {
   tools?: ProtocolToolInfo[];
   config?: Record<string, unknown>;
   permissionTool?: string;
+  /**
+   * R4.1 — when set, prompt asks a host user question with this prompt
+   * before echoing (for ACP/SDK round-trip tests).
+   */
+  userQuestion?: {
+    prompt: string;
+    options?: ReadonlyArray<string>;
+    recommendedIndex?: number;
+  };
   peers?: ProtocolPeerInfo[];
   clusterStatus?: ProtocolClusterStatus;
   teamJobs?: ProtocolTeamJob[];
@@ -366,6 +375,7 @@ export function createFakeSessionBackend(options?: {
 }): ProtocolSessionBackend & {
   cancelled: string[];
   prompts: Array<{ sessionId: string; text: string }>;
+  userAnswers: ProtocolUserQuestionAnswer[];
 } {
   let seq = 0;
   const sessions = new Set<string>();
@@ -376,6 +386,7 @@ export function createFakeSessionBackend(options?: {
   const aborts = new Map<string, AbortController>();
   const cancelled: string[] = [];
   const prompts: Array<{ sessionId: string; text: string }> = [];
+  const userAnswers: ProtocolUserQuestionAnswer[] = [];
   const tools = options?.tools ?? [
     { name: "bash", description: "Run a shell command" },
   ];
@@ -383,6 +394,7 @@ export function createFakeSessionBackend(options?: {
   return {
     cancelled,
     prompts,
+    userAnswers,
     async createSession() {
       const sessionId = `sess-${++seq}`;
       sessions.add(sessionId);
@@ -422,6 +434,34 @@ export function createFakeSessionBackend(options?: {
             return {
               stopReason: "permission_denied",
               messages: [{ role: "assistant", text: "permission denied" }],
+            };
+          }
+        }
+        if (options?.userQuestion !== undefined) {
+          if (params.requestUserQuestion === undefined) {
+            return {
+              stopReason: "end_turn",
+              messages: [
+                { role: "assistant", text: "user_question unsupported" },
+              ],
+            };
+          }
+          const answer = await params.requestUserQuestion({
+            sessionId: params.sessionId,
+            questionId: `uq-${params.sessionId}`,
+            prompt: options.userQuestion.prompt,
+            ...(options.userQuestion.options !== undefined
+              ? { options: options.userQuestion.options }
+              : {}),
+            ...(options.userQuestion.recommendedIndex !== undefined
+              ? { recommendedIndex: options.userQuestion.recommendedIndex }
+              : {}),
+          });
+          userAnswers.push(answer);
+          if (answer.cancelled) {
+            return {
+              stopReason: "cancelled",
+              messages: [{ role: "assistant", text: "question cancelled" }],
             };
           }
         }

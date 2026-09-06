@@ -5,6 +5,10 @@
 import type { JsonRpcConnection } from "./connection.js";
 import type { ProtocolSessionBackend } from "./session-backend.js";
 import { JsonRpcError, JsonRpcErrorCode } from "./types.js";
+import {
+  requestHostPermission,
+  requestHostUserQuestion,
+} from "./host-request.js";
 
 export interface SdkServerOptions {
   connection: JsonRpcConnection;
@@ -61,61 +65,9 @@ export function attachSdkServer(options: SdkServerOptions): () => void {
             sessionId: p.sessionId,
             prompt: p.prompt,
             signal: ac.signal,
-            requestPermission: async (req) => {
-              // See acp-server.ts for the rationale: defensive
-              // parse the host's response; anything other than
-              // a literal `"allow"` is deny. Same 5-minute
-              // ceiling for permission waits.
-              const raw = await connection.request(
-                "session/request_permission",
-                {
-                  sessionId: req.sessionId,
-                  toolName: req.toolName,
-                  description: req.description,
-                  args: req.args,
-                },
-                5 * 60_000,
-              );
-              const decision =
-                typeof raw === "object" &&
-                raw !== null &&
-                "decision" in raw &&
-                typeof (raw as { decision: unknown }).decision === "string"
-                  ? (raw as { decision: string }).decision
-                  : undefined;
-              return decision === "allow" ? "allow" : "deny";
-            },
-            requestUserQuestion: async (req) => {
-              const raw = await connection.request(
-                "session/user_question",
-                {
-                  sessionId: req.sessionId,
-                  questionId: req.questionId,
-                  prompt: req.prompt,
-                  ...(req.options !== undefined
-                    ? { options: [...req.options] }
-                    : {}),
-                  ...(req.recommendedIndex !== undefined
-                    ? { recommendedIndex: req.recommendedIndex }
-                    : {}),
-                  ...(req.multiline !== undefined
-                    ? { multiline: req.multiline }
-                    : {}),
-                },
-                5 * 60_000,
-              );
-              if (typeof raw !== "object" || raw === null) {
-                return { value: "", cancelled: true };
-              }
-              const obj = raw as Record<string, unknown>;
-              return {
-                value: typeof obj.value === "string" ? obj.value : "",
-                ...(typeof obj.optionIndex === "number"
-                  ? { optionIndex: obj.optionIndex }
-                  : {}),
-                cancelled: obj.cancelled === true,
-              };
-            },
+            requestPermission: (req) => requestHostPermission(connection, req),
+            requestUserQuestion: (req) =>
+              requestHostUserQuestion(connection, req),
             onUpdate: (msg) => {
               connection.notify("session/event", {
                 sessionId: p.sessionId,

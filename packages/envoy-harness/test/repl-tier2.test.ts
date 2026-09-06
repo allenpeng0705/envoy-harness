@@ -280,7 +280,9 @@ describe("/compact", () => {
       historyPath: "",
       skills,
     });
-    expect(out.data).toMatch(/^compacted: 4 → 4 messages \(kept last 100\)$/m);
+    expect(out.data).toMatch(/^compacted: 3 → 3 messages \(kept last 100\)$/m);
+    // Skill catalog is registered but not injected as a transcript
+    // message in this path (system + user + assistant = 3).
   });
 
   it("rejects a non-numeric <keep> arg", async () => {
@@ -615,14 +617,14 @@ describe("/init", () => {
 // ---------------------------------------------------------------------------
 
 describe("F17.5 dispatch table", () => {
-  it("the dispatch table covers all 20 built-in commands (no missing, no collisions)", () => {
-    // 9 from F17.2 + 8 from F17.2.5 + 3 from F17.5 = 20.
+  it("the dispatch table covers all built-in commands (no missing, no collisions)", () => {
+    // F17.2 + F17.2.5 + F17.5 + Round 4 additions (e.g. /preset).
     const allNames = [
       ...BUILTIN_COMMANDS,
       ...BUILTIN_INFO_COMMANDS,
       ...BUILTIN_TIER2_COMMANDS,
     ].map((c) => c.name);
     expect(new Set(allNames).size).toBe(allNames.length);
-    expect(allNames.length).toBe(20);
+    expect(allNames.length).toBe(21);
   });
 });
