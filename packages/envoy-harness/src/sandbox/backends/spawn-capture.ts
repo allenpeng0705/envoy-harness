@@ -1,28 +1,27 @@
 /**
  * Shared spawn-and-capture helper for all sandbox executors
- * (landlock, seatbelt, noop).
+ * (landlock, seatbelt, noop, windows-job).
  *
- * **Why this exists:** the three backends each had their own
- * near-identical copy of the same `spawn → pipe stdout/stderr
- * → resolve on close` boilerplate. None of them enforced an
- * output cap, so a chatty command (`cat /dev/urandom`) would
- * OOM the process. This helper:
+ * **Why this exists:** the backends each had near-identical
+ * `spawn → pipe stdout/stderr → resolve on close` boilerplate.
+ * This helper:
  *
  * 1. Spawns the child with `stdio: ["ignore", "pipe", "pipe"]`.
  * 2. Streams stdout and stderr separately, each capped at
- *    `maxOutputBytes` (default 1 MiB per stream). When the
- *    cap is hit, the stream is closed and the rest is dropped.
- * 3. Resolves on `close` with the captured text + a
- *    `stdoutTruncated` / `stderrTruncated` flag, OR on
- *    `error` (spawn failure).
- * 4. Honors the caller's `AbortSignal` (already plumbed via
- *    `spawn({ signal })`).
+ *    `maxOutputBytes` (default 1 MiB per stream).
+ * 3. Resolves on `close` with captured text + truncation flags,
+ *    OR on `error` (spawn failure).
+ * 4. Honors `AbortSignal` via `spawn({ signal })` **and**
+ *    {@link killProcessTree} (R6.2). Node's spawn signal alone
+ *    kills only the direct child on Windows; nested `cmd.exe`
+ *    grandchildren can survive without a tree kill.
  *
  * Do NOT introduce another copy of this in a backend.
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
 
+import { killProcessTree } from "../../process/kill-tree.js";
 import type { SandboxResult } from "../types.js";
 
 const DEFAULT_MAX_OUTPUT_BYTES = 1024 * 1024; // 1 MiB per stream
@@ -65,6 +64,17 @@ export function spawnCapture(options: SpawnCaptureOptions): Promise<SpawnCapture
       return;
     }
 
+    const onAbort = (): void => {
+      killProcessTree(child.pid);
+    };
+    if (options.signal !== undefined) {
+      if (options.signal.aborted) {
+        onAbort();
+      } else {
+        options.signal.addEventListener("abort", onAbort, { once: true });
+      }
+    }
+
     const outChunks: Buffer[] = [];
     const errChunks: Buffer[] = [];
     let outTotal = 0;
@@ -76,6 +86,10 @@ export function spawnCapture(options: SpawnCaptureOptions): Promise<SpawnCapture
     let childExitCode: number | null = null;
     let settled = false;
 
+    const cleanupAbort = (): void => {
+      options.signal?.removeEventListener("abort", onAbort);
+    };
+
     const tryFinish = (): void => {
       if (settled) return;
       // Wait for the child to actually close (so `exitCode`
@@ -84,6 +98,7 @@ export function spawnCapture(options: SpawnCaptureOptions): Promise<SpawnCapture
       if (childExitCode === null) return;
       if (!outClosed || !errClosed) return;
       settled = true;
+      cleanupAbort();
       const stdout = Buffer.concat(outChunks).toString("utf8");
       const stderr = Buffer.concat(errChunks).toString("utf8");
       resolve({
@@ -147,6 +162,7 @@ export function spawnCapture(options: SpawnCaptureOptions): Promise<SpawnCapture
     child.on("error", (err) => {
       if (settled) return;
       settled = true;
+      cleanupAbort();
       resolve({
         stdout: Buffer.concat(outChunks).toString("utf8"),
         stderr: err.message,
