@@ -19,6 +19,15 @@ describe("formatMesh", () => {
     expect(text).toContain("Quick start");
     expect(text).toContain("Live status: connected 1");
     expect(text).not.toContain("health: ok");
+    expect(text).not.toContain("Configured endpoints:");
+  });
+
+  it("lists configured endpoints only when provided", () => {
+    const text = formatMesh({
+      configuredPeers: [{ id: "w1", endpoint: "127.0.0.1:18123" }],
+    });
+    expect(text).toContain("Configured endpoints:");
+    expect(text).toContain("w1 → 127.0.0.1:18123");
   });
 });
 

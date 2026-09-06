@@ -162,13 +162,21 @@ export function EhuiPanelContent(props: EhuiPanelContentProps): JSX.Element {
             sessions.map((s, i) => {
               const title = resumeSessionTitle(s);
               const shortId = shortSessionId(s.id);
+              const wired = onResumeSession !== undefined;
               return (
                 <button
                   key={s.id}
                   type="button"
-                  className="ehui-resume-row"
-                  onClick={() => onResumeSession?.(s.id)}
-                  disabled={onResumeSession === undefined}
+                  className={
+                    wired
+                      ? "ehui-resume-row"
+                      : "ehui-resume-row ehui-resume-row--unavailable"
+                  }
+                  onClick={() => {
+                    if (onResumeSession === undefined) return;
+                    onResumeSession(s.id);
+                  }}
+                  aria-disabled={wired ? undefined : true}
                   title={s.id}
                 >
                   <span className="ehui-resume-idx">{i + 1}</span>

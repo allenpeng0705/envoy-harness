@@ -20,6 +20,9 @@ function peerLabel(p: ClientPeerInfo): string {
   return `${p.id}${model}${caps}`;
 }
 
+/** Exported for hosts / tests that format a peer the same way as EHUI lists. */
+export { peerLabel };
+
 /** Mesh onboarding guide (distinct from cluster health). */
 export function formatMesh(options?: {
   configuredPeers?: ReadonlyArray<{ id: string; endpoint: string }>;
@@ -40,6 +43,8 @@ export function formatMesh(options?: {
   if (options?.configuredPeers !== undefined && options.configuredPeers.length > 0) {
     lines.push("", "Configured endpoints:");
     for (const peer of options.configuredPeers) {
+      // Only real host:port (or similar) values — never model ids.
+      if (peer.endpoint.trim().length === 0) continue;
       lines.push(`  ${peer.id} → ${peer.endpoint}`);
     }
   }

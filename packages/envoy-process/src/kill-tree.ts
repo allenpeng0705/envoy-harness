@@ -1,6 +1,9 @@
 /**
  * Kill a process and its descendants.
  *
+ * Single source of truth for Package 1 and `envoy-sandbox-win` (the old
+ * mirrored copy in `envoy-sandbox-win/src/execute.ts` was removed).
+ *
  * On Windows, Node's `ChildProcess.kill` / `process.kill(pid)` only
  * terminates the direct child. Nested `cmd.exe` / shell grandchildren
  * survive. Use `taskkill /T /F` for a best-effort tree kill.

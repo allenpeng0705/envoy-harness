@@ -30,6 +30,7 @@ export {
   formatScoreboard,
   formatSessions,
   formatTeamJobs,
+  peerLabel,
   resumeSessionTitle,
   shortSessionId,
 } from "./ehui-format.js";

@@ -1,9 +1,12 @@
 # @envoymesh/envoy-process
 
-Tiny shared helpers used by `@envoymesh/envoy-harness` and
-`@envoymesh/envoy-sandbox-win`.
+Shared process helpers for the envoy-harness monorepo. Exists so
+`@envoymesh/envoy-harness` and `@envoymesh/envoy-sandbox-win` can share
+`killProcessTree` without a circular package edge.
 
-## `killProcessTree(pid)`
+## Exports
+
+### `killProcessTree(pid)`
 
 Best-effort process-tree kill:
 
