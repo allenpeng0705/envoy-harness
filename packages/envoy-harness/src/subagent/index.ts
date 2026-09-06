@@ -80,3 +80,14 @@ export {
   type SubagentProviderKind,
   type SubagentProviderRegistryOptions,
 } from "./provider-registry.js";
+
+export {
+  FakeExternalWorkerTransport,
+  createExternalAgentWorker,
+  createExternalWorkerSubmitter,
+  registerExternalWorker,
+  type ExternalAgentWorker,
+  type ExternalWorkerKind,
+  type ExternalWorkerSubmitterOptions,
+  type ExternalWorkerTransport,
+} from "./external-worker.js";
