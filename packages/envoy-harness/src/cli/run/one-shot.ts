@@ -348,6 +348,21 @@ export async function runAgent(
     // Default: NullTracer (no observable side effect).
     agentOptions.tracer = new NullTracer();
   }
+  // R8.1 — default LocalMeshSubmitter so standalone CLI gets `task`.
+  if (!parsed.noSubagents) {
+    const { buildCliLocalMeshSubmitter } = await import(
+      "./build-local-mesh-submitter.js"
+    );
+    agentOptions.meshSubmitter = buildCliLocalMeshSubmitter({
+      model,
+      cwd,
+      permissionMode: effectiveMode ?? "workspace-write",
+      ...(agentOptions.tracer !== undefined
+        ? { parentTracer: agentOptions.tracer }
+        : {}),
+      parentSessionId: session.id,
+    });
+  }
   const agent = new Agent(agentOptions);
 
   // Phase B / Item 15.2: register any hooks loaded from

@@ -39,6 +39,7 @@ const RUN_FLAGS = new Set([
   "--no-color",
   "--verbose",
   "--quiet",
+  "--no-subagents",
 ]);
 
 /** A flag that takes a value (--flag value) for the run subcommand. */
@@ -84,6 +85,7 @@ export function parseRunArgs(argv: ReadonlyArray<string>): RunParsedArgs {
     cwd: undefined,
     maxTurns: undefined,
     maxCostUsd: undefined,
+    noSubagents: false,
     resume: undefined,
     resumeRemote: undefined,
     fork: undefined,
@@ -132,6 +134,10 @@ export function parseRunArgs(argv: ReadonlyArray<string>): RunParsedArgs {
       }
       if (arg === "--persist") {
         out.persist = true;
+        continue;
+      }
+      if (arg === "--no-subagents") {
+        out.noSubagents = true;
         continue;
       }
       // Valued flags: consume the next arg.

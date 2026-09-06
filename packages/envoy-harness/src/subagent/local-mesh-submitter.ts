@@ -295,6 +295,11 @@ export interface DefaultBuildSubagentFactoryOptions {
    * field but go to a `NullTracer`).
    */
   parentSessionId?: string;
+  /**
+   * When set, sub-agents also get a `task` tool (nested local mesh).
+   * Typically the same `LocalMeshSubmitter` instance that owns this factory.
+   */
+  meshSubmitter?: import("./types.js").MeshSubmitter;
 }
 
 /**
@@ -345,6 +350,7 @@ export function defaultBuildSubagentFactory(
       systemPrompt,
       ...(options.parentTracer ? { tracer: options.parentTracer } : {}),
       ...(options.parentSessionId ? { subagentOf: options.parentSessionId } : {}),
+      ...(options.meshSubmitter ? { meshSubmitter: options.meshSubmitter } : {}),
     });
   };
 }

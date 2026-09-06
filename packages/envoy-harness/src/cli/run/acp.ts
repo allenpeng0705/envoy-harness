@@ -36,6 +36,7 @@ import { CliError } from "./errors.js";
 import { makeEmptyRunResult, resolveModel, defaultSessionDir } from "./helpers.js";
 import { EXIT_USAGE, type RunOptions, type RunResult } from "./types.js";
 import { mergeClusterSeams, wirePeerCluster } from "../../peers/wire-cluster.js";
+import { buildCliLocalMeshSubmitter } from "./build-local-mesh-submitter.js";
 
 /**
  * Run until the JSON-RPC input stream ends (or the connection
@@ -274,6 +275,17 @@ async function resolveAcpBackend(
                 : {}),
               // R4.1 — host-bridged via session/user_question (TUI answers).
               userQuestions,
+              // R8.1 — default LocalMeshSubmitter unless --no-subagents.
+              ...(!parsed.noSubagents
+                ? {
+                    meshSubmitter: buildCliLocalMeshSubmitter({
+                      model,
+                      cwd: sessionCwd,
+                      permissionMode: runtime.permissionMode,
+                      parentSessionId: sessionId,
+                    }),
+                  }
+                : {}),
             });
           },
           sessionStore: new SessionStore({

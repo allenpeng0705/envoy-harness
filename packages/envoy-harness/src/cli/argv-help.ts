@@ -28,6 +28,7 @@ export function formatHelp(version: string): string {
     "  --resume-remote <node>/<session>  resume from a mesh peer (requires mesh adapter)",
     "  --fork <session-id>    fork a previous session",
     "  --persist              persist this session to disk (for --resume later)",
+    "  --no-subagents         disable default local task / LocalMeshSubmitter (R8)",
     "  --session-dir <path>   session storage dir (default ~/.local/state/envoy-harness/sessions)",
     "  --config <path>        TOML config file (default ~/.config/envoy-harness/config.toml)",
     "  --import-config <path> import a foreign config file (use with --from <format>)",

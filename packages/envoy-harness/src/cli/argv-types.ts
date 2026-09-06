@@ -46,6 +46,11 @@ export interface RunParsedArgs {
   maxTurns: number | undefined;
   /** `--max-cost-usd <n>`: cost ceiling (Phase 2). */
   maxCostUsd: number | undefined;
+  /**
+   * `--no-subagents`: disable the default LocalMeshSubmitter / `task` tool
+   * (R8.1 — sub-agents are on by default for standalone CLI).
+   */
+  noSubagents: boolean;
   /** `--resume <session-id>`: resume a saved session. */
   resume: string | undefined;
   /**

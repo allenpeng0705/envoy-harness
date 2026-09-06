@@ -243,6 +243,22 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
     });
   agentOptions.memoryStore = memoryStore;
 
+  // R8.1 — default LocalMeshSubmitter so standalone REPL gets `task`.
+  if (!opts.args.noSubagents) {
+    const { buildCliLocalMeshSubmitter } = await import(
+      "../run/build-local-mesh-submitter.js"
+    );
+    agentOptions.meshSubmitter = buildCliLocalMeshSubmitter({
+      model: opts.model,
+      cwd,
+      permissionMode: session.metadata.permissionMode ?? "workspace-write",
+      ...(agentOptions.tracer !== undefined
+        ? { parentTracer: agentOptions.tracer }
+        : {}),
+      parentSessionId: session.id,
+    });
+  }
+
   const agent = new Agent(agentOptions);
 
   // F17.6: extract the sub-agent registry from the

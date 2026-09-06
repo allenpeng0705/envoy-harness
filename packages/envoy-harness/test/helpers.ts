@@ -231,6 +231,7 @@ export function makeArgs(
     cwd: undefined,
     maxTurns: undefined,
     maxCostUsd: undefined,
+    noSubagents: false,
     resume: undefined,
     resumeRemote: undefined,
     fork: undefined,
