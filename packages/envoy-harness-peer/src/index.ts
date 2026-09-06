@@ -36,7 +36,13 @@ export {
   PeerScoreboard,
   combinePeerVerdicts,
   type PeerReputation,
+  type ScoreboardMergeResult,
 } from "./scoreboard.js";
+export {
+  pullPeerScoreboards,
+  type PullPeerScoreboardsOptions,
+  type PeerScoreboardPullResult,
+} from "./scoreboard-pull.js";
 export {
   createVerifiedScoreKeeper,
   type VerifyAndRecordRequest,
@@ -60,6 +66,7 @@ export {
   PEER_CLOSE_METHOD,
   PEER_STATUS_METHOD,
   PEER_WAIT_SETTLE_METHOD,
+  PEER_SCOREBOARD_LIST_METHOD,
   type PeerPingResult,
   type PeerSubmitResponse,
   type PeerSubmitContinuableParams,

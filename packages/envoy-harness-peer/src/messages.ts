@@ -29,6 +29,8 @@ export const PEER_CLOSE_METHOD = "peer/close";
 export const PEER_STATUS_METHOD = "peer/status";
 /** Block until a continuable task settles (or timeout). */
 export const PEER_WAIT_SETTLE_METHOD = "peer/waitSettle";
+/** R4.11 — list VerdictEntry records for federation pull. */
+export const PEER_SCOREBOARD_LIST_METHOD = "peer/scoreboard/list";
 
 /**
  * `peer/submit` response body. `verdict` is additive: present when the

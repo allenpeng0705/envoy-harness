@@ -18,6 +18,7 @@ import type {
   CapabilityManifest,
   SignedAgentResult,
   Verdict,
+  VerdictEntry,
 } from "@envoymesh/protocol";
 
 import {
@@ -31,6 +32,7 @@ import {
   PEER_SUBMIT_METHOD,
   PEER_VERIFY_METHOD,
   PEER_WAIT_SETTLE_METHOD,
+  PEER_SCOREBOARD_LIST_METHOD,
   type PeerSubmitContinuableParams,
   type PeerSubmitContinuableResult,
   type PeerSubmitResponse,
@@ -249,6 +251,17 @@ export class PeerClient {
       signal,
       "peer manifest aborted",
     ) as Promise<CapabilityManifest>;
+  }
+
+  /** R4.11 — `peer/scoreboard/list` — VerdictEntry records for federation. */
+  async listScoreboard(signal?: AbortSignal): Promise<VerdictEntry[]> {
+    return this.#send(
+      PEER_SCOREBOARD_LIST_METHOD,
+      {},
+      this.#requestTimeoutMs,
+      signal,
+      "peer scoreboard/list aborted",
+    ) as Promise<VerdictEntry[]>;
   }
 
   async #send<T>(

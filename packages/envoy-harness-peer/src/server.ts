@@ -35,12 +35,14 @@ import {
   PEER_SUBMIT_METHOD,
   PEER_VERIFY_METHOD,
   PEER_WAIT_SETTLE_METHOD,
+  PEER_SCOREBOARD_LIST_METHOD,
   type PeerSubmitContinuableParams,
   type PeerSubmitResponse,
   type PeerTaskControlParams,
 } from "./messages.js";
 import { unwrapEnvelope, type PeerVerifier } from "./envelope.js";
 import type { PeerEventSink } from "./events.js";
+import type { PeerScoreboard } from "./scoreboard.js";
 
 export interface PeerServerOptions {
   /** The MAP adapter that executes + verifies + advertises this peer. */
@@ -78,6 +80,8 @@ export interface PeerServerOptions {
   verifyBudget?: import("@envoymesh/envoy-harness").VerifySessionBudget;
   /** R4.9b — settled continuable-task retention (default 60s). `0` = immediate GC. */
   settledTaskTtlMs?: number;
+  /** R4.11 — local scoreboard exposed via `peer/scoreboard/list`. */
+  scoreboard?: PeerScoreboard;
 }
 
 /** Build a JSON-RPC request handler for the peer dialect. */
@@ -98,9 +102,15 @@ export function createPeerServerHandler(
   const continuable = new PeerContinuableTaskRegistry({
     adapter,
     peerId: identity.peerId,
-    verifyAfterExecute: options.verifyAfterExecute,
-    verifyBudget,
-    settledTtlMs: options.settledTaskTtlMs,
+    // exactOptionalPropertyTypes: never pass explicit `undefined` for an
+    // absent optional property.
+    ...(options.verifyAfterExecute !== undefined
+      ? { verifyAfterExecute: options.verifyAfterExecute }
+      : {}),
+    ...(verifyBudget !== undefined ? { verifyBudget } : {}),
+    ...(options.settledTaskTtlMs !== undefined
+      ? { settledTtlMs: options.settledTaskTtlMs }
+      : {}),
   });
   const unwrap = <T>(method: string, params: unknown): T => {
     if (options.verifier !== undefined) {
@@ -228,6 +238,9 @@ export function createPeerServerHandler(
               reputationBySkill: input.reputationBySkill ?? {},
             });
             return manifest as CapabilityManifest;
+          }
+          case PEER_SCOREBOARD_LIST_METHOD: {
+            return options.scoreboard?.list() ?? [];
           }
           default:
             throw new Error(`unknown peer method: ${method}`);
