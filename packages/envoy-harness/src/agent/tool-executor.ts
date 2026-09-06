@@ -138,6 +138,10 @@ export interface ToolExecutorContext {
    */
   readonly mcpClients: import("../mcp/index.js").McpClientRegistry | undefined;
   /**
+   * R4.14b — optional exec-world for FS/shell tools (peer-targeted).
+   */
+  readonly execWorld?: import("../exec-world/types.js").ExecWorld;
+  /**
    * Emit a trace event. The Agent's `emit` wraps the
    * tracer with the `subagentOf` tag; the executor
    * just calls back into the owner.
@@ -537,6 +541,9 @@ export class ToolExecutor {
           : {}),
         ...(this.ctx.recordUndo !== undefined
           ? { recordUndo: this.ctx.recordUndo }
+          : {}),
+        ...(this.ctx.execWorld !== undefined
+          ? { execWorld: this.ctx.execWorld }
           : {}),
       });
       resultContent = result.content;

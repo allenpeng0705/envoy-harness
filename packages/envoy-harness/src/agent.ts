@@ -340,6 +340,12 @@ export interface AgentOptions {
    */
   sandboxExecutor?: import("./sandbox/types.js").SandboxExecutor;
   /**
+   * R4.14b — optional exec-world (think local / tools on peer).
+   * When set, `read_file` / `write` / `bash` use this instead of
+   * the process filesystem/shell.
+   */
+  execWorld?: import("./exec-world/types.js").ExecWorld;
+  /**
    * Phase B / Item 3.1: capability-module registry.
    * When set, the constructor stores it on the
    * `agent.plugins` field. The host (the CLI runner)
@@ -474,6 +480,10 @@ export class Agent {
    * from policy + platform.
    */
   sandboxExecutor: SandboxExecutor | undefined;
+  /**
+   * @internal R4.14b: optional peer-targeted exec-world.
+   */
+  execWorld: import("./exec-world/types.js").ExecWorld | undefined;
   /** @internal Cost tracker; populated across the run. F7.1. */
   costTracker: CostTracker;
   /** @internal F7.5: cost ceiling; when exceeded, the agent aborts. */
@@ -741,6 +751,7 @@ export class Agent {
         this.cwd,
       );
     this.sandboxExecutor = options.sandboxExecutor;
+    this.execWorld = options.execWorld;
     // Cost tracker. v0 defaults to "local" (which has $0 pricing);
     // F7.2+ adapters set the model name in their ModelResponse, so
     // cost is attributed per-response rather than per-construction.
@@ -789,6 +800,7 @@ export class Agent {
       maxSubagents: this.maxSubagents,
       meshSubmitter: this.meshSubmitter,
       mcpClients: this.mcpClients,
+      ...(this.execWorld !== undefined ? { execWorld: this.execWorld } : {}),
       // The agent's `emit` wraps the tracer with the
       // `subagentOf` tag. We pass the bound method
       // so the executor doesn't have to know about

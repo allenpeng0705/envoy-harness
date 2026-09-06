@@ -111,6 +111,37 @@ export const writeTool: Tool<
     // danger-full-access: no check.
 
     let previousContent: string | null = null;
+    if (ctx.execWorld !== undefined) {
+      try {
+        const prev = await ctx.execWorld.readFile(
+          resolved,
+          {},
+          ctx.abortSignal,
+        );
+        previousContent = prev.content;
+      } catch {
+        previousContent = null;
+      }
+      try {
+        await ctx.execWorld.writeFile(
+          resolved,
+          content,
+          { createDirectories: createDirectories === true },
+          ctx.abortSignal,
+        );
+        if (ctx.recordUndo !== undefined) {
+          ctx.recordUndo({ path: resolved, previousContent });
+        }
+        const bytes = Buffer.byteLength(content, "utf8");
+        return { content: `wrote ${bytes} bytes to ${resolved}` };
+      } catch (err) {
+        return {
+          content: `write error: ${err instanceof Error ? err.message : String(err)}`,
+          isError: true,
+        };
+      }
+    }
+
     try {
       previousContent = await fs.readFile(resolved, "utf8");
     } catch (err) {

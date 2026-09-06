@@ -115,6 +115,11 @@ export interface ToolContext {
     path: string;
     previousContent: string | null;
   }) => void;
+  /**
+   * R4.14b — when set, FS/shell tools run against this exec-world
+   * (local or peer-targeted) instead of the process filesystem.
+   */
+  execWorld?: import("../exec-world/types.js").ExecWorld;
 }
 
 // ---------------------------------------------------------------------------

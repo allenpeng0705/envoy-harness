@@ -142,6 +142,13 @@ async function executeBash(
     verdict.kind === "allow-with-warning" ? verdict.warning : undefined;
 
   if (background === true) {
+    if (ctx.execWorld !== undefined && ctx.execWorld.target.kind === "peer") {
+      return {
+        content:
+          "bash background: true is not supported on peer exec-world (R4.14b); run foreground or use local jobs",
+        isError: true,
+      };
+    }
     if (jobs === undefined) {
       return {
         content:
@@ -209,6 +216,54 @@ async function runBash(
 ): Promise<{ content: string; isError?: boolean }> {
   const timeout = timeoutMs ?? DEFAULT_BASH_TIMEOUT_MS;
   const cap = maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
+
+  if (ctx.execWorld !== undefined) {
+    try {
+      const result = await ctx.execWorld.runShell(
+        {
+          command,
+          cwd: ctx.cwd,
+          ...(ctx.shellEnv !== undefined ? { env: ctx.shellEnv } : {}),
+          timeoutMs: timeout,
+        },
+        ctx.abortSignal,
+      );
+      let out = "";
+      if (preWarning !== undefined) out += `warning: ${preWarning}\n`;
+      if (result.timedOut) {
+        out += `bash timed out after ${timeout}ms\n`;
+      }
+      const stdout =
+        result.stdout.length > cap
+          ? result.stdout.slice(0, cap) + "\n[stdout truncated]"
+          : result.stdout;
+      const stderr =
+        result.stderr.length > cap
+          ? result.stderr.slice(0, cap) + "\n[stderr truncated]"
+          : result.stderr;
+      if (stdout.length > 0) out += stdout;
+      if (stderr.length > 0) {
+        if (out.length > 0) out += "\n";
+        out += stderr;
+      }
+      if (ctx.execWorld.target.kind === "peer") {
+        out += `\n[exec-world: peer://${ctx.execWorld.target.peerId}]`;
+      }
+      const exit = result.exitCode ?? (result.timedOut ? 124 : 1);
+      if (exit !== 0) {
+        return {
+          content: out || `bash exited ${exit}`,
+          isError: true,
+        };
+      }
+      return { content: out || "(no output)" };
+    } catch (err) {
+      return {
+        content: `bash exec-world error: ${err instanceof Error ? err.message : String(err)}`,
+        isError: true,
+      };
+    }
+  }
 
   if (ctx.sandboxExecutor !== undefined) {
     return runBashViaExecutor(command, ctx, timeout, cap, preWarning);

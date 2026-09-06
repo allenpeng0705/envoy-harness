@@ -172,6 +172,7 @@ export {
   bashTool,
   makeBashTool,
   readFileTool,
+  writeTool,
   type MakeBashToolOptions,
 } from "./tools/builtin/index.js";
 
@@ -688,6 +689,20 @@ export {
   type RemoteJobRef,
   type RemoteJobTransport,
 } from "./jobs/index.js";
+
+// R4.14b — exec-world (think local / tools on peer).
+export {
+  createLocalExecWorld,
+  createPeerExecWorld,
+  FakeRemoteExecTransport,
+  ExecWorldError,
+  type ExecReadResult,
+  type ExecShellRequest,
+  type ExecShellResult,
+  type ExecWorld,
+  type ExecWorldTarget,
+  type RemoteExecTransport,
+} from "./exec-world/index.js";
 
 export {
   createFakeFetchProvider,

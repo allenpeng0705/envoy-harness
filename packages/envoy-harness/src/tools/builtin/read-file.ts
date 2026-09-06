@@ -60,6 +60,28 @@ export const readFileTool: Tool<
       ? filePath
       : path.resolve(ctx.cwd, filePath);
     const cap = maxBytes ?? 1024 * 1024; // 1 MB default
+    if (ctx.execWorld !== undefined) {
+      try {
+        const result = await ctx.execWorld.readFile(
+          resolved,
+          { maxBytes: cap },
+          ctx.abortSignal,
+        );
+        if (result.truncated) {
+          return {
+            content:
+              result.content +
+              `\n\n[truncated at ${cap} bytes; full size is ${result.byteLength} bytes]`,
+          };
+        }
+        return { content: result.content };
+      } catch (err) {
+        return {
+          content: `read_file error: ${err instanceof Error ? err.message : String(err)}`,
+          isError: true,
+        };
+      }
+    }
     try {
       const buf = await fs.readFile(resolved);
       const truncated = buf.byteLength > cap;
