@@ -74,3 +74,13 @@ export {
   installToolPermissionAskHook,
   type ToolPermissionAskHookOptions,
 } from "./permission-hook.js";
+
+export {
+  TeamJobRegistry,
+  chainSubtasksToTeamJobs,
+  hostLabel,
+  mergeTeamJobBoards,
+  type ChainSubtaskJobView,
+  type StartPeerSubmitJobInput,
+  type StartTeamJobInput,
+} from "./team-job-board.js";

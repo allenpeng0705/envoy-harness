@@ -885,8 +885,13 @@ export {
   isJsonRpcNotification,
   isJsonRpcRequest,
   isJsonRpcResponse,
+  TeamJobRegistry,
+  chainSubtasksToTeamJobs,
+  hostLabel,
+  mergeTeamJobBoards,
   type AcpServerOptions,
   type AgentSessionBackendOptions,
+  type ChainSubtaskJobView,
   type InProcessPair,
   type JsonRpcConnectionOptions,
   type JsonRpcErrorObject,
@@ -915,6 +920,8 @@ export {
   type ProtocolToolInfo,
   type RequestHandler,
   type SdkServerOptions,
+  type StartPeerSubmitJobInput,
+  type StartTeamJobInput,
   type ToolPermissionAskHookOptions,
 } from "./protocol/index.js";
 

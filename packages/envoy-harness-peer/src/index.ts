@@ -154,7 +154,10 @@ export {
 } from "./cli/ui.js";
 export {
   TeamJobRegistry,
+  chainSubtasksToTeamJobs,
   hostLabel,
+  mergeTeamJobBoards,
+  type ChainSubtaskJobView,
   type StartPeerSubmitJobInput,
   type StartTeamJobInput,
 } from "./team-jobs.js";
