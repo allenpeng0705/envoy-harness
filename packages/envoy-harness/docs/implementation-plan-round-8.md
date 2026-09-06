@@ -1,6 +1,6 @@
 # Round 8 — Standalone CLI power + WebUI MVP
 
-> **Status:** IN PROGRESS (2026-09-06).
+> **Status:** IMPLEMENTED (2026-09-06).
 > **Master index:** [`implementation-plan.md`](./implementation-plan.md).
 > **Prior:** [`implementation-plan-round-7.md`](./implementation-plan-round-7.md) (IMPLEMENTED).
 > **UI vision:** [`envoy-harness-ui.md`](./envoy-harness-ui.md).
@@ -41,8 +41,8 @@ monorepo (no EnvoyMesh required).
 | R8.1 CLI sub-agents | **done** |
 | R8.2 long-run + peers | **done** |
 | R8.3 web scaffold | **done** |
-| R8.4 web MVP | pending |
-| R8.5 EHUI + close-out | pending |
+| R8.4 web MVP | **done** |
+| R8.5 EHUI + close-out | **done** |
 
 ## Success criteria
 

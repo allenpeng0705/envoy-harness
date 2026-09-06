@@ -69,9 +69,15 @@ scannable overview.
 | `--plan` | off | Plan-only mode (no tool execution) |
 | `--no-color` / `--verbose` / `--quiet` | off | Output knobs |
 
-> **Round 8:** standalone CLI wires local sub-agents by default; browser UI
-> via `@envoymesh/envoy-harness-web` — see
-> [`docs/implementation-plan-round-8.md`](docs/implementation-plan-round-8.md).
+> **Round 8 (done):** standalone CLI wires local sub-agents by default;
+> browser UI via `@envoymesh/envoy-harness-web`:
+>
+> ```sh
+> pnpm --filter @envoymesh/envoy-harness-web start
+> # or: envoy-harness web --provider openai --model gpt-4o
+> ```
+>
+> See [`docs/implementation-plan-round-8.md`](docs/implementation-plan-round-8.md).
 
 **Environment variables:**
 

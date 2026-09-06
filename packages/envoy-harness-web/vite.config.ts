@@ -8,6 +8,18 @@ const root = path.dirname(fileURLToPath(import.meta.url));
 export default defineConfig({
   root,
   plugins: [react()],
+  resolve: {
+    alias: {
+      "@envoymesh/envoy-harness-ehui": path.resolve(
+        root,
+        "../envoy-harness-ehui/src/index.ts",
+      ),
+      "@envoymesh/envoy-harness-client/ehui": path.resolve(
+        root,
+        "../envoy-harness-client/src/ehui.ts",
+      ),
+    },
+  },
   build: {
     outDir: "dist/client",
     emptyOutDir: true,

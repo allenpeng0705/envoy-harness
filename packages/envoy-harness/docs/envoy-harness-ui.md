@@ -2,8 +2,9 @@
 
 Status: U1-U5 DONE; U6a DONE (Round 5); F2 lifecycle DONE (Round 6; FS
 isolation skipped). **U6b EHUI refine — Round 7 DONE**.
-**Round 8 — standalone WebUI MVP**
-([implementation-plan-round-8.md](./implementation-plan-round-8.md)).
+**Round 8 — standalone WebUI MVP DONE**
+([implementation-plan-round-8.md](./implementation-plan-round-8.md);
+package `@envoymesh/envoy-harness-web`).
 See [ehui-panel-spec.md](./ehui-panel-spec.md).
 
 **EnvoyMesh mapper swap (R5.4):** hosts that injected `FakeRemoteJobTransport` /
