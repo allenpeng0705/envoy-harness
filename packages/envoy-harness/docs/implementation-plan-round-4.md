@@ -1,6 +1,8 @@
 # Round 4 — Single-instance parity + deepen distribution
 
-> **Status:** PLANNED (2026-09-05, revised same day).
+> **Status:** IMPLEMENTED (2026-09-06). All tracked chunks R4.1–R4.18 done
+> (incl. optional R4.14b / R4.16). Post-review harden: discovery rail refcount
+> (`d0487bd`).
 > **Design:** [`distributed-collaboration.md`](./distributed-collaboration.md) §1 + §11.
 > **Master index:** [`implementation-plan.md`](./implementation-plan.md) §Distributed.
 >
