@@ -4,6 +4,19 @@ export { EhuiCommandLinks, type EhuiCommandLinksProps } from "./EhuiCommandLinks
 export { EhuiPanelContent, type EhuiPanelContentProps } from "./EhuiPanelContent.js";
 export { EhuiPanelModal, type EhuiPanelModalProps } from "./EhuiPanelModal.js";
 export {
+  EhuiRenderedBody,
+  linesForPanel,
+  type EhuiRenderedBodyProps,
+} from "./EhuiRenderedBody.js";
+export {
+  buildGitDiffLines,
+  buildMemoryLines,
+  buildPlanLines,
+  ehuiLineClassName,
+  type EhuiLine,
+  type EhuiLineKind,
+} from "./ehui-render.js";
+export {
   EHUI_COMMAND_PANEL_IDS,
   EHUI_RAIL_MORE_PANEL_IDS,
   EHUI_RAIL_PRIMARY_PANEL_IDS,

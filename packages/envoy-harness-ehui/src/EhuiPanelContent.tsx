@@ -3,6 +3,7 @@ import type { JSX } from "react";
 import type { UseEhuiPanelOptions } from "./use-ehui-panel.js";
 import { useEhuiPanel } from "./use-ehui-panel.js";
 import { MEMORY_OPS, MEMORY_OP_LABELS, PLAN_ACTIONS, PLAN_ACTION_LABELS } from "./ehui-constants.js";
+import { EhuiRenderedBody } from "./EhuiRenderedBody.js";
 
 export interface EhuiPanelContentProps extends UseEhuiPanelOptions {
   className?: string;
@@ -143,6 +144,8 @@ export function EhuiPanelContent(props: EhuiPanelContentProps): JSX.Element {
       ) : null}
       {error !== undefined ? (
         <pre className="ehui-error">{error}</pre>
+      ) : panel === "plan" || panel === "memory" || panel === "git-diff" ? (
+        <EhuiRenderedBody panel={panel} text={body} />
       ) : (
         <pre className="ehui-body">{body}</pre>
       )}
