@@ -18,15 +18,15 @@ intentionally design-light — the executable chunking lives here.
 
 ## Distributed collaboration — the major feature
 
-> **Status:** Rounds 1–6 ✅ DONE. **Round 7 IN PROGRESS (2026-09-06)** —
-> U6b EHUI refine (rich panels, chat-scoped invoke, side dock).
+> **Status:** Rounds 1–7 ✅ DONE. Round 7 = U6b EHUI refine (rich panels,
+> chat-scoped invoke, side dock, resume picker).
 >
 > **Design:** [`docs/distributed-collaboration.md`](./distributed-collaboration.md)
 > (canonical: protocol, seams, scenarios, competitive landscape).
 > **Round 4 plan:** [`docs/implementation-plan-round-4.md`](./implementation-plan-round-4.md) (IMPLEMENTED).
 > **Round 5 plan:** [`docs/implementation-plan-round-5.md`](./implementation-plan-round-5.md) (IMPLEMENTED).
 > **Round 6 plan:** [`docs/implementation-plan-round-6.md`](./implementation-plan-round-6.md) (IMPLEMENTED).
-> **Round 7 plan:** [`docs/implementation-plan-round-7.md`](./implementation-plan-round-7.md).
+> **Round 7 plan:** [`docs/implementation-plan-round-7.md`](./implementation-plan-round-7.md) (IMPLEMENTED).
 
 **Strategic framing:** envoy-harness is a **full harness with real local
 sub-agents** (`task` → `LocalMeshSubmitter` + fan-out + team
@@ -110,7 +110,7 @@ RPC and CLI discovery flags deferred to Round 5.
 |---|---|---|---|
 | **R6-F2** | R6.1–R6.4 | `killProcessTree`, spawnCapture abort, sidecar cancel IPC, doctor probe | **P0–P1** |
 
-### Round 7 chunk roadmap (in progress)
+### Round 7 chunk roadmap (IMPLEMENTED)
 
 > Full specs: [`implementation-plan-round-7.md`](./implementation-plan-round-7.md).
 >

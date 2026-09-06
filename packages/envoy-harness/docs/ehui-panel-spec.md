@@ -84,8 +84,8 @@ Recommended layout:
 Copy `EhuiShell` into EnvoyMesh `apps/social` beside `EnvoyHarnessPanel` or replace
 the plain-text plan/diff sections as panels mature.
 
-**Round 7:** rich panel bodies (CSS classes mirroring TUI), chat-scoped invoke,
-and a persistent side dock — see
+**Round 7 (done):** rich panel bodies (CSS classes mirroring TUI), chat-scoped
+invoke, persistent side dock, and clickable Resume rows — see
 [implementation-plan-round-7.md](./implementation-plan-round-7.md).
 
 Panel bodies should mirror `envoy-harness-tui/src/view-resolver.ts` text layout

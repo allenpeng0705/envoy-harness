@@ -16,6 +16,7 @@ export interface EhuiPanelModalProps {
   actionButtonClassName?: string;
   primaryActionButtonClassName?: string;
   inputClassName?: string;
+  onResumeSession?: (sessionId: string) => void;
 }
 
 export function EhuiPanelModal(props: EhuiPanelModalProps): JSX.Element {
@@ -60,6 +61,9 @@ export function EhuiPanelModal(props: EhuiPanelModalProps): JSX.Element {
             ? { primaryActionButtonClassName: props.primaryActionButtonClassName }
             : {})}
           {...(props.inputClassName ? { inputClassName: props.inputClassName } : {})}
+          {...(props.onResumeSession !== undefined
+            ? { onResumeSession: props.onResumeSession }
+            : {})}
         />
       </div>
     </div>

@@ -1,6 +1,6 @@
 # Round 7 — U6b EHUI refine
 
-> **Status:** IN PROGRESS (2026-09-06).
+> **Status:** IMPLEMENTED (2026-09-06).
 > **Design:** [`implementation-plan-chunk-u6-product-shell.md`](./implementation-plan-chunk-u6-product-shell.md) §U6b,
 > [`ehui-panel-spec.md`](./ehui-panel-spec.md).
 > **Master index:** [`implementation-plan.md`](./implementation-plan.md).
@@ -41,8 +41,8 @@ EnvoyMesh chunks commit in that repo with matching messages.
 | R7.1 rich panels | **done** |
 | R7.2 mesh formatters | **done** |
 | R7.3 chat scope | **done** (EnvoyMesh) |
-| R7.4 side dock | pending |
-| R7.5 resume + tests | pending |
+| R7.4 side dock | **done** (EnvoyMesh) |
+| R7.5 resume + tests | **done** |
 
 ## Success criteria
 

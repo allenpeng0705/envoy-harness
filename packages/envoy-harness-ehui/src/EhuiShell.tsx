@@ -22,6 +22,8 @@ export interface EhuiShellProps {
   /** Bump to reload the active panel (e.g. after a chat turn completes). */
   refreshKey?: number;
   className?: string;
+  /** Host loads the selected persisted session (Resume panel). */
+  onResumeSession?: (sessionId: string) => void;
 }
 
 export function EhuiShell(props: EhuiShellProps): JSX.Element {
@@ -78,6 +80,9 @@ export function EhuiShell(props: EhuiShellProps): JSX.Element {
         panel={panel}
         dataSource={props.dataSource}
         {...(props.refreshKey !== undefined ? { refreshKey: props.refreshKey } : {})}
+        {...(props.onResumeSession !== undefined
+          ? { onResumeSession: props.onResumeSession }
+          : {})}
       />
     </div>
   );

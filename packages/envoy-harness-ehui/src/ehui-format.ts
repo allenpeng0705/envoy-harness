@@ -136,12 +136,21 @@ export function formatSessions(rows: ClientSessionSummary[]): string {
   ];
   rows.forEach((s, i) => {
     const title = s.title ?? s.cwd ?? "—";
-    const shortId = s.id.length > 12 ? `${s.id.slice(0, 10)}…` : s.id;
+    const shortId = shortSessionId(s.id);
     lines.push(
       `  ${String(i + 1).padStart(2)}  ${shortId.padEnd(12)} ${String(s.messageCount).padStart(3)}     ${title}`,
     );
   });
   return lines.join("\n");
+}
+
+/** Display helpers for clickable Resume rows (R7.5). */
+export function shortSessionId(id: string): string {
+  return id.length > 12 ? `${id.slice(0, 10)}…` : id;
+}
+
+export function resumeSessionTitle(s: ClientSessionSummary): string {
+  return s.title ?? s.cwd ?? s.id;
 }
 
 export function formatDiscoveryEvent(ev: ClientDiscoveryEvent): string {

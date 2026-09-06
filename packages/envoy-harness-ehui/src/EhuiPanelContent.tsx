@@ -3,6 +3,7 @@ import type { JSX } from "react";
 import type { UseEhuiPanelOptions } from "./use-ehui-panel.js";
 import { useEhuiPanel } from "./use-ehui-panel.js";
 import { MEMORY_OPS, MEMORY_OP_LABELS, PLAN_ACTIONS, PLAN_ACTION_LABELS } from "./ehui-constants.js";
+import { resumeSessionTitle, shortSessionId } from "./ehui-format.js";
 import { EhuiRenderedBody } from "./EhuiRenderedBody.js";
 
 export interface EhuiPanelContentProps extends UseEhuiPanelOptions {
@@ -10,6 +11,8 @@ export interface EhuiPanelContentProps extends UseEhuiPanelOptions {
   actionButtonClassName?: string;
   primaryActionButtonClassName?: string;
   inputClassName?: string;
+  /** R7.5 — host loads the selected persisted session. */
+  onResumeSession?: (sessionId: string) => void;
 }
 
 export function EhuiPanelContent(props: EhuiPanelContentProps): JSX.Element {
@@ -21,6 +24,7 @@ export function EhuiPanelContent(props: EhuiPanelContentProps): JSX.Element {
     panel,
     refreshKey,
     dataSource,
+    onResumeSession,
   } = props;
 
   const state = useEhuiPanel({
@@ -30,6 +34,7 @@ export function EhuiPanelContent(props: EhuiPanelContentProps): JSX.Element {
   });
   const {
     body,
+    sessions,
     error,
     reloadPanel,
     planAction,
@@ -146,6 +151,35 @@ export function EhuiPanelContent(props: EhuiPanelContentProps): JSX.Element {
         <pre className="ehui-error">{error}</pre>
       ) : panel === "plan" || panel === "memory" || panel === "git-diff" ? (
         <EhuiRenderedBody panel={panel} text={body} />
+      ) : panel === "resume" ? (
+        <div className="ehui-resume-list" data-ehui-resume>
+          <div className="ehui-line ehui-line--header">Resume session</div>
+          {sessions.length === 0 ? (
+            <div className="ehui-line ehui-line--hint">
+              no persisted sessions — use --persist
+            </div>
+          ) : (
+            sessions.map((s, i) => {
+              const title = resumeSessionTitle(s);
+              const shortId = shortSessionId(s.id);
+              return (
+                <button
+                  key={s.id}
+                  type="button"
+                  className="ehui-resume-row"
+                  onClick={() => onResumeSession?.(s.id)}
+                  disabled={onResumeSession === undefined}
+                  title={s.id}
+                >
+                  <span className="ehui-resume-idx">{i + 1}</span>
+                  <span className="ehui-resume-id">{shortId}</span>
+                  <span className="ehui-resume-msgs">{s.messageCount}</span>
+                  <span className="ehui-resume-title">{title}</span>
+                </button>
+              );
+            })
+          )}
+        </div>
       ) : (
         <pre className="ehui-body">{body}</pre>
       )}

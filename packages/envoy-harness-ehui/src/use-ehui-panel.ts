@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 
-import type { EhuiDataSource, EhuiPanelId } from "@envoymesh/envoy-harness-client/ehui";
+import type {
+  ClientSessionSummary,
+  EhuiDataSource,
+  EhuiPanelId,
+} from "@envoymesh/envoy-harness-client/ehui";
 
 import {
   formatCluster,
@@ -22,6 +26,7 @@ export function useEhuiPanel(options: UseEhuiPanelOptions) {
   const { dataSource, panel, refreshKey } = options;
 
   const [body, setBody] = useState<string>("");
+  const [sessions, setSessions] = useState<ClientSessionSummary[]>([]);
   const [error, setError] = useState<string | undefined>();
   const [planAction, setPlanAction] = useState<string>("show");
   const [memoryOp, setMemoryOp] = useState<string>("list");
@@ -70,11 +75,16 @@ export function useEhuiPanel(options: UseEhuiPanelOptions) {
       } else if (panel === "scoreboard") {
         text = formatScoreboard(await dataSource.scoreboardSummary());
       } else if (panel === "resume") {
-        text = formatSessions(await dataSource.listSessions());
+        const rows = await dataSource.listSessions();
+        setSessions(rows);
+        text = formatSessions(rows);
       } else if (panel === "trace") {
         text = "Listening for peer pool health…";
       } else {
         text = "Chat surface is host-owned.";
+      }
+      if (panel !== "resume") {
+        setSessions([]);
       }
       setBody(text);
     } catch (err) {
@@ -134,6 +144,7 @@ export function useEhuiPanel(options: UseEhuiPanelOptions) {
 
   return {
     body,
+    sessions,
     error,
     reloadPanel,
     planAction,

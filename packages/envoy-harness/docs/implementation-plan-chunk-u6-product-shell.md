@@ -2,7 +2,7 @@
 
 > **Status:** U6a.1–U6a.5 **done**. F2 lifecycle **done** (Round 6; FS
 > isolation / Job-object FFI **skipped** by product decision).
-> **U6b** — Round 7 ([`implementation-plan-round-7.md`](./implementation-plan-round-7.md)).
+> **U6b** — Round 7 **done** ([`implementation-plan-round-7.md`](./implementation-plan-round-7.md)).
 
 Targets the gaps vs Codex / Claude Code the team flagged:
 

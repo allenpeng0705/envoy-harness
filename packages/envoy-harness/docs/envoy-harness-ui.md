@@ -1,7 +1,7 @@
 # Envoy Harness UI (EHUI) - the dedicated envoy-harness interface
 
 Status: U1-U5 DONE; U6a DONE (Round 5); F2 lifecycle DONE (Round 6; FS
-isolation skipped). **U6b EHUI refine — Round 7**
+isolation skipped). **U6b EHUI refine — Round 7 DONE**
 ([implementation-plan-round-7.md](./implementation-plan-round-7.md)).
 See [ehui-panel-spec.md](./ehui-panel-spec.md).
 
