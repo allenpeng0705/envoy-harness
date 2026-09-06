@@ -249,13 +249,21 @@ export interface TuiParsedArgs {
   noColor: boolean;
 }
 
+/** Args for the `web` subcommand (delegate to envoy-harness-web). */
+export interface WebParsedArgs {
+  subcommand: "web";
+  help: boolean;
+  version: boolean;
+}
+
 export type ParsedArgs =
   | RunParsedArgs
   | SelfEvolveParsedArgs
   | TeamParsedArgs
   | DoctorParsedArgs
   | McpParsedArgs
-  | TuiParsedArgs;
+  | TuiParsedArgs
+  | WebParsedArgs;
 
 /** Error thrown when argv parsing fails. Caught by the runner. */
 export class ArgvError extends Error {

@@ -10,6 +10,7 @@ import {
   parseMcpArgs,
   parseTeamArgs,
   parseTuiArgs,
+  parseWebArgs,
 } from "./argv-parse-subcommands.js";
 
 export {
@@ -21,6 +22,7 @@ export {
   type SelfEvolveParsedArgs,
   type TeamParsedArgs,
   type TuiParsedArgs,
+  type WebParsedArgs,
 } from "./argv-types.js";
 export { formatHelp } from "./argv-help.js";
 
@@ -41,6 +43,9 @@ export function parseArgs(argv: ReadonlyArray<string>): ParsedArgs {
   }
   if (firstPositional === "tui") {
     return parseTuiArgs(argv);
+  }
+  if (firstPositional === "web") {
+    return parseWebArgs(argv);
   }
   return parseRunArgs(argv);
 }

@@ -1,5 +1,5 @@
 /**
- * team / mcp / doctor / tui argv parsers.
+ * team / mcp / doctor / tui / web argv parsers.
  */
 
 import {
@@ -8,6 +8,7 @@ import {
   type McpParsedArgs,
   type DoctorParsedArgs,
   type TuiParsedArgs,
+  type WebParsedArgs,
 } from "./argv-types.js";
 
 // ---------------------------------------------------------------------------
@@ -189,6 +190,67 @@ export function parseTuiArgs(argv: ReadonlyArray<string>): TuiParsedArgs {
       arg === "--connect-timeout-ms" ||
       arg === "--provider" ||
       arg === "--model"
+    ) {
+      const next = argv[i + 1];
+      if (next === undefined || next.startsWith("--")) {
+        throw new ArgvError(`${arg} requires a value`);
+      }
+      i++;
+    }
+  }
+  return out;
+}
+
+const WEB_FLAGS = new Set([
+  "--port",
+  "--host",
+  "--cwd",
+  "--provider",
+  "--model",
+  "--persist",
+  "--no-subagents",
+  "--peers",
+  "--dev",
+  "--no-open",
+  "--help",
+  "-h",
+]);
+
+export function parseWebArgs(argv: ReadonlyArray<string>): WebParsedArgs {
+  const out: WebParsedArgs = {
+    subcommand: "web",
+    help: false,
+    version: false,
+  };
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]!;
+    if (arg === "web") continue;
+    if (arg === "--help" || arg === "-h") {
+      out.help = true;
+      continue;
+    }
+    if (arg === "--version") {
+      out.version = true;
+      continue;
+    }
+    if (!WEB_FLAGS.has(arg)) {
+      throw new ArgvError(`unknown flag for web subcommand: ${arg}`);
+    }
+    if (
+      arg === "--persist" ||
+      arg === "--no-subagents" ||
+      arg === "--dev" ||
+      arg === "--no-open"
+    ) {
+      continue;
+    }
+    if (
+      arg === "--port" ||
+      arg === "--host" ||
+      arg === "--cwd" ||
+      arg === "--provider" ||
+      arg === "--model" ||
+      arg === "--peers"
     ) {
       const next = argv[i + 1];
       if (next === undefined || next.startsWith("--")) {
