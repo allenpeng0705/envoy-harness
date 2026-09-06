@@ -18,8 +18,8 @@ intentionally design-light — the executable chunking lives here.
 
 ## Distributed collaboration — the major feature
 
-> **Status:** Rounds 1–7 ✅ DONE. Round 7 = U6b EHUI refine (rich panels,
-> chat-scoped invoke, side dock, resume picker).
+> **Status:** Rounds 1–7 ✅ DONE. **Round 8 IN PROGRESS (2026-09-06)** —
+> standalone CLI power + WebUI MVP.
 >
 > **Design:** [`docs/distributed-collaboration.md`](./distributed-collaboration.md)
 > (canonical: protocol, seams, scenarios, competitive landscape).
@@ -27,6 +27,7 @@ intentionally design-light — the executable chunking lives here.
 > **Round 5 plan:** [`docs/implementation-plan-round-5.md`](./implementation-plan-round-5.md) (IMPLEMENTED).
 > **Round 6 plan:** [`docs/implementation-plan-round-6.md`](./implementation-plan-round-6.md) (IMPLEMENTED).
 > **Round 7 plan:** [`docs/implementation-plan-round-7.md`](./implementation-plan-round-7.md) (IMPLEMENTED).
+> **Round 8 plan:** [`docs/implementation-plan-round-8.md`](./implementation-plan-round-8.md).
 
 **Strategic framing:** envoy-harness is a **full harness with real local
 sub-agents** (`task` → `LocalMeshSubmitter` + fan-out + team
@@ -122,9 +123,21 @@ RPC and CLI discovery flags deferred to Round 5.
 | **R7-EHUI** | R7.1–R7.2 | Shared ehui renderers / formatters | **P0** |
 | **R7-Host** | R7.3–R7.5 | chatId invoke, EhuiShell dock, resume (EnvoyMesh) | **P0–P1** |
 
+### Round 8 chunk roadmap (in progress)
+
+> Full specs: [`implementation-plan-round-8.md`](./implementation-plan-round-8.md).
+>
+> **Theme:** standalone CLI = dsh-class power; first-party WebUI MVP.
+
+| Phase | Chunks | Theme | Priority |
+|---|---|---|---|
+| **R8-CLI** | R8.1–R8.2 | Default sub-agents, long-run, peers parity | **P0** |
+| **R8-Web** | R8.3–R8.5 | `envoy-harness-web` ACP browser host + EHUI | **P0** |
+
 ## Envoy Harness UI — the second major feature
 
-> **Status:** DESIGNED (2026-08-23), not started.
+> **Status:** U1–U6b DONE; **Round 8 WebUI MVP IN PROGRESS**
+> ([`implementation-plan-round-8.md`](./implementation-plan-round-8.md)).
 > **Design:** [`docs/envoy-harness-ui.md`](./envoy-harness-ui.md)
 > (canonical: vision, current state, architecture, features, protocol
 > additions, chunk roadmap, risks).

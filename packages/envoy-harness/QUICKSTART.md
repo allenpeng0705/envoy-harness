@@ -56,16 +56,22 @@ scannable overview.
 | `--cwd <path>` | `process.cwd()` | Working directory for tool execution |
 | `--sandbox <mode>` | `read-only` | `read-only` / `workspace-write` / `danger-full-access` |
 | `--approval <policy>` | `on-request` | `unless-trusted` / `on-request` / `granular` / `never` |
-| `--max-turns <n>` | 50 | Max agent iterations before force-stop |
-| `--max-cost-usd <usd>` | unlimited | Cost ceiling; aborts the run when reached |
+| `--max-turns <n>` | 50 (one-shot) / 200 (REPL) | Max agent iterations before force-stop |
+| `--max-cost-usd <usd>` | 5.00 (one-shot) / unlimited (REPL) | Cost ceiling; aborts the run when reached |
 | `--config <path>` | (env / default) | TOML config file; overrides env + default |
 | `--session-dir <path>` | `~/.local/state/envoy-harness/sessions` | Where persisted sessions live |
 | `--resume <id>` | none | Continue a saved session |
 | `--fork <id>` | none | Copy a saved session + new id |
-| `--persist` | off | Save the run's session to disk |
+| `--persist` | off (REPL auto-persists when TTY) | Save the run's session to disk |
+| `--no-subagents` | off | Disable default local `task` / LocalMeshSubmitter |
+| `--peers <id>@host:port` | none | Static peer cluster (also `ENVOY_PEERS`) |
 | `--json` | off | JSON Lines trace output (machine-readable) |
 | `--plan` | off | Plan-only mode (no tool execution) |
 | `--no-color` / `--verbose` / `--quiet` | off | Output knobs |
+
+> **Round 8:** standalone CLI wires local sub-agents by default; browser UI
+> via `@envoymesh/envoy-harness-web` — see
+> [`docs/implementation-plan-round-8.md`](docs/implementation-plan-round-8.md).
 
 **Environment variables:**
 
