@@ -30,6 +30,7 @@ import {
 import { buildTurnOutlineFromMessages } from "../session/turn-outline.js";
 import type { Session } from "../session.js";
 import { SessionStore } from "../session/session-store.js";
+import { messagesToUiTranscript } from "./transcript-ui.js";
 import type { UserQuestionService } from "../interaction/user-questions.js";
 import {
   cancelPendingUserQuestions,
@@ -252,7 +253,10 @@ export function createAgentSessionBackend(
       });
       installLivePermissionHook(live, options.shouldAskTool);
       sessions.set(sessionId, live);
-      return { sessionId };
+      return {
+        sessionId,
+        messages: messagesToUiTranscript(persisted.messages),
+      };
     },
 
     async listSessions() {

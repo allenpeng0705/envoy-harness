@@ -96,7 +96,10 @@ export function attachAcpServer(options: AcpServerOptions): () => void {
           ...(cwd !== undefined ? { cwd } : {}),
         });
         sessions.set(loaded.sessionId, { busy: false, abort: undefined });
-        return { sessionId: loaded.sessionId };
+        return {
+          sessionId: loaded.sessionId,
+          ...(loaded.messages !== undefined ? { messages: loaded.messages } : {}),
+        };
       }
 
       case "sessions/list": {

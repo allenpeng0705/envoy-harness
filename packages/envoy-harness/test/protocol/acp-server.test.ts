@@ -163,4 +163,28 @@ describe("ACP server", () => {
     expect(backend.cancelled).toContain(sessionId);
     pair.close();
   });
+
+  it("session/load returns transcript messages when the backend provides them", async () => {
+    const pair = createInProcessJsonRpcPair();
+    const backend = createFakeSessionBackend({
+      loadMessages: [
+        { role: "user", text: "prior question" },
+        { role: "assistant", text: "prior answer" },
+      ],
+    });
+    attachAcpServer({ connection: pair.server, backend });
+    await pair.client.request("initialize", {});
+    const loaded = (await pair.client.request("session/load", {
+      sessionId: "sess-resume-1",
+    })) as {
+      sessionId: string;
+      messages?: Array<{ role: string; text: string }>;
+    };
+    expect(loaded.sessionId).toBe("sess-resume-1");
+    expect(loaded.messages).toEqual([
+      { role: "user", text: "prior question" },
+      { role: "assistant", text: "prior answer" },
+    ]);
+    pair.close();
+  });
 });

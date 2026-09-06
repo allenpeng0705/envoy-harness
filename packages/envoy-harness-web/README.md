@@ -49,21 +49,24 @@ in browser storage.
 
 ## Using the UI
 
+Three-column shell (inspired by deepseek-harness, Envoy branding):
+
 | Area | Purpose |
 |---|---|
-| **Chat** | Prompt the agent; stream replies; **Cancel** aborts the turn |
-| **Permissions** | Approve or deny tool calls |
-| **Questions** | Answer structured agent questions |
-| **Settings** | Model, sandbox, approval, auto-run, resume list |
-| **Connection** | Shows connecting / connected / disconnected; **Reconnect** |
-| **Mesh rail** | Peer counts, team jobs, `session/agents` summary |
-| **EHUI dock** | Plan · Diff · Mesh · Peers · Team · Scoreboard · Trace · Resume |
+| **Left · Sessions** | New session, resume list, connection pill, Settings |
+| **Center · Chat** | Empty hero, markdown streaming, foldable activity, Stop/Send |
+| **Right · Details** | **Mesh** tab (peers/jobs) · **Tools** tab (Plan/Diff/Memory/…) |
+| **Permissions** | Summary of command/path; expandable raw args |
+| **Settings** | Model, policy, light/dark theme |
+| **Connection** | Connecting / connected / disconnected; Reconnect |
 
-**Long runs:** start with `--persist`, use Cancel when needed, and Reconnect
-if the ACP child dies (auto-backoff + manual button).
+**Long runs:** start with `--persist`, use **Stop** when needed, and Reconnect
+if the ACP child dies (auto-backoff + manual button). Resume hydrates the
+transcript from `session/load`. While the agent is busy, **Enter** / **Queue**
+enqueues the next message. Fonts use system stacks (no CDN — works offline).
 
 **Parallel sub-agents:** on by default. Ask the model to use `task`; watch
-the Mesh rail. Opt out with `--no-subagents`.
+the Mesh tab. Opt out with `--no-subagents`.
 
 ---
 
@@ -79,8 +82,8 @@ envoy-harness web --persist --peers alice@192.168.1.20:8123 \
   --provider openai --model gpt-4o
 ```
 
-Use a public IP the same way for WAN. Open the Mesh rail and EHUI
-**Mesh / Peers / Team** tabs to inspect the cluster.
+Use a public IP the same way for WAN. Open the **Mesh** details tab (and
+Tools → Team / Trace) to inspect the cluster.
 
 Details: [root README — Distributed](../../README.md#distributed-features-no-envoymesh-required) ·
 [`envoy-harness-peer` README](../envoy-harness-peer/README.md).

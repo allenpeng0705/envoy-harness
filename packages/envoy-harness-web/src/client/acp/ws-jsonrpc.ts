@@ -118,13 +118,19 @@ export class WsJsonRpcClient {
           })();
         this.#ws.send(JSON.stringify({ jsonrpc: "2.0", id, result }));
       } catch (err) {
+        // JSON-RPC reserved server-error range (-32000..-32099).
+        // `data.kind` lets clients distinguish subtypes without parsing messages.
+        const message = err instanceof Error ? err.message : String(err);
+        const kind =
+          err instanceof Error && err.name !== "Error" ? err.name : "Error";
         this.#ws.send(
           JSON.stringify({
             jsonrpc: "2.0",
             id,
             error: {
               code: -32000,
-              message: err instanceof Error ? err.message : String(err),
+              message,
+              data: { kind },
             },
           }),
         );

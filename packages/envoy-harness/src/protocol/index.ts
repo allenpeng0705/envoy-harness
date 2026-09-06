@@ -56,6 +56,10 @@ export {
 export { traceEventToActivity } from "./activity-format.js";
 export { traceEventToCommittedMessage, messageTextFromContent } from "./message-format.js";
 export { formatGitOutput, runGitDiff, runGitStatus } from "./git-runner.js";
+export {
+  messagesToUiTranscript,
+  type ProtocolUiMessage,
+} from "./transcript-ui.js";
 
 export {
   ACP_PROTOCOL_VERSION,

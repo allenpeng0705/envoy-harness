@@ -1,9 +1,20 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import { EhuiShell } from "@envoymesh/envoy-harness-ehui";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type JSX,
+} from "react";
 import { AcpHost, type SessionSummary } from "./acp/host.js";
 import { createBrowserEhuiDataSource } from "./acp/ehui-source.js";
-import { ConnectionIndicator } from "./ConnectionIndicator.js";
-import { MeshRail } from "./MeshRail.js";
+import { DetailsRail } from "./DetailsRail.js";
+import { EmptyHero } from "./EmptyHero.js";
+import { PermissionModal } from "./PermissionModal.js";
+import { SessionRail } from "./SessionRail.js";
+import { SettingsModal, type ThemeMode } from "./SettingsModal.js";
+import { Transcript } from "./Transcript.js";
 
 function useAcpHost(host: AcpHost) {
   return useSyncExternalStore(
@@ -13,7 +24,25 @@ function useAcpHost(host: AcpHost) {
   );
 }
 
-export function App() {
+function readTheme(): ThemeMode {
+  try {
+    const v = localStorage.getItem("eh-web-theme");
+    return v === "dark" ? "dark" : "light";
+  } catch {
+    return "light";
+  }
+}
+
+function readWidth(key: string, fallback: number): number {
+  try {
+    const n = Number(localStorage.getItem(key));
+    return Number.isFinite(n) && n >= 160 ? n : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+export function App(): JSX.Element {
   const host = useMemo(() => new AcpHost(), []);
   const state = useAcpHost(host);
   const [draft, setDraft] = useState("");
@@ -23,6 +52,23 @@ export function App() {
   const [modelDraft, setModelDraft] = useState("");
   const [questionDraft, setQuestionDraft] = useState("");
   const [ehuiRefresh, setEhuiRefresh] = useState(0);
+  const [theme, setTheme] = useState<ThemeMode>(readTheme);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [detailsCollapsed, setDetailsCollapsed] = useState(false);
+  const [queueLen, setQueueLen] = useState(0);
+  const [sidebarW, setSidebarW] = useState(() =>
+    readWidth("eh-web-sidebar-w", 260),
+  );
+  const [detailsW, setDetailsW] = useState(() =>
+    readWidth("eh-web-details-w", 340),
+  );
+  const dragRef = useRef<"sidebar" | "details" | null>(null);
+  const sidebarWRef = useRef(sidebarW);
+  const detailsWRef = useRef(detailsW);
+  const promptQueueRef = useRef<string[]>([]);
+  const drainingRef = useRef(false);
+  sidebarWRef.current = sidebarW;
+  detailsWRef.current = detailsW;
 
   useEffect(() => {
     void host.connect().catch(() => undefined);
@@ -30,90 +76,140 @@ export function App() {
   }, [host]);
 
   useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try {
+      localStorage.setItem("eh-web-theme", theme);
+    } catch {
+      // ignore
+    }
+  }, [theme]);
+
+  useEffect(() => {
     setProviderDraft(state.provider);
     setModelDraft(state.model);
   }, [state.provider, state.model]);
 
-  useEffect(() => {
+  const refreshSessions = useCallback(() => {
     if (!state.ready) return;
     void host.listSessions().then(setSessions).catch(() => setSessions([]));
-  }, [host, state.ready, state.sessionId]);
+  }, [host, state.ready]);
+
+  useEffect(() => {
+    refreshSessions();
+  }, [refreshSessions, state.sessionId]);
 
   const ehuiSource = useMemo(() => {
     if (!state.sessionId || !state.ready) return null;
     return createBrowserEhuiDataSource(host, state.sessionId);
   }, [host, state.sessionId, state.ready]);
 
-  const send = async (): Promise<void> => {
+  const runPrompt = useCallback(
+    async (text: string): Promise<void> => {
+      await host.prompt(text);
+      setEhuiRefresh((n) => n + 1);
+      refreshSessions();
+    },
+    [host, refreshSessions],
+  );
+
+  /** Send now, or queue behind the active turn. */
+  const enqueueOrSend = useCallback((): void => {
     const text = draft.trim();
-    if (!text || state.busy || !state.ready) return;
+    if (!text || !state.ready || state.permission) return;
+    if (state.busy || drainingRef.current) {
+      promptQueueRef.current.push(text);
+      setQueueLen(promptQueueRef.current.length);
+      setDraft("");
+      return;
+    }
     setDraft("");
-    await host.prompt(text);
-    setEhuiRefresh((n) => n + 1);
+    void runPrompt(text);
+  }, [draft, state.ready, state.busy, state.permission, runPrompt]);
+
+  // Drain one queued prompt when the agent becomes idle.
+  useEffect(() => {
+    if (
+      state.busy ||
+      !state.ready ||
+      state.permission ||
+      promptQueueRef.current.length === 0 ||
+      drainingRef.current
+    ) {
+      return;
+    }
+    const next = promptQueueRef.current.shift()!;
+    setQueueLen(promptQueueRef.current.length);
+    drainingRef.current = true;
+    void runPrompt(next).finally(() => {
+      drainingRef.current = false;
+      // Re-trigger drain if more were queued while we ran.
+      setQueueLen(promptQueueRef.current.length);
+    });
+  }, [state.busy, state.ready, state.permission, queueLen, runPrompt]);
+
+  const onResume = (id: string): void => {
+    promptQueueRef.current = [];
+    setQueueLen(0);
+    void host.resumeSession(id).then(() => {
+      setEhuiRefresh((n) => n + 1);
+      refreshSessions();
+    });
   };
 
-  const connectedLabel =
-    state.connectionState === "connected"
-      ? "live"
-      : state.connectionState === "connecting"
-        ? "connecting…"
-        : state.connectionState === "disconnected"
-          ? "offline"
-          : "…";
+  useEffect(() => {
+    const onMove = (e: PointerEvent): void => {
+      if (dragRef.current === "sidebar") {
+        const w = Math.min(420, Math.max(180, e.clientX));
+        setSidebarW(w);
+      } else if (dragRef.current === "details") {
+        const w = Math.min(520, Math.max(240, window.innerWidth - e.clientX));
+        setDetailsW(w);
+      }
+    };
+    const onUp = (): void => {
+      if (dragRef.current === "sidebar") {
+        try {
+          localStorage.setItem(
+            "eh-web-sidebar-w",
+            String(sidebarWRef.current),
+          );
+        } catch {
+          // ignore
+        }
+      }
+      if (dragRef.current === "details") {
+        try {
+          localStorage.setItem(
+            "eh-web-details-w",
+            String(detailsWRef.current),
+          );
+        } catch {
+          // ignore
+        }
+      }
+      dragRef.current = null;
+      document.body.classList.remove("col-dragging");
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, []);
+
+  const gridStyle = {
+    gridTemplateColumns: [
+      sidebarCollapsed ? "56px" : `${sidebarW}px`,
+      "8px",
+      "minmax(0, 1fr)",
+      "8px",
+      detailsCollapsed ? "56px" : `${detailsW}px`,
+    ].join(" "),
+  };
 
   return (
     <div className="app">
-      <header className="top">
-        <div className="brand-block">
-          <p className="brand">envoy-harness</p>
-          <p className="tag">Primary WebUI</p>
-        </div>
-        <ConnectionIndicator
-          state={state.connectionState}
-          retryAttempt={state.retryAttempt}
-          onReconnect={() => void host.reconnect()}
-        />
-        <div className="status-strip" aria-live="polite">
-          <span className={`conn-${state.connectionState}`}>{connectedLabel}</span>
-          <span className="sep">·</span>
-          <span>
-            {state.provider || "provider?"}
-            {state.model ? ` / ${state.model}` : ""}
-          </span>
-          <span className="sep">·</span>
-          <span title={state.cwd}>{state.cwd || "cwd"}</span>
-          <span className="sep">·</span>
-          <span>
-            mesh {state.mesh?.connected ?? state.peerCount}/
-            {state.mesh?.peerTotal ?? state.peerCount}
-          </span>
-          <span className="sep">·</span>
-          <span className={state.busy ? "busy" : ""}>
-            {state.busy ? "busy" : "idle"}
-          </span>
-          {state.sessionId ? (
-            <>
-              <span className="sep">·</span>
-              <span className="mono" title={state.sessionId}>
-                {state.sessionId.slice(0, 8)}
-              </span>
-            </>
-          ) : null}
-        </div>
-        <div className="top-actions">
-          <button type="button" onClick={() => setSettingsOpen((v) => !v)}>
-            Settings
-          </button>
-          <button
-            type="button"
-            disabled={!state.busy}
-            onClick={() => void host.cancel()}
-          >
-            Cancel
-          </button>
-        </div>
-      </header>
-
       {state.connectionState === "disconnected" ? (
         <div className="banner warn" role="status">
           <span>
@@ -127,38 +223,95 @@ export function App() {
         </div>
       ) : null}
 
-      <div className="workspace">
+      <div className="workspace" style={gridStyle}>
+        <SessionRail
+          connectionState={state.connectionState}
+          retryAttempt={state.retryAttempt}
+          onReconnect={() => void host.reconnect()}
+          sessions={sessions}
+          activeSessionId={state.sessionId}
+          onNewSession={() => {
+            promptQueueRef.current = [];
+            setQueueLen(0);
+            void host.newSession().then(() => {
+              setEhuiRefresh((n) => n + 1);
+              refreshSessions();
+            });
+          }}
+          onResume={onResume}
+          onOpenSettings={() => setSettingsOpen(true)}
+          collapsed={sidebarCollapsed}
+          onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
+          provider={state.provider}
+          model={state.model}
+        />
+
+        <div
+          className="col-handle"
+          data-side="sidebar"
+          onPointerDown={() => {
+            if (sidebarCollapsed) return;
+            dragRef.current = "sidebar";
+            document.body.classList.add("col-dragging");
+          }}
+        />
+
         <section className="chat-pane">
-          <div className="transcript" role="log">
-            {state.messages.length === 0 ? (
-              <p className="empty">
-                {state.ready ? (
-                  <>
-                    Session <code>{state.sessionId}</code> ready. Local{" "}
-                    <code>task</code> sub-agents run in parallel by default;
-                    wire <code>--peers</code> for multi-node mesh.
-                  </>
-                ) : (
-                  "Connecting to envoy-harness ACP…"
-                )}
-              </p>
-            ) : (
-              state.messages.map((m) => (
-                <article key={m.id} className={`bubble ${m.role}`}>
-                  <header>{m.role}</header>
-                  <pre>{m.text}</pre>
-                </article>
-              ))
-            )}
-            {state.error && state.connectionState === "connected" ? (
-              <p className="error">{state.error}</p>
-            ) : null}
-          </div>
+          <header className="chat-top">
+            <div className="chat-status" aria-live="polite">
+              <span className={`conn-${state.connectionState}`}>
+                {state.connectionState === "connected"
+                  ? "live"
+                  : state.connectionState === "connecting"
+                    ? "connecting…"
+                    : "offline"}
+              </span>
+              <span className="sep">·</span>
+              <span title={state.cwd}>{state.cwd || "cwd"}</span>
+              <span className="sep">·</span>
+              <span>
+                mesh {state.mesh?.connected ?? state.peerCount}/
+                {state.mesh?.peerTotal ?? state.peerCount}
+              </span>
+              <span className="sep">·</span>
+              <span className={state.busy ? "busy" : ""}>
+                {state.busy ? "busy" : "idle"}
+              </span>
+              {queueLen > 0 ? (
+                <>
+                  <span className="sep">·</span>
+                  <span className="busy">{queueLen} queued</span>
+                </>
+              ) : null}
+            </div>
+            <button
+              type="button"
+              disabled={!state.busy}
+              onClick={() => void host.cancel()}
+            >
+              Stop
+            </button>
+          </header>
+
+          <Transcript
+            messages={state.messages}
+            busy={state.busy}
+            error={state.error}
+            showConnectionError={state.connectionState === "connected"}
+            empty={
+              <EmptyHero
+                ready={state.ready}
+                sessionId={state.sessionId}
+                cwd={state.cwd}
+              />
+            }
+          />
+
           <form
             className="composer"
             onSubmit={(e) => {
               e.preventDefault();
-              void send();
+              enqueueOrSend();
             }}
           >
             <textarea
@@ -166,240 +319,102 @@ export function App() {
               onChange={(e) => setDraft(e.target.value)}
               placeholder={
                 state.ready
-                  ? "Message the agent… (Enter to send, Shift+Enter newline)"
+                  ? state.busy
+                    ? "Agent is working… Enter queues the next message"
+                    : "Message the agent… (Enter to send, Shift+Enter newline)"
                   : "Waiting for connection…"
               }
               rows={3}
-              disabled={!state.ready || state.busy}
+              disabled={!state.ready || Boolean(state.permission)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
-                  void send();
+                  enqueueOrSend();
                 }
               }}
             />
-            <button
-              type="submit"
-              disabled={!state.ready || state.busy || !draft.trim()}
-            >
-              Send
-            </button>
+            {state.busy ? (
+              <div className="composer-actions">
+                {draft.trim() ? (
+                  <button
+                    type="button"
+                    onClick={() => enqueueOrSend()}
+                    disabled={!state.ready}
+                  >
+                    Queue
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="primary stop"
+                  onClick={() => void host.cancel()}
+                >
+                  Stop
+                </button>
+              </div>
+            ) : (
+              <button
+                type="submit"
+                className="primary"
+                disabled={!state.ready || !draft.trim()}
+              >
+                Send
+              </button>
+            )}
           </form>
         </section>
 
-        <aside className="side">
-          <MeshRail
-            mesh={state.mesh}
-            onRefresh={() => void host.refreshMesh()}
-          />
+        <div
+          className="col-handle"
+          data-side="details"
+          onPointerDown={() => {
+            if (detailsCollapsed) return;
+            dragRef.current = "details";
+            document.body.classList.add("col-dragging");
+          }}
+        />
 
-          {settingsOpen ? (
-            <div className="settings">
-              <h2>Model & policy</h2>
-              <label>
-                Provider
-                <input
-                  value={providerDraft}
-                  onChange={(e) => setProviderDraft(e.target.value)}
-                  placeholder="openai / anthropic / …"
-                />
-              </label>
-              <label>
-                Model
-                <input
-                  value={modelDraft}
-                  onChange={(e) => setModelDraft(e.target.value)}
-                  placeholder="model id"
-                />
-              </label>
-              <button
-                type="button"
-                onClick={() =>
-                  void host
-                    .setModel(providerDraft.trim(), modelDraft.trim())
-                    .catch(() => undefined)
-                }
-              >
-                Apply model
-              </button>
-              <p className="hint">
-                API keys stay in the Node bridge / env — not browser storage.
-              </p>
-              <label>
-                Sandbox
-                <select
-                  value={state.sandbox}
-                  onChange={(e) =>
-                    void host
-                      .setPolicy({ sandbox: e.target.value })
-                      .catch(() => undefined)
-                  }
-                >
-                  <option value="read-only">read-only</option>
-                  <option value="workspace-write">workspace-write</option>
-                  <option value="danger-full-access">danger-full-access</option>
-                </select>
-              </label>
-              <label>
-                Approval
-                <select
-                  value={state.approval}
-                  onChange={(e) =>
-                    void host
-                      .setPolicy({ approval: e.target.value })
-                      .catch(() => undefined)
-                  }
-                >
-                  <option value="unless-trusted">unless-trusted</option>
-                  <option value="on-request">on-request</option>
-                  <option value="granular">granular</option>
-                  <option value="never">never</option>
-                </select>
-              </label>
-              <label>
-                Auto-run
-                <select
-                  value={state.autoRun}
-                  onChange={(e) =>
-                    void host
-                      .setPolicy({ autoRun: e.target.value })
-                      .catch(() => undefined)
-                  }
-                >
-                  <option value="always-confirm">always-confirm</option>
-                  <option value="safe-only">safe-only</option>
-                  <option value="off">off</option>
-                </select>
-              </label>
-              <h2>Resume</h2>
-              <ul className="session-list">
-                {sessions.length === 0 ? (
-                  <li className="muted">No persisted sessions</li>
-                ) : (
-                  sessions.map((s) => (
-                    <li key={s.id}>
-                      <button
-                        type="button"
-                        className="session-row"
-                        onClick={() =>
-                          void host.resumeSession(s.id).then(() => {
-                            setEhuiRefresh((n) => n + 1);
-                          })
-                        }
-                      >
-                        <span className="mono">{s.id.slice(0, 8)}…</span>
-                        <span>{s.title ?? "untitled"}</span>
-                        <span className="muted">{s.messageCount} msgs</span>
-                      </button>
-                    </li>
-                  ))
-                )}
-              </ul>
-            </div>
-          ) : null}
-
-          {ehuiSource ? (
-            <div className="ehui-dock">
-              <EhuiShell
-                dataSource={ehuiSource}
-                refreshKey={ehuiRefresh}
-                onResumeSession={(id) => {
-                  void host.resumeSession(id).then(() => {
-                    setEhuiRefresh((n) => n + 1);
-                    void host.listSessions().then(setSessions);
-                  });
-                }}
-              />
-            </div>
-          ) : (
-            <p className="muted side-placeholder">
-              EHUI dock waits for a live session…
-            </p>
-          )}
-        </aside>
+        <DetailsRail
+          mesh={state.mesh}
+          onRefreshMesh={() => void host.refreshMesh()}
+          ehuiSource={ehuiSource}
+          ehuiRefresh={ehuiRefresh}
+          onResumeSession={(id) => {
+            onResume(id);
+          }}
+          collapsed={detailsCollapsed}
+          onToggleCollapsed={() => setDetailsCollapsed((v) => !v)}
+        />
       </div>
 
-      {state.permission ? (
-        <div className="modal-backdrop" role="dialog" aria-modal="true">
-          <div className="modal">
-            <h2>Permission</h2>
-            <p>
-              <strong>{state.permission.toolName}</strong>
-            </p>
-            <p>{state.permission.description}</p>
-            <pre className="args">
-              {JSON.stringify(state.permission.args, null, 2)}
-            </pre>
-            <div className="modal-actions">
-              <button
-                type="button"
-                onClick={() => state.permission?.resolve("deny")}
-              >
-                Deny
-              </button>
-              <button
-                type="button"
-                className="primary"
-                onClick={() => state.permission?.resolve("allow")}
-              >
-                Allow
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
+      <SettingsModal
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        providerDraft={providerDraft}
+        modelDraft={modelDraft}
+        onProviderDraft={setProviderDraft}
+        onModelDraft={setModelDraft}
+        onApplyModel={() =>
+          void host
+            .setModel(providerDraft.trim(), modelDraft.trim())
+            .catch(() => undefined)
+        }
+        sandbox={state.sandbox}
+        approval={state.approval}
+        autoRun={state.autoRun}
+        onPolicy={(partial) =>
+          void host.setPolicy(partial).catch(() => undefined)
+        }
+        theme={theme}
+        onTheme={setTheme}
+      />
 
-      {state.userQuestion ? (
-        <div className="modal-backdrop" role="dialog" aria-modal="true">
-          <div className="modal">
-            <h2>Question</h2>
-            <p>{state.userQuestion.question}</p>
-            {state.userQuestion.options?.length ? (
-              <ul className="options">
-                {state.userQuestion.options.map((opt, i) => (
-                  <li key={opt}>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        state.userQuestion?.resolve({
-                          value: opt,
-                          optionIndex: i,
-                        })
-                      }
-                    >
-                      {opt}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  state.userQuestion?.resolve({ value: questionDraft });
-                  setQuestionDraft("");
-                }}
-              >
-                <input
-                  value={questionDraft}
-                  onChange={(e) => setQuestionDraft(e.target.value)}
-                  autoFocus
-                />
-                <button type="submit">Submit</button>
-              </form>
-            )}
-            <button
-              type="button"
-              className="linkish"
-              onClick={() =>
-                state.userQuestion?.resolve({ value: "", cancelled: true })
-              }
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      ) : null}
+      <PermissionModal
+        permission={state.permission}
+        userQuestion={state.userQuestion}
+        questionDraft={questionDraft}
+        onQuestionDraft={setQuestionDraft}
+      />
     </div>
   );
 }

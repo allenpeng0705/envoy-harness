@@ -7,84 +7,26 @@
 
 import { formatActivityLine, type ActivityLike } from "./activity.js";
 import {
+  type AcpHostState,
+  type ChatRole,
+  type SessionSummary,
+} from "./host-types.js";
+import { fetchMeshSnapshot } from "./mesh-snapshot.js";
+import {
   connectAcpWs,
   type WsJsonRpcClient,
 } from "./ws-jsonrpc.js";
 
-export type ChatRole = "user" | "assistant" | "system" | "tool" | "status";
-
-export type ConnectionState =
-  | "idle"
-  | "connecting"
-  | "connected"
-  | "disconnected";
-
-export interface ChatMessage {
-  id: string;
-  role: ChatRole;
-  text: string;
-  at: number;
-}
-
-export interface PermissionPrompt {
-  sessionId: string;
-  toolName: string;
-  description: string;
-  args: unknown;
-  resolve: (decision: "allow" | "deny") => void;
-}
-
-export interface UserQuestionPrompt {
-  sessionId: string;
-  question: string;
-  options?: string[];
-  resolve: (answer: {
-    value: string;
-    optionIndex?: number;
-    cancelled?: boolean;
-  }) => void;
-}
-
-export interface SessionSummary {
-  id: string;
-  mtimeMs: number;
-  title?: string;
-  cwd?: string;
-  startedAt?: string;
-  messageCount: number;
-}
-
-export interface MeshSnapshot {
-  connected: number;
-  peerTotal: number;
-  failed: number;
-  peers: Array<{ id: string; ok: boolean; model?: string; error?: string }>;
-  teamJobsRunning: number;
-  teamJobsTotal: number;
-  agentsSummary: string;
-  lastDiscovery?: string;
-}
-
-export interface AcpHostState {
-  connectionState: ConnectionState;
-  ready: boolean;
-  busy: boolean;
-  sessionId: string | null;
-  protocolVersion: number | null;
-  model: string;
-  provider: string;
-  sandbox: string;
-  approval: string;
-  autoRun: string;
-  peerCount: number;
-  mesh: MeshSnapshot | null;
-  cwd: string;
-  messages: ChatMessage[];
-  error: string | null;
-  retryAttempt: number;
-  permission: PermissionPrompt | null;
-  userQuestion: UserQuestionPrompt | null;
-}
+export type {
+  AcpHostState,
+  ChatMessage,
+  ChatRole,
+  ConnectionState,
+  MeshSnapshot,
+  PermissionPrompt,
+  SessionSummary,
+  UserQuestionPrompt,
+} from "./host-types.js";
 
 type Listener = () => void;
 
@@ -198,88 +140,13 @@ export class AcpHost {
     const client = this.#client;
     const sessionId = this.#state.sessionId;
     if (!client || client.closed || !sessionId) return;
-
-    let connected = 0;
-    let peerTotal = 0;
-    let failed = 0;
-    let peers: MeshSnapshot["peers"] = [];
-    try {
-      const res = (await client.request("cluster/status", {})) as {
-        cluster?: {
-          connected?: number;
-          failed?: number;
-          peers?: Array<{
-            id: string;
-            model?: string;
-            health?: { ok?: boolean; error?: string };
-          }>;
-        };
-      };
-      const c = res.cluster;
-      if (c) {
-        connected = c.connected ?? 0;
-        failed = c.failed ?? 0;
-        peers = (c.peers ?? []).map((p) => ({
-          id: p.id,
-          ok: p.health?.ok !== false,
-          ...(p.model !== undefined ? { model: p.model } : {}),
-          ...(p.health?.error !== undefined ? { error: p.health.error } : {}),
-        }));
-        peerTotal = peers.length;
-      }
-    } catch {
-      try {
-        const res = (await client.request("peers/list", {})) as {
-          peers?: Array<{ id: string; model?: string }>;
-        };
-        peers = (res.peers ?? []).map((p) => ({
-          id: p.id,
-          ok: true,
-          ...(p.model !== undefined ? { model: p.model } : {}),
-        }));
-        peerTotal = peers.length;
-        connected = peerTotal;
-      } catch {
-        // keep previous
-      }
-    }
-
-    let teamJobsRunning = 0;
-    let teamJobsTotal = 0;
-    try {
-      const res = (await client.request("team/jobs", {})) as {
-        jobs?: Array<{ status?: string }>;
-      };
-      const jobs = res.jobs ?? [];
-      teamJobsTotal = jobs.length;
-      teamJobsRunning = jobs.filter((j) => j.status === "running").length;
-    } catch {
-      // optional
-    }
-
-    let agentsSummary = "";
-    try {
-      const res = (await client.request("session/agents", {
-        sessionId,
-      })) as { output?: string };
-      agentsSummary = (res.output ?? "").trim();
-    } catch {
-      agentsSummary = "";
-    }
-
-    const mesh: MeshSnapshot = {
-      connected,
-      peerTotal,
-      failed,
-      peers,
-      teamJobsRunning,
-      teamJobsTotal,
-      agentsSummary,
-      ...(this.#state.mesh?.lastDiscovery !== undefined
-        ? { lastDiscovery: this.#state.mesh.lastDiscovery }
-        : {}),
-    };
-    this.#patch({ mesh, peerCount: connected });
+    const { mesh, peerCount } = await fetchMeshSnapshot(
+      client,
+      sessionId,
+      this.#state.mesh,
+      this.#state.peerCount,
+    );
+    this.#patch({ mesh, peerCount });
   }
 
   async connect(): Promise<void> {
@@ -727,22 +594,95 @@ export class AcpHost {
   async resumeSession(sessionId: string): Promise<void> {
     const client = this.#client;
     if (!client) throw new Error("not connected");
+
+    // Leave any in-flight turn / host prompts cleanly before swapping.
+    if (this.#state.busy && this.#state.sessionId) {
+      try {
+        await client.request("session/cancel", {
+          sessionId: this.#state.sessionId,
+        });
+      } catch {
+        // best-effort — load may still succeed
+      }
+    }
+    this.#clearPendingHostRequests("session resumed");
+
     const res = (await client.request("session/load", {
       sessionId,
-    })) as { sessionId: string };
+    })) as {
+      sessionId: string;
+      messages?: Array<{
+        role?: string;
+        text?: string;
+      }>;
+    };
+    const hydrated =
+      res.messages
+        ?.filter((m) => m.text && m.text.trim().length > 0)
+        .map((m) => {
+          const roleRaw = m.role ?? "system";
+          const role: ChatRole =
+            roleRaw === "user" ||
+            roleRaw === "assistant" ||
+            roleRaw === "tool" ||
+            roleRaw === "system" ||
+            roleRaw === "status"
+              ? roleRaw
+              : "system";
+          return {
+            id: nextMsgId(),
+            role,
+            text: m.text!,
+            at: Date.now(),
+          };
+        }) ?? [];
     this.#patch({
       sessionId: res.sessionId,
-      messages: [
-        {
-          id: nextMsgId(),
-          role: "system",
-          text:
-            `Resumed session ${res.sessionId}. ` +
-            `Prior turns live in the agent context (transcript view is this UI session).`,
-          at: Date.now(),
-        },
-      ],
+      messages:
+        hydrated.length > 0
+          ? hydrated
+          : [
+              {
+                id: nextMsgId(),
+                role: "system",
+                text: `Resumed session ${res.sessionId} (no transcript rows returned).`,
+                at: Date.now(),
+              },
+            ],
       error: null,
+      busy: false,
+      permission: null,
+      userQuestion: null,
+    });
+    void this.refreshMesh();
+  }
+
+  /** Start a fresh ACP session (clears the local transcript). */
+  async newSession(): Promise<void> {
+    const client = this.#client;
+    if (!client || client.closed) throw new Error("not connected");
+
+    if (this.#state.busy && this.#state.sessionId) {
+      try {
+        await client.request("session/cancel", {
+          sessionId: this.#state.sessionId,
+        });
+      } catch {
+        // best-effort
+      }
+    }
+    this.#clearPendingHostRequests("new session");
+
+    const session = (await client.request("session/new", {})) as {
+      sessionId: string;
+    };
+    this.#patch({
+      sessionId: session.sessionId,
+      messages: [],
+      error: null,
+      busy: false,
+      permission: null,
+      userQuestion: null,
     });
     void this.refreshMesh();
   }

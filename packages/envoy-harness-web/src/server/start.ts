@@ -64,6 +64,8 @@ export async function startWebServer(
 
   let vite: ViteDevServer | undefined;
   if (useDev) {
+    // appType "custom": Vite must not own HTML/WS itself — this host
+    // serves health + static/SPA and upgrades /ws/acp on the same server.
     vite = await createViteServer({
       root: packageRoot(),
       server: { middlewareMode: true },

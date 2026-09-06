@@ -180,11 +180,20 @@ export type ProtocolPromptInput =
 
 export interface ProtocolSessionBackend {
   createSession(params?: { cwd?: string }): Promise<{ sessionId: string }>;
-  /** Load a persisted session transcript into a live agent (ACP `session/load`). */
+  /**
+   * Load a persisted session transcript into a live agent (ACP `session/load`).
+   * When available, `messages` is a UI-friendly transcript for host hydrate.
+   */
   loadSession?(params: {
     sessionId: string;
     cwd?: string;
-  }): Promise<{ sessionId: string }>;
+  }): Promise<{
+    sessionId: string;
+    messages?: ReadonlyArray<{
+      role: "user" | "assistant" | "system" | "tool";
+      text: string;
+    }>;
+  }>;
   /** U6a.5 — list persisted sessions for resume picker. */
   listSessions?(): Promise<
     ReadonlyArray<{
@@ -370,6 +379,11 @@ export function createFakeSessionBackend(options?: {
     capabilityTag: string;
     preferredPeerId?: string;
   }) => ProtocolPeerInfo | undefined;
+  /** Returned by `loadSession` when set (WebUI hydrate tests). */
+  loadMessages?: ReadonlyArray<{
+    role: "user" | "assistant" | "system" | "tool";
+    text: string;
+  }>;
 }): ProtocolSessionBackend & {
   cancelled: string[];
   prompts: Array<{ sessionId: string; text: string }>;
@@ -401,6 +415,21 @@ export function createFakeSessionBackend(options?: {
         approval: "on-request",
       });
       return { sessionId };
+    },
+    async loadSession(params) {
+      sessions.add(params.sessionId);
+      if (!policies.has(params.sessionId)) {
+        policies.set(params.sessionId, {
+          sandbox: "workspace-write",
+          approval: "on-request",
+        });
+      }
+      return {
+        sessionId: params.sessionId,
+        ...(options?.loadMessages !== undefined
+          ? { messages: options.loadMessages }
+          : {}),
+      };
     },
     async prompt(params) {
       if (!sessions.has(params.sessionId)) {

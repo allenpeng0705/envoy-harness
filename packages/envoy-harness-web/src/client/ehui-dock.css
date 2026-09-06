@@ -30,12 +30,13 @@
   font-size: 0.78rem;
   padding: 0.3rem 0.55rem;
   border-radius: 999px;
-  border: 1px solid var(--line);
-  background: #fff;
+  border: 0.5px solid var(--line);
+  background: var(--panel-elevated);
+  color: var(--ink);
 }
 
 .ehui-tab[aria-pressed="true"] {
-  background: color-mix(in srgb, var(--accent) 14%, #fff);
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel-elevated));
   border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
   color: var(--accent-ink);
 }
@@ -49,9 +50,10 @@
   max-height: min(52vh, 28rem);
   margin: 0;
   padding: 0.55rem 0.65rem;
-  border: 1px solid var(--line);
+  border: 0.5px solid var(--line);
   border-radius: 8px;
-  background: #fff;
+  background: var(--panel-elevated);
+  color: var(--ink);
 }
 
 .ehui-dock button.ehui-resume-row,
@@ -60,4 +62,17 @@
   width: 100%;
   text-align: left;
   margin-bottom: 0.35rem;
+}
+
+.ehui-panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 0.45rem;
+}
+
+.ehui-action-btn {
+  font-size: 0.78rem;
+  padding: 0.28rem 0.55rem;
+  border-radius: 6px;
 }

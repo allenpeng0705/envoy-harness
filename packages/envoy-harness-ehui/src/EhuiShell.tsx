@@ -15,6 +15,8 @@ import { EhuiPanelContent } from "./EhuiPanelContent.js";
 
 export type { EhuiPanelId };
 
+export { EHUI_COMMAND_PANEL_IDS } from "./ehui-constants.js";
+
 export interface EhuiShellProps {
   dataSource: EhuiDataSource;
   activePanel?: EhuiPanelId;
@@ -24,12 +26,14 @@ export interface EhuiShellProps {
   className?: string;
   /** Host loads the selected persisted session (Resume panel). */
   onResumeSession?: (sessionId: string) => void;
+  /** Override which panels appear in the tab strip (defaults to all non-chat). */
+  panelIds?: readonly EhuiPanelId[];
 }
 
 export function EhuiShell(props: EhuiShellProps): JSX.Element {
-  const [panel, setPanel] = useState<EhuiPanelId>(
-    props.activePanel ?? "plan",
-  );
+  const panelIds = props.panelIds ?? EHUI_COMMAND_PANEL_IDS;
+  const defaultPanel = props.activePanel ?? panelIds[0] ?? "plan";
+  const [panel, setPanel] = useState<EhuiPanelId>(defaultPanel);
   const [clusterLine, setClusterLine] = useState<string>("");
 
   const select = useCallback(
@@ -47,6 +51,12 @@ export function EhuiShell(props: EhuiShellProps): JSX.Element {
   }, [props.activePanel, panel]);
 
   useEffect(() => {
+    if (!panelIds.includes(panel) && panelIds[0] !== undefined) {
+      setPanel(panelIds[0]);
+    }
+  }, [panel, panelIds]);
+
+  useEffect(() => {
     void props.dataSource.clusterStatus().then((c) => {
       setClusterLine(`mesh ${c.connected}/${c.peers.length} peers`);
     }).catch(() => {
@@ -60,7 +70,7 @@ export function EhuiShell(props: EhuiShellProps): JSX.Element {
         <div className="ehui-rail-meta">{clusterLine}</div>
       ) : null}
       <nav className="ehui-tabs" aria-label="EHUI panels">
-        {EHUI_COMMAND_PANEL_IDS.map((id) => {
+        {panelIds.map((id) => {
           const meta = EHUI_PANELS.find((p) => p.id === id);
           const label = meta?.label ?? id;
           return (

@@ -156,12 +156,24 @@ export class EnvoyHarnessClient {
   async loadSession(
     sessionId: string,
     cwd?: string,
-  ): Promise<{ sessionId: string }> {
+  ): Promise<{
+    sessionId: string;
+    messages?: Array<{
+      role: "user" | "assistant" | "system" | "tool";
+      text: string;
+    }>;
+  }> {
     this.#dialect = "acp";
     return (await this.#conn.request("session/load", {
       sessionId,
       ...(cwd !== undefined ? { cwd } : {}),
-    })) as { sessionId: string };
+    })) as {
+      sessionId: string;
+      messages?: Array<{
+        role: "user" | "assistant" | "system" | "tool";
+        text: string;
+      }>;
+    };
   }
 
   /** U6a.5 — list persisted sessions (`sessions/list`). */
