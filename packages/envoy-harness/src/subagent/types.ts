@@ -140,6 +140,12 @@ export interface SubagentInput {
   /** Optional: prefer a specific peer (mesh routing
    *  hint). v0's `LocalMeshSubmitter` ignores this. */
   preferredPeerId?: string;
+  /**
+   * R4.15 — prefer a named provider id from
+   * {@link SubagentProviderRegistry} (e.g. `"local"`,
+   * `"peer:default"`). Takes precedence over peer/kind routing.
+   */
+  preferredProviderId?: string;
   /** Optional: prefer a specific runtime. v0's
    *  `LocalMeshSubmitter` ignores this. */
   preferredRuntime?: AgentRuntime;

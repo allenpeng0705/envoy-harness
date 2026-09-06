@@ -72,3 +72,11 @@ export {
   type WorkflowRunOptions,
   type WorkflowTask,
 } from "./workflow.js";
+
+export {
+  SubagentProviderRegistry,
+  SubagentProviderError,
+  type SubagentProvider,
+  type SubagentProviderKind,
+  type SubagentProviderRegistryOptions,
+} from "./provider-registry.js";
