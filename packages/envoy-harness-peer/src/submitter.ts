@@ -56,6 +56,7 @@ function failedPeerResult(
     workerRuntime: "envoy-harness",
     costUsd: 0,
     durationMs: 0,
+    signature: "",
     verdict: { kind: "fail", reason, rollback: false },
   };
 }
