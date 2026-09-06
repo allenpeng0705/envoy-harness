@@ -227,7 +227,7 @@ export class LocalMeshSubmitter implements MeshSubmitter {
         ? { onSettle: this.onSubagentSettle }
         : {}),
     });
-    return handle.waitSettle({ signal });
+    return handle.waitSettle();
   }
 
   listSubagents(): ReadonlyArray<SubagentRecord> {

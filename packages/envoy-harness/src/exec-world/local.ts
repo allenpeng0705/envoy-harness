@@ -7,8 +7,6 @@ import * as path from "node:path";
 import { spawn } from "node:child_process";
 
 import type {
-  ExecReadResult,
-  ExecShellRequest,
   ExecShellResult,
   ExecWorld,
 } from "./types.js";

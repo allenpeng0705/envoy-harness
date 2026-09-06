@@ -15,7 +15,11 @@ import type {
   UserQuestionRequest,
 } from "../user-questions.js";
 
-/** Wire shape sent to ACP/SDK hosts (server → client request). */
+/**
+ * Canonical wire shape for ACP/SDK `session/user_question`
+ * (server → client). Protocol aliases this as
+ * `ProtocolUserQuestionRequest`; the TUI/client reuse it.
+ */
 export interface HostUserQuestionRequest {
   sessionId: string;
   questionId: string;
@@ -23,6 +27,13 @@ export interface HostUserQuestionRequest {
   options?: ReadonlyArray<string>;
   recommendedIndex?: number;
   multiline?: boolean;
+}
+
+/** Canonical wire answer for `session/user_question` (client → server). */
+export interface HostUserQuestionAnswer {
+  value: string;
+  optionIndex?: number;
+  cancelled?: boolean;
 }
 
 export type HostUserQuestionAsk = (

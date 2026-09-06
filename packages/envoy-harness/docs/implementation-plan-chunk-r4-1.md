@@ -37,8 +37,9 @@ without fighting stdin.
 ## Tests
 
 - `test/interaction/host-bridge.test.ts` — no-host, forward, abort.
-- `test/protocol/protocol.test.ts` — park until host answers; cancel unblocks;
-  ACP + SDK `session/user_question` round-trips (fake backend).
+- `test/protocol/{framing,acp-server,sdk-server,agent-session-backend,jsonrpc-connection,permission-ask-hook}.test.ts`
+  — park until host answers; cancel unblocks; ACP + SDK `session/user_question`
+  round-trips (fake backend).
 - `envoy-harness-tui/test/user-question.test.ts` — answer / cancel waiters.
 
 ## Review follow-ups (2026-09-06)
@@ -47,6 +48,11 @@ without fighting stdin.
 - Shared ACP/SDK host permission + user-question helpers.
 - TUI surfaces `recommendedIndex` as `(recommended)` on options.
 - Fixed pre-existing `repl-tier2` compact count (3, not 4) + command table size.
+- Module-size: split `cli/argv.ts`, package `index.ts` barrels, TUI `session.ts`.
+- §4c: canonical wire types `HostUserQuestionRequest` /
+  `HostUserQuestionAnswer`; `Protocol*` aliases; client/TUI reuse.
+- §4g: split `protocol.test.ts` into framing / acp / sdk / agent-backend /
+  jsonrpc / permission-ask-hook suites.
 
 ## Accept
 

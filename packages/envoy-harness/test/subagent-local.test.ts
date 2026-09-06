@@ -199,10 +199,17 @@ describe("LocalMeshSubmitter deadline + throw handling", () => {
   it("aborts the sub-agent when the deadline elapses", async () => {
     let completeResolve: (() => void) | undefined;
     const hangingModel: ModelAdapter = {
-      async complete() {
-        // Never returns until the test releases it.
+      async complete(input) {
+        // Honor abort so deadline / parent interrupt can unblock
+        // a hung complete() (Agent.run passes AbortSignal here).
         await new Promise<void>((resolve) => {
           completeResolve = resolve;
+          const signal = input.signal;
+          if (signal?.aborted) {
+            resolve();
+            return;
+          }
+          signal?.addEventListener("abort", () => resolve(), { once: true });
         });
         return {
           content: [textBlock("late")],

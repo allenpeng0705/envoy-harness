@@ -24,6 +24,7 @@ function okResult(
     costUsd: 0.01,
     durationMs: 1,
     verdict: { kind: "pass", score: 1, confidence: "high" },
+    signature: "",
     ...overrides,
   };
 }

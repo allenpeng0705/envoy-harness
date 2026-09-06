@@ -30,7 +30,7 @@ import {
 import { buildTurnOutlineFromMessages } from "../session/turn-outline.js";
 import type { Session } from "../session.js";
 import { SessionStore } from "../session/session-store.js";
-import type { UserQuestionAnswer, UserQuestionService } from "../interaction/user-questions.js";
+import type { UserQuestionService } from "../interaction/user-questions.js";
 import {
   cancelPendingUserQuestions,
   createHostAskHandler,

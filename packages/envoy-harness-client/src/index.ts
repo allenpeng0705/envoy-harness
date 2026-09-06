@@ -8,6 +8,10 @@ import type { Readable, Writable } from "node:stream";
 
 import { JsonRpcConnection } from "@envoymesh/envoy-harness";
 import type {
+  HostUserQuestionAnswer,
+  HostUserQuestionRequest,
+} from "@envoymesh/envoy-harness";
+import type {
   ClientClusterStatus,
   ClientDiscoveryEvent,
   ClientPeerInfo,
@@ -45,18 +49,9 @@ export interface EnvoyHarnessClientOptions {
     args: unknown;
   }) => Promise<"allow" | "deny">;
   /** R4.1 — structured ask_user / plan-mode questions from the agent. */
-  onUserQuestionRequest?: (req: {
-    sessionId: string;
-    questionId: string;
-    prompt: string;
-    options?: ReadonlyArray<string>;
-    recommendedIndex?: number;
-    multiline?: boolean;
-  }) => Promise<{
-    value: string;
-    optionIndex?: number;
-    cancelled?: boolean;
-  }>;
+  onUserQuestionRequest?: (
+    req: HostUserQuestionRequest,
+  ) => Promise<HostUserQuestionAnswer>;
   onEvent?: (event: { dialect: "acp" | "sdk"; params: unknown }) => void;
 }
 
@@ -88,14 +83,7 @@ export class EnvoyHarnessClient {
           return { decision };
         }
         if (method === "session/user_question") {
-          const req = params as {
-            sessionId: string;
-            questionId: string;
-            prompt: string;
-            options?: ReadonlyArray<string>;
-            recommendedIndex?: number;
-            multiline?: boolean;
-          };
+          const req = params as HostUserQuestionRequest;
           const answer = (await options.onUserQuestionRequest?.(req)) ?? {
             value: "",
             cancelled: true,

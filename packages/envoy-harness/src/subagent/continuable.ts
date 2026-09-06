@@ -285,6 +285,19 @@ export class ContinuableSubagentRegistry {
     running.agent.abort(reason);
     running.abortController.abort(reason);
     this.wake(running);
+    // Settle immediately so waitSettle resolves even when the
+    // agent is blocked inside a hung model.complete() that does
+    // not observe the abort signal.
+    this.settle(
+      running,
+      failedResult(
+        `sub-agent interrupted: ${reason}`,
+        this.opts.workerPeerId,
+        running.startedAt,
+        this.opts.signer,
+        "interrupted",
+      ),
+    );
   }
 
   private async pump(running: RunningSubagent): Promise<void> {
@@ -407,10 +420,11 @@ export class ContinuableSubagentRegistry {
         options?.signal?.removeEventListener("abort", onAbort);
       };
       const onAbort = (): void => {
-        cleanup();
-        const idx = running.settleWaiters.indexOf(waiter);
-        if (idx >= 0) running.settleWaiters.splice(idx, 1);
-        reject(new Error("waitSettle aborted"));
+        // Parent abort settles via interruptHandle → settle().
+        // Do not reject here (race with that path); just drop the
+        // waiter-cancel timeout/listener and let settle resolve.
+        if (timeout !== undefined) clearTimeout(timeout);
+        options?.signal?.removeEventListener("abort", onAbort);
       };
       if (options?.signal !== undefined) {
         if (options.signal.aborted) {

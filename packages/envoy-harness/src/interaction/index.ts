@@ -28,6 +28,7 @@ export {
   createHostBridgeUserQuestionProvider,
   type HostBridgeUserQuestionProviderOptions,
   type HostUserQuestionAsk,
+  type HostUserQuestionAnswer,
   type HostUserQuestionRequest,
 } from "./providers/host-bridge.js";
 

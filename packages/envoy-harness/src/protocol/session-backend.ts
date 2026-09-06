@@ -2,6 +2,11 @@
  * Phase E — shared session backend for ACP + SDK dialects.
  */
 
+import type {
+  HostUserQuestionAnswer,
+  HostUserQuestionRequest,
+} from "../interaction/providers/host-bridge.js";
+
 export interface ProtocolPermissionRequest {
   sessionId: string;
   toolName: string;
@@ -13,22 +18,12 @@ export type ProtocolPermissionDecision = "allow" | "deny";
 
 /**
  * R4.1 — server → client user question (mirrors permission requests).
- * The client returns a {@link ProtocolUserQuestionAnswer}.
+ * Alias of the canonical host-bridge wire shape.
  */
-export interface ProtocolUserQuestionRequest {
-  sessionId: string;
-  questionId: string;
-  prompt: string;
-  options?: ReadonlyArray<string>;
-  recommendedIndex?: number;
-  multiline?: boolean;
-}
+export type ProtocolUserQuestionRequest = HostUserQuestionRequest;
 
-export interface ProtocolUserQuestionAnswer {
-  value: string;
-  optionIndex?: number;
-  cancelled?: boolean;
-}
+/** Alias of the canonical host-bridge wire answer. */
+export type ProtocolUserQuestionAnswer = HostUserQuestionAnswer;
 
 export interface ProtocolCommittedMessage {
   role: "user" | "assistant" | "tool" | "system";

@@ -22,7 +22,7 @@ import { stubAdapter } from "./helpers.js";
 function inProcessConnect(
   peers: Map<string, { client: PeerClient; close(): void }>,
 ): typeof connectPeerClient {
-  return (async (opts) => {
+  return (async (opts: { host: string; port: number }) => {
     const key = `${opts.host}:${opts.port}`;
     const hit = peers.get(key);
     if (hit === undefined) {

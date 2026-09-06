@@ -81,31 +81,6 @@ describe("LocalMeshSubmitter.submitContinuable", () => {
   });
 
   it("interrupt settles as failed", async () => {
-    let resolveHang: (() => void) | undefined;
-    const hang = new Promise<void>((resolve) => {
-      resolveHang = resolve;
-    });
-    const model: ModelAdapter = {
-      async complete(input) {
-        if (input.signal?.aborted) {
-          return {
-            content: [text("aborted early")],
-            stopReason: "end_turn",
-          };
-        }
-        await hang;
-        if (input.signal?.aborted) {
-          return {
-            content: [text("aborted")],
-            stopReason: "end_turn",
-          };
-        }
-        return {
-          content: [text("done")],
-          stopReason: "end_turn",
-        };
-      },
-    };
     // Agent.run checks abort between iterations; for a single
     // complete() we abort the agent so stopReason becomes aborted
     // after the hanging complete resolves — use AbortSignal on
@@ -140,7 +115,6 @@ describe("LocalMeshSubmitter.submitContinuable", () => {
     const result = await handle.waitSettle({ timeoutMs: 5_000 });
     expect(result.status).toBe("failed");
     expect(handle.status().status).toBe("failed");
-    resolveHang?.();
   });
 
   it("blocking submit() still works (auto-settle)", async () => {
