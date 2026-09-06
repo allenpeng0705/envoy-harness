@@ -40,3 +40,15 @@ export type {
   TerminalWaitReason,
 } from "./types.js";
 export { TerminalError } from "./types.js";
+
+export {
+  FakeRemoteTerminalTransport,
+  NOOP_REMOTE_TERMINAL_TRANSPORT,
+  RemoteTerminalError,
+  formatRemoteTerminalRef,
+  isRemoteTerminalRef,
+  parseRemoteTerminalPeerId,
+  parseRemoteTerminalRef,
+  type RemoteTerminalRef,
+  type RemoteTerminalTransport,
+} from "./remote.js";

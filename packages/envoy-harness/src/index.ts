@@ -720,6 +720,13 @@ export {
   makeTerminalTools,
   registerTerminalTools,
   TerminalError,
+  FakeRemoteTerminalTransport,
+  NOOP_REMOTE_TERMINAL_TRANSPORT,
+  RemoteTerminalError,
+  formatRemoteTerminalRef,
+  isRemoteTerminalRef,
+  parseRemoteTerminalPeerId,
+  parseRemoteTerminalRef,
   type FakeTerminalBackendOptions,
   type FakeTerminalSessionState,
   type TerminalBackend,
@@ -737,6 +744,8 @@ export {
   type TerminalSignal,
   type TerminalSpawnRequest,
   type TerminalWaitReason,
+  type RemoteTerminalRef,
+  type RemoteTerminalTransport,
 } from "./terminal/index.js";
 
 export {
