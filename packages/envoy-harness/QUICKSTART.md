@@ -199,6 +199,14 @@ mutate the session.
 envoy --repl
 ```
 
+On a TTY, the REPL **auto-persists** the session (prints
+`auto-persisted session: <id>`). Resume later with `--resume <id>`.
+Default turn budget is **200** (vs 50 one-shot); cost is **uncapped**
+unless you pass `--max-cost-usd`. Use `/preset safe` (or `/approval` /
+`/sandbox`) for intermittent permissions on multi-hour runs.
+Background bash uses `job_start` when environment tools are wired;
+per-command bash timeout is the tool's `timeoutMs` (default 30s).
+
 ```
 envoy> /help                       # list all 26 commands
 envoy> /model claude-sonnet-4-6    # swap model mid-session

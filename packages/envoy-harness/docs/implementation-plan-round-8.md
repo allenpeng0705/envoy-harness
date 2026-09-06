@@ -39,7 +39,7 @@ monorepo (no EnvoyMesh required).
 |---|---|
 | R8.0 Plan artifacts | **done** |
 | R8.1 CLI sub-agents | **done** |
-| R8.2 long-run + peers | pending |
+| R8.2 long-run + peers | **done** |
 | R8.3 web scaffold | pending |
 | R8.4 web MVP | pending |
 | R8.5 EHUI + close-out | pending |

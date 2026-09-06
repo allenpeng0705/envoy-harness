@@ -496,36 +496,44 @@ export async function runAgent(
     void registry;
   }
 
-  // 4. Run the loop.
-  const result = await agent.run(prompt);
+  // R8.2 — peers parity with ACP (connect cluster for --peers / ENVOY_PEERS).
+  const { wireCliPeers } = await import("./wire-cli-peers.js");
+  const disposePeers = await wireCliPeers({ parsed, configLayer, stderr });
 
-  // F-fix: make sure the transcript is durable before the CLI
-  // returns (PersistedSession's appends are fire-and-forget).
-  await session.flush();
+  try {
+    // 4. Run the loop.
+    const result = await agent.run(prompt);
 
-  // 5. Print the result.
-  const text = result.content
-    .filter((b): b is Extract<typeof b, { type: "text" }> => b.type === "text")
-    .map((b) => b.text)
-    .join("\n");
-  if (!parsed.quiet) {
-    stdout.write(text + "\n");
+    // F-fix: make sure the transcript is durable before the CLI
+    // returns (PersistedSession's appends are fire-and-forget).
+    await session.flush();
+
+    // 5. Print the result.
+    const text = result.content
+      .filter((b): b is Extract<typeof b, { type: "text" }> => b.type === "text")
+      .map((b) => b.text)
+      .join("\n");
+    if (!parsed.quiet) {
+      stdout.write(text + "\n");
+    }
+
+    await environment.dispose().catch(() => undefined);
+    if (cordisWire.cordisDispose !== undefined) {
+      await cordisWire.cordisDispose().catch(() => undefined);
+    }
+    if (mcpWire !== undefined) {
+      await mcpWire.dispose().catch(() => undefined);
+    }
+
+    return {
+      subcommand: "run",
+      content: text,
+      stopReason: result.stopReason,
+      sessionId: session.id,
+      iterations: result.iterations,
+      toolCalls: result.toolCalls,
+    };
+  } finally {
+    await disposePeers().catch(() => undefined);
   }
-
-  await environment.dispose().catch(() => undefined);
-  if (cordisWire.cordisDispose !== undefined) {
-    await cordisWire.cordisDispose().catch(() => undefined);
-  }
-  if (mcpWire !== undefined) {
-    await mcpWire.dispose().catch(() => undefined);
-  }
-
-  return {
-    subcommand: "run",
-    content: text,
-    stopReason: result.stopReason,
-    sessionId: session.id,
-    iterations: result.iterations,
-    toolCalls: result.toolCalls,
-  };
 }

@@ -55,6 +55,15 @@ export async function runReplDispatch(
   // enforces this in `resolveSession` for the one-shot
   // path; we don't accept `--fork` in REPL mode at
   // all — it's a one-shot concept).
+  // R8.2 — auto-persist interactive REPL on a TTY when the user did not
+  // pass --resume / --persist (tests inject lineReader → stay in-memory).
+  const autoPersistRepl =
+    !parsed.resume &&
+    !parsed.persist &&
+    options.lineReader === undefined &&
+    Boolean(process.stdin.isTTY);
+  const wantPersist = parsed.persist || autoPersistRepl;
+
   if (parsed.resume && parsed.persist) {
     throw new CliError(
       "--resume and --persist are mutually exclusive in --repl mode (pick one)",
@@ -71,7 +80,7 @@ export async function runReplDispatch(
   let sessionStore: SessionStore | undefined;
   let resumeFromId: string | undefined;
   let createSession: (() => Promise<Session>) | undefined;
-  if (parsed.resume || parsed.persist) {
+  if (parsed.resume || wantPersist) {
     sessionStore = new SessionStore({ dir: defaultSessionDir(parsed) });
     if (parsed.resume) {
       // Validate the session exists up front (the
@@ -87,10 +96,7 @@ export async function runReplDispatch(
       resumeFromId = parsed.resume;
       stderr.write(`resumed session: ${parsed.resume}\n`);
     } else {
-      // --persist: create a new persisted session.
-      // We build a `SessionMetadata` from the parsed
-      // args (cwd + sandbox). The loop awaits the
-      // factory; the file is created on first call.
+      // --persist or auto-persist: create a new persisted session.
       const meta = {
         cwd: parsed.cwd ?? options.cwd ?? process.cwd(),
         permissionMode: parsed.sandbox ?? ("read-only" as const),
@@ -100,34 +106,49 @@ export async function runReplDispatch(
       const store = sessionStore;
       createSession = async () => {
         const s = await store.create(meta);
-        // Print the new session id to stderr so the
-        // user can --resume it later.
-        stderr.write(`persisted session: ${s.id}\n`);
+        stderr.write(
+          autoPersistRepl && !parsed.persist
+            ? `auto-persisted session: ${s.id} (use --resume ${s.id})\n`
+            : `persisted session: ${s.id}\n`,
+        );
         return s;
       };
     }
   }
 
-  const replResult = await runRepl({
-    model,
-    args: parsed,
-    ...(options.hooks ? { hooks: options.hooks } : {}),
-    ...(options.cwd ? { cwd: options.cwd } : {}),
-    ...(options.lineReader ? { lineReader: options.lineReader } : {}),
-    ...(options.skills ? { skills: options.skills } : {}),
-    ...(sessionStore ? { sessionStore } : {}),
-    ...(resumeFromId ? { resumeFromId } : {}),
-    ...(createSession ? { createSession } : {}),
-    stdout,
-    stderr,
+  // R8.2 — peers parity with ACP (connect cluster; dispose on exit).
+  const { loadConfigStack } = await import("../../index.js");
+  const { layer: configLayer } = await loadConfigStack({
+    cwd: parsed.cwd ?? options.cwd ?? process.cwd(),
+    ...(parsed.config !== undefined ? { filePath: parsed.config } : {}),
   });
+  const { wireCliPeers } = await import("./wire-cli-peers.js");
+  const disposePeers = await wireCliPeers({ parsed, configLayer, stderr });
 
-  return {
-    subcommand: "run",
-    content: "",
-    stopReason: "end_turn",
-    sessionId: replResult.sessionId,
-    iterations: replResult.turns,
-    toolCalls: 0,
-  };
+  try {
+    const replResult = await runRepl({
+      model,
+      args: parsed,
+      ...(options.hooks ? { hooks: options.hooks } : {}),
+      ...(options.cwd ? { cwd: options.cwd } : {}),
+      ...(options.lineReader ? { lineReader: options.lineReader } : {}),
+      ...(options.skills ? { skills: options.skills } : {}),
+      ...(sessionStore ? { sessionStore } : {}),
+      ...(resumeFromId ? { resumeFromId } : {}),
+      ...(createSession ? { createSession } : {}),
+      stdout,
+      stderr,
+    });
+
+    return {
+      subcommand: "run",
+      content: "",
+      stopReason: "end_turn",
+      sessionId: replResult.sessionId,
+      iterations: replResult.turns,
+      toolCalls: 0,
+    };
+  } finally {
+    await disposePeers().catch(() => undefined);
+  }
 }

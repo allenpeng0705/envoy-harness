@@ -182,8 +182,12 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
       ? { askForApproval: configLayer.askForApproval }
       : {}),
   });
+  // R8.2 — REPL default turn budget (long-run friendly). One-shot keeps 50.
+  const REPL_DEFAULT_MAX_TURNS = 200;
   if (opts.args.maxTurns !== undefined) {
     agentOptions.maxIterations = opts.args.maxTurns;
+  } else {
+    agentOptions.maxIterations = REPL_DEFAULT_MAX_TURNS;
   }
   if (opts.args.maxCostUsd !== undefined) {
     agentOptions.maxCostUsd = opts.args.maxCostUsd;
@@ -198,6 +202,17 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
       | "on-request"
       | "granular"
       | "never";
+  }
+  // R8.2 — align sandbox policy with one-shot / ACP via config layer.
+  {
+    const { resolveAgentRuntimeConfig } = await import("../../config/apply.js");
+    const runtime = resolveAgentRuntimeConfig(cwd, configLayer, {
+      permissionMode: session.metadata.permissionMode ?? "read-only",
+      ...(agentOptions.approval !== undefined
+        ? { askForApproval: agentOptions.approval }
+        : {}),
+    });
+    agentOptions.sandboxPolicy = runtime.sandboxPolicy;
   }
   if (opts.lspManager) {
     agentOptions.lspManager = opts.lspManager;
