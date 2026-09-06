@@ -25,6 +25,7 @@ export {
 export {
   formatCluster,
   formatDiscoveryEvent,
+  formatMesh,
   formatPeers,
   formatScoreboard,
   formatSessions,

@@ -5,6 +5,7 @@ import type { EhuiDataSource, EhuiPanelId } from "@envoymesh/envoy-harness-clien
 import {
   formatCluster,
   formatDiscoveryEvent,
+  formatMesh,
   formatPeers,
   formatScoreboard,
   formatSessions,
@@ -50,7 +51,17 @@ export function useEhuiPanel(options: UseEhuiPanelOptions) {
         });
       } else if (panel === "git-status") {
         text = await dataSource.gitStatus();
-      } else if (panel === "mesh" || panel === "cluster") {
+      } else if (panel === "mesh") {
+        const c = await dataSource.clusterStatus();
+        text = formatMesh({
+          connected: c.connected,
+          failed: c.failed,
+          configuredPeers: c.peers.map((p) => ({
+            id: p.id,
+            endpoint: p.model ?? "peer",
+          })),
+        });
+      } else if (panel === "cluster") {
         text = formatCluster(await dataSource.clusterStatus());
       } else if (panel === "peers") {
         text = formatPeers(await dataSource.listPeers());

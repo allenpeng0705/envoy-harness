@@ -39,7 +39,7 @@ EnvoyMesh chunks commit in that repo with matching messages.
 |---|---|
 | R7.0 Plan artifacts | **done** |
 | R7.1 rich panels | **done** |
-| R7.2 mesh formatters | pending |
+| R7.2 mesh formatters | **done** |
 | R7.3 chat scope | pending |
 | R7.4 side dock | pending |
 | R7.5 resume + tests | pending |

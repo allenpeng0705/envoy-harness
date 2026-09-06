@@ -1,3 +1,7 @@
+/**
+ * R7.2 — EHUI list/mesh formatters (TUI-aligned plain text for non-structured panels).
+ */
+
 import type {
   ClientClusterStatus,
   ClientDiscoveryEvent,
@@ -7,65 +11,137 @@ import type {
   ClientTeamJob,
 } from "@envoymesh/envoy-harness-client/ehui";
 
-export function formatCluster(c: ClientClusterStatus): string {
+function peerLabel(p: ClientPeerInfo): string {
+  const model = p.model !== undefined ? ` ${p.model}` : "";
+  const caps =
+    p.capabilities !== undefined && p.capabilities.length > 0
+      ? ` caps=${[...p.capabilities].join(",")}`
+      : "";
+  return `${p.id}${model}${caps}`;
+}
+
+/** Mesh onboarding guide (distinct from cluster health). */
+export function formatMesh(options?: {
+  configuredPeers?: ReadonlyArray<{ id: string; endpoint: string }>;
+  connected?: number;
+  failed?: number;
+}): string {
   const lines = [
-    `connected ${c.connected} / failed ${c.failed} / peers ${c.peers.length}`,
+    "Mesh — collaborate across envoy-harness nodes",
+    "",
+    "Quick start:",
+    "  1. On each worker: envoy-peer serve --port 18123",
+    "  2. Wire peers: --peers w1@127.0.0.1:18123",
+    "  3. Explore: /cluster /peers /scoreboard /team /trace",
+    "",
+    "Slash / panels:",
+    "  Mesh / Cluster / Peers / Team / Scoreboard / Trace",
   ];
+  if (options?.configuredPeers !== undefined && options.configuredPeers.length > 0) {
+    lines.push("", "Configured endpoints:");
+    for (const peer of options.configuredPeers) {
+      lines.push(`  ${peer.id} → ${peer.endpoint}`);
+    }
+  }
+  if (options?.connected !== undefined) {
+    lines.push(
+      "",
+      `Live status: connected ${options.connected}, failed ${options.failed ?? 0}`,
+    );
+  }
+  return lines.join("\n");
+}
+
+export function formatCluster(
+  c: ClientClusterStatus,
+  routePreviews?: ReadonlyArray<{
+    tag: string;
+    peer: ClientPeerInfo | undefined;
+  }>,
+): string {
+  const lines = [
+    `Cluster · connected ${c.connected} / failed ${c.failed}`,
+  ];
+  if (c.peers.length === 0) {
+    lines.push("  no peers configured");
+    return lines.join("\n");
+  }
   for (const p of c.peers) {
-    const health = p.health.ok
-      ? `ok${p.health.rttMs !== undefined ? ` ${p.health.rttMs}ms` : ""}`
-      : `down${p.health.error ? ` (${p.health.error})` : ""}`;
-    const caps =
-      p.capabilities && p.capabilities.length > 0
-        ? ` [${p.capabilities.join(", ")}]`
-        : "";
-    lines.push(`${p.id} ${p.model ?? "—"} ${health}${caps}`);
+    lines.push(`  ${peerLabel(p)}`);
+    if (p.health.ok) {
+      const rtt = p.health.rttMs !== undefined ? ` rtt=${p.health.rttMs}ms` : "";
+      lines.push(`    health: ok${rtt}`);
+    } else {
+      const error = p.health.error !== undefined ? ` (${p.health.error})` : "";
+      lines.push(`    health: down${error}`);
+    }
+  }
+  if (routePreviews !== undefined && routePreviews.length > 0) {
+    lines.push("  routing:");
+    for (const preview of routePreviews) {
+      lines.push(
+        preview.peer === undefined
+          ? `    ${preview.tag} → no peer`
+          : `    ${preview.tag} → ${peerLabel(preview.peer)}`,
+      );
+    }
+  } else {
+    lines.push("  routing: open Route preview from slash /route <tag>");
   }
   return lines.join("\n");
 }
 
 export function formatPeers(peers: ClientPeerInfo[]): string {
-  if (peers.length === 0) return "No peers configured.";
-  return peers
-    .map((p) => {
-      const caps =
-        p.capabilities && p.capabilities.length > 0
-          ? ` — ${p.capabilities.join(", ")}`
-          : "";
-      return `${p.id}${p.model ? ` (${p.model})` : ""}${caps}`;
-    })
-    .join("\n");
+  if (peers.length === 0) return "Peers (0) — no peers configured";
+  return [`Peers (${peers.length})`, ...peers.map((p) => `  ${peerLabel(p)}`)].join(
+    "\n",
+  );
 }
 
 export function formatTeamJobs(jobs: ClientTeamJob[]): string {
-  if (jobs.length === 0) return "No team jobs.";
-  return jobs
-    .map((j) => {
-      const agents = j.agents.map((a) => `${a.id}:${a.status}`).join(", ");
-      const cost = j.costUsd !== undefined ? ` $${j.costUsd.toFixed(3)}` : "";
-      return `${j.jobId} [${j.status}]${cost}\n  ${agents}`;
-    })
-    .join("\n\n");
+  if (jobs.length === 0) return "Team (0) — no jobs";
+  const lines: string[] = [`Team (${jobs.length})`];
+  for (const job of jobs) {
+    const cost = job.costUsd !== undefined ? ` cost=${job.costUsd}` : "";
+    lines.push(`  ${job.jobId} ${job.status}${cost} @ ${job.createdAt}`);
+    for (const agent of job.agents) {
+      const model = agent.model !== undefined ? ` ${agent.model}` : "";
+      const costA = agent.costUsd !== undefined ? ` cost=${agent.costUsd}` : "";
+      lines.push(
+        `    ${agent.id} @ ${agent.host}${model} = ${agent.status}${costA}`,
+      );
+    }
+  }
+  return lines.join("\n");
 }
 
 export function formatScoreboard(entries: ClientScoreboardEntry[]): string {
-  if (entries.length === 0) return "No scoreboard entries.";
-  return entries
-    .map(
-      (e) =>
-        `${e.workerPeerId} · ${e.skillId}: score ${e.score} (pass ${e.passCount} / fail ${e.failCount} / partial ${e.partialCount})`,
-    )
-    .join("\n");
+  if (entries.length === 0) return "Scoreboard (0) — no entries";
+  const lines = ["Scoreboard"];
+  for (const e of entries) {
+    lines.push(
+      `  ${e.workerPeerId} · ${e.skillId}: score ${e.score} (pass ${e.passCount} / fail ${e.failCount} / partial ${e.partialCount})`,
+    );
+  }
+  return lines.join("\n");
 }
 
 export function formatSessions(rows: ClientSessionSummary[]): string {
-  if (rows.length === 0) return "No saved sessions.";
-  return rows
-    .map((s) => {
-      const title = s.title ?? s.id;
-      return `${title}\n  ${s.messageCount} msgs · ${s.id}`;
-    })
-    .join("\n\n");
+  if (rows.length === 0) {
+    return "Resume session\n  no persisted sessions — use --persist";
+  }
+  const lines = [
+    "Resume session",
+    "  #   id          messages  title / cwd",
+  ];
+  rows.forEach((s, i) => {
+    const title = s.title ?? s.cwd ?? "—";
+    const shortId = s.id.length > 12 ? `${s.id.slice(0, 10)}…` : s.id;
+    lines.push(
+      `  ${String(i + 1).padStart(2)}  ${shortId.padEnd(12)} ${String(s.messageCount).padStart(3)}     ${title}`,
+    );
+  });
+  return lines.join("\n");
 }
 
 export function formatDiscoveryEvent(ev: ClientDiscoveryEvent): string {
