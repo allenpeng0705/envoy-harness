@@ -151,17 +151,25 @@ export class ManagedPeerCluster implements ConnectResultLike {
     return clusterStatusFromConnect(this, health);
   }
 
+  /** Disconnect one peer by id (no-op if unknown). */
+  disconnectPeer(id: string): boolean {
+    const close = this.#closers.get(id);
+    if (close === undefined) return false;
+    close();
+    this.#closers.delete(id);
+    const idx = this.connected.indexOf(id);
+    if (idx !== -1) this.connected.splice(idx, 1);
+    this.#options.onEvent?.({
+      type: "peer.disconnected",
+      peerId: id,
+      at: Date.now(),
+    });
+    return true;
+  }
+
   closeAll(): void {
     for (const id of [...this.connected]) {
-      const close = this.#closers.get(id);
-      if (close !== undefined) close();
-      this.#closers.delete(id);
-      this.#options.onEvent?.({
-        type: "peer.disconnected",
-        peerId: id,
-        at: Date.now(),
-      });
+      this.disconnectPeer(id);
     }
-    this.connected.length = 0;
   }
 }

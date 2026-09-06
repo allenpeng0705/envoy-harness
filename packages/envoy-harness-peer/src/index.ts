@@ -103,6 +103,23 @@ export {
   type ManagedPeerClusterOptions,
 } from "./managed-cluster.js";
 export {
+  StaticDiscoverySource,
+  FakeDiscoverySource,
+  MeshFeedDiscoverySource,
+  MdnsDiscoverySource,
+  CompositeDiscoverySource,
+  type DiscoverySource,
+  type DiscoverySourceKind,
+  type DiscoveredPeer,
+  type DiscoveryAnnouncement,
+  type DiscoveryListener,
+} from "./discovery.js";
+export {
+  createDiscoveryRail,
+  type DiscoveryRail,
+  type DiscoveryRailOptions,
+} from "./discovery-rail.js";
+export {
   parseServeArgs,
   startPeerServer,
   createDemoAdapter,

@@ -309,7 +309,7 @@ Named providers: `local` | `peer` | future — one `MeshSubmitter` / `task` surf
 | R4.9b Continuable peer | D-Ops | **P0** | multi | **done** |
 | R4.10 Verify budget | D-Ops | P1 | multi | **done** |
 | R4.11 Scoreboard pull | D-Ops | P2 | multi | **done** |
-| R4.18 Dynamic discovery | D-Ops | P2 | multi | planned |
+| R4.18 Dynamic discovery | D-Ops | P2 | multi | **done** |
 | R4.12 Remote jobs | D-Mesh | P1 | multi | planned |
 | R4.13 Remote terminals | D-Mesh | P1 | multi | planned |
 | R4.14 Unify job boards | D-Mesh | P1 | multi | planned |
