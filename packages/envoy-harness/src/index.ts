@@ -663,6 +663,13 @@ export {
   JobError,
   makeJobTools,
   registerJobTools,
+  FakeRemoteJobTransport,
+  NOOP_REMOTE_JOB_TRANSPORT,
+  RemoteJobError,
+  formatRemoteJobRef,
+  isRemoteJobRef,
+  parseRemoteJobRef,
+  parseRemotePeerId,
   type JobDoneListener,
   type JobHooks,
   type JobOutcome,
@@ -673,6 +680,8 @@ export {
   type JobStatus,
   type LocalJobRegistryOptions,
   type ProcessJobOptions,
+  type RemoteJobRef,
+  type RemoteJobTransport,
 } from "./jobs/index.js";
 
 export {
