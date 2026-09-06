@@ -1,7 +1,8 @@
 # Implementation plan — U6 product shell + Windows sandbox + IDE bridge
 
-> **Status:** U6a.1–U6a.5 **done** (U6a.4–5 via Round 5 R5.5/R5.6).
-> Windows F2 and IDE U6b–c remain **planned** below.
+> **Status:** U6a.1–U6a.5 **done**. F2 lifecycle **Round 6**
+> ([`implementation-plan-round-6.md`](./implementation-plan-round-6.md)).
+> IDE U6b–c remain **planned** (EnvoyMesh / EnvoyGo).
 
 Targets the gaps vs Codex / Claude Code the team flagged:
 
@@ -55,7 +56,12 @@ envoy-harness stays **protocol-first**; IDE polish lives in hosts.
 
 ## F2 — Windows sandbox (Package 1)
 
-**Today:** Linux landlock + macOS seatbelt; Windows = 6 bash validators only.
+> **Round 6:** harden abort/cancel (`taskkill /T`), sidecar per-request
+> cancel, doctor probe. Scaffolds for F2a–c already shipped; FS isolation
+> (`fsIsolation: true`) remains deferred.
+
+**Today:** Linux landlock + macOS seatbelt; Windows job + optional sidecar
+scaffold; Round 6 closes process-tree kill gaps.
 
 **Codex reference:** `codex-rs/windows-sandbox-rs` sidecar for FS ACL isolation + job objects for process-tree lifecycle (`windows-sandbox-rs/src/bin/command_runner/win.rs`).
 

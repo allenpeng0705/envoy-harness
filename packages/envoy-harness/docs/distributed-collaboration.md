@@ -454,6 +454,11 @@ See [`implementation-plan-round-5.md`](./implementation-plan-round-5.md).
 Theme: peer JSON-RPC for jobs + exec, discovery rail on CLI, adapter
 transport factories, remaining U6a TUI polish.
 
+### 11.8 Round 6 (Windows F2 lifecycle)
+
+See [`implementation-plan-round-6.md`](./implementation-plan-round-6.md).
+Theme: process-tree kill, sidecar cancel IPC, doctor probe (no FS isolation).
+
 ## 12. Round-by-round history (index)
 
 - **Round 1 (D1-D4):** peer transport, server, registry, distributed
@@ -465,6 +470,7 @@ transport factories, remaining U6a TUI polish.
   single-instance parity + multi-node ops — IMPLEMENTED (2026-09-06)
 - **Round 5 (R5-Wire / R5-Shell):** live jobs/exec RPC, discovery CLI,
   adapter transports, U6a remainder — IMPLEMENTED (2026-09-06)
+- **Round 6 (R6-F2):** Windows sandbox lifecycle harden — IN PROGRESS (2026-09-06)
 
 Each round ships with tests and keeps this design doc updated. The
 differentiator remains the protocol (MAP at two scales) plus a real
