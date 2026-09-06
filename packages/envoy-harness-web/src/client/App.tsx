@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { EhuiShell } from "@envoymesh/envoy-harness-ehui";
 import { AcpHost, type SessionSummary } from "./acp/host.js";
 import { createBrowserEhuiDataSource } from "./acp/ehui-source.js";
+import { ConnectionIndicator } from "./ConnectionIndicator.js";
+import { MeshRail } from "./MeshRail.js";
 
 function useAcpHost(host: AcpHost) {
   return useSyncExternalStore(
@@ -38,40 +40,65 @@ export function App() {
   }, [host, state.ready, state.sessionId]);
 
   const ehuiSource = useMemo(() => {
-    if (!state.sessionId) return null;
+    if (!state.sessionId || !state.ready) return null;
     return createBrowserEhuiDataSource(host, state.sessionId);
-  }, [host, state.sessionId]);
+  }, [host, state.sessionId, state.ready]);
 
   const send = async (): Promise<void> => {
     const text = draft.trim();
-    if (!text || state.busy) return;
+    if (!text || state.busy || !state.ready) return;
     setDraft("");
     await host.prompt(text);
     setEhuiRefresh((n) => n + 1);
   };
+
+  const connectedLabel =
+    state.connectionState === "connected"
+      ? "live"
+      : state.connectionState === "connecting"
+        ? "connecting…"
+        : state.connectionState === "disconnected"
+          ? "offline"
+          : "…";
 
   return (
     <div className="app">
       <header className="top">
         <div className="brand-block">
           <p className="brand">envoy-harness</p>
-          <p className="tag">Standalone WebUI</p>
+          <p className="tag">Primary WebUI</p>
         </div>
+        <ConnectionIndicator
+          state={state.connectionState}
+          retryAttempt={state.retryAttempt}
+          onReconnect={() => void host.reconnect()}
+        />
         <div className="status-strip" aria-live="polite">
-          <span>{state.ready ? "connected" : "connecting…"}</span>
+          <span className={`conn-${state.connectionState}`}>{connectedLabel}</span>
           <span className="sep">·</span>
           <span>
             {state.provider || "provider?"}
             {state.model ? ` / ${state.model}` : ""}
           </span>
           <span className="sep">·</span>
-          <span>{state.cwd || "cwd"}</span>
+          <span title={state.cwd}>{state.cwd || "cwd"}</span>
           <span className="sep">·</span>
-          <span>{state.peerCount} peers</span>
+          <span>
+            mesh {state.mesh?.connected ?? state.peerCount}/
+            {state.mesh?.peerTotal ?? state.peerCount}
+          </span>
           <span className="sep">·</span>
           <span className={state.busy ? "busy" : ""}>
             {state.busy ? "busy" : "idle"}
           </span>
+          {state.sessionId ? (
+            <>
+              <span className="sep">·</span>
+              <span className="mono" title={state.sessionId}>
+                {state.sessionId.slice(0, 8)}
+              </span>
+            </>
+          ) : null}
         </div>
         <div className="top-actions">
           <button type="button" onClick={() => setSettingsOpen((v) => !v)}>
@@ -87,13 +114,33 @@ export function App() {
         </div>
       </header>
 
+      {state.connectionState === "disconnected" ? (
+        <div className="banner warn" role="status">
+          <span>
+            Disconnected from ACP
+            {state.error ? `: ${state.error}` : ""}. Auto-retry
+            {state.retryAttempt > 0 ? ` #${state.retryAttempt}` : ""}…
+          </span>
+          <button type="button" onClick={() => void host.reconnect()}>
+            Reconnect now
+          </button>
+        </div>
+      ) : null}
+
       <div className="workspace">
         <section className="chat-pane">
           <div className="transcript" role="log">
             {state.messages.length === 0 ? (
               <p className="empty">
-                Connected session{" "}
-                <code>{state.sessionId ?? "…"}</code>. Send a prompt to start.
+                {state.ready ? (
+                  <>
+                    Session <code>{state.sessionId}</code> ready. Local{" "}
+                    <code>task</code> sub-agents run in parallel by default;
+                    wire <code>--peers</code> for multi-node mesh.
+                  </>
+                ) : (
+                  "Connecting to envoy-harness ACP…"
+                )}
               </p>
             ) : (
               state.messages.map((m) => (
@@ -103,7 +150,9 @@ export function App() {
                 </article>
               ))
             )}
-            {state.error ? <p className="error">{state.error}</p> : null}
+            {state.error && state.connectionState === "connected" ? (
+              <p className="error">{state.error}</p>
+            ) : null}
           </div>
           <form
             className="composer"
@@ -115,7 +164,11 @@ export function App() {
             <textarea
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
-              placeholder="Message the agent…"
+              placeholder={
+                state.ready
+                  ? "Message the agent… (Enter to send, Shift+Enter newline)"
+                  : "Waiting for connection…"
+              }
               rows={3}
               disabled={!state.ready || state.busy}
               onKeyDown={(e) => {
@@ -125,13 +178,21 @@ export function App() {
                 }
               }}
             />
-            <button type="submit" disabled={!state.ready || state.busy || !draft.trim()}>
+            <button
+              type="submit"
+              disabled={!state.ready || state.busy || !draft.trim()}
+            >
               Send
             </button>
           </form>
         </section>
 
         <aside className="side">
+          <MeshRail
+            mesh={state.mesh}
+            onRefresh={() => void host.refreshMesh()}
+          />
+
           {settingsOpen ? (
             <div className="settings">
               <h2>Model & policy</h2>
@@ -154,7 +215,9 @@ export function App() {
               <button
                 type="button"
                 onClick={() =>
-                  void host.setModel(providerDraft.trim(), modelDraft.trim())
+                  void host
+                    .setModel(providerDraft.trim(), modelDraft.trim())
+                    .catch(() => undefined)
                 }
               >
                 Apply model
@@ -167,7 +230,9 @@ export function App() {
                 <select
                   value={state.sandbox}
                   onChange={(e) =>
-                    void host.setPolicy({ sandbox: e.target.value })
+                    void host
+                      .setPolicy({ sandbox: e.target.value })
+                      .catch(() => undefined)
                   }
                 >
                   <option value="read-only">read-only</option>
@@ -180,7 +245,9 @@ export function App() {
                 <select
                   value={state.approval}
                   onChange={(e) =>
-                    void host.setPolicy({ approval: e.target.value })
+                    void host
+                      .setPolicy({ approval: e.target.value })
+                      .catch(() => undefined)
                   }
                 >
                   <option value="unless-trusted">unless-trusted</option>
@@ -194,7 +261,9 @@ export function App() {
                 <select
                   value={state.autoRun}
                   onChange={(e) =>
-                    void host.setPolicy({ autoRun: e.target.value })
+                    void host
+                      .setPolicy({ autoRun: e.target.value })
+                      .catch(() => undefined)
                   }
                 >
                   <option value="always-confirm">always-confirm</option>
@@ -212,7 +281,11 @@ export function App() {
                       <button
                         type="button"
                         className="session-row"
-                        onClick={() => void host.resumeSession(s.id)}
+                        onClick={() =>
+                          void host.resumeSession(s.id).then(() => {
+                            setEhuiRefresh((n) => n + 1);
+                          })
+                        }
                       >
                         <span className="mono">{s.id.slice(0, 8)}…</span>
                         <span>{s.title ?? "untitled"}</span>
@@ -239,7 +312,9 @@ export function App() {
               />
             </div>
           ) : (
-            <p className="muted side-placeholder">EHUI dock waits for session…</p>
+            <p className="muted side-placeholder">
+              EHUI dock waits for a live session…
+            </p>
           )}
         </aside>
       </div>

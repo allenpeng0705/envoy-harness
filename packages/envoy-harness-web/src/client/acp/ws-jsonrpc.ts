@@ -11,23 +11,15 @@ export interface JsonRpcRequest {
   params?: unknown;
 }
 
-export interface JsonRpcResponse {
-  jsonrpc: "2.0";
-  id: JsonRpcId | null;
-  result?: unknown;
-  error?: { code: number; message: string; data?: unknown };
-}
-
-export interface JsonRpcNotification {
-  jsonrpc: "2.0";
-  method: string;
-  params?: unknown;
-}
-
 type Pending = {
   resolve: (value: unknown) => void;
   reject: (err: Error) => void;
 };
+
+export interface WsJsonRpcClientOptions {
+  onClose?: (ev: CloseEvent) => void;
+  onError?: () => void;
+}
 
 export class WsJsonRpcClient {
   readonly #ws: WebSocket;
@@ -40,18 +32,28 @@ export class WsJsonRpcClient {
   #requestHandler:
     | ((method: string, params: unknown) => Promise<unknown>)
     | undefined;
+  #closed = false;
 
-  constructor(ws: WebSocket) {
+  constructor(ws: WebSocket, options: WsJsonRpcClientOptions = {}) {
     this.#ws = ws;
     this.#ws.addEventListener("message", (ev) => {
       void this.#onMessage(String(ev.data));
     });
-    this.#ws.addEventListener("close", () => {
+    this.#ws.addEventListener("close", (ev) => {
+      this.#closed = true;
       for (const [, p] of this.#pending) {
         p.reject(new Error("WebSocket closed"));
       }
       this.#pending.clear();
+      options.onClose?.(ev);
     });
+    this.#ws.addEventListener("error", () => {
+      options.onError?.();
+    });
+  }
+
+  get closed(): boolean {
+    return this.#closed || this.#ws.readyState === WebSocket.CLOSED;
   }
 
   onRequest(
@@ -77,6 +79,7 @@ export class WsJsonRpcClient {
   }
 
   async request(method: string, params?: unknown): Promise<unknown> {
+    if (this.closed) throw new Error("WebSocket closed");
     const id = this.#nextId++;
     const msg: JsonRpcRequest = {
       jsonrpc: "2.0",
@@ -86,7 +89,12 @@ export class WsJsonRpcClient {
     };
     return await new Promise((resolve, reject) => {
       this.#pending.set(id, { resolve, reject });
-      this.#ws.send(JSON.stringify(msg));
+      try {
+        this.#ws.send(JSON.stringify(msg));
+      } catch (err) {
+        this.#pending.delete(id);
+        reject(err instanceof Error ? err : new Error(String(err)));
+      }
     });
   }
 
@@ -99,7 +107,6 @@ export class WsJsonRpcClient {
     }
 
     if (typeof msg["method"] === "string" && msg["id"] !== undefined) {
-      // Server → client request (permissions / user questions).
       const method = msg["method"] as string;
       const id = msg["id"] as JsonRpcId;
       const params = msg["params"];
@@ -109,9 +116,7 @@ export class WsJsonRpcClient {
           (() => {
             throw new Error(`unhandled server request: ${method}`);
           })();
-        this.#ws.send(
-          JSON.stringify({ jsonrpc: "2.0", id, result }),
-        );
+        this.#ws.send(JSON.stringify({ jsonrpc: "2.0", id, result }));
       } catch (err) {
         this.#ws.send(
           JSON.stringify({
@@ -151,17 +156,29 @@ export class WsJsonRpcClient {
   }
 
   close(): void {
-    this.#ws.close();
+    if (!this.#closed && this.#ws.readyState < WebSocket.CLOSING) {
+      this.#ws.close();
+    }
   }
 }
 
-export function connectAcpWs(url = defaultAcpWsUrl()): Promise<WsJsonRpcClient> {
+export function connectAcpWs(
+  url = defaultAcpWsUrl(),
+  options: WsJsonRpcClientOptions = {},
+): Promise<WsJsonRpcClient> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(url);
-    ws.addEventListener("open", () => resolve(new WsJsonRpcClient(ws)));
-    ws.addEventListener("error", () =>
-      reject(new Error(`failed to connect ACP WebSocket at ${url}`)),
-    );
+    let settled = false;
+    ws.addEventListener("open", () => {
+      if (settled) return;
+      settled = true;
+      resolve(new WsJsonRpcClient(ws, options));
+    });
+    ws.addEventListener("error", () => {
+      if (settled) return;
+      settled = true;
+      reject(new Error(`failed to connect ACP WebSocket at ${url}`));
+    });
   });
 }
 

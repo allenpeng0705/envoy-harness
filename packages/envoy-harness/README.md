@@ -1,22 +1,20 @@
 # @envoymesh/envoy-harness
 
-> **Status (this package):** **Phases 0–7 complete** (7 sub-phases:
-> v0 spine, mesh-native, self-evolution, production-grade, mesh-native
-> sub-agents, interactive REPL, persistent session log + bundled F18
-> gap-analysis commands). The CLI agent in Package 1 is the reference
-> implementation of MAP's `AgentRuntime = envoy-harness` value, and the
-> only adapter that ships a full local sub-agent path. The mesh
-> integration lives in [`@envoymesh/envoy-harness-adapter`](../envoy-harness-adapter)
-> (Package 3) — a thin bridge, not a fork. **The package works without
-> a mesh;** `npm install -g @envoymesh/envoy-harness` runs on a stock
-> laptop.
+> **Status:** Phases 0–7 + **Round 8** (standalone CLI power, default local
+> sub-agents, long-run REPL, browser WebUI). Works **without EnvoyMesh** —
+> `npm install` / monorepo use on a stock laptop. Optional TCP peers and
+> EnvoyMesh are add-ons, not requirements.
 
-EnvoyMesh's home-team agent harness. Production-grade CLI agent with four design targets, all load-bearing:
+Production-grade agent harness with four design targets:
 
-- **EnvoyMesh-native** — speaks the MAP protocol natively, sub-agents can run on any node in the mesh.
-- **Independently runnable** — `npm install -g @envoymesh/envoy-harness` works without any mesh, any peer, any EnvoyMesh install.
-- **Easy to integrate elsewhere** — any project can depend on this and write a ~500 LoC adapter against the stable `@envoymesh/protocol` contract.
-- **Self-contained, fully independently testable** — test suite passes in complete isolation: no mesh, no peer, no network, no `libp2p` daemon, no live LLM key.
+- **Independently runnable** — no mesh, peer, or EnvoyMesh install required.
+- **EnvoyMesh-ready** — same MAP contracts when you opt into the mesh adapter.
+- **Easy to integrate** — depend on the package and adapt against `@envoymesh/protocol`.
+- **Hermetic tests** — suite passes with no network and no live LLM key.
+
+**User guides:** monorepo [`README.md`](../../README.md) (CLI · WebUI · peers) ·
+[`QUICKSTART.md`](./QUICKSTART.md) ·
+[`../envoy-harness-web/README.md`](../envoy-harness-web/README.md).
 
 ## What ships
 
@@ -40,7 +38,7 @@ EnvoyMesh's home-team agent harness. Production-grade CLI agent with four design
 | **Mesh-native sub-agents** (Phase 5: `MeshSubmitter` seam, `LocalMeshSubmitter`, `task` tool, parallel fan-out + `maxSubagents=8`, `SubagentResultSigner`, `FanOutSpec` + capability-driven fan-out, cost aggregation, progress streaming, `subagentOf` trace annotation) | ✅ shipped | `src/subagent/` |
 | `RemoteMeshSubmitter` (Package 3, thin wrapper over `RemoteSubmitterTransport`) | ✅ shipped | `packages/envoy-harness-adapter/src/remote-mesh-submitter.ts` |
 
-### Interactive REPL (Phase 6) — `envoy --repl`
+### Interactive REPL (Phase 6) — `envoy-harness --repl`
 
 | Capability | Status | Where |
 |---|---|---|
@@ -53,7 +51,7 @@ EnvoyMesh's home-team agent harness. Production-grade CLI agent with four design
 | 3 F17.5 real-feature commands (`/new`, `/compact`, `/init`) | ✅ shipped | `src/cli/repl/commands-tier2.ts` |
 | 2 F17.6 real-feature commands (`/agents`, `/diff`) | ✅ shipped | `src/cli/repl/commands-tier2-batch2.ts` |
 
-### Persistent session log + bundled F18 commands (Phase 7) — `envoy --persist` / `--resume` / `--fork`
+### Persistent session log + bundled F18 commands (Phase 7) — `envoy-harness --persist` / `--resume` / `--fork`
 
 | Capability | Status | Where |
 |---|---|---|
@@ -61,8 +59,8 @@ EnvoyMesh's home-team agent harness. Production-grade CLI agent with four design
 | `SessionStore` (load/create/createWithId/exists/list/delete, mtime-sorted list) | ✅ shipped | `src/session/session-store.ts` |
 | `Session.setTitle` additive method (for `/rename` + persisted sessions) | ✅ shipped | `src/session.ts` |
 | CLI: `--persist` (opt-in), `--resume <id>`, `--fork <id>`, `--session-dir <path>` (default `~/.local/state/envoy-harness/sessions`, env override) | ✅ shipped | `src/cli/run.ts` |
-| REPL: `envoy --repl --session-dir <path> --resume <id>` (load + continue) | ✅ shipped | `src/cli/repl/loop.ts` |
-| REPL: `envoy --repl --session-dir <path> --persist` (new persisted session) | ✅ shipped | `src/cli/repl/loop.ts` |
+| REPL: `envoy-harness --repl --session-dir <path> --resume <id>` (load + continue) | ✅ shipped | `src/cli/repl/loop.ts` |
+| REPL: `envoy-harness --repl --session-dir <path> --persist` (new persisted session) | ✅ shipped | `src/cli/repl/loop.ts` |
 | 2 F14.1 commands (`/rename`, `/copy`) | ✅ shipped | `src/cli/repl/commands-tier2-batch3.ts` |
 | 2 F14.3 commands (`/review`, `/export`) | ✅ shipped | `src/cli/repl/commands-tier2-batch4.ts` |
 
@@ -83,43 +81,61 @@ The mesh integration (`@envoymesh/envoy-harness-adapter`) is a separate, optiona
 
 ## Quickstart
 
+Set a provider key (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or
+`DEEPSEEK_API_KEY`, …), then:
+
 ```sh
 # One-shot: read a prompt, run the agent, print the result.
-envoy "explain this codebase"
-envoy --plan "add a /healthz endpoint to the API"
-envoy --sandbox=workspace-write "refactor the auth module"
+envoy-harness --provider openai --model gpt-4o "explain this codebase"
+envoy-harness --plan "add a /healthz endpoint to the API"
+envoy-harness --sandbox=workspace-write "refactor the auth module"
 
-# Sub-agents: the `task` tool spawns a sub-agent in a NEW session.
-# (Package 1 = local; Package 3 = routed to a remote peer.)
-envoy task "translate this doc to zh"
-
-# Interactive REPL: long-lived loop, slash commands, history.
-envoy --repl
+# Interactive REPL: long-lived loop (default 200 turns, uncapped cost,
+# auto-persist on TTY). Best for multi-hour work.
+envoy-harness --repl --provider openai --model gpt-4o
 envoy> /help
 envoy> explain the auth module
-envoy> /review              # model reviews git diff
-envoy> /rename "auth refactor"
-envoy> /export md           # write the session as Markdown
+envoy> /preset safe
+envoy> /agents                 # local sub-agents from task
 envoy> /quit
 
-# Persistence: one-shot → save → REPL → resume.
-envoy --persist "fix the bug in src/auth.ts"        # prints session id to stderr
-envoy --repl --session-dir ~/.local/state/envoy-harness/sessions --resume <id>
+# Browser WebUI (primary GUI — spawns --acp)
+envoy-harness web --provider openai --model gpt-4o --persist
+# → http://127.0.0.1:5177/
 
-# Fork: copy a saved session into a new branch (new id, original transcript).
-envoy --fork <source-id> "try a different approach"
+# Sub-agents: LocalMeshSubmitter is ON by default (parallel task).
+# Opt out with --no-subagents.
+
+# Persistence
+envoy-harness --persist "fix the bug in src/auth.ts"   # prints session id
+envoy-harness --repl --resume <id>
+envoy-harness --fork <source-id> "try a different approach"
+
+# Standalone peers (LAN/WAN — no EnvoyMesh). See “Distributed features”.
+envoy-harness --repl --peers alice@192.168.1.20:8123
 ```
+
+Monorepo: `pnpm envoy -- …` and
+`pnpm --filter @envoymesh/envoy-harness-web start`.
+
+Detailed guide: repo root [`README.md`](../../README.md) and
+[`QUICKSTART.md`](./QUICKSTART.md).
 
 ## Commands
 
-`envoy` is a single binary with subcommands. Run `envoy --help` for the authoritative list; the table below is the v0 surface.
+`envoy-harness` is a single binary with subcommands. Run `envoy-harness --help`
+for the authoritative list.
 
 | Subcommand | What it does |
 |---|---|
-| `envoy` (default = `run`) | One-shot agent run. Reads a prompt (positional or stdin), runs the agent loop, prints the result. |
-| `envoy --repl` | Interactive REPL (Phase 6) — long-lived loop, 26 built-in slash commands, history. |
-| `envoy team <team.toml>` | Run a multi-agent team from a TOML file (F9.3). |
-| `envoy self-evolve` | Run one 5-step self-evolution cycle (Phase 3, shadow mode by default). |
+| `envoy-harness` (default = `run`) | One-shot agent run. |
+| `envoy-harness --repl` | Interactive REPL — long-lived loop, slash commands, history. |
+| `envoy-harness --acp` | ACP JSON-RPC on stdio (hosts / TUI / WebUI bridge). |
+| `envoy-harness web` | Browser WebUI (`@envoymesh/envoy-harness-web`). |
+| `envoy-harness tui` | Terminal UI host. |
+| `envoy-harness team <team.toml>` | Multi-agent team from a TOML file. |
+| `envoy-harness self-evolve` | One self-evolution cycle (shadow by default). |
+| `envoy-harness doctor` | Health checks. |
 
 ### `run` flags
 
@@ -130,18 +146,29 @@ envoy --fork <source-id> "try a different approach"
 | `--sandbox <mode>` | Permission mode: `read-only` (default) \| `workspace-write` \| `danger-full-access`. |
 | `--approval <mode>` | Approval policy: `unless-trusted` \| `on-request` \| `granular` \| `never`. |
 | `--cwd <path>` | Override working directory (default: `process.cwd()`). |
-| `--max-turns <n>` | Cap agent-loop iterations. |
-| `--max-cost-usd <n>` | Cost ceiling for the run; agent aborts when reached. |
+| `--max-turns <n>` | Cap agent-loop iterations (default **50** one-shot / **200** REPL). |
+| `--max-cost-usd <n>` | Cost ceiling (default **$5** one-shot; **uncapped** REPL unless set). |
 | `--repl` | Enter the interactive REPL. |
-| `--persist` | Persist the new session to disk (for `--resume` later). Prints the session id to stderr. |
+| `--acp` | Serve ACP on stdio. |
+| `--persist` | Persist the new session to disk (REPL also auto-persists on TTY). |
 | `--resume <session-id>` | Resume a saved session. |
 | `--fork <session-id>` | Fork a saved session into a new branch (fresh id, original transcript). |
 | `--session-dir <path>` | Session storage dir (default `~/.local/state/envoy-harness/sessions`; override via `ENVOY_HARNESS_SESSION_DIR`). |
+| `--no-subagents` | Disable default local `task` / `LocalMeshSubmitter`. |
+| `--peers <id>@<host:port>` | Static standalone peer (repeatable; also `ENVOY_PEERS`). |
+| `--discovery <mode>` | Peer discovery: `static` \| `mdns` \| `none` (default `static`). |
 | `--plan` | Plan-only mode: no tool execution, just the plan. |
-| `--json` | Machine-readable JSON Lines output (F9.4) — pipe to `jq` or a trace viewer. |
+| `--json` | Machine-readable JSON Lines output — pipe to `jq` or a trace viewer. |
 | `--verbose` | Print hook fires and validator verdicts. |
-| `--quiet` | Suppress human output; only stream-json. |
+| `--quiet` | Suppress human output. |
 | `--no-color` | Disable ANSI colors. |
+
+### WebUI (`envoy-harness web`)
+
+Delegates to `@envoymesh/envoy-harness-web`. Typical flags: `--port`,
+`--host`, `--cwd`, `--provider`, `--model`, `--persist`, `--no-subagents`,
+`--peers`, `--dev`, `--no-open`. See
+[`../envoy-harness-web/README.md`](../envoy-harness-web/README.md).
 
 ### `team` flags
 
@@ -199,7 +226,10 @@ envoy --fork <source-id> "try a different approach"
 
 ## Persistence
 
-The persistence layer is opt-in. By default, sessions are in-memory (the v0 behavior). Pass `--persist` to write the session to disk; use `--resume <id>` (one-shot) or `--repl --resume <id>` (REPL) to load it back.
+The persistence layer is opt-in for one-shot. By default, one-shot sessions
+are in-memory. Pass `--persist` to write to disk; use `--resume <id>` or
+`--repl --resume <id>` to load it back. On a TTY, **REPL auto-persists**
+(prints `auto-persisted session: <id>`).
 
 ### Storage
 
@@ -212,12 +242,64 @@ The persistence layer is opt-in. By default, sessions are in-memory (the v0 beha
 
 | Mode | CLI | REPL |
 |---|---|---|
-| **Fresh in-memory** (default) | `envoy "prompt"` | `envoy --repl` |
-| **Fresh persisted** | `envoy --persist "prompt"` (prints id to stderr) | `envoy --repl --session-dir <path> --persist` |
-| **Resume saved** | `envoy --resume <id> "next prompt"` | `envoy --repl --session-dir <path> --resume <id>` |
-| **Fork saved** (copy + fresh id) | `envoy --fork <id> "alternate approach"` | — (deferred; one-shot only in v0) |
+| **Fresh in-memory** | `envoy-harness "prompt"` | tests / non-TTY without `--persist` |
+| **Fresh persisted** | `envoy-harness --persist "prompt"` | TTY auto-persist, or `--persist` |
+| **Resume saved** | `envoy-harness --resume <id> "next"` | `envoy-harness --repl --resume <id>` |
+| **Fork saved** (copy + fresh id) | `envoy-harness --fork <id> "…"` | — (one-shot only in v0) |
 
-`--resume` and `--fork` are mutually exclusive. `--resume <missing-id>` (and `--fork <missing-id>`) throw `CliError(EXIT_USAGE)`.
+`--resume` and `--fork` are mutually exclusive. Missing ids throw `CliError(EXIT_USAGE)`.
+
+## Distributed features
+
+**EnvoyMesh is optional.** The same `task` / team seams run locally or
+across machines.
+
+```text
+LocalMeshSubmitter  →  PeerMeshSubmitter  →  RemoteMeshSubmitter
+   (default)              (TCP --peers)         (EnvoyMesh adapter)
+```
+
+### Local parallel sub-agents (default)
+
+CLI one-shot, REPL, and `--acp` (WebUI/TUI) inject `LocalMeshSubmitter`
+unless `--no-subagents`. The model’s `task` tool runs child agents in
+parallel under a concurrency cap.
+
+### Standalone peers (LAN / WAN, no EnvoyMesh)
+
+1. Start a peer worker (`@envoymesh/envoy-harness-peer`):
+
+```sh
+pnpm --filter @envoymesh/envoy-harness-peer exec \
+  tsx bin/envoy-peer.ts serve \
+  --port 8123 --peer-id alice --model deepseek-chat
+```
+
+2. Connect from CLI or WebUI:
+
+```sh
+# LAN
+envoy-harness --repl --peers alice@192.168.1.20:8123
+
+# WAN / public IP
+envoy-harness web --peers alice@203.0.113.10:8123 --persist
+
+# Several peers
+envoy-harness --repl \
+  --peers alice@192.168.1.20:8123 \
+  --peers bob@192.168.1.21:8123
+```
+
+Also: `ENVOY_PEERS=alice@host:port,bob@host:port`.
+
+Ensure TCP reachability (firewall / NAT / Tailscale). See the monorepo
+root README for a full walkthrough.
+
+### EnvoyMesh
+
+Install `@envoymesh/envoy-harness-adapter` and run inside an EnvoyMesh
+deployment when you want libp2p fabric, signed envelopes, and mesh
+orchestration. Not required for LAN/WAN peer clusters.
 
 ## Configuration
 
@@ -270,8 +352,8 @@ sandbox = "read-only"
 ```
 
 ```sh
-envoy --profile fast "refactor the auth module"
-envoy --profile local "summarize this file"
+envoy-harness --profile fast "refactor the auth module"
+envoy-harness --profile local "summarize this file"
 ```
 
 ### History (REPL)

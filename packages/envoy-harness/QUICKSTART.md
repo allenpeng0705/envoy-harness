@@ -70,11 +70,13 @@ scannable overview.
 | `--no-color` / `--verbose` / `--quiet` | off | Output knobs |
 
 > **Round 8 (done):** standalone CLI wires local sub-agents by default;
-> browser UI via `@envoymesh/envoy-harness-web`:
+> browser UI via `@envoymesh/envoy-harness-web` (primary entry — connection
+> recovery, mesh rail, EHUI dock):
 >
 > ```sh
 > pnpm --filter @envoymesh/envoy-harness-web start
 > # or: envoy-harness web --provider openai --model gpt-4o
+> # mesh: envoy-harness web --peers alice@127.0.0.1:7400 --persist
 > ```
 >
 > See [`docs/implementation-plan-round-8.md`](docs/implementation-plan-round-8.md).

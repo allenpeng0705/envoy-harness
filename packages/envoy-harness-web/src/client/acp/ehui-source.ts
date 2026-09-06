@@ -83,9 +83,36 @@ export function createBrowserEhuiDataSource(
       return res.sessions ?? [];
     },
     async subscribeDiscovery(listener) {
-      return host.onNotification("discovery/event", (params) => {
-        listener(params as ClientDiscoveryEvent);
+      // Mirror EnvoyHarnessClient.subscribeDiscovery: register handler,
+      // then call discovery/subscribe; unwrap { event }.
+      const remove = host.onNotification("discovery/event", (params) => {
+        const { event } = (params ?? {}) as { event?: ClientDiscoveryEvent };
+        if (event !== undefined) {
+          listener(event);
+          return;
+        }
+        // Some hosts may send the event object directly.
+        if (
+          params !== null &&
+          typeof params === "object" &&
+          "type" in (params as object)
+        ) {
+          listener(params as ClientDiscoveryEvent);
+        }
       });
+      try {
+        const res = (await host.request("discovery/subscribe", {})) as {
+          subscribed?: boolean;
+        };
+        if (res.subscribed === false) {
+          remove();
+          throw new Error("discovery/subscribe not supported by this host");
+        }
+        return remove;
+      } catch (err) {
+        remove();
+        throw err;
+      }
     },
   };
 }

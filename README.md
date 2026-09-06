@@ -1,153 +1,322 @@
 # envoy-harness
 
-> **Monorepo.** This repo contains EnvoyMesh's home-team agent harness and
-> its reference mesh adapter. Each package is independently published.
->
-> **Status as of 2026-08-19:** Phases 0–7 complete (v0 spine, mesh-native
-> adapters, self-evolution, production-grade tooling, mesh-native
-> sub-agents, interactive REPL, persistent sessions + bundled F18 REPL
-> commands). **1094 tests across 74 files**, all passing; typecheck clean.
-> Plus 3 opt-in live tests under `pnpm test:live` (real network; off by default).
+Home-team agent harness for everyday coding — **CLI**, **browser WebUI**, and
+optional **multi-machine peers**. Works on a laptop with **no EnvoyMesh**.
+
+| You want… | Do this |
+|---|---|
+| Chat in the browser | [`envoy-harness web`](#how-to-use-the-webui) |
+| Interactive terminal | [`envoy-harness --repl`](#how-to-use-the-cli) |
+| One prompt, then exit | [`envoy-harness "…"`](#one-shot) |
+| Several machines on LAN/WAN | [`Distributed peers`](#distributed-features-no-envoymesh-required) |
+
+**Status:** Rounds 1–8 shipped. Plan:
+[`packages/envoy-harness/docs/implementation-plan.md`](./packages/envoy-harness/docs/implementation-plan.md).
+
+---
+
+## Contents
+
+1. [Quick start](#quick-start)
+2. [Packages](#packages)
+3. [CLI](#how-to-use-the-cli)
+4. [WebUI](#how-to-use-the-webui)
+5. [Distributed features](#distributed-features-no-envoymesh-required)
+6. [Monorepo commands](#monorepo-commands)
+7. [Docs](#docs)
+
+---
+
+## Quick start
+
+```sh
+pnpm install
+
+# Pick one API key:
+export OPENAI_API_KEY=…        # or ANTHROPIC_API_KEY / DEEPSEEK_API_KEY
+
+# A) Browser WebUI (recommended GUI)
+pnpm --filter @envoymesh/envoy-harness-web start -- \
+  --provider openai --model gpt-4o --persist
+# open http://127.0.0.1:5177/
+
+# B) Terminal REPL (recommended for long sessions)
+pnpm envoy -- --repl --provider openai --model gpt-4o
+
+# C) One-shot
+pnpm envoy -- --provider openai --model gpt-4o "explain this repo"
+```
+
+After install/build, the binary name is **`envoy-harness`**. In this monorepo,
+`pnpm envoy -- …` forwards to it.
+
+---
 
 ## Packages
 
-| Package | Status | Description |
+| Package | Role |
+|---|---|
+| [`@envoymesh/envoy-harness`](./packages/envoy-harness/README.md) | Core agent + CLI |
+| [`@envoymesh/envoy-harness-web`](./packages/envoy-harness-web/README.md) | Browser WebUI |
+| [`@envoymesh/envoy-harness-peer`](./packages/envoy-harness-peer/README.md) | TCP peers (`envoy-peer serve`) — no EnvoyMesh |
+| [`@envoymesh/envoy-harness-tui`](./packages/envoy-harness-tui/README.md) | Terminal UI over ACP |
+| [`@envoymesh/envoy-harness-ehui`](./packages/envoy-harness-ehui/README.md) | React EHUI side panels |
+| [`@envoymesh/envoy-harness-client`](./packages/envoy-harness-client/README.md) | Typed ACP client |
+| [`@envoymesh/envoy-harness-adapter`](./packages/envoy-harness-adapter/README.md) | Optional EnvoyMesh bridge |
+
+Package 1 stays **EnvoyMesh-free**. Peers are a separate package; EnvoyMesh is optional.
+
+---
+
+## How to use the CLI
+
+### Modes
+
+| Mode | Command | Best for |
 |---|---|---|
-| [`@envoymesh/envoy-harness`](./packages/envoy-harness/README.md) | ✅ Phases 0–7 | The home-team agent harness — production-grade CLI agent, EnvoyMesh-native, independently runnable. The local runtime: agent loop, permissions, hooks, verifier, REPL, persistence, sub-agents. |
-| [`@envoymesh/envoy-harness-adapter`](./packages/envoy-harness-adapter/README.md) | ✅ shipped | The reference MAP adapter (Package 3). The only code that knows both envoy-harness and the mesh: `EnvoyHarnessAdapter` (execute/verify/manifest) + `RemoteMeshSubmitter`. |
-| `@envoymesh/protocol` (in [EnvoyMesh](https://github.com/allenpeng0705/EnvoyMesh)) | external | Package 2 — the MAP wire contract (`AgentAdapter`, manifest/result/verdict schemas). Not in this repo. |
+| One-shot | `envoy-harness "prompt"` | Single task |
+| REPL | `envoy-harness --repl` | Hours of interactive work |
+| WebUI | `envoy-harness web` | Browser daily driver |
+| TUI | `envoy-harness tui` | Terminal ACP UI |
+| ACP | `envoy-harness --acp` | Hosts (WebUI/TUI spawn this) |
+| Team | `envoy-harness team team.toml` | Scripted multi-agent runs |
 
-The dependency direction is strictly one-way: `EnvoyMesh → envoy-harness-adapter → envoy-harness`.
-
-## Architecture
-
-### Package boundary
-
-```mermaid
-flowchart LR
-    subgraph mesh["EnvoyMesh — sibling monorepo"]
-        proto["@envoymesh/protocol<br/>AgentAdapter · wire types"]
-        ident["@envoymesh/identity<br/>Ed25519 keys"]
-        fabric["Mesh fabric<br/>libp2p · orchestrator · reputation"]
-    end
-
-    subgraph p3["envoy-harness-adapter (Package 3)"]
-        envad["EnvoyHarnessAdapter<br/>execute · verify · buildManifest"]
-        rms["RemoteMeshSubmitter"]
-    end
-
-    subgraph p1["envoy-harness (Package 1)"]
-        agent["Agent loop · CLI · REPL"]
-        sub["MeshSubmitter seam<br/>LocalMeshSubmitter"]
-    end
-
-    proto --> envad
-    ident --> envad
-    envad --> agent
-    fabric --> rms
-    rms --> sub
-    sub --> agent
-```
-
-### Runtime flow
-
-One `Agent.run()` turn, from prompt to result:
-
-```mermaid
-flowchart TB
-    CLI["envoy CLI<br/>one-shot · --repl · team · self-evolve"] --> RUN["Agent.run — turn loop"]
-    RUN -->|"1 · context (AGENTS.md + transcript)"| LLM["ModelAdapter"]
-    LLM -->|"2 · text / tool calls"| RUN
-    RUN -->|"3 · per tool call"| HOOK["HookRegistry<br/>PreToolUse · PostToolUse"]
-    HOOK -->|"block · ask · modify"| RUN
-    RUN -->|"4 · permission"| PERM["SandboxPolicy<br/>+ 6 bash validators"]
-    PERM -->|"allow"| TOOLS["ToolRegistry"]
-    TOOLS --> READ["read_file"]
-    TOOLS --> BASH["bash"]
-    TOOLS --> LSP["lsp_*"]
-    TOOLS --> TASK["task"]
-    TASK -->|"submit"| MS["MeshSubmitter"]
-    MS --> LOCAL["LocalMeshSubmitter<br/>new session"]
-    MS --> REMOTE["RemoteMeshSubmitter<br/>→ EnvoyMesh"]
-    RUN -->|"5 · transcript + cost"| SESS["Session<br/>InMemory · Persisted (JSONL)"]
-    RUN -->|"6 · result"| VER["Verifier rules"]
-    VER --> VOUT["Verdict"]
-```
-
-ASCII sketch of the same flow (for raw viewers):
-
-```
-user → envoy CLI ──> Agent.run (turn loop) ──> ModelAdapter (OpenAI/Anthropic/DeepSeek/Ollama)
-                          │
-                          ├─ tool_call ─> hooks ─> permission (6 bash validators) ─> tool
-                          │                                        └─ task ─> MeshSubmitter
-                          │                                                   ├─ LocalMeshSubmitter (new session)
-                          │                                                   └─ RemoteMeshSubmitter ─> EnvoyMesh
-                          ├─ transcript ─> Session (in-memory | persisted JSONL)
-                          └─ result ─> verifier rules ─> verdict
-```
-
-The mesh bridge (Package 3) wraps the same loop for inbound work: EnvoyMesh
-calls `EnvoyHarnessAdapter.execute()` → builds a fresh local `Agent` (its own
-session, permission, tools) → runs the objective → signs the wire result.
-
-## Layout
-
-```
-.
-├── packages/
-│   ├── envoy-harness/              # Package 1 — the CLI agent (Phases 0–7)
-│   │   ├── src/
-│   │   │   ├── agent.ts            # the turn loop
-│   │   │   ├── cli/                # run · argv · repl/ (26 slash commands)
-│   │   │   ├── session/            # PersistedSession + SessionStore (JSONL)
-│   │   │   ├── permissions/        # 6 bash validators + shared SandboxPolicy
-│   │   │   ├── hooks/              # 12 hook events + shell/module runners
-│   │   │   ├── agents-md/          # AGENTS.md discovery (walk-up + concat)
-│   │   │   ├── verifier/           # rule / llm / cross verdicts
-│   │   │   ├── scoreboard/         # self-evolution + federated pull
-│   │   │   ├── llm/                # OpenAI / Anthropic / DeepSeek adapters
-│   │   │   ├── lsp/                # LSP client + 4 navigation tools
-│   │   │   ├── team/               # TOML teams + topological runner
-│   │   │   ├── trace/              # tracer + JSON Lines output
-│   │   │   └── subagent/           # MeshSubmitter seam + fan-out
-│   │   ├── test/                   # 939 tests across 57 files
-│   │   ├── bin/                    # bin/envoy-harness.ts
-│   │   └── docs/                   # design.{en,zh}.md · boundary · implementation-plan
-│   └── envoy-harness-adapter/      # Package 3 — MAP bridge (93 tests / 10 files)
-│       └── src/                    # EnvoyHarnessAdapter · RemoteMeshSubmitter
-├── .github/workflows/ci.yml        # pnpm -r typecheck + test + build
-├── pnpm-workspace.yaml
-├── tsconfig.base.json
-├── package.json                    # workspace root (private)
-└── LICENSE
-```
-
-## Commands
+### One-shot
 
 ```sh
-pnpm install            # workspace install (hoists dev deps)
-pnpm run typecheck      # tsc --noEmit across all packages
-pnpm run test           # vitest run across all packages
-pnpm run build          # tsc -p tsconfig.build.json across all packages
-pnpm run envoy          # run the bin script (envoy-harness)
+envoy-harness --provider openai --model gpt-4o "summarize README.md"
+
+envoy-harness --sandbox workspace-write --approval on-request \
+  "refactor src/auth.ts and add tests"
+
+envoy-harness --plan "add a /healthz endpoint"
+
+envoy-harness --persist "fix the flaky test"    # prints session id on stderr
+envoy-harness --resume <session-id> "continue from there"
+
+# Caps (defaults: 50 turns, $5.00)
+envoy-harness --max-turns 80 --max-cost-usd 2.5 "…"
 ```
 
-Per-package commands (use `--filter`):
+### REPL (long-run)
 
 ```sh
-pnpm --filter @envoymesh/envoy-harness run test
-pnpm --filter @envoymesh/envoy-harness-adapter run typecheck
+envoy-harness --repl --provider openai --model gpt-4o --sandbox workspace-write
 ```
 
-## Design
+On a real terminal (TTY), the REPL **auto-saves** the session:
 
-- Design doc: [`packages/envoy-harness/docs/design.en.md`](./packages/envoy-harness/docs/design.en.md) (English, source of truth) + `design.zh.md` (Chinese mirror).
-- Implementation plan: [`packages/envoy-harness/docs/implementation-plan.md`](./packages/envoy-harness/docs/implementation-plan.md) — the master reference for "what shipped, what's next".
-- Package boundary: [`packages/envoy-harness/docs/boundary.en.md`](./packages/envoy-harness/docs/boundary.en.md).
-- MAP protocol: EnvoyMesh monorepo's `docs/improving-agent-network.en.md`.
+```text
+auto-persisted session: <id> (use --resume <id>)
+```
 
-## Stability
+| | One-shot | REPL |
+|---|---|---|
+| Max turns | 50 | **200** |
+| Cost limit | **$5** | none (unless you set `--max-cost-usd`) |
+| Save session | `--persist` | **auto on TTY** |
 
-- Pre-release: this monorepo is **pre-release**. Per the AGENTS.md stance, "remove the pre-release section at the first tagged release". Until then: rename or repackage freely; update every reference together; on-disk formats are rejected if stale.
-- Each package's API surface is the contract. Additive changes don't bump the major; non-additive changes do.
+Handy slash commands:
+
+| Command | Purpose |
+|---|---|
+| `/help` | List commands |
+| `/model` `/provider` | Switch model |
+| `/sandbox` `/approval` | Permissions |
+| `/preset safe` \| `ask-all` \| `approve-all` | One-knob policy |
+| `/agents` | Local sub-agents from `task` |
+| `/status` `/cost` | Session state |
+| `/quit` | Exit |
+
+Resume later:
+
+```sh
+envoy-harness --repl --resume <session-id>
+```
+
+### Local parallel sub-agents
+
+**On by default** for one-shot, REPL, ACP, and WebUI. The model can call
+`task`; several tasks in one turn run in parallel (capped).
+
+```sh
+envoy-harness --no-subagents "…"          # opt out
+envoy-harness --repl --no-subagents
+envoy-harness web --no-subagents
+```
+
+### Useful flags
+
+| Flag | Meaning |
+|---|---|
+| `--provider` / `--model` | Which LLM |
+| `--sandbox` | `read-only` · `workspace-write` · `danger-full-access` |
+| `--approval` | `unless-trusted` · `on-request` · `granular` · `never` |
+| `--cwd` | Tool working directory |
+| `--max-turns` / `--max-cost-usd` | Stop conditions |
+| `--persist` / `--resume` / `--fork` | Session save / load / branch |
+| `--no-subagents` | Disable default local `task` |
+| `--peers id@host:port` | Connect standalone peers (repeatable) |
+| `--discovery static\|mdns\|none` | Peer discovery mode |
+| `--json` / `--verbose` / `--quiet` | Output style |
+
+**API keys (env):** `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`, …
+**Config file:** `~/.config/envoy-harness/config.toml` or `ENVOY_HARNESS_CONFIG`.
+
+More detail: [`packages/envoy-harness/QUICKSTART.md`](./packages/envoy-harness/QUICKSTART.md).
+
+---
+
+## How to use the WebUI
+
+The WebUI is the **primary browser entry**: chat, permissions, settings,
+mesh status, and EHUI panels. It talks ACP over WebSocket to a local
+`envoy-harness --acp` process.
+
+### Start
+
+```sh
+# Monorepo
+pnpm --filter @envoymesh/envoy-harness-web start -- \
+  --provider openai --model gpt-4o --persist
+
+# Same thing via CLI
+envoy-harness web --provider openai --model gpt-4o --persist
+```
+
+Open **http://127.0.0.1:5177/** (default).
+
+| Flag | Meaning |
+|---|---|
+| `--port` / `--host` | Bind address (default `127.0.0.1:5177`) |
+| `--cwd` | Working directory for tools |
+| `--provider` / `--model` | Passed to the ACP child |
+| `--persist` | Save sessions for resume |
+| `--peers id@host:port` | Wire TCP peers |
+| `--no-subagents` | Disable local `task` |
+| `--no-open` | Do not auto-open a browser tab |
+| `--dev` | Force Vite middleware mode |
+
+### In the UI
+
+| Area | Use it for |
+|---|---|
+| Chat + Cancel | Talk to the agent; abort a turn |
+| Permission / question modals | Approve tools; answer asks |
+| Settings | Model, sandbox, approval, auto-run, resume list |
+| Connection control | Reconnect if the ACP process drops |
+| Mesh rail | Peers, jobs, local/remote agents |
+| EHUI dock | Plan · Diff · Mesh · Peers · Team · Scoreboard · Trace · Resume |
+
+Keys stay on the **Node machine** (env / config), not in the browser.
+
+Package docs: [`packages/envoy-harness-web/README.md`](./packages/envoy-harness-web/README.md).
+
+---
+
+## Distributed features (no EnvoyMesh required)
+
+You can run **several machines** that collaborate over plain **TCP**
+(LAN or public IP). EnvoyMesh is an optional upgrade, not a requirement.
+
+```text
+LocalMeshSubmitter  →  PeerMeshSubmitter  →  RemoteMeshSubmitter
+   this laptop            TCP --peers          EnvoyMesh (optional)
+```
+
+### Step 1 — Start a worker peer
+
+On machine A (or another terminal on the same host):
+
+```sh
+pnpm --filter @envoymesh/envoy-harness-peer exec \
+  tsx bin/envoy-peer.ts serve \
+  --port 8123 \
+  --peer-id alice \
+  --model deepseek-chat
+```
+
+- Listens on `0.0.0.0:8123` by default (reachable on the LAN if the firewall allows it).
+- Built-in demo adapter is fine for smoke tests; production should pass `--adapter <module>`.
+
+See [`packages/envoy-harness-peer/README.md`](./packages/envoy-harness-peer/README.md).
+
+### Step 2 — Connect from CLI or WebUI
+
+**Same LAN:**
+
+```sh
+envoy-harness --repl --peers alice@192.168.1.20:8123 \
+  --provider openai --model gpt-4o
+
+envoy-harness web --persist --peers alice@192.168.1.20:8123 \
+  --provider openai --model gpt-4o
+```
+
+**WAN / public IP:**
+
+```sh
+envoy-harness web --persist --peers alice@203.0.113.10:8123
+```
+
+**Several peers:**
+
+```sh
+envoy-harness --repl \
+  --peers alice@192.168.1.20:8123 \
+  --peers bob@192.168.1.21:8123
+```
+
+Or set `ENVOY_PEERS=alice@192.168.1.20:8123,bob@192.168.1.21:8123`.
+
+### Step 3 — Watch status
+
+- **WebUI:** Mesh rail + EHUI tabs (Mesh, Peers, Team, Scoreboard, Trace)
+- **ACP / TUI:** `peers/list`, `cluster/status`, `team/jobs`
+- **REPL:** `/agents` for local `task` sub-agents
+
+### WAN checklist
+
+1. Peer port open on the firewall / security group  
+2. If behind NAT: port-forward, public IP, or a tunnel (Tailscale, SSH)  
+3. Treat the peer port as private (v1 auth is lightweight)
+
+### Standalone peers vs EnvoyMesh
+
+| | `--peers` (standalone) | EnvoyMesh |
+|---|---|---|
+| Transport | TCP + JSON-RPC | libp2p + signed envelopes |
+| Setup | `envoy-peer serve` + `--peers` | Mesh + adapter package |
+| Enough for LAN/WAN coding? | **Yes** | Optional for richer fabric |
+
+Design notes: [`packages/envoy-harness/docs/distributed-collaboration.md`](./packages/envoy-harness/docs/distributed-collaboration.md).
+
+---
+
+## Monorepo commands
+
+```sh
+pnpm install
+pnpm run typecheck
+pnpm run test
+pnpm run build
+pnpm run envoy -- --help
+
+pnpm --filter @envoymesh/envoy-harness-web start
+pnpm --filter @envoymesh/envoy-harness-web test
+```
+
+---
+
+## Docs
+
+| Doc | What |
+|---|---|
+| [`packages/envoy-harness/QUICKSTART.md`](./packages/envoy-harness/QUICKSTART.md) | Operator quickstart |
+| [`packages/envoy-harness/docs/design.en.md`](./packages/envoy-harness/docs/design.en.md) | Design |
+| [`packages/envoy-harness/docs/implementation-plan.md`](./packages/envoy-harness/docs/implementation-plan.md) | What shipped |
+| [`packages/envoy-harness/docs/envoy-harness-ui.md`](./packages/envoy-harness/docs/envoy-harness-ui.md) | UI / EHUI |
+
+## License
+
+Apache-2.0

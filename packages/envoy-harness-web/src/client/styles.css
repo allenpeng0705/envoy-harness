@@ -341,3 +341,162 @@ button.primary {
   margin-top: 0.5rem;
   padding: 0;
 }
+
+.bubble.status {
+  border-style: dashed;
+  opacity: 0.9;
+  background: color-mix(in srgb, var(--accent) 6%, var(--panel));
+}
+
+.bubble.system {
+  border-style: dashed;
+  color: var(--muted);
+}
+
+.banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.55rem 1.25rem;
+  font-size: 0.9rem;
+}
+
+.banner.warn {
+  background: #f7e8b8;
+  color: #5c4a12;
+  border-bottom: 1px solid #e2d08a;
+}
+
+.conn-pill {
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 0.35rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  min-width: 8.5rem;
+  text-align: left;
+}
+
+.conn-ok {
+  background: #d9efe6;
+  color: var(--accent-ink);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.conn-warn {
+  background: #f7e8b8;
+  color: #5c4a12;
+  border-color: #e2d08a;
+  cursor: pointer;
+}
+
+.conn-pulse {
+  animation: conn-dots 1.2s ease-in-out infinite;
+}
+
+@keyframes conn-dots {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+.mesh-rail {
+  padding: 0.9rem 1.1rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.mesh-rail header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.55rem;
+}
+
+.mesh-rail h2 {
+  margin: 0;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+}
+
+.mesh-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.4rem;
+  margin-bottom: 0.65rem;
+}
+
+.mesh-stat-n {
+  display: block;
+  font-family: var(--display);
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--accent-ink);
+}
+
+.mesh-stat-l {
+  font-size: 0.7rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.mesh-peers {
+  list-style: none;
+  margin: 0 0 0.5rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+}
+
+.mesh-peers .ok::before {
+  content: "● ";
+  color: var(--accent);
+}
+
+.mesh-peers .bad::before {
+  content: "● ";
+  color: var(--danger);
+}
+
+.mesh-peers .err {
+  color: var(--danger);
+}
+
+.mesh-agents {
+  margin: 0.35rem 0 0;
+  padding: 0.45rem 0.55rem;
+  max-height: 7rem;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  white-space: pre-wrap;
+}
+
+.muted.compact {
+  margin: 0.25rem 0;
+  font-size: 0.8rem;
+}
+
+.fatal {
+  max-width: 28rem;
+  margin: 4rem auto;
+  padding: 1.5rem;
+  text-align: center;
+}
+
+.fatal h1 {
+  font-family: var(--display);
+  font-size: 1.5rem;
+}
