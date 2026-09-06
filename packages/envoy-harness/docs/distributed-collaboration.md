@@ -471,6 +471,7 @@ Theme: process-tree kill, sidecar cancel IPC, doctor probe (no FS isolation).
 - **Round 5 (R5-Wire / R5-Shell):** live jobs/exec RPC, discovery CLI,
   adapter transports, U6a remainder — IMPLEMENTED (2026-09-06)
 - **Round 6 (R6-F2):** Windows sandbox lifecycle harden — IMPLEMENTED (2026-09-06)
+- **Round 7 (R7-EHUI / R7-Host):** U6b EHUI refine — IN PROGRESS (2026-09-06)
 
 Each round ships with tests and keeps this design doc updated. The
 differentiator remains the protocol (MAP at two scales) plus a real

@@ -18,14 +18,15 @@ intentionally design-light — the executable chunking lives here.
 
 ## Distributed collaboration — the major feature
 
-> **Status:** Rounds 1–6 ✅ DONE. Round 6 (2026-09-06): Windows sandbox
-> lifecycle (process-tree kill, sidecar cancel, doctor probe).
+> **Status:** Rounds 1–6 ✅ DONE. **Round 7 IN PROGRESS (2026-09-06)** —
+> U6b EHUI refine (rich panels, chat-scoped invoke, side dock).
 >
 > **Design:** [`docs/distributed-collaboration.md`](./distributed-collaboration.md)
 > (canonical: protocol, seams, scenarios, competitive landscape).
 > **Round 4 plan:** [`docs/implementation-plan-round-4.md`](./implementation-plan-round-4.md) (IMPLEMENTED).
 > **Round 5 plan:** [`docs/implementation-plan-round-5.md`](./implementation-plan-round-5.md) (IMPLEMENTED).
 > **Round 6 plan:** [`docs/implementation-plan-round-6.md`](./implementation-plan-round-6.md) (IMPLEMENTED).
+> **Round 7 plan:** [`docs/implementation-plan-round-7.md`](./implementation-plan-round-7.md).
 
 **Strategic framing:** envoy-harness is a **full harness with real local
 sub-agents** (`task` → `LocalMeshSubmitter` + fan-out + team
@@ -108,6 +109,18 @@ RPC and CLI discovery flags deferred to Round 5.
 | Phase | Chunks | Theme | Priority |
 |---|---|---|---|
 | **R6-F2** | R6.1–R6.4 | `killProcessTree`, spawnCapture abort, sidecar cancel IPC, doctor probe | **P0–P1** |
+
+### Round 7 chunk roadmap (in progress)
+
+> Full specs: [`implementation-plan-round-7.md`](./implementation-plan-round-7.md).
+>
+> **Theme:** U6b EHUI refine — TUI-parity panels, chat-scoped invoke, side dock.
+> EnvoyMesh host chunks land in the EnvoyMesh repo.
+
+| Phase | Chunks | Theme | Priority |
+|---|---|---|---|
+| **R7-EHUI** | R7.1–R7.2 | Shared ehui renderers / formatters | **P0** |
+| **R7-Host** | R7.3–R7.5 | chatId invoke, EhuiShell dock, resume (EnvoyMesh) | **P0–P1** |
 
 ## Envoy Harness UI — the second major feature
 

@@ -1,9 +1,9 @@
 # Envoy Harness UI (EHUI) - the dedicated envoy-harness interface
 
-Status: U1-U5 DONE (2026-08-23; U3 follow-ups included); U6a partial (tab strip +
-colored panels + `envoy-harness tui`); U6a.4–5 → Round 5 R5.5/R5.6. See
-[ehui-panel-spec.md](./ehui-panel-spec.md) and
-[implementation-plan-round-5.md](./implementation-plan-round-5.md).
+Status: U1-U5 DONE; U6a DONE (Round 5); F2 lifecycle DONE (Round 6; FS
+isolation skipped). **U6b EHUI refine — Round 7**
+([implementation-plan-round-7.md](./implementation-plan-round-7.md)).
+See [ehui-panel-spec.md](./ehui-panel-spec.md).
 
 **EnvoyMesh mapper swap (R5.4):** hosts that injected `FakeRemoteJobTransport` /
 `FakeRemoteExecTransport` should swap to adapter factories
