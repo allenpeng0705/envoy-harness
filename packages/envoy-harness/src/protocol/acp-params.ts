@@ -193,6 +193,7 @@ export function parseSetModelParams(params: unknown): {
   sessionId: string;
   provider: string;
   model?: string;
+  baseUrl?: string;
 } {
   if (params === null || typeof params !== "object") {
     throw new JsonRpcError("invalid params", JsonRpcErrorCode.INVALID_PARAMS);
@@ -201,6 +202,7 @@ export function parseSetModelParams(params: unknown): {
     sessionId?: unknown;
     provider?: unknown;
     model?: unknown;
+    baseUrl?: unknown;
   };
   const sessionId = readSessionId(params);
   if (typeof obj.provider !== "string" || obj.provider.length === 0) {
@@ -208,10 +210,15 @@ export function parseSetModelParams(params: unknown): {
   }
   const model =
     typeof obj.model === "string" && obj.model.length > 0 ? obj.model : undefined;
+  const baseUrl =
+    typeof obj.baseUrl === "string" && obj.baseUrl.length > 0
+      ? obj.baseUrl
+      : undefined;
   return {
     sessionId,
     provider: obj.provider,
     ...(model !== undefined ? { model } : {}),
+    ...(baseUrl !== undefined ? { baseUrl } : {}),
   };
 }
 

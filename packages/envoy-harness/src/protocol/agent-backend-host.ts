@@ -56,6 +56,13 @@ export interface LiveSession {
   createdAt: number;
   modelLabel?: string;
   providerLabel?: string;
+  /**
+   * Session-level API base URL override.
+   * `undefined` = inherit from host `getConfig` / CLI;
+   * `null` = cleared via `set_model` (use env defaults);
+   * string = explicit override.
+   */
+  baseUrlLabel?: string | null;
   /** Session-level auto-run permission policy (TUI / ACP hosts). */
   autoRun?: AutoRunPolicy;
 }

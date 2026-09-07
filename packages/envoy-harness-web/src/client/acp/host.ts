@@ -67,6 +67,7 @@ export class AcpHost {
     protocolVersion: null,
     model: "",
     provider: "",
+    baseUrl: "",
     sandbox: "read-only",
     approval: "on-request",
     autoRun: "always-confirm",
@@ -462,6 +463,7 @@ export class AcpHost {
       protocolVersion: init.protocolVersion,
       provider: String(config["provider"] ?? ""),
       model: String(config["model"] ?? ""),
+      baseUrl: String(config["baseUrl"] ?? ""),
       sandbox: policy.sandbox,
       approval: policy.approval,
       autoRun: policy.autoRun,
@@ -563,19 +565,28 @@ export class AcpHost {
     this.#patch({ busy: false });
   }
 
-  async setModel(provider: string, model: string): Promise<void> {
+  async setModel(
+    provider: string,
+    model: string,
+    baseUrl?: string,
+  ): Promise<void> {
     const client = this.#client;
     const sessionId = this.#state.sessionId;
     if (!client || !sessionId) throw new Error("not connected");
     try {
+      const trimmedBase = baseUrl?.trim() ?? "";
       const res = (await client.request("session/set_model", {
         sessionId,
         provider,
         ...(model ? { model } : {}),
-      })) as { result?: { provider?: string; model?: string } };
+        ...(trimmedBase ? { baseUrl: trimmedBase } : {}),
+      })) as {
+        result?: { provider?: string; model?: string; baseUrl?: string };
+      };
       this.#patch({
         provider: res.result?.provider ?? provider,
         model: res.result?.model ?? model,
+        baseUrl: res.result?.baseUrl ?? trimmedBase,
         error: null,
       });
     } catch (err) {

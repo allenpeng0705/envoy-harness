@@ -7,8 +7,10 @@ export interface SettingsModalProps {
   onClose: () => void;
   providerDraft: string;
   modelDraft: string;
+  baseUrlDraft: string;
   onProviderDraft: (v: string) => void;
   onModelDraft: (v: string) => void;
+  onBaseUrlDraft: (v: string) => void;
   onApplyModel: () => void;
   sandbox: string;
   approval: string;
@@ -90,11 +92,21 @@ export function SettingsModal(props: SettingsModalProps): JSX.Element | null {
             placeholder="model id"
           />
         </label>
+        <label>
+          Base URL
+          <input
+            value={props.baseUrlDraft}
+            onChange={(e) => props.onBaseUrlDraft(e.target.value)}
+            placeholder="optional — OpenAI-/Anthropic-compatible endpoint"
+          />
+        </label>
         <button type="button" className="primary" onClick={props.onApplyModel}>
           Apply model
         </button>
         <p className="hint">
-          API keys stay in the Node bridge / env — not browser storage.
+          API keys stay in the Node bridge / env — not browser storage. Base URL
+          routes openai/anthropic providers to compatible gateways (LiteLLM,
+          Azure, local proxies, …).
         </p>
         <label>
           Sandbox

@@ -40,6 +40,11 @@ export interface RunParsedArgs {
   model: string | undefined;
   /** `--provider <name>`: provider name (openai, anthropic, etc.). */
   provider: string | undefined;
+  /**
+   * `--base-url <url>`: override the provider API base URL
+   * (OpenAI-/Anthropic-compatible proxies). Wins over `*_BASE_URL` env.
+   */
+  baseUrl: string | undefined;
   /** `--cwd <path>`: override the working directory. */
   cwd: string | undefined;
   /** `--max-turns <n>`: max iterations for the agent loop. */
@@ -172,6 +177,8 @@ export interface SelfEvolveParsedArgs {
   model: string | undefined;
   /** `--provider <name>`: provider name. */
   provider: string | undefined;
+  /** `--base-url <url>`: override the provider API base URL. */
+  baseUrl: string | undefined;
   /** `--scoreboard <path>`: scoreboard YAML file. */
   scoreboard: string | undefined;
   /** `--snapshot-dir <path>`: snapshot directory. */
@@ -211,6 +218,8 @@ export interface TeamParsedArgs {
   model: string | undefined;
   /** `--provider <name>`: provider name. */
   provider: string | undefined;
+  /** `--base-url <url>`: override the provider API base URL. */
+  baseUrl: string | undefined;
   /** `--cwd <path>`: override the working directory. */
   cwd: string | undefined;
   /** `--input <s>`: the team-level input (substituted

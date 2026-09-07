@@ -19,6 +19,7 @@ function printHelp(): void {
       "  --cwd <path>         working directory for ACP child",
       "  --provider <name>    forwarded to envoy-harness --acp",
       "  --model <id>         forwarded to envoy-harness --acp",
+      "  --base-url <url>     forwarded to envoy-harness --acp",
       "  --persist            forwarded to envoy-harness --acp",
       "  --no-subagents       forwarded to envoy-harness --acp",
       "  --peers <id>@host:port  forwarded (repeatable)",
@@ -71,6 +72,7 @@ function parseArgv(argv: string[]): {
       arg === "--cwd" ||
       arg === "--provider" ||
       arg === "--model" ||
+      arg === "--base-url" ||
       arg === "--peers"
     ) {
       const val = argv[i + 1];

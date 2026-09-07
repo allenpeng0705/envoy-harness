@@ -16,6 +16,7 @@ const RUN_FLAGS = new Set([
   "--approval",
   "--model",
   "--provider",
+  "--base-url",
   "--cwd",
   "--max-turns",
   "--max-cost-usd",
@@ -49,6 +50,7 @@ const RUN_VALUED_FLAGS = new Set([
   "--approval",
   "--model",
   "--provider",
+  "--base-url",
   "--cwd",
   "--max-turns",
   "--max-cost-usd",
@@ -82,6 +84,7 @@ export function parseRunArgs(argv: ReadonlyArray<string>): RunParsedArgs {
     approval: undefined,
     model: undefined,
     provider: undefined,
+    baseUrl: undefined,
     cwd: undefined,
     maxTurns: undefined,
     maxCostUsd: undefined,
@@ -186,6 +189,9 @@ export function parseRunArgs(argv: ReadonlyArray<string>): RunParsedArgs {
             break;
           case "--provider":
             out.provider = value;
+            break;
+          case "--base-url":
+            out.baseUrl = value;
             break;
           case "--cwd":
             out.cwd = value;

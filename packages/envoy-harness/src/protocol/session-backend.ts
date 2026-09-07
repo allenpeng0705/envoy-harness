@@ -56,6 +56,8 @@ export interface ProtocolCompactResult {
 export interface ProtocolSetModelResult {
   provider: string;
   model?: string;
+  /** Effective API base URL override when set. */
+  baseUrl?: string;
 }
 
 export interface ProtocolSetPolicyResult {
@@ -282,6 +284,8 @@ export interface ProtocolSessionBackend {
     sessionId: string;
     provider: string;
     model?: string;
+    /** Optional API base URL (OpenAI-/Anthropic-compatible). */
+    baseUrl?: string;
   }): Promise<ProtocolSetModelResult>;
   /** Change sandbox or approval policy mid-session. */
   setPolicy?(params: {

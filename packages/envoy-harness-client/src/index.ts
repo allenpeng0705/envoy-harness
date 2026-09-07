@@ -386,12 +386,16 @@ export class EnvoyHarnessClient {
     sessionId: string,
     provider: string,
     model?: string,
-  ): Promise<{ provider: string; model?: string }> {
+    baseUrl?: string,
+  ): Promise<{ provider: string; model?: string; baseUrl?: string }> {
     const res = (await this.#conn.request("session/set_model", {
       sessionId,
       provider,
       ...(model !== undefined ? { model } : {}),
-    })) as { result: { provider: string; model?: string } };
+      ...(baseUrl !== undefined ? { baseUrl } : {}),
+    })) as {
+      result: { provider: string; model?: string; baseUrl?: string };
+    };
     return res.result;
   }
 

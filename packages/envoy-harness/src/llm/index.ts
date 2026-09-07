@@ -92,6 +92,12 @@ export interface ProviderConfig {
    */
   model?: string;
   /**
+   * Optional API base URL (OpenAI-/Anthropic-compatible proxies,
+   * LiteLLM, Azure, local gateways, …). When set, wins over the
+   * matching `*_BASE_URL` env var.
+   */
+  baseUrl?: string;
+  /**
    * The environment to read API keys from. Default: `process.env`.
    * Override for tests.
    */
@@ -144,42 +150,47 @@ export type SupportedProvider = (typeof SUPPORTED_PROVIDERS)[number];
 export function createProviderAdapter(config: ProviderConfig): ModelAdapter {
   const env = config.env ?? process.env;
   const provider = config.provider.toLowerCase();
+  const explicitBase =
+    typeof config.baseUrl === "string" && config.baseUrl.length > 0
+      ? config.baseUrl
+      : undefined;
 
   switch (provider) {
     case "openai": {
       const apiKey = requireEnv(env, "OPENAI_API_KEY");
-      const baseUrl = env["OPENAI_BASE_URL"];
+      const baseUrl = pickBaseUrl(explicitBase, env, "OPENAI_BASE_URL");
       return new OpenAIAdapter({
         apiKey,
         model: config.model ?? DEFAULT_PROVIDER_MODELS["openai"]!,
-        ...(baseUrl && baseUrl.length > 0 ? { baseUrl } : {}),
+        ...(baseUrl !== undefined ? { baseUrl } : {}),
         ...(config.httpClient ? { httpClient: config.httpClient } : {}),
       });
     }
     case "anthropic": {
       const apiKey = requireEnv(env, "ANTHROPIC_API_KEY");
-      const baseUrl = env["ANTHROPIC_BASE_URL"];
+      const baseUrl = pickBaseUrl(explicitBase, env, "ANTHROPIC_BASE_URL");
       return new AnthropicAdapter({
         apiKey,
         model: config.model ?? DEFAULT_PROVIDER_MODELS["anthropic"]!,
-        ...(baseUrl && baseUrl.length > 0 ? { baseUrl } : {}),
+        ...(baseUrl !== undefined ? { baseUrl } : {}),
         ...(config.httpClient ? { httpClient: config.httpClient } : {}),
       });
     }
     case "deepseek": {
       const apiKey = requireEnv(env, "DEEPSEEK_API_KEY");
-      const baseUrl = env["DEEPSEEK_BASE_URL"];
+      const baseUrl = pickBaseUrl(explicitBase, env, "DEEPSEEK_BASE_URL");
       return new DeepSeekAdapter({
         apiKey,
         ...(config.model !== undefined ? { model: config.model } : {}),
-        ...(baseUrl && baseUrl.length > 0 ? { baseUrl } : {}),
+        ...(baseUrl !== undefined ? { baseUrl } : {}),
         ...(config.httpClient ? { httpClient: config.httpClient } : {}),
       });
     }
     case "minimax": {
       const apiKey = requireEnv(env, "MINIMAX_API_KEY");
       const baseUrl =
-        env["MINIMAX_BASE_URL"] ?? "https://api.minimax.io/v1";
+        pickBaseUrl(explicitBase, env, "MINIMAX_BASE_URL") ??
+        "https://api.minimax.io/v1";
       return new OpenAIAdapter({
         apiKey,
         model: config.model ?? DEFAULT_PROVIDER_MODELS["minimax"]!,
@@ -191,8 +202,7 @@ export function createProviderAdapter(config: ProviderConfig): ModelAdapter {
     case "zhipu": {
       const apiKey = requireEnv(env, "ZHIPU_API_KEY");
       const baseUrl =
-        env["GLM_BASE_URL"] ??
-        env["ZHIPU_BASE_URL"] ??
+        pickBaseUrl(explicitBase, env, "GLM_BASE_URL", "ZHIPU_BASE_URL") ??
         "https://open.bigmodel.cn/api/paas/v4";
       return new OpenAIAdapter({
         apiKey,
@@ -205,8 +215,7 @@ export function createProviderAdapter(config: ProviderConfig): ModelAdapter {
     case "dashscope": {
       const apiKey = requireEnv(env, "DASHSCOPE_API_KEY");
       const baseUrl =
-        env["QWEN_BASE_URL"] ??
-        env["DASHSCOPE_BASE_URL"] ??
+        pickBaseUrl(explicitBase, env, "QWEN_BASE_URL", "DASHSCOPE_BASE_URL") ??
         "https://dashscope.aliyuncs.com/compatible-mode/v1";
       return new OpenAIAdapter({
         apiKey,
@@ -222,7 +231,9 @@ export function createProviderAdapter(config: ProviderConfig): ModelAdapter {
       return new OpenAIAdapter({
         apiKey: "ollama",
         model: config.model ?? DEFAULT_PROVIDER_MODELS["ollama"]!,
-        baseUrl: env["OLLAMA_BASE_URL"] ?? "http://localhost:11434/v1",
+        baseUrl:
+          pickBaseUrl(explicitBase, env, "OLLAMA_BASE_URL") ??
+          "http://localhost:11434/v1",
         ...(config.httpClient ? { httpClient: config.httpClient } : {}),
       });
     }
@@ -233,6 +244,23 @@ export function createProviderAdapter(config: ProviderConfig): ModelAdapter {
       );
     }
   }
+}
+
+/**
+ * Prefer an explicit `--base-url` / `ProviderConfig.baseUrl`, else the
+ * first non-empty env var among `envKeys`.
+ */
+function pickBaseUrl(
+  explicit: string | undefined,
+  env: NodeJS.ProcessEnv,
+  ...envKeys: string[]
+): string | undefined {
+  if (explicit !== undefined) return explicit;
+  for (const key of envKeys) {
+    const value = env[key];
+    if (typeof value === "string" && value.length > 0) return value;
+  }
+  return undefined;
 }
 
 /** Read a required env var; throw a clear error if missing. */

@@ -57,6 +57,27 @@ describe("createProviderAdapter — OpenAI-compatible endpoints", () => {
     }) as unknown as { baseUrl: string };
     expect(adapter.baseUrl).toMatch(/api\.openai\.com/);
   });
+
+  it("prefers ProviderConfig.baseUrl over OPENAI_BASE_URL", () => {
+    const adapter = createProviderAdapter({
+      provider: "openai",
+      baseUrl: "https://explicit.example/v1",
+      env: {
+        OPENAI_API_KEY: "sk-test",
+        OPENAI_BASE_URL: "https://env.example/v1",
+      } as NodeJS.ProcessEnv,
+    }) as unknown as { baseUrl: string };
+    expect(adapter.baseUrl).toBe("https://explicit.example/v1");
+  });
+
+  it("honors ProviderConfig.baseUrl for anthropic-compatible gateways", () => {
+    const adapter = createProviderAdapter({
+      provider: "anthropic",
+      baseUrl: "https://proxy.example",
+      env: { ANTHROPIC_API_KEY: "sk-test" } as NodeJS.ProcessEnv,
+    }) as unknown as { baseUrl: string };
+    expect(adapter.baseUrl).toBe("https://proxy.example");
+  });
 });
 
 describe("createProviderAdapter — MiniMax / GLM / Qwen dispatch", () => {

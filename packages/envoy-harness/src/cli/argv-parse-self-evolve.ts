@@ -11,6 +11,7 @@ const SELF_EVOLVE_FLAGS = new Set([
   "--version",
   "--model",
   "--provider",
+  "--base-url",
   "--scoreboard",
   "--snapshot-dir",
   "--benchmark",
@@ -30,6 +31,7 @@ const SELF_EVOLVE_FLAGS = new Set([
 const SELF_EVOLVE_VALUED_FLAGS = new Set([
   "--model",
   "--provider",
+  "--base-url",
   "--scoreboard",
   "--snapshot-dir",
   "--benchmark",
@@ -51,6 +53,7 @@ export function parseSelfEvolveArgs(argv: ReadonlyArray<string>): SelfEvolvePars
     version: false,
     model: undefined,
     provider: undefined,
+    baseUrl: undefined,
     scoreboard: undefined,
     snapshotDir: undefined,
     benchmark: undefined,
@@ -93,6 +96,9 @@ export function parseSelfEvolveArgs(argv: ReadonlyArray<string>): SelfEvolvePars
             break;
           case "--provider":
             out.provider = value;
+            break;
+          case "--base-url":
+            out.baseUrl = value;
             break;
           case "--scoreboard":
             out.scoreboard = value;

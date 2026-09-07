@@ -228,6 +228,7 @@ export function makeArgs(
     approval: undefined,
     model: undefined,
     provider: undefined,
+    baseUrl: undefined,
     cwd: undefined,
     maxTurns: undefined,
     maxCostUsd: undefined,

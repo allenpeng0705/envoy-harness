@@ -50,6 +50,7 @@ export function App(): JSX.Element {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [providerDraft, setProviderDraft] = useState("");
   const [modelDraft, setModelDraft] = useState("");
+  const [baseUrlDraft, setBaseUrlDraft] = useState("");
   const [questionDraft, setQuestionDraft] = useState("");
   const [ehuiRefresh, setEhuiRefresh] = useState(0);
   const [theme, setTheme] = useState<ThemeMode>(readTheme);
@@ -87,7 +88,8 @@ export function App(): JSX.Element {
   useEffect(() => {
     setProviderDraft(state.provider);
     setModelDraft(state.model);
-  }, [state.provider, state.model]);
+    setBaseUrlDraft(state.baseUrl);
+  }, [state.provider, state.model, state.baseUrl]);
 
   const refreshSessions = useCallback(() => {
     if (!state.ready) return;
@@ -392,11 +394,17 @@ export function App(): JSX.Element {
         onClose={() => setSettingsOpen(false)}
         providerDraft={providerDraft}
         modelDraft={modelDraft}
+        baseUrlDraft={baseUrlDraft}
         onProviderDraft={setProviderDraft}
         onModelDraft={setModelDraft}
+        onBaseUrlDraft={setBaseUrlDraft}
         onApplyModel={() =>
           void host
-            .setModel(providerDraft.trim(), modelDraft.trim())
+            .setModel(
+              providerDraft.trim(),
+              modelDraft.trim(),
+              baseUrlDraft.trim() || undefined,
+            )
             .catch(() => undefined)
         }
         sandbox={state.sandbox}

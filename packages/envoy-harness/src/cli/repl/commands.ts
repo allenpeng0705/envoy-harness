@@ -98,28 +98,38 @@ const modelCommand: ReplCommand = {
  * providers (`openai` / `anthropic` / `deepseek` / `ollama`)
  * when the matching env var is set. The new adapter is
  * installed via `agent.setModel(...)`.
+ *
+ * Optional third arg: base URL override (same as `--base-url`).
  */
 const providerCommand: ReplCommand = {
   name: "/provider",
-  description: "swap the model provider (openai | anthropic | deepseek | ollama)",
+  description:
+    "swap the model provider (openai | anthropic | deepseek | ollama) [model] [base-url]",
   handler(args, ctx) {
     if (args.length === 0) {
-      ctx.stdout.write("usage: /provider <name> [model-id]\n");
+      ctx.stdout.write("usage: /provider <name> [model-id] [base-url]\n");
       return;
     }
     const provider = args[0];
     if (provider === undefined) {
-      ctx.stdout.write("usage: /provider <name> [model-id]\n");
+      ctx.stdout.write("usage: /provider <name> [model-id] [base-url]\n");
       return;
     }
     const modelId = args[1];
+    const baseUrl = args[2];
     try {
       const newAdapter: ModelAdapter = createProviderAdapter({
         provider,
         ...(modelId !== undefined ? { model: modelId } : {}),
+        ...(baseUrl !== undefined ? { baseUrl } : {}),
       });
       ctx.agent.setModel(newAdapter);
-      ctx.stdout.write(`provider: ${provider}${modelId ? ` (model: ${modelId})` : ""}\n`);
+      const bits = [
+        `provider: ${provider}`,
+        modelId ? `model: ${modelId}` : undefined,
+        baseUrl ? `base-url: ${baseUrl}` : undefined,
+      ].filter(Boolean);
+      ctx.stdout.write(`${bits.join(" · ")}\n`);
     } catch (err) {
       ctx.stderr.write(`error: ${(err as Error).message}\n`);
     }

@@ -18,6 +18,7 @@ const WEB_FORWARD_FLAGS = new Set([
   "--cwd",
   "--provider",
   "--model",
+  "--base-url",
   "--persist",
   "--no-subagents",
   "--peers",
@@ -112,6 +113,7 @@ function buildForwardArgv(
       arg === "--cwd" ||
       arg === "--provider" ||
       arg === "--model" ||
+      arg === "--base-url" ||
       arg === "--peers"
     ) {
       const val = rawArgv[i + 1];

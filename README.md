@@ -32,19 +32,22 @@ optional **multi-machine peers**. Works on a laptop with **no EnvoyMesh**.
 ```sh
 pnpm install
 
-# Pick one API key:
-export OPENAI_API_KEY=…        # or ANTHROPIC_API_KEY / DEEPSEEK_API_KEY
+# Pick one API key (+ optional compatible base URL):
+export OPENAI_API_KEY=…        # or ANTHROPIC_API_KEY / DEEPSEEK_API_KEY / …
+# export OPENAI_BASE_URL=https://your-compatible-gateway/v1   # LiteLLM, Azure, local proxy, …
 
 # A) Browser WebUI (recommended GUI)
 pnpm --filter @envoymesh/envoy-harness-web start -- \
   --provider openai --model gpt-4o --persist
-# open http://127.0.0.1:5177/
+# open http://127.0.0.1:5177/  → Settings for provider / model / base URL
 
 # B) Terminal REPL (recommended for long sessions)
 pnpm envoy -- --repl --provider openai --model gpt-4o
 
-# C) One-shot
+# C) One-shot (explicit --base-url also works)
 pnpm envoy -- --provider openai --model gpt-4o "explain this repo"
+# pnpm envoy -- --provider openai --model my-model \
+#   --base-url https://your-compatible-gateway/v1 "hello"
 ```
 
 After install/build, the binary name is **`envoy-harness`**. In this monorepo,
@@ -150,6 +153,7 @@ envoy-harness web --no-subagents
 | Flag | Meaning |
 |---|---|
 | `--provider` / `--model` | Which LLM |
+| `--base-url` | Override API base (OpenAI-/Anthropic-compatible gateways) |
 | `--sandbox` | `read-only` · `workspace-write` · `danger-full-access` |
 | `--approval` | `unless-trusted` · `on-request` · `granular` · `never` |
 | `--cwd` | Tool working directory |
@@ -161,6 +165,7 @@ envoy-harness web --no-subagents
 | `--json` / `--verbose` / `--quiet` | Output style |
 
 **API keys (env):** `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`, …
+**Base URLs (env or `--base-url`):** `OPENAI_BASE_URL`, `ANTHROPIC_BASE_URL`, `DEEPSEEK_BASE_URL`, … — any OpenAI- or Anthropic-compatible endpoint.
 **Config file:** `~/.config/envoy-harness/config.toml` or `ENVOY_HARNESS_CONFIG`.
 
 More detail: [`packages/envoy-harness/QUICKSTART.md`](./packages/envoy-harness/QUICKSTART.md).
@@ -191,6 +196,7 @@ Open **http://127.0.0.1:5177/** (default).
 | `--port` / `--host` | Bind address (default `127.0.0.1:5177`) |
 | `--cwd` | Working directory for tools |
 | `--provider` / `--model` | Passed to the ACP child |
+| `--base-url` | Passed to the ACP child (compatible gateway) |
 | `--persist` | Save sessions for resume |
 | `--peers id@host:port` | Wire TCP peers |
 | `--no-subagents` | Disable local `task` |
@@ -203,7 +209,7 @@ Open **http://127.0.0.1:5177/** (default).
 |---|---|
 | Chat + Cancel | Talk to the agent; abort a turn |
 | Permission / question modals | Approve tools; answer asks |
-| Settings | Model, sandbox, approval, auto-run, resume list |
+| Settings | Provider, model, base URL, sandbox, approval, auto-run, theme |
 | Connection control | Reconnect if the ACP process drops |
 | Mesh rail | Peers, jobs, local/remote agents |
 | EHUI dock | Plan · Diff · Mesh · Peers · Team · Scoreboard · Trace · Resume |

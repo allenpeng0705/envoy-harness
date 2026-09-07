@@ -225,6 +225,12 @@ async function resolveAcpBackend(
               : parsed.provider !== undefined
                 ? { model: parsed.provider }
                 : {}),
+            ...(parsed.provider !== undefined
+              ? { provider: parsed.provider }
+              : {}),
+            ...(parsed.baseUrl !== undefined
+              ? { baseUrl: parsed.baseUrl }
+              : {}),
           }),
           listTools: () =>
             tools.list().map((t) => ({

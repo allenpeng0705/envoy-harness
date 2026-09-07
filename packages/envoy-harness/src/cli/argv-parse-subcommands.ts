@@ -18,6 +18,7 @@ import {
 const TEAM_FLAGS = new Set([
   "--model",
   "--provider",
+  "--base-url",
   "--cwd",
   "--input",
   "--json",
@@ -33,6 +34,7 @@ export function parseTeamArgs(argv: ReadonlyArray<string>): TeamParsedArgs {
     version: false,
     model: undefined,
     provider: undefined,
+    baseUrl: undefined,
     cwd: undefined,
     input: undefined,
     json: false,
@@ -70,6 +72,7 @@ export function parseTeamArgs(argv: ReadonlyArray<string>): TeamParsedArgs {
       }
       if (arg === "--model") out.model = next;
       else if (arg === "--provider") out.provider = next;
+      else if (arg === "--base-url") out.baseUrl = next;
       else if (arg === "--cwd") out.cwd = next;
       else if (arg === "--input") out.input = next;
       i++;
@@ -154,6 +157,7 @@ const TUI_FLAGS = new Set([
   "--connect-timeout-ms",
   "--provider",
   "--model",
+  "--base-url",
   "--ask-permission",
   "--help",
   "-h",
@@ -189,7 +193,8 @@ export function parseTuiArgs(argv: ReadonlyArray<string>): TuiParsedArgs {
       arg === "--peers" ||
       arg === "--connect-timeout-ms" ||
       arg === "--provider" ||
-      arg === "--model"
+      arg === "--model" ||
+      arg === "--base-url"
     ) {
       const next = argv[i + 1];
       if (next === undefined || next.startsWith("--")) {
@@ -207,6 +212,7 @@ const WEB_FLAGS = new Set([
   "--cwd",
   "--provider",
   "--model",
+  "--base-url",
   "--persist",
   "--no-subagents",
   "--peers",
@@ -250,6 +256,7 @@ export function parseWebArgs(argv: ReadonlyArray<string>): WebParsedArgs {
       arg === "--cwd" ||
       arg === "--provider" ||
       arg === "--model" ||
+      arg === "--base-url" ||
       arg === "--peers"
     ) {
       const next = argv[i + 1];

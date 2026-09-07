@@ -462,6 +462,7 @@ export function createAgentSessionBackend(
       const adapter = createProviderAdapter({
         provider: params.provider,
         ...(params.model !== undefined ? { model: params.model } : {}),
+        ...(params.baseUrl !== undefined ? { baseUrl: params.baseUrl } : {}),
       });
       live.agent.setModel(adapter);
       live.providerLabel = params.provider;
@@ -469,9 +470,15 @@ export function createAgentSessionBackend(
         params.model !== undefined
           ? `${params.provider}/${params.model}`
           : params.provider;
+      if (params.baseUrl !== undefined) {
+        live.baseUrlLabel = params.baseUrl;
+      } else {
+        live.baseUrlLabel = null;
+      }
       return {
         provider: params.provider,
         ...(params.model !== undefined ? { model: params.model } : {}),
+        ...(params.baseUrl !== undefined ? { baseUrl: params.baseUrl } : {}),
       };
     },
 
@@ -664,13 +671,19 @@ export function createAgentSessionBackend(
       const base = options.getConfig?.() ?? { version: "0.0.0" };
       for (const live of sessions.values()) {
         if (live.modelLabel !== undefined) {
-          return {
+          const out: Record<string, unknown> = {
             ...base,
             model: live.modelLabel,
             ...(live.providerLabel !== undefined
               ? { provider: live.providerLabel }
               : {}),
           };
+          if (live.baseUrlLabel === null) {
+            delete out["baseUrl"];
+          } else if (live.baseUrlLabel !== undefined) {
+            out["baseUrl"] = live.baseUrlLabel;
+          }
+          return out;
         }
       }
       return base;

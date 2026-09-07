@@ -511,21 +511,31 @@ function parseSdkSetModelParams(params: unknown): {
   sessionId: string;
   provider: string;
   model?: string;
+  baseUrl?: string;
 } {
   if (params === null || typeof params !== "object") {
     throw new JsonRpcError("invalid params", JsonRpcErrorCode.INVALID_PARAMS);
   }
-  const obj = params as { provider?: unknown; model?: unknown };
+  const obj = params as {
+    provider?: unknown;
+    model?: unknown;
+    baseUrl?: unknown;
+  };
   const sessionId = readSessionId(params);
   if (typeof obj.provider !== "string" || obj.provider.length === 0) {
     throw new JsonRpcError("provider required", JsonRpcErrorCode.INVALID_PARAMS);
   }
   const model =
     typeof obj.model === "string" && obj.model.length > 0 ? obj.model : undefined;
+  const baseUrl =
+    typeof obj.baseUrl === "string" && obj.baseUrl.length > 0
+      ? obj.baseUrl
+      : undefined;
   return {
     sessionId,
     provider: obj.provider,
     ...(model !== undefined ? { model } : {}),
+    ...(baseUrl !== undefined ? { baseUrl } : {}),
   };
 }
 

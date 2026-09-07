@@ -36,6 +36,7 @@ Each browser tab opens `/ws/acp`; the Node bridge spawns one
 | `--host <addr>` | Bind address (default `127.0.0.1`) |
 | `--cwd <path>` | Working directory for tools |
 | `--provider` / `--model` | Forwarded to `--acp` |
+| `--base-url <url>` | Forwarded to `--acp` (OpenAI-/Anthropic-compatible) |
 | `--persist` | Persist sessions (resume in Settings / EHUI) |
 | `--no-subagents` | Disable default local parallel `task` |
 | `--peers id@host:port` | Standalone TCP peers (repeatable) |
@@ -43,7 +44,8 @@ Each browser tab opens `/ws/acp`; the Node bridge spawns one
 | `--no-open` | Do not open a browser tab |
 
 Put API keys in the **shell env** or config.toml on the Node host — never
-in browser storage.
+in browser storage. Optional `OPENAI_BASE_URL` / `--base-url` / Settings →
+Base URL routes `openai`/`anthropic` to compatible gateways.
 
 ---
 
@@ -57,7 +59,7 @@ Three-column shell (inspired by deepseek-harness, Envoy branding):
 | **Center · Chat** | Empty hero, markdown streaming, foldable activity, Stop/Send |
 | **Right · Details** | **Mesh** tab (peers/jobs) · **Tools** tab (Plan/Diff/Memory/…) |
 | **Permissions** | Summary of command/path; expandable raw args |
-| **Settings** | Model, policy, light/dark theme |
+| **Settings** | Provider, model, base URL, policy, light/dark theme |
 | **Connection** | Connecting / connected / disconnected; Reconnect |
 
 **Long runs:** start with `--persist`, use **Stop** when needed, and Reconnect

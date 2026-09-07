@@ -320,7 +320,9 @@ tool-call responses are parsed exactly like OpenAI's (including the flat
 `{ name, arguments }` shape some of these providers emit).
 
 Optional `OPENAI_BASE_URL` / `ANTHROPIC_BASE_URL` / `DEEPSEEK_BASE_URL`
-override the upstream endpoint (useful for proxies).
+override the upstream endpoint (useful for proxies). The CLI flag
+`--base-url <url>` (and ACP `session/set_model` / WebUI Settings) wins
+over those env vars for any supported provider.
 
 ### Profiles (TOML config)
 

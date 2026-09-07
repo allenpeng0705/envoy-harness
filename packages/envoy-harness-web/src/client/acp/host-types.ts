@@ -64,6 +64,8 @@ export interface AcpHostState {
   protocolVersion: number | null;
   model: string;
   provider: string;
+  /** Optional API base URL override (OpenAI-/Anthropic-compatible). */
+  baseUrl: string;
   sandbox: string;
   approval: string;
   autoRun: string;

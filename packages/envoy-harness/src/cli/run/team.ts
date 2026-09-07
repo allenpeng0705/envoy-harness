@@ -118,6 +118,7 @@ function resolveModelForTeam(
     return createProviderAdapter({
       provider: parsed.provider,
       ...(parsed.model !== undefined ? { model: parsed.model } : {}),
+      ...(parsed.baseUrl !== undefined ? { baseUrl: parsed.baseUrl } : {}),
     });
   } catch (err) {
     throw new CliError((err as Error).message, EXIT_USAGE);

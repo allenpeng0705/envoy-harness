@@ -23,6 +23,7 @@ const TUI_FORWARD_FLAGS = new Set([
   "--connect-timeout-ms",
   "--provider",
   "--model",
+  "--base-url",
   "--ask-permission",
   "--help",
   "-h",
@@ -95,7 +96,8 @@ function buildForwardArgv(
       arg === "--peers" ||
       arg === "--connect-timeout-ms" ||
       arg === "--provider" ||
-      arg === "--model"
+      arg === "--model" ||
+      arg === "--base-url"
     ) {
       const val = rawArgv[i + 1];
       if (val === undefined || val.startsWith("--")) {
