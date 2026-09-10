@@ -8,9 +8,10 @@ packages:
 # npm registry and 404s. Forcing the local file: paths here makes the
 # workspace self-contained without modifying the EnvoyMesh checkout.
 overrides:
-  "@envoymesh/protocol": "link:../../EnvoyMesh/packages/protocol"
-  "@envoymesh/identity": "link:../../EnvoyMesh/packages/identity"
-  "@envoymesh/agent-adapter": "link:../../EnvoyMesh/packages/agent-adapter"
+  # Paths are relative to this file (envoy-harness/), sibling of EnvoyMesh/.
+  "@envoymesh/protocol": "link:../EnvoyMesh/packages/protocol"
+  "@envoymesh/identity": "link:../EnvoyMesh/packages/identity"
+  "@envoymesh/agent-adapter": "link:../EnvoyMesh/packages/agent-adapter"
 
 # Native addons whose build scripts pnpm must run (pnpm 10 blocks them by
 # default). koffi is the FFI backend of @deepseek-ai/dsh-fs-local; without
