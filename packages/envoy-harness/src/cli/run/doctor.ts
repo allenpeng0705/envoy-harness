@@ -4,8 +4,6 @@
 
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
 
 import { loadConfig, resolveConfigPath } from "../../config/index.js";
 import {
@@ -16,6 +14,7 @@ import {
 } from "../../sandbox/index.js";
 import { isPtyAvailable } from "../../terminal/pty-backend.js";
 import type { ParsedArgs } from "../argv.js";
+import { resolveDefaultSessionDir } from "./helpers.js";
 import type { DoctorRunResult, RunOptions } from "./types.js";
 
 export interface DoctorCheck {
@@ -179,12 +178,18 @@ export async function runDoctorChecks(
     });
   }
 
-  const home = os.homedir();
-  const sessionDir = path.join(home, ".local", "share", "envoy-harness", "sessions");
+  const sessionDir = parsed.sessionDir ?? resolveDefaultSessionDir();
+  const sessionDirExists = fs.existsSync(sessionDir);
   checks.push({
     name: "session_dir",
-    ok: fs.existsSync(sessionDir) || true,
-    detail: sessionDir,
+    // Absence is normal before the first `--persist` session, so it is
+    // not a failure — but the row must report the REAL path (it
+    // previously hard-coded `~/.local/share/...`, a directory the
+    // harness never writes to) and say whether it exists yet.
+    ok: true,
+    detail: sessionDirExists
+      ? sessionDir
+      : `${sessionDir} (not created yet)`,
   });
 
   return checks;

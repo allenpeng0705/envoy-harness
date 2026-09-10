@@ -470,11 +470,16 @@ describe("run: with a fake model", () => {
     skills.registerProvider(provider);
     const fakeModel: ModelAdapter = {
       async complete(input) {
-        const firstUser = input.messages.find((m) => m.role === "user");
-        const firstBlock = firstUser?.content[0] as
-          | Extract<ContentBlock, { type: "text" }>
-          | undefined;
-        captured = firstBlock?.text;
+        // The catalog is injected as a user-role block; since the
+        // prefix-cache fix it is APPENDED after the prompt rather than
+        // spliced in front of it, so search every user message.
+        const userText = input.messages
+          .filter((m) => m.role === "user")
+          .flatMap((m) => m.content)
+          .filter((b): b is Extract<ContentBlock, { type: "text" }> => b.type === "text")
+          .map((b) => b.text)
+          .join("\n");
+        captured = userText;
         return {
           content: [{ type: "text", text: "ok" }],
           stopReason: "end_turn",

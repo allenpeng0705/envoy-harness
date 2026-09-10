@@ -134,7 +134,9 @@ export {
   type DiscoveredPeer,
   type DiscoveryAnnouncement,
   type DiscoveryListener,
+  type MdnsDiscoverySourceOptions,
 } from "./discovery.js";
+export * from "./mdns/index.js";
 export {
   createDiscoveryRail,
   type DiscoveryRail,

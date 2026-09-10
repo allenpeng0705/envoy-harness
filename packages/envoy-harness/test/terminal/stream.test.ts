@@ -20,6 +20,14 @@ function makeContext(
     cwd: "/workspace",
     session: { id: sessionId } as ToolContext["session"],
     abortSignal: new AbortController().signal,
+    sandboxPolicy: {
+      mode: "workspace-write",
+      approval: "on-request",
+      backend: "none",
+      writableRoots: [],
+      networkAccess: false,
+      slashTmpWritable: false,
+    },
     ...(onToolOutput !== undefined ? { onToolOutput } : {}),
   };
 }

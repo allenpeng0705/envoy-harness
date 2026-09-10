@@ -54,18 +54,32 @@ export function attachAcpServer(options: AcpServerOptions): () => void {
     switch (method) {
       case "initialize":
         initialized = true;
+        // ACP capability shape (schema-correct).
+        //
+        // The legacy flat form envoy shipped (`{capabilities: {loadSession,
+        // promptCapabilities, mcpServers}}`) is not what a standard client
+        // reads: `loadSession` belongs on `agentCapabilities`, `serverInfo`
+        // is spelled `agentInfo`, and the three session methods are
+        // advertised as OBJECT-valued markers under `sessionCapabilities`.
+        // The old shape made every capability query return undefined.
         return {
           protocolVersion: ACP_PROTOCOL_VERSION,
-          serverInfo,
-          capabilities: {
-            loadSession: true,
+          agentInfo: serverInfo,
+          agentCapabilities: {
+            loadSession: backend.loadSession !== undefined,
             promptCapabilities: {
               image: true,
               audio: false,
               embeddedContext: false,
             },
-            mcpServers: false,
+            mcpCapabilities: { http: false, sse: false },
+            sessionCapabilities: {
+              // `{}` means "supported"; the key's presence is the signal.
+              ...(backend.listSessions !== undefined ? { list: {} } : {}),
+              ...(backend.listSessions !== undefined ? { resume: {} } : {}),
+            },
           },
+          authMethods: [],
         };
 
       case "authenticate":
@@ -102,16 +116,30 @@ export function attachAcpServer(options: AcpServerOptions): () => void {
         };
       }
 
+      // The ACP spec method is `session/list`; `sessions/list` is kept as
+      // an alias for envoy's own older client.
+      case "session/list":
       case "sessions/list": {
         assertInitialized(initialized);
         if (backend.listSessions === undefined) {
           throw new JsonRpcError(
-            "sessions/list not supported",
+            "session/list not supported",
             JsonRpcErrorCode.METHOD_NOT_FOUND,
           );
         }
         const sessions = await backend.listSessions();
-        return { sessions };
+        // Spec shape: `{ sessions: [{ sessionId, cwd }], nextCursor? }`.
+        // `nextCursor` is OMITTED (not null) when there is no next page.
+        return {
+          sessions: sessions.map((entry) =>
+            typeof entry === "string"
+              ? { sessionId: entry }
+              : {
+                  sessionId: entry.id,
+                  ...(entry.cwd !== undefined ? { cwd: entry.cwd } : {}),
+                },
+          ),
+        };
       }
 
       case "session/prompt": {

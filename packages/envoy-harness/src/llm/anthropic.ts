@@ -38,9 +38,10 @@
  * message with no text and no tool calls, we emit a single
  * placeholder text block `""` to keep the request valid.
  *
- * **Streaming:** v0 uses non-streaming `complete()`. The
- * Anthropic API supports `stream: true`; a future chunk
- * can add a streaming variant of `ModelAdapter`.
+ * **Streaming:** this adapter is non-streaming; it ignores
+ * `onTextDelta` and returns the complete message. The OpenAI adapter
+ * does stream (SSE) — wiring Anthropic streaming is tracked work, not
+ * a blocked one.
  *
  * **Stability:** the public surface is `AnthropicAdapter`
  * (class), `AnthropicAdapterOptions`, and the exported

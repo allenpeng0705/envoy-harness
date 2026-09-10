@@ -23,6 +23,11 @@ export {
 } from "./argv.js";
 
 export {
+  RUNNER_SEPARATOR,
+  stripRunnerSeparators,
+} from "./argv-normalize.js";
+
+export {
   CliError,
   EXIT_DATAERR,
   EXIT_ERROR,

@@ -53,6 +53,21 @@ import type { MeshSubmitter } from "../subagent/index.js";
 // with the name-construction in run-loop.ts:115.
 import { MCP_TOOL_PREFIX } from "../mcp/types.js";
 import { collaborationModeBlockReason } from "../plan/tool-policy.js";
+import { inferToolNameFromArgs } from "./tool-name-inference.js";
+import {
+  DEFAULT_MAX_PARALLEL_TOOL_CALLS,
+  runToolGroupInModelOrder,
+  type ToolResultSink,
+} from "./tool-scheduler.js";
+
+// Re-exported so the public API keeps a single import path for hosts
+// that already pull these from the executor module.
+export {
+  DEFAULT_MAX_PARALLEL_TOOL_CALLS,
+  type PendingToolResult,
+  type ToolResultSink,
+} from "./tool-scheduler.js";
+export { inferToolNameFromArgs } from "./tool-name-inference.js";
 
 /**
  * The dependencies ToolExecutor reads from the
@@ -167,7 +182,17 @@ export interface ToolExecutorContext {
     path: string;
     previousContent: string | null;
   }) => void;
+  /**
+   * Cap on tool calls running concurrently within one model turn.
+   *
+   * Only the all-`task` fan-out path is parallel today. This is a
+   * *concurrency* cap, distinct from `maxSubagents` (a count cap that
+   * refuses the whole batch). Optional so existing hosts keep working;
+   * defaults to {@link DEFAULT_MAX_PARALLEL_TOOL_CALLS}.
+   */
+  getMaxParallelToolCalls?: () => number;
 }
+
 
 export class ToolExecutor {
   constructor(private readonly ctx: ToolExecutorContext) {}
@@ -192,41 +217,61 @@ export class ToolExecutor {
   ): Promise<void> {
     if (calls.length === 0) return;
 
-    // Sub-agent fan-out: parallel when ALL calls are
-    // `task`. Other tools (bash, lsp_*, etc.) may
-    // have order dependencies; they stay serial.
+    // Sub-agent fan-out: parallel when ALL calls are `task`. Other tools
+    // (bash, lsp_*, etc.) may have order dependencies; they stay serial.
     const allTask =
       this.ctx.meshSubmitter !== undefined &&
       calls.every((c) => c.name === "task");
-    if (allTask) {
-      // Cap check: refuse ALL when exceeded.
-      if (calls.length > this.ctx.maxSubagents) {
-        for (const call of calls) {
-          this.appendToolResult(
-            call.id,
-            `maxSubagents reached: ${calls.length} task calls in one turn (cap is ${this.ctx.maxSubagents}). Refused.`,
-            true,
-          );
-        }
-        return;
+    if (!allTask) {
+      for (const call of calls) {
+        if (this.ctx.abortSignal.aborted) break;
+        await this.execute(call, iteration);
       }
-      // Parallel run. Each sub-agent runs in its
-      // own session; abort propagation is wired
-      // via the submitter (F10.1.2).
-      await Promise.all(
-        calls.map((call) => this.execute(call, iteration)),
-      );
       return;
     }
 
-    // Serial run (existing path). Used when:
-    // - No meshSubmitter (no `task` tool at all)
-    // - Mixed iteration (some `task` + some other
-    //   tool that may have order dependencies)
-    for (const call of calls) {
-      if (this.ctx.abortSignal.aborted) break;
-      await this.execute(call, iteration);
+    // Cap check: refuse ALL when exceeded (a count cap, not a
+    // concurrency limit — see `getMaxParallelToolCalls`).
+    if (calls.length > this.ctx.maxSubagents) {
+      for (const call of calls) {
+        this.appendToolResult(
+          call.id,
+          `maxSubagents reached: ${calls.length} task calls in one turn (cap is ${this.ctx.maxSubagents}). Refused.`,
+          true,
+        );
+      }
+      return;
     }
+
+    await this.executeBoundedParallel(calls, iteration);
+  }
+
+  /**
+   * Run `calls` with a bounded rolling pool, then commit every result
+   * to the transcript **in model order**.
+   *
+   * The scheduling lives in `tool-scheduler.ts`; this method only wires
+   * it to the executor (execute, commit, record a skipped call).
+   */
+  private async executeBoundedParallel(
+    calls: ReadonlyArray<Extract<ContentBlock, { type: "tool_call" }>>,
+    iteration: number,
+  ): Promise<void> {
+    await runToolGroupInModelOrder({
+      calls,
+      maxParallel:
+        this.ctx.getMaxParallelToolCalls?.() ?? DEFAULT_MAX_PARALLEL_TOOL_CALLS,
+      signal: this.ctx.abortSignal,
+      runOne: (call, sink) => this.execute(call, iteration, sink),
+      commit: (result) =>
+        this.appendToolResult(result.id, result.content, result.isError),
+      onSkipped: (call) =>
+        this.appendToolResult(
+          call.id,
+          "not executed: the turn was aborted before this call started",
+          true,
+        ),
+    });
   }
 
   /**
@@ -241,8 +286,14 @@ export class ToolExecutor {
   async execute(
     call: Extract<ContentBlock, { type: "tool_call" }>,
     iteration: number,
+    sink?: ToolResultSink,
   ): Promise<void> {
     this.ctx.noteToolCall();
+    // Commit target: the caller's sink (parallel batches collect, then
+    // commit in model order) or the transcript directly.
+    const commit: ToolResultSink =
+      sink ??
+      ((id, content, isError) => this.appendToolResult(id, content, isError));
     const isMcpCall = call.name.startsWith(MCP_TOOL_PREFIX);
 
     // Malformed model call (empty tool name): some OpenAI-compatible
@@ -272,7 +323,7 @@ export class ToolExecutor {
           .list()
           .map((t) => t.name)
           .join(", ")})`;
-        this.appendToolResult(call.id, message, true);
+        commit(call.id, message, true);
         this.ctx.emit({
           kind: "tool_result",
           ts: new Date().toISOString(),
@@ -298,7 +349,7 @@ export class ToolExecutor {
           iteration,
           call,
         });
-        this.appendToolResult(call.id, blocked, true);
+        commit(call.id, blocked, true);
         this.ctx.emit({
           kind: "tool_result",
           ts: new Date().toISOString(),
@@ -322,7 +373,7 @@ export class ToolExecutor {
         iteration,
         call,
       });
-      this.appendToolResult(call.id, `unknown tool: ${call.name}`, true);
+      commit(call.id, `unknown tool: ${call.name}`, true);
       this.ctx.emit({
         kind: "tool_result",
         ts: new Date().toISOString(),
@@ -344,7 +395,7 @@ export class ToolExecutor {
         iteration,
         call,
       });
-      this.appendToolResult(call.id, `blocked by PreToolUse: ${preDecision.reason}`, true);
+      commit(call.id, `blocked by PreToolUse: ${preDecision.reason}`, true);
       this.ctx.emit({
         kind: "tool_result",
         ts: new Date().toISOString(),
@@ -374,7 +425,7 @@ export class ToolExecutor {
           call,
         });
         const denial = `denied: approval mode is 'never' (${preDecision.question})`;
-        this.appendToolResult(call.id, denial, true);
+        commit(call.id, denial, true);
         this.ctx.emit({
           kind: "tool_result",
           ts: new Date().toISOString(),
@@ -406,7 +457,7 @@ export class ToolExecutor {
           call,
         });
         const denial = "denied: cancelled while awaiting approval";
-        this.appendToolResult(call.id, denial, true);
+        commit(call.id, denial, true);
         this.ctx.emit({
           kind: "tool_result",
           ts: new Date().toISOString(),
@@ -426,7 +477,7 @@ export class ToolExecutor {
           call,
         });
         const denial = `denied by user: ${decision.reason}`;
-        this.appendToolResult(call.id, denial, true);
+        commit(call.id, denial, true);
         this.ctx.emit({
           kind: "tool_result",
           ts: new Date().toISOString(),
@@ -461,7 +512,7 @@ export class ToolExecutor {
     // flows through the normal path so envoy's hooks,
     // arg validation, and permissions govern it.
     if (isMcpCall && tool === undefined) {
-      await this.executeMcpCall(call, iteration);
+      await this.executeMcpCall(call, iteration, commit);
       return;
     }
 
@@ -486,7 +537,7 @@ export class ToolExecutor {
     // (the host may have given us a different shape).
     const parsed = registeredTool.parameters.safeParse(call.args);
     if (!parsed.success) {
-      this.appendToolResult(
+      commit(
         call.id,
         `invalid arguments: ${parsed.error.message}`,
         true,
@@ -583,7 +634,7 @@ export class ToolExecutor {
         resultContent = postDecision.modified;
       }
     }
-    this.appendToolResult(call.id, resultContent, isError);
+    commit(call.id, resultContent, isError);
   }
 
   private appendToolResult(
@@ -634,11 +685,12 @@ export class ToolExecutor {
   private async executeMcpCall(
     call: Extract<ContentBlock, { type: "tool_call" }>,
     iteration: number,
+    commit: ToolResultSink,
   ): Promise<void> {
     const { parseMcpToolName } = await import("../mcp/types.js");
     const parsed = parseMcpToolName(call.name);
     if (parsed === null) {
-      this.appendToolResult(
+      commit(
         call.id,
         `invalid MCP tool name: ${call.name}`,
         true,
@@ -647,7 +699,7 @@ export class ToolExecutor {
     }
     const registry = this.ctx.mcpClients;
     if (registry === undefined) {
-      this.appendToolResult(
+      commit(
         call.id,
         `MCP server not registered: ${parsed.serverName} (no McpClientRegistry configured)`,
         true,
@@ -656,7 +708,7 @@ export class ToolExecutor {
     }
     const client = registry.get(parsed.serverName);
     if (client === undefined) {
-      this.appendToolResult(
+      commit(
         call.id,
         `MCP server not registered: ${parsed.serverName}`,
         true,
@@ -723,52 +775,6 @@ export class ToolExecutor {
         resultContent = postDecision.modified;
       }
     }
-    this.appendToolResult(call.id, resultContent, isError);
+    commit(call.id, resultContent, isError);
   }
-}
-
-/**
- * Recover a missing tool name by matching the args against the
- * registered tools' zod schemas. Returns the tool name only when EXACTLY
- * ONE tool validates — ambiguous matches stay unresolved (the caller
- * refuses the call) so we never guess wrong.
- */
-export function inferToolNameFromArgs(
-  tools: ToolRegistry,
-  args: unknown,
-): string | undefined {
-  // Key-based fallback: an args object carrying a tool-specific key is
-  // unambiguous even if a future tool's schema also accepts it. This is
-  // the pragmatic recovery for providers that drop the tool name.
-  if (args !== null && typeof args === "object") {
-    const record = args as Record<string, unknown>;
-    if (typeof record.command === "string" && tools.has("bash")) {
-      return "bash";
-    }
-    if (typeof record.path === "string" && tools.has("read_file")) {
-      return "read_file";
-    }
-  }
-
-  let match: string | undefined;
-  let count = 0;
-  for (const t of tools.list()) {
-    const parsed = t.parameters.safeParse(args);
-    // Require the schema to actually consume at least one argument key:
-    // an all-optional schema (e.g. `suggest_follow_ups`) matches ANY
-    // object after zod strips unknown keys, which would make inference
-    // ambiguous for every call.
-    const data = parsed.data as Record<string, unknown> | undefined;
-    const consumedKeys =
-      parsed.success &&
-      data !== undefined &&
-      typeof data === "object" &&
-      Object.keys(data).length > 0;
-    if (consumedKeys) {
-      match = t.name;
-      count += 1;
-      if (count > 1) return undefined;
-    }
-  }
-  return count === 1 ? match : undefined;
 }

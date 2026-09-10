@@ -15,6 +15,7 @@ import type {
   TerminalSessionService,
 } from "./types.js";
 import { TerminalError } from "./types.js";
+import { decodeUtf8Within, encodeUtf8 } from "../util/retention.js";
 
 const SIGNAL_SCHEMA = z.enum([
   "SIGINT",
@@ -36,18 +37,11 @@ export function capTextUtf8(
   text: string,
   maxBytes = DEFAULT_MAX_RESULT_BYTES,
 ): { text: string; truncated: boolean } {
-  if (Buffer.byteLength(text, "utf8") <= maxBytes) {
-    return { text, truncated: false };
-  }
-  const encoder = new TextEncoder();
-  const bytes = encoder.encode(text);
-  let end = maxBytes;
-  // Back off to a UTF-8 boundary: continuation bytes start with 10xxxxxx.
-  while (end > 0 && (bytes[end]! & 0xc0) === 0x80) end--;
-  return {
-    text: new TextDecoder().decode(bytes.subarray(0, end)),
-    truncated: true,
-  };
+  // Delegates to the shared retention library: one UTF-8 boundary
+  // implementation for the whole harness (this was the only correct one
+  // of the eight ad-hoc truncators; the rest now use it too).
+  const decoded = decodeUtf8Within(encodeUtf8(text), maxBytes);
+  return { text: decoded.text, truncated: decoded.truncated };
 }
 
 function errResult(err: unknown): ToolResult {
@@ -106,6 +100,53 @@ function startTerminalOutputPoll(
 }
 
 /** Build the six terminal tools bound to a session service. */
+/**
+ * Maximum bytes of terminal input the harness will approve in one write.
+ *
+ * Codex parity (`MAX_STDIN_APPROVAL_BYTES = 8_000`): a human cannot
+ * meaningfully review a larger paste, and overflow is **rejected**, not
+ * silently truncated — truncating input would send a command the model
+ * did not write.
+ */
+export const MAX_TERMINAL_INPUT_BYTES = 8_000;
+
+/**
+ * Enforce the session's permission mode for terminal **mutations**.
+ *
+ * **The hole this closes:** `bash` has always consulted
+ * `ctx.sandboxPolicy` (the 6 validators plus the mode), but the six
+ * `terminal_*` tools never did — so under `--sandbox read-only`,
+ * `terminal_send` would happily write into a live PTY, and a session
+ * downgraded mid-run kept accepting input. Reading output
+ * (`terminal_read`, `terminal_list`) stays allowed in read-only mode;
+ * only mutation is gated.
+ *
+ * Returns an error string when the operation must be refused, or
+ * `undefined` when it may proceed.
+ */
+export function terminalWriteRefusal(
+  ctx: { sandboxPolicy?: import("../types.js").SandboxPolicy },
+  tool: string,
+  inputBytes = 0,
+): string | undefined {
+  const mode = ctx.sandboxPolicy?.mode ?? "read-only";
+  if (mode === "read-only") {
+    return (
+      `${tool} refused: the session sandbox policy is \`read-only\`. ` +
+      "Terminal input runs commands, which is a write. Re-run with " +
+      "`--sandbox workspace-write` (or `/sandbox workspace-write`) to allow it."
+    );
+  }
+  if (inputBytes > MAX_TERMINAL_INPUT_BYTES) {
+    return (
+      `${tool} refused: ${inputBytes} bytes of terminal input exceeds the ` +
+      `${MAX_TERMINAL_INPUT_BYTES}-byte review limit. Send a smaller input, ` +
+      "or write the command to a file and execute that."
+    );
+  }
+  return undefined;
+}
+
 export function makeTerminalTools(
   service: TerminalSessionService,
   jobs?: JobRegistry,
@@ -172,6 +213,13 @@ export function makeTerminalTools(
         ),
     }),
     async execute(args, ctx): Promise<ToolResult> {
+      // SECURITY: gate the mutation before anything is written.
+      const refusal = terminalWriteRefusal(
+        ctx as { sandboxPolicy?: import("../types.js").SandboxPolicy },
+        "terminal_send",
+        Buffer.byteLength(args.text, "utf8"),
+      );
+      if (refusal !== undefined) return { content: refusal, isError: true };
       try {
         const operation = service.startSend(ctx.session.id, args.sessionId, {
           text: args.text,
@@ -301,6 +349,12 @@ export function makeTerminalTools(
       signal: SIGNAL_SCHEMA.describe("POSIX signal to deliver"),
     }),
     async execute(args, ctx): Promise<ToolResult> {
+      // SECURITY: signalling a live process group is a mutation.
+      const refusal = terminalWriteRefusal(
+        ctx as { sandboxPolicy?: import("../types.js").SandboxPolicy },
+        "terminal_signal",
+      );
+      if (refusal !== undefined) return { content: refusal, isError: true };
       try {
         const result = await service.signal(
           ctx.session.id,

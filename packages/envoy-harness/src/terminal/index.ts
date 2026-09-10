@@ -18,8 +18,10 @@ export { createTerminalSessionService } from "./service.js";
 
 export {
   capTextUtf8,
+  MAX_TERMINAL_INPUT_BYTES,
   makeTerminalTools,
   registerTerminalTools,
+  terminalWriteRefusal,
 } from "./tools.js";
 
 export type {

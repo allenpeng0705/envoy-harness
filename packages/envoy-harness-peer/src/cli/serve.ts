@@ -36,6 +36,10 @@ import type {
 } from "@envoymesh/protocol";
 
 import { createPeerServerHandler } from "../server.js";
+import {
+  MdnsAdvertiser,
+  resolveAdvertiseAddress,
+} from "../mdns/index.js";
 
 export interface PeerServeArgs {
   host: string;
@@ -46,6 +50,13 @@ export interface PeerServeArgs {
   ownerId?: string;
   verifyAfterExecute?: boolean;
   maxVerifyAfterExecute?: number;
+  /**
+   * Publish an mDNS/DNS-SD record so LAN peers running
+   * `--discovery mdns` find this peer without `--peers` config.
+   */
+  advertise?: boolean;
+  /** Address to advertise (default: the first private LAN IPv4). */
+  advertiseAddress?: string;
   help?: boolean;
 }
 
@@ -92,6 +103,12 @@ export function parseServeArgs(argv: readonly string[]): PeerServeArgs {
       case "--verify-after-execute":
         args.verifyAfterExecute = true;
         break;
+      case "--advertise":
+        args.advertise = true;
+        break;
+      case "--advertise-address":
+        args.advertiseAddress = requireValue(argv, ++i, "--advertise-address");
+        break;
       case "--max-verify-after-execute": {
         const value = Number(requireValue(argv, ++i, "--max-verify-after-execute"));
         if (!Number.isInteger(value) || value < 0) {
@@ -134,6 +151,12 @@ Options:
                              cap auto-verifies per server lifetime (bounds
                              LLM-verifier cost; only meaningful with
                              --verify-after-execute)
+  --advertise                publish an mDNS/DNS-SD record so LAN peers
+                             running \`--discovery mdns\` find this peer with
+                             no --peers config (needs a non-internal IPv4;
+                             fails open with a warning)
+  --advertise-address <ip>   address to publish (default: first private
+                             LAN IPv4)
   --help                     show this help
 `;
 
@@ -322,15 +345,54 @@ export async function runPeerServeCli(
     io.stdout.write(
       `envoy-peer serve: listening on ${args.host}:${started.port} (peer ${args.peerId}) — Ctrl-C to stop\n`,
     );
+
+    // Optional LAN advertisement so `--discovery mdns` works with no
+    // `--peers` config on the other machine. Fail-open by design: a
+    // host with no reachable IPv4 (or multicast blocked) still serves
+    // TCP clients that were configured explicitly.
+    let advertiser: MdnsAdvertiser | undefined;
+    if (args.advertise === true) {
+      const address = args.advertiseAddress ?? resolveAdvertiseAddress();
+      if (address === undefined) {
+        io.stderr.write(
+          "envoy-peer serve: --advertise skipped (no non-internal IPv4 address)\n",
+        );
+      } else {
+        advertiser = new MdnsAdvertiser({
+          info: {
+            peerId: args.peerId,
+            port: started.port,
+            address,
+            ...(args.model !== undefined ? { model: args.model } : {}),
+          },
+          onError: (err) => {
+            io.stderr.write(
+              `envoy-peer serve: mDNS advertise unavailable (${err.message}); continuing without it\n`,
+            );
+          },
+        });
+        await advertiser.start();
+        if (advertiser.running) {
+          io.stdout.write(
+            `envoy-peer serve: advertised as ${args.peerId} on ${address}:${started.port} (_envoy-harness._tcp.local)\n`,
+          );
+        }
+      }
+    }
+
     await new Promise<void>((resolvePromise) => {
       const stop = (): void => {
         process.off("SIGINT", stop);
         process.off("SIGTERM", stop);
+        advertiser?.stop();
         void started.close().then(() => resolvePromise());
       };
       process.on("SIGINT", stop);
       process.on("SIGTERM", stop);
-      started.server.once("close", () => resolvePromise());
+      started.server.once("close", () => {
+        advertiser?.stop();
+        resolvePromise();
+      });
     });
     return 0;
   } catch (err) {

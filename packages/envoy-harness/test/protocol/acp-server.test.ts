@@ -188,3 +188,63 @@ describe("ACP server", () => {
     pair.close();
   });
 });
+
+describe("ACP capability declaration (standard-client shape)", () => {
+  it("reports loadSession, promptCapabilities and sessionCapabilities as a schema-correct object", async () => {
+    const pair = createInProcessJsonRpcPair();
+    const backend = createFakeSessionBackend();
+    attachAcpServer({ connection: pair.server, backend });
+
+    const init = (await pair.client.request("initialize", {})) as {
+      protocolVersion: number;
+      agentInfo?: { name: string };
+      agentCapabilities?: {
+        loadSession?: boolean;
+        promptCapabilities?: { image?: boolean; audio?: boolean };
+        sessionCapabilities?: { list?: unknown; resume?: unknown };
+      };
+      // The legacy flat shape must NOT be present any more.
+      capabilities?: unknown;
+    };
+
+    expect(init.protocolVersion).toBe(ACP_PROTOCOL_VERSION);
+    expect(init.agentInfo?.name).toBeTruthy();
+    expect(init.agentCapabilities?.loadSession).toBe(true);
+    expect(init.agentCapabilities?.promptCapabilities?.image).toBe(true);
+    expect(init.agentCapabilities?.promptCapabilities?.audio).toBe(false);
+    // Object-valued markers; the key's presence is the capability.
+    expect(init.agentCapabilities?.sessionCapabilities).toBeDefined();
+    expect(init.capabilities).toBeUndefined();
+  });
+
+  it("answers the spec method name session/list (and the legacy alias)", async () => {
+    const pair = createInProcessJsonRpcPair();
+    // The fake backend only exposes `listSessions` when asked, so the
+    // test supplies it explicitly (a real host wires the session store).
+    const backend = createFakeSessionBackend();
+    const withList = {
+      ...backend,
+      listSessions: async () => [
+        { id: "sess-1", mtimeMs: 1, messageCount: 2, cwd: "/tmp" },
+      ],
+    };
+    attachAcpServer({ connection: pair.server, backend: withList });
+    await pair.client.request("initialize", {});
+    await pair.client.request("session/new", {});
+
+    const spec = (await pair.client.request("session/list", {})) as {
+      sessions: Array<{ sessionId: string }>;
+      nextCursor?: unknown;
+    };
+    expect(Array.isArray(spec.sessions)).toBe(true);
+    // `nextCursor` is omitted, never null, when there is no next page.
+    expect("nextCursor" in spec).toBe(false);
+
+    expect(spec.sessions[0]?.sessionId).toBe("sess-1");
+
+    const legacy = (await pair.client.request("sessions/list", {})) as {
+      sessions: unknown[];
+    };
+    expect(legacy.sessions).toHaveLength(spec.sessions.length);
+  });
+});

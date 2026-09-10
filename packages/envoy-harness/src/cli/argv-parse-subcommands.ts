@@ -144,6 +144,15 @@ export function parseDoctorArgs(argv: ReadonlyArray<string>): DoctorParsedArgs {
       i++;
       continue;
     }
+    if (arg === "--session-dir") {
+      const next = argv[i + 1];
+      if (next === undefined) {
+        throw new ArgvError("flag --session-dir requires a value");
+      }
+      out.sessionDir = next;
+      i++;
+      continue;
+    }
     throw new ArgvError(`unknown flag for doctor subcommand: ${arg}`);
   }
   return out;

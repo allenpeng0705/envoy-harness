@@ -168,6 +168,15 @@ envoy-harness web --no-subagents
 **Base URLs (env or `--base-url`):** `OPENAI_BASE_URL`, `ANTHROPIC_BASE_URL`, `DEEPSEEK_BASE_URL`, … — any OpenAI- or Anthropic-compatible endpoint.
 **Config file:** `~/.config/envoy-harness/config.toml` or `ENVOY_HARNESS_CONFIG`.
 
+**Project config is untrusted by default.** A repo-committed
+`.envoy/config.toml` is read, but security-relevant keys
+(`permissionMode`, `askForApproval`, `sandboxBackend`, `hooks`,
+`mcpServers`, `plugins`, `peers`, `persona`, …) are **ignored with a
+warning** — a repository must not be able to lift your sandbox or run its
+own commands just because you opened it. To trust a specific checkout,
+add its absolute path to
+`~/.local/state/envoy-harness/trusted-projects.json`.
+
 More detail: [`packages/envoy-harness/QUICKSTART.md`](./packages/envoy-harness/QUICKSTART.md).
 
 ---
@@ -229,6 +238,25 @@ You can run **several machines** that collaborate over plain **TCP**
 LocalMeshSubmitter  →  PeerMeshSubmitter  →  RemoteMeshSubmitter
    this laptop            TCP --peers          EnvoyMesh (optional)
 ```
+
+### Step 0 — Discover peers automatically (optional)
+
+mDNS/DNS-SD is implemented (`_envoy-harness._tcp.local`), so two machines
+on the same LAN can find each other with **no `--peers` config**:
+
+```sh
+# Machine A — serve AND advertise on the LAN
+envoy-peer serve --port 8123 --peer-id alice --model deepseek-chat --advertise
+
+# Machine B — browse instead of listing peers
+envoy-harness --repl --discovery mdns --provider openai --model gpt-4o
+```
+
+`--advertise` publishes PTR/SRV/TXT/A records carrying the peer id, model
+and capabilities, so the orchestrator can route by model. Discovery is
+**fail-open**: a machine with multicast blocked (CI, hardened sandbox,
+corporate WLAN) logs a warning and runs normally with whatever static
+`--peers` you configured.
 
 ### Step 1 — Start a worker peer
 

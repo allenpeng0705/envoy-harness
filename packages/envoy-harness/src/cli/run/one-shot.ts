@@ -35,6 +35,7 @@ import {
   type Session,
   type SessionMetadata,
   buildAgentSystemPrompt,
+  projectConfigWarning,
   systemPromptOptionsFromConfig,
 } from "../../index.js";
 import { wireEnvironmentTools } from "../../environment/index.js";
@@ -133,11 +134,24 @@ export async function runAgent(
   } else {
     // Config stack: dist → user → project `.envoy/config.toml`.
     try {
-      const { layer } = await loadConfigStack({
-        cwd: parsed.cwd ?? options.cwd ?? process.cwd(),
+      const cwd = parsed.cwd ?? options.cwd ?? process.cwd();
+      const { layer, ignoredProjectKeys } = await loadConfigStack({
+        cwd,
         ...(parsed.config !== undefined ? { filePath: parsed.config } : {}),
       });
       configLayer = layer;
+      // SECURITY: the project layer is repository-controlled. Never
+      // silently drop its attempt to lift the sandbox, register hooks,
+      // or spawn servers — tell the user what was ignored and how to
+      // opt in.
+      if (ignoredProjectKeys.length > 0 && !parsed.quiet) {
+        stderr.write(
+          `${projectConfigWarning(
+            path.join(cwd, ".envoy", "config.toml"),
+            ignoredProjectKeys,
+          )}\n`,
+        );
+      }
     } catch (err) {
       if (
         !(err instanceof ConfigLoadError) ||

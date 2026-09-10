@@ -202,10 +202,17 @@ export async function runAgentLoop(
       ].filter(
         (t) => collaborationModeBlockReason(modeKind, t.name) === undefined,
       );
+      // Prefix-cache discipline (see `context/ephemeral-user-context.ts`):
+      // 1. the transcript is append-only, so this request is a strict
+      //    prefix-extension of the previous one;
+      // 2. `promptCacheKey` pins the conversation (and every request in
+      //    it) to one provider-side cache partition, so the cached
+      //    prefix is actually reused instead of being re-billed.
       response = await agent.model.complete({
         messages: messagesForModel,
         tools: toolsForModel,
         signal: agent.abortController.signal,
+        promptCacheKey: agent.session.id,
         ...(agent.assistantStreamSink !== undefined
           ? { onTextDelta: agent.assistantStreamSink }
           : {}),

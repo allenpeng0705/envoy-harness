@@ -14,6 +14,11 @@ import {
   loadConfigFile,
   resolveConfigPath,
 } from "./loader.js";
+import {
+  isProjectTrusted,
+  sanitizeProjectLayer,
+  trustedProjectsPath,
+} from "./project-trust.js";
 import type { ConfigLayer } from "./schema.js";
 import { ConfigLayerSchema } from "./schema.js";
 
@@ -24,12 +29,31 @@ export interface LoadConfigStackOptions {
   filePath?: string;
   /** Highest-precedence overlay (CLI flags as a layer). */
   overrides?: ConfigLayer;
+  /**
+   * Whether the project-local layer may set security-relevant keys.
+   *
+   * - `undefined` (default): consult the persisted trust list
+   *   (`isProjectTrusted`); untrusted projects get the sanitized layer.
+   * - `true`: trust the project (host already verified it).
+   * - `false`: always sanitize.
+   *
+   * See `project-trust.ts` for why this exists.
+   */
+  trustProject?: boolean;
+  /** Override the trust-list path (tests / hosts). */
+  trustFilePath?: string;
 }
 
 export interface LoadedConfigStack {
   layer: ConfigLayer;
   /** Paths that contributed (existing files only), low → high precedence. */
   sources: ReadonlyArray<string>;
+  /**
+   * Security-relevant keys stripped from the project-local layer. Empty
+   * when there was no project layer, it had none, or it was trusted.
+   * Hosts should surface these (see `projectConfigWarning`).
+   */
+  ignoredProjectKeys: ReadonlyArray<string>;
 }
 
 /**
@@ -73,6 +97,7 @@ export async function loadConfigStack(
 ): Promise<LoadedConfigStack> {
   const sources: string[] = [];
   const layers: ConfigLayer[] = [];
+  let ignoredProjectKeys: ReadonlyArray<string> = [];
 
   const userPath =
     options.filePath !== undefined
@@ -96,7 +121,23 @@ export async function loadConfigStack(
     const projectPath = path.join(options.cwd, ".envoy", "config.toml");
     const project = await tryLoad(projectPath);
     if (project !== undefined) {
-      layers.push(project);
+      // SECURITY: the project layer is repository-controlled input. It
+      // is merged ABOVE the user's config, so without this gate a
+      // cloned repo could set `permissionPreset = "approve-all"`,
+      // register hooks, or spawn MCP servers just by being opened.
+      const trusted =
+        options.trustProject ??
+        (await isProjectTrusted(
+          options.cwd,
+          options.trustFilePath ?? trustedProjectsPath(),
+        ));
+      if (trusted) {
+        layers.push(project);
+      } else {
+        const sanitized = sanitizeProjectLayer(project);
+        layers.push(sanitized.layer);
+        ignoredProjectKeys = sanitized.ignoredKeys;
+      }
       sources.push(projectPath);
     }
   }
@@ -108,6 +149,7 @@ export async function loadConfigStack(
   return {
     layer: mergeConfigLayers(...layers),
     sources,
+    ignoredProjectKeys,
   };
 }
 

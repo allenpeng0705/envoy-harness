@@ -9,10 +9,12 @@
  * `bin` entry points here too.
  */
 
+import { stripRunnerSeparators } from "@envoymesh/envoy-harness";
 import { runPeerServeCli } from "../src/cli/serve.js";
 import { runPeerUiCli } from "../src/cli/ui.js";
 
-const argv = process.argv.slice(2);
+// `pnpm … exec tsx bin/envoy-peer.ts serve -- --port 8123` forwards `--`.
+const argv = stripRunnerSeparators(process.argv.slice(2));
 const subcommand = argv[0];
 const code =
   subcommand === "ui"

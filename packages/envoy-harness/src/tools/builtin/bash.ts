@@ -45,6 +45,7 @@ import { tokenizeShellCommand } from "../../permissions/bash/tokenize.js";
 import { policyFromMode } from "../../permissions/policy.js";
 import type { BashValidationInput, SandboxPolicy } from "../../types.js";
 import type { Tool, ToolContext, ToolResult } from "../types.js";
+import { retainHeadBytes } from "../../util/retention.js";
 
 /** Default timeout for a bash command, in milliseconds. */
 const DEFAULT_BASH_TIMEOUT_MS = 30_000;
@@ -234,14 +235,11 @@ async function runBash(
       if (result.timedOut) {
         out += `bash timed out after ${timeout}ms\n`;
       }
-      const stdout =
-        result.stdout.length > cap
-          ? result.stdout.slice(0, cap) + "\n[stdout truncated]"
-          : result.stdout;
-      const stderr =
-        result.stderr.length > cap
-          ? result.stderr.slice(0, cap) + "\n[stderr truncated]"
-          : result.stderr;
+      // Byte-accurate, UTF-8-safe cut. A code-unit `slice` here could
+      // split a surrogate pair and put a lone surrogate in the
+      // transcript and the durable session log.
+      const stdout = retainHeadBytes(result.stdout, cap, "stdout");
+      const stderr = retainHeadBytes(result.stderr, cap, "stderr");
       if (stdout.length > 0) out += stdout;
       if (stderr.length > 0) {
         if (out.length > 0) out += "\n";

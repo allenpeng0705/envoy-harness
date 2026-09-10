@@ -240,6 +240,8 @@ export interface DoctorParsedArgs {
   help: boolean;
   version: boolean;
   config?: string | undefined;
+  /** Override the reported session directory (default `~/.local/state/...`). */
+  sessionDir?: string | undefined;
 }
 
 /** Args for the `mcp` subcommand (stdio MCP server). */

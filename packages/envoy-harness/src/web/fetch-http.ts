@@ -14,6 +14,7 @@
 
 import type { WebFetchBody, WebFetchProvider, WebFetchResult } from "./types.js";
 import { WebError } from "./types.js";
+import { trimTrailingPartialUtf8 } from "../util/retention.js";
 
 export interface HttpFetchProviderOptions {
   /** Soft cap on decoded body bytes (default 512 KiB). */
@@ -52,7 +53,15 @@ async function readBodyCapped(
       const chunk = Buffer.from(value);
       const remaining = maxBytes - total;
       if (chunk.byteLength > remaining) {
-        chunks.push(chunk.subarray(0, Math.max(0, remaining)));
+        // Cut on a UTF-8 boundary so the assembled body never ends with
+        // a dangling partial sequence.
+        chunks.push(
+          Buffer.from(
+            trimTrailingPartialUtf8(
+              chunk.subarray(0, Math.max(0, remaining)),
+            ),
+          ),
+        );
         total = maxBytes;
         truncated = true;
         // Cancel the underlying stream so the server stops sending.

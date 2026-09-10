@@ -13,6 +13,7 @@ import {
   createFakeSessionBackend,
   loadConfig,
   resolvePeerEndpoints,
+  stripRunnerSeparators,
 } from "@envoymesh/envoy-harness";
 
 import { createClusterTui } from "./cluster-wiring.js";
@@ -96,7 +97,8 @@ function parsePermissionsFlag(
 }
 
 async function main(): Promise<void> {
-  const argv = process.argv.slice(2);
+  // `pnpm … tui -- --demo` forwards the literal `--` separator.
+  const argv = stripRunnerSeparators(process.argv.slice(2));
   if (argv.includes("--help") || argv.includes("-h")) {
     process.stdout.write(TUI_HELP);
     return;

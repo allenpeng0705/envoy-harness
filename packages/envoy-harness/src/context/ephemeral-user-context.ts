@@ -27,8 +27,33 @@ export function isEphemeralUserMessage(msg: Message): boolean {
 }
 
 /**
- * Insert ephemeral turn context immediately before this turn's user
- * prompt (the trailing user message). Not persisted to the session.
+ * Append ephemeral turn context **after** this turn's user prompt.
+ * Not persisted to the session.
+ *
+ * **Why "after" and not "before" — this is a prompt-cache fix.**
+ * Inserting the block immediately *before* the trailing user message
+ * changes the transcript at index 1 on every turn:
+ *
+ * ```
+ * turn 1: [system, EPH1, user1, ...]
+ * turn 2: [system, user1, asst1, ..., EPH2, user2, ...]
+ * ```
+ *
+ * The longest common prefix between consecutive requests was therefore
+ * the system prompt alone, so provider prefix caching (OpenAI ≥1024
+ * token prefixes, DeepSeek automatic caching, Anthropic
+ * `cache_control`) re-billed essentially the whole transcript on every
+ * turn — the single largest avoidable cost in a long session.
+ *
+ * Appending instead keeps each request a **strict prefix-extension** of
+ * its predecessor: everything the model already saw stays byte-identical,
+ * and only the new turn's context plus the prompt are added. See
+ * `test/context-prefix-stability.test.ts`, which asserts the property
+ * directly.
+ *
+ * Trade-off: the block now sits after the human's message rather than
+ * before it. Both are user-role, no transcript tooling depends on the
+ * pair order, and the model reads the whole turn either way.
  */
 export function injectEphemeralUserContext(
   messages: readonly Message[],
@@ -39,12 +64,5 @@ export function injectEphemeralUserContext(
     role: "user",
     content: [{ type: "text", text: ephemeralText }],
   };
-  const copy = [...messages];
-  const last = copy[copy.length - 1];
-  if (last?.role === "user") {
-    copy.splice(copy.length - 1, 0, ephemeral);
-    return copy;
-  }
-  copy.push(ephemeral);
-  return copy;
+  return [...messages, ephemeral];
 }

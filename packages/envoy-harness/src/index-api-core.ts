@@ -160,6 +160,18 @@ export {
 } from "./agent.js";
 export { ActionJournal, type UndoEntry } from "./action-journal.js";
 
+// The per-tool-call execution seam. Exported because the design doc
+// (§3.4) makes it an explicit host-facing seam: a host may wrap or
+// replace the executor without forking `Agent`, and it is the unit that
+// owns tool-call ordering, hooks, approval and UTF-8-safe output bounds.
+export {
+  DEFAULT_MAX_PARALLEL_TOOL_CALLS,
+  ToolExecutor,
+  inferToolNameFromArgs,
+  type ToolExecutorContext,
+  type ToolResultSink,
+} from "./agent/tool-executor.js";
+
 // Re-export built-in tools (§10 of the design doc)
 export {
   BUILTIN_TOOLS,
@@ -196,6 +208,7 @@ export {
   parseAnthropicError,
   parseChatResponse,
   parseMessagesResponse,
+  openAiUsage,
   parseOpenAIError,
   splitSystemAndMessages,
   toolsToAnthropic,
@@ -232,6 +245,7 @@ export {
   BUILTIN_TIER2_BATCH4_COMMANDS,
   BUILTIN_TIER2_COMMANDS,
   ReplCommandRegistry,
+  RUNNER_SEPARATOR,
   defaultAskHandler,
   dispatchCommand,
   formatHelp,
@@ -239,6 +253,7 @@ export {
   parseCommandLine,
   run,
   runRepl,
+  stripRunnerSeparators,
   type DispatchResult,
   type ExitCode,
   type LineReader,
@@ -469,6 +484,14 @@ export {
   loadConfigWithImport,
   mergeConfigLayers,
   parseClaudeCodeHooks,
+  PROJECT_LOCAL_DENYLIST,
+  isProjectTrusted,
+  listTrustedProjects,
+  projectConfigWarning,
+  sanitizeProjectLayer,
+  trustProject,
+  trustedProjectsPath,
+  untrustProject,
   resolveAgentRuntimeConfig,
   resolveConfigPath,
   applyShellEnvironmentPolicy,
@@ -486,6 +509,7 @@ export {
   type ImportFormat,
   type LoadConfigStackOptions,
   type LoadedConfigStack,
+  type SanitizedProjectLayer,
   type ParseClaudeCodeHooksOptions,
   type ParseClaudeCodeHooksResult,
   type ResolvedAgentRuntimeConfig,

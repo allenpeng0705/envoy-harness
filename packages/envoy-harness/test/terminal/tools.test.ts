@@ -21,6 +21,16 @@ function makeContext(
     cwd,
     session: { id: sessionId } as ToolContext["session"],
     abortSignal: signal,
+    // The terminal mutation gate fails CLOSED when no policy is present,
+    // so a test must state the mode it intends to exercise.
+    sandboxPolicy: {
+      mode: "workspace-write",
+      approval: "on-request",
+      backend: "none",
+      writableRoots: [],
+      networkAccess: false,
+      slashTmpWritable: false,
+    },
   };
 }
 

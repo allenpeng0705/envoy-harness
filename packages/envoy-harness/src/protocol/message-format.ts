@@ -5,10 +5,11 @@
 import type { ContentBlock } from "../tools/types.js";
 import type { TraceEvent } from "../trace/types.js";
 import type { ProtocolCommittedMessage } from "./session-backend.js";
+import { truncateChars } from "../util/retention.js";
 
 function truncate(s: string, max: number): string {
-  if (s.length <= max) return s;
-  return `${s.slice(0, max - 1)}…`;
+  // Char-based cap for display strings; never splits a surrogate pair.
+  return truncateChars(s, max);
 }
 
 /** Extract display text from message content blocks. */

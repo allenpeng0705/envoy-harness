@@ -3,6 +3,7 @@
  */
 
 import type { ParsedArgs } from "./argv-types.js";
+import { stripRunnerSeparators } from "./argv-normalize.js";
 import { parseRunArgs } from "./argv-parse-run.js";
 import { parseSelfEvolveArgs } from "./argv-parse-self-evolve.js";
 import {
@@ -27,25 +28,30 @@ export {
 export { formatHelp } from "./argv-help.js";
 
 export function parseArgs(argv: ReadonlyArray<string>): ParsedArgs {
+  // Normalize runner-injected `--` separators first: `pnpm envoy --
+  // --repl` forwards the literal `--`, which no subcommand parser
+  // accepts. See `argv-normalize.ts` for why this is safe.
+  const normalized = stripRunnerSeparators(argv);
+
   // Detect subcommand: the first non-flag positional.
-  const firstPositional = argv.find((a) => !a.startsWith("--"));
+  const firstPositional = normalized.find((a) => !a.startsWith("--"));
   if (firstPositional === "self-evolve") {
-    return parseSelfEvolveArgs(argv);
+    return parseSelfEvolveArgs(normalized);
   }
   if (firstPositional === "team") {
-    return parseTeamArgs(argv);
+    return parseTeamArgs(normalized);
   }
   if (firstPositional === "doctor") {
-    return parseDoctorArgs(argv);
+    return parseDoctorArgs(normalized);
   }
   if (firstPositional === "mcp") {
-    return parseMcpArgs(argv);
+    return parseMcpArgs(normalized);
   }
   if (firstPositional === "tui") {
-    return parseTuiArgs(argv);
+    return parseTuiArgs(normalized);
   }
   if (firstPositional === "web") {
-    return parseWebArgs(argv);
+    return parseWebArgs(normalized);
   }
-  return parseRunArgs(argv);
+  return parseRunArgs(normalized);
 }

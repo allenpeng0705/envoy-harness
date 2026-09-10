@@ -9,10 +9,11 @@ import type { ToolCall } from "../tools/index.js";
 import type { TraceEvent } from "../trace/types.js";
 import type { ProtocolActivityEvent } from "./session-backend.js";
 import { stripThinking } from "../util/strip-thinking.js";
+import { truncateChars } from "../util/retention.js";
 
 function truncate(s: string, max: number): string {
-  if (s.length <= max) return s;
-  return `${s.slice(0, max - 1)}…`;
+  // Char-based cap for display strings; never splits a surrogate pair.
+  return truncateChars(s, max);
 }
 
 function summarizeToolCall(call: ToolCall): string {

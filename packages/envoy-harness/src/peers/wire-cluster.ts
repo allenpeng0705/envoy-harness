@@ -67,12 +67,25 @@ export function mergeClusterSeams(
 /**
  * Connect configured peers and return protocol seams for the cluster rail,
  * slash commands, and runtime `cluster/connect`. Returns undefined when
- * `peers` is empty and runtime connect is disabled.
+ * there is nothing to discover or connect.
+ *
+ * **mDNS-only mode is a first-class case.** `--discovery mdns` with no
+ * `--peers` must still build a cluster: the whole point of discovery is
+ * that the peer list is empty at startup. Earlier revisions returned
+ * `undefined` here (and later gated the rail on
+ * `endpointConfigs.length > 0`), so `--discovery mdns` was a no-op in
+ * exactly the configuration it exists for.
  */
 export async function wirePeerCluster(
   options: WirePeerClusterOptions,
 ): Promise<WirePeerClusterResult | undefined> {
-  if (options.peers.length === 0 && !options.enableRuntimeConnect) {
+  const discovery: PeerDiscoveryMode = options.discovery ?? "static";
+  const mdnsEnabled = discovery === "mdns";
+  if (
+    options.peers.length === 0 &&
+    !options.enableRuntimeConnect &&
+    !mdnsEnabled
+  ) {
     return undefined;
   }
 
@@ -85,8 +98,6 @@ export async function wirePeerCluster(
       "peer cluster requires @envoymesh/envoy-harness-peer (install the peer package)",
     );
   }
-
-  const discovery: PeerDiscoveryMode = options.discovery ?? "static";
 
   const managed = new peerMod.ManagedPeerCluster({
     ...(options.connectTimeoutMs !== undefined
@@ -106,10 +117,22 @@ export async function wirePeerCluster(
 
   let rail: { start(): Promise<void>; stop(): void } | undefined;
 
-  if (discovery !== "none" && endpointConfigs.length > 0) {
+  // Build the rail whenever there is something to discover: static peers,
+  // or mDNS browsing (which starts with an empty peer list by design).
+  if (discovery !== "none" && (endpointConfigs.length > 0 || mdnsEnabled)) {
     const sources = [
       new peerMod.StaticDiscoverySource(endpointConfigs),
-      ...(discovery === "mdns" ? [new peerMod.MdnsDiscoverySource()] : []),
+      ...(mdnsEnabled
+        ? [
+            new peerMod.MdnsDiscoverySource({
+              // Discovery is a convenience: multicast may be blocked (CI,
+              // hardened sandboxes, corporate WLAN). Warn, then continue.
+              onError: (err: Error) => {
+                options.onFailure?.("mdns", err);
+              },
+            }),
+          ]
+        : []),
     ];
     const discoveryRail = peerMod.createDiscoveryRail({
       cluster: managed,

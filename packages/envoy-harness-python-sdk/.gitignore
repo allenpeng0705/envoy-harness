@@ -1,0 +1,6 @@
+# Python build + cache artifacts (uv / pip / pytest).
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+*.egg-info/

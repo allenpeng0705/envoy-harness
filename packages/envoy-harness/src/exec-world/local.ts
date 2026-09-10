@@ -12,6 +12,7 @@ import type {
   ExecWorld,
 } from "./types.js";
 import { ExecWorldError } from "./types.js";
+import { decodeUtf8Within } from "../util/retention.js";
 
 function throwIfAborted(signal: AbortSignal): void {
   if (signal.aborted) {
@@ -28,11 +29,10 @@ export function createLocalExecWorld(): ExecWorld {
       const cap = options.maxBytes ?? 1024 * 1024;
       try {
         const buf = await fs.readFile(filePath);
-        const truncated = buf.byteLength > cap;
-        const slice = truncated ? buf.subarray(0, cap) : buf;
+        const decoded = decodeUtf8Within(buf, cap);
         return {
-          content: slice.toString("utf8"),
-          truncated,
+          content: decoded.text,
+          truncated: decoded.truncated,
           byteLength: buf.byteLength,
         };
       } catch (err) {

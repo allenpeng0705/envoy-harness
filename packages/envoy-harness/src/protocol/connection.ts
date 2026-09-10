@@ -5,7 +5,12 @@
 import { EventEmitter } from "node:events";
 import type { Readable, Writable } from "node:stream";
 
-import { encodeFrame, FrameDecoder } from "./framing.js";
+import {
+  AutoFrameDecoder,
+  encodeFrame,
+  encodeNdjsonFrame,
+  type FrameDialect,
+} from "./framing.js";
 import {
   isJsonRpcNotification,
   isJsonRpcRequest,
@@ -37,6 +42,20 @@ export interface JsonRpcConnectionOptions {
    * Default 30s; pass `Infinity` to disable.
    */
   defaultRequestTimeoutMs?: number;
+  /**
+   * Framing used for OUTBOUND messages.
+   *
+   * - `"ndjson"` (default) — newline-delimited JSON, which is what the
+   *   Agent Client Protocol specifies and every standard ACP client
+   *   (the `@agentclientprotocol/sdk` family) speaks.
+   * - `"content-length"` — LSP-style headers, kept for envoy's own
+   *   older client dialect.
+   *
+   * Inbound framing is auto-detected ({@link AutoFrameDecoder}), so a
+   * server can accept both dialects; only the reply framing has to be
+   * decided, and it must match what the peer expects.
+   */
+  frameDialect?: FrameDialect;
 }
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
@@ -54,7 +73,8 @@ interface Pending {
 export class JsonRpcConnection {
   readonly #output: Writable;
   readonly #pending = new Map<JsonRpcId, Pending>();
-  readonly #decoder = new FrameDecoder();
+  readonly #decoder = new AutoFrameDecoder();
+  readonly #frameDialect: FrameDialect;
   readonly #events = new EventEmitter();
   #nextId = 1;
   #closed = false;
@@ -64,6 +84,7 @@ export class JsonRpcConnection {
 
   constructor(options: JsonRpcConnectionOptions) {
     this.#output = options.output;
+    this.#frameDialect = options.frameDialect ?? "ndjson";
     this.#defaultRequestTimeoutMs =
       options.defaultRequestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
     this.#onRequest =
@@ -177,7 +198,9 @@ export class JsonRpcConnection {
   }
 
   #write(msg: JsonRpcMessage): void {
-    this.#output.write(encodeFrame(msg));
+    this.#output.write(
+      this.#frameDialect === "ndjson" ? encodeNdjsonFrame(msg) : encodeFrame(msg),
+    );
   }
 
   async #dispatch(msg: JsonRpcMessage): Promise<void> {

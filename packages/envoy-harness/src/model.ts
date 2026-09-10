@@ -10,11 +10,12 @@
  * runnable — the harness must work with a fake model for tests
  * and demos.)
  *
- * **`complete()` is the only required method.** Streaming is
- * optional and lives behind a separate method
- * (`completeStreaming`, added in a later chunk). The non-streaming
- * path is enough for v0: get the response, dispatch tool calls,
- * repeat. Streaming is a UX improvement, not a correctness one.
+ * **`complete()` is the only required method.** Adapters that support
+ * streaming implement it internally and enter it when the caller
+ * supplies `onTextDelta` (see `llm/openai.ts#completeStreaming`); the
+ * interface stays a single method so a fake or local adapter needs no
+ * streaming code. Streaming is a UX improvement, not a correctness
+ * one.
  *
  * **Wire compatibility:** `messages` and `tools` use the local
  * `Message` / `Tool` types from `../tools/types.js`. An adapter
@@ -53,8 +54,23 @@ export interface ModelResponse {
    * loop accumulates these into `AgentResult.metrics`.
    */
   usage?: {
+    /**
+     * **Uncached** input tokens only.
+     *
+     * Counts are DISJOINT: `inputTokens` must exclude anything
+     * reported in `cacheReadTokens`/`cacheWriteTokens`, so billed input
+     * is the sum of the three. Providers that fold cache hits into a
+     * total prompt count (OpenAI's `prompt_tokens`, DeepSeek's
+     * `prompt_tokens`) must subtract them out in the adapter — see
+     * `llm/openai.ts`. Without this, cached input is invisible and the
+     * hit rate cannot be computed at all.
+     */
     inputTokens: number;
     outputTokens: number;
+    /** Input tokens served from the provider's prefix cache. */
+    cacheReadTokens?: number;
+    /** Input tokens written into the provider's prefix cache. */
+    cacheWriteTokens?: number;
   };
   /**
    * The model identifier that produced this response. The
@@ -68,7 +84,8 @@ export interface ModelResponse {
 /**
  * The input to `complete()`. Bundled in an object so we can
  * add fields (temperature, max_tokens, system prompt overrides)
- * without breaking the signature.
+ * without breaking the signature — and so the prompt-cache key and
+ * streaming callback can arrive without a signature change.
  */
 export interface CompleteInput {
   /** The full transcript so far. The adapter may add a system prompt. */
@@ -103,6 +120,21 @@ export interface CompleteInput {
    * loop wires this from protocol hosts (`session/token`).
    */
   onTextDelta?: (delta: string) => void;
+  /**
+   * Stable partition key for the provider's prefix cache.
+   *
+   * Set to the **session id**, so every request in a conversation (and
+   * every sub-agent it spawns) maps to the same server-side cache
+   * partition. Codex does exactly this (`ModelClient::prompt_cache_key`
+   * returns the session id, and an internal sub-session returns
+   * `<source>:<parent_thread_id>` so children start on the parent's
+   * warm prefix).
+   *
+   * Sent as `prompt_cache_key` on OpenAI-compatible endpoints, which is
+   * accepted by `chat/completions` — no transport change needed.
+   * Adapters that do not understand it ignore it.
+   */
+  promptCacheKey?: string;
 }
 
 /**

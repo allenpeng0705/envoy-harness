@@ -36,6 +36,22 @@ export {
   type LoadedConfigStack,
 } from "./layers.js";
 
+// SECURITY — project-local config trust gate. `.envoy/config.toml` is
+// repository-controlled input merged ABOVE the user's config, so
+// security-relevant keys are stripped unless the project is explicitly
+// trusted. See `project-trust.ts` for the threat model.
+export {
+  PROJECT_LOCAL_DENYLIST,
+  isProjectTrusted,
+  listTrustedProjects,
+  projectConfigWarning,
+  sanitizeProjectLayer,
+  trustProject,
+  trustedProjectsPath,
+  untrustProject,
+  type SanitizedProjectLayer,
+} from "./project-trust.js";
+
 // Phase B / Item 15: external config importers.
 // Chunk 15.1 ships the codex importer; chunk 15.2 adds
 // the deepseek `cordis.yml` importer + the CC hooks.json

@@ -28,6 +28,7 @@ import * as path from "node:path";
 import { z } from "zod";
 
 import type { Tool } from "../types.js";
+import { decodeUtf8Within } from "../../util/retention.js";
 
 /**
  * The read_file tool. Single required parameter: `path`.
@@ -84,9 +85,11 @@ export const readFileTool: Tool<
     }
     try {
       const buf = await fs.readFile(resolved);
-      const truncated = buf.byteLength > cap;
-      const slice = truncated ? buf.subarray(0, cap) : buf;
-      const content = slice.toString("utf8");
+      // `decodeUtf8Within` backs off to a UTF-8 boundary, so a cut that
+      // lands mid-sequence never emits U+FFFD into the transcript.
+      const decoded = decodeUtf8Within(buf, cap);
+      const truncated = decoded.truncated;
+      const content = decoded.text;
       if (truncated) {
         return {
           content:

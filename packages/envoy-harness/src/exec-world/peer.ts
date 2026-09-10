@@ -10,6 +10,7 @@ import type {
   RemoteExecTransport,
 } from "./types.js";
 import { ExecWorldError } from "./types.js";
+import { decodeUtf8Within } from "../util/retention.js";
 
 function throwIfAborted(signal: AbortSignal): void {
   if (signal.aborted) {
@@ -68,11 +69,11 @@ export class FakeRemoteExecTransport implements RemoteExecTransport {
     }
     const buf = Buffer.from(raw, "utf8");
     const cap = options.maxBytes ?? 1024 * 1024;
-    const truncated = buf.byteLength > cap;
-    const slice = truncated ? buf.subarray(0, cap) : buf;
+    // Boundary-correct decode: a raw byte cut would emit U+FFFD.
+    const decoded = decodeUtf8Within(buf, cap);
     return {
-      content: slice.toString("utf8"),
-      truncated,
+      content: decoded.text,
+      truncated: decoded.truncated,
       byteLength: buf.byteLength,
     };
   }

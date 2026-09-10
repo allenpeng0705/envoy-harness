@@ -21,9 +21,10 @@
  * OpenAI-compatible endpoint (Azure, vLLM, llama.cpp, etc.).
  * The default is `https://api.openai.com/v1`.
  *
- * **Streaming:** v0 uses non-streaming `complete()`. The
- * OpenAI API supports `stream: true`; a future chunk can
- * add a streaming variant of `ModelAdapter`.
+ * **Streaming:** `complete()` uses the non-streaming endpoint
+ * unless the caller supplies `onTextDelta`, in which case it delegates
+ * to `completeStreaming()` (`stream: true`, SSE). Anthropic streaming
+ * is still a separate piece of work.
  *
  * **Stability:** the public surface is `OpenAIAdapter`
  * (class) and its constructor options. Additive; new
@@ -79,6 +80,10 @@ interface OpenAIChatResponse {
     prompt_tokens: number;
     completion_tokens: number;
     total_tokens: number;
+    /** DeepSeek's cache-hit counter. */
+    prompt_cache_hit_tokens?: number;
+    /** OpenAI's nested cache counter. */
+    prompt_tokens_details?: { cached_tokens?: number };
   } | null;
 }
 
@@ -146,6 +151,10 @@ export class OpenAIAdapter implements ModelAdapter {
       ...(input.tools.length > 0 ? { tools: toolsToOpenAI(input.tools) } : {}),
       ...(input.temperature !== undefined ? { temperature: input.temperature } : {}),
       ...(input.maxTokens !== undefined ? { max_tokens: input.maxTokens } : {}),
+      // Pin the conversation to one server-side prefix-cache partition.
+      ...(input.promptCacheKey !== undefined
+        ? { prompt_cache_key: input.promptCacheKey }
+        : {}),
     };
     const response = await this.httpClient.request({
       method: "POST",
@@ -250,10 +259,7 @@ export class OpenAIAdapter implements ModelAdapter {
       };
       if (parsed.model !== undefined) responseModel = parsed.model;
       if (parsed.usage != null) {
-        usage = {
-          inputTokens: parsed.usage.prompt_tokens,
-          outputTokens: parsed.usage.completion_tokens,
-        };
+        usage = openAiUsage(parsed.usage);
       }
       const choice = parsed.choices?.[0];
       if (choice === undefined) return;
@@ -400,14 +406,41 @@ export function parseChatResponse(parsed: OpenAIChatResponse): ModelResponse {
     content,
     stopReason,
     model: parsed.model,
-    ...(parsed.usage
-      ? {
-          usage: {
-            inputTokens: parsed.usage.prompt_tokens,
-            outputTokens: parsed.usage.completion_tokens,
-          },
-        }
-      : {}),
+    ...(parsed.usage ? { usage: openAiUsage(parsed.usage) } : {}),
+  };
+}
+
+/**
+ * Map an OpenAI usage block to the harness's **disjoint** convention.
+ *
+ * OpenAI's `prompt_tokens` *includes* cached tokens; the harness's
+ * `inputTokens` must exclude them so billed input is
+ * `inputTokens + cacheReadTokens + cacheWriteTokens`. Without the
+ * subtraction a cached conversation looks exactly as expensive as an
+ * uncached one and the hit rate cannot be computed.
+ *
+ * `prompt_cache_hit_tokens` (DeepSeek) and
+ * `prompt_tokens_details.cached_tokens` (OpenAI) are both accepted.
+ */
+export function openAiUsage(usage: {
+  prompt_tokens: number;
+  completion_tokens: number;
+  prompt_cache_hit_tokens?: number;
+  prompt_tokens_details?: { cached_tokens?: number };
+}): {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens?: number;
+} {
+  const cacheRead =
+    usage.prompt_cache_hit_tokens ??
+    usage.prompt_tokens_details?.cached_tokens ??
+    0;
+  const uncached = Math.max(0, usage.prompt_tokens - cacheRead);
+  return {
+    inputTokens: uncached,
+    outputTokens: usage.completion_tokens,
+    ...(cacheRead > 0 ? { cacheReadTokens: cacheRead } : {}),
   };
 }
 

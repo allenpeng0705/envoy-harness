@@ -3,6 +3,7 @@
  * `envoy-harness-web` — spawn ACP + serve the browser UI.
  */
 
+import { stripRunnerSeparators } from "@envoymesh/envoy-harness";
 import { startWebServer } from "./start.js";
 
 function printHelp(): void {
@@ -108,7 +109,8 @@ function parseArgv(argv: string[]): {
 }
 
 async function main(): Promise<void> {
-  const parsed = parseArgv(process.argv.slice(2));
+  // `pnpm --filter … start -- --port 5177` forwards the literal `--`.
+  const parsed = parseArgv(stripRunnerSeparators(process.argv.slice(2)));
   if (parsed.help) {
     printHelp();
     process.exit(0);

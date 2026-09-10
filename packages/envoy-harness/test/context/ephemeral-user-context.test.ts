@@ -32,7 +32,11 @@ describe("isEphemeralUserContextText", () => {
 });
 
 describe("injectEphemeralUserContext", () => {
-  it("inserts ephemeral context before the trailing user prompt", () => {
+  it("appends ephemeral context AFTER the trailing user prompt", () => {
+    // Appending (rather than splicing in front of the prompt) is what
+    // keeps every request a strict prefix-extension of its predecessor,
+    // so provider prefix caching can actually hit. See
+    // `test/context-prefix-stability.test.ts`.
     const messages = injectEphemeralUserContext(
       [
         { role: "user", content: [{ type: "text", text: "hello" }] },
@@ -40,11 +44,22 @@ describe("injectEphemeralUserContext", () => {
       "<available_skills></available_skills>",
     );
     expect(messages).toHaveLength(2);
-    expect(messages[0]?.content[0]).toMatchObject({
+    expect(messages[0]?.content[0]).toMatchObject({ type: "text", text: "hello" });
+    expect(messages[1]?.content[0]).toMatchObject({
       type: "text",
       text: "<available_skills></available_skills>",
     });
-    expect(messages[1]?.content[0]).toMatchObject({ type: "text", text: "hello" });
+  });
+
+  it("leaves earlier messages untouched (prefix stability)", () => {
+    const history = [
+      { role: "user" as const, content: [{ type: "text" as const, text: "one" }] },
+      { role: "assistant" as const, content: [{ type: "text" as const, text: "two" }] },
+      { role: "user" as const, content: [{ type: "text" as const, text: "three" }] },
+    ];
+    const before = JSON.stringify(history);
+    injectEphemeralUserContext(history, "ctx");
+    expect(JSON.stringify(history)).toBe(before);
   });
 });
 

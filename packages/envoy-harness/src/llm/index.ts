@@ -69,6 +69,7 @@ export {
   OpenAIAdapter,
   type OpenAIAdapterOptions,
   parseChatResponse,
+  openAiUsage,
   parseError as parseOpenAIError,
 } from "./openai.js";
 

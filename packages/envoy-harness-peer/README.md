@@ -75,3 +75,37 @@ pnpm --filter @envoymesh/envoy-harness-peer build
 ## License
 
 Apache-2.0
+
+## LAN discovery (mDNS / DNS-SD)
+
+Peers can find each other without hand-written `--peers` config. The
+implementation is zero-dependency (a hand-rolled DNS codec + an
+injectable UDP socket) and speaks `_envoy-harness._tcp.local`:
+
+```sh
+# Advertise this peer (PTR + SRV + TXT + A, with a TTL=0 goodbye on exit)
+envoy-peer serve --port 8123 --peer-id alice --model deepseek-chat --advertise
+
+# Browse from the harness
+envoy-harness --repl --discovery mdns
+```
+
+The TXT record carries `id`, `model` and `caps`, so `PeerRegistry` can
+route a sub-task to a peer that serves the right model.
+
+**Fail-open by design.** Binding 5353 (shared via `reuseAddr` with the
+platform responder) and joining 224.0.0.251 can fail — no multicast
+route, a hardened sandbox, a locked-down WLAN. When that happens the
+browser reports the error through `onError` and stops; the CLI logs a
+warning and continues with static peers. Discovery must never take the
+harness down.
+
+**`--discovery mdns` with no `--peers` is a supported configuration** —
+starting from an empty peer list is the entire point of discovery, and
+an earlier revision silently built no cluster in that case.
+
+### Testability
+
+`MdnsBrowser` / `MdnsAdvertiser` take an injectable `socketFactory` and
+`scheduler`, so the whole stack is tested hermetically against byte
+fixtures and a manual clock — no multicast, no LAN, no timing flake.

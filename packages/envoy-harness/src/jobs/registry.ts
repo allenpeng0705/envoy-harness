@@ -13,6 +13,7 @@ import type {
   JobStatus,
 } from "./types.js";
 import { JobError } from "./types.js";
+import { decodeUtf8Within } from "../util/retention.js";
 
 const DEFAULT_MAX_PER_OWNER = 10;
 
@@ -45,9 +46,9 @@ function isTerminal(status: JobStatus): boolean {
 
 function truncateBytes(text: string, limit: number | undefined): string {
   if (limit === undefined) return text;
-  const buf = Buffer.from(text, "utf8");
-  if (buf.byteLength <= limit) return text;
-  return buf.subarray(0, limit).toString("utf8") + "\n…[truncated]";
+  const decoded = decodeUtf8Within(Buffer.from(text, "utf8"), limit);
+  if (!decoded.truncated) return text;
+  return `${decoded.text}\n…[truncated]`;
 }
 
 /** Create a process-local job registry. */

@@ -66,6 +66,26 @@ export function resolveModel(
 }
 
 /**
+ * Resolve the session directory when no explicit `--session-dir` was
+ * given.
+ *
+ * Order:
+ * 1. `$ENVOY_HARNESS_SESSION_DIR` (if set)
+ * 2. `~/.local/state/envoy-harness/sessions`
+ *
+ * **Single source of truth.** `doctor` previously hard-coded
+ * `~/.local/share/envoy-harness/sessions`, so it reported a directory
+ * the harness never writes to. Every caller must go through this
+ * function (or {@link defaultSessionDir}) so the reported path and the
+ * written path can never drift again.
+ */
+export function resolveDefaultSessionDir(): string {
+  const env = process.env["ENVOY_HARNESS_SESSION_DIR"];
+  if (env !== undefined && env.length > 0) return env;
+  return `${process.env["HOME"] ?? os.homedir()}/.local/state/envoy-harness/sessions`;
+}
+
+/**
  * Resolve the default session directory.
  *
  * Order:
@@ -77,9 +97,7 @@ export function defaultSessionDir(
   parsed: Extract<ParsedArgs, { subcommand: "run" }>,
 ): string {
   if (parsed.sessionDir) return parsed.sessionDir;
-  const env = process.env["ENVOY_HARNESS_SESSION_DIR"];
-  if (env && env.length > 0) return env;
-  return `${process.env["HOME"] ?? os.homedir()}/.local/state/envoy-harness/sessions`;
+  return resolveDefaultSessionDir();
 }
 
 /** `true` if `p` exists and is a regular file. */

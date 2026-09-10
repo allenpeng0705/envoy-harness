@@ -7,6 +7,11 @@
  */
 
 import type { PeerEndpointConfig } from "./cluster.js";
+import {
+  MdnsBrowser,
+  type MdnsScheduler,
+  type MdnsSocketFactory,
+} from "./mdns/index.js";
 
 export type DiscoverySourceKind = "static" | "mdns" | "mesh" | "fake";
 
@@ -144,36 +149,124 @@ export class MeshFeedDiscoverySource implements DiscoverySource {
 }
 
 /**
- * mDNS placeholder — real Bonjour/zeroconf wiring lands later.
- * Optional injectable browser keeps the seam testable without OS mDNS.
+ * Real mDNS / DNS-SD discovery (RFC 6762/6763).
+ *
+ * Earlier revisions shipped a *placeholder* here: it only emitted
+ * announcements when the host injected a `browser`, so
+ * `envoy-harness --discovery mdns` silently discovered nothing — a
+ * documented-but-unimplemented flag. It now drives a real
+ * {@link MdnsBrowser} by default.
+ *
+ * The injected `browser` seam is retained for hosts and tests:
+ * - inject a browser → it is used verbatim (hermetic tests);
+ * - pass `socketFactory` → a real browser with a fake socket;
+ * - pass `disabled: true` → an inert source (explicit opt-out);
+ * - pass nothing → a real browser on the LAN.
+ *
+ * One announcement may cover several peers, and a refresh (the same
+ * peer re-announced with a new TTL) must NOT re-announce `found` to the
+ * rail on every sweep — the rail would re-connect and log noise. So the
+ * source de-duplicates by `(peerId, endpoint, model)`.
  */
 export class MdnsDiscoverySource implements DiscoverySource {
   readonly kind = "mdns" as const;
   readonly #browser:
     | ((emit: DiscoveryListener) => void | (() => void))
     | undefined;
+  readonly #options: MdnsDiscoverySourceOptions;
   #stopBrowser: (() => void) | undefined;
+  #mdns: MdnsBrowser | undefined;
+  /** Announcement signature per peer, to suppress TTL-refresh churn. */
+  readonly #announced = new Map<string, string>();
 
-  constructor(options?: {
-    /**
-     * Injected browser (tests / future real mDNS). Called once on start;
-     * may return a stop handle.
-     */
-    browser?: (emit: DiscoveryListener) => void | (() => void);
-  }) {
-    this.#browser = options?.browser;
+  constructor(options: MdnsDiscoverySourceOptions = {}) {
+    this.#browser = options.browser;
+    this.#options = options;
   }
 
-  start(listener: DiscoveryListener): void {
-    if (this.#browser === undefined) return;
-    const stop = this.#browser(listener);
-    if (typeof stop === "function") this.#stopBrowser = stop;
+  start(listener: DiscoveryListener): void | Promise<void> {
+    if (this.#options.disabled === true) return;
+    if (this.#browser !== undefined) {
+      const stop = this.#browser(listener);
+      if (typeof stop === "function") this.#stopBrowser = stop;
+      return;
+    }
+
+    const browser = new MdnsBrowser({
+      ...(this.#options.socketFactory !== undefined
+        ? { socketFactory: this.#options.socketFactory }
+        : {}),
+      ...(this.#options.scheduler !== undefined
+        ? { scheduler: this.#options.scheduler }
+        : {}),
+      ...(this.#options.queryIntervalMs !== undefined
+        ? { queryIntervalMs: this.#options.queryIntervalMs }
+        : {}),
+      ...(this.#options.sweepIntervalMs !== undefined
+        ? { sweepIntervalMs: this.#options.sweepIntervalMs }
+        : {}),
+      ...(this.#options.defaultTtlSeconds !== undefined
+        ? { defaultTtlSeconds: this.#options.defaultTtlSeconds }
+        : {}),
+      // Discovery is optional: a machine with multicast blocked must
+      // still run. Report and carry on with the other sources.
+      onError: (err) => this.#options.onError?.(err),
+    });
+    this.#mdns = browser;
+
+    return browser.start((event) => {
+      const record = event.record;
+      const endpoint = `${record.host}:${record.port}`;
+      if (event.kind === "lost") {
+        this.#announced.delete(record.peerId);
+        listener({ kind: "lost", peerId: record.peerId, source: "mdns" });
+        return;
+      }
+      const signature = `${endpoint}|${record.model ?? ""}|${(record.capabilities ?? []).join(",")}`;
+      if (this.#announced.get(record.peerId) === signature) return;
+      this.#announced.set(record.peerId, signature);
+      listener({
+        kind: "found",
+        peer: {
+          id: record.peerId,
+          endpoint,
+          source: "mdns",
+          ...(record.model !== undefined ? { model: record.model } : {}),
+          ...(record.capabilities !== undefined
+            ? { capabilities: [...record.capabilities] }
+            : {}),
+        },
+      });
+    });
   }
 
   stop(): void {
     this.#stopBrowser?.();
     this.#stopBrowser = undefined;
+    this.#mdns?.stop();
+    this.#mdns = undefined;
+    this.#announced.clear();
   }
+}
+
+/** Options for {@link MdnsDiscoverySource}. */
+export interface MdnsDiscoverySourceOptions {
+  /** Legacy/hermetic injection: a function that emits announcements. */
+  browser?: (emit: DiscoveryListener) => void | (() => void);
+  /** Inject a fake UDP socket (tests) while keeping the real logic. */
+  socketFactory?: MdnsSocketFactory;
+  /** Inject clock/timers (tests). */
+  scheduler?: MdnsScheduler;
+  /** Re-query interval. */
+  queryIntervalMs?: number;
+  /** TTL sweep interval. */
+  sweepIntervalMs?: number;
+  /** TTL when a responder omits one. */
+  defaultTtlSeconds?: number;
+  /** Report multicast/bind failures without failing the host. */
+  onError?: (err: Error) => void;
+  /** Explicitly inert (used when `--discovery none`). */
+  disabled?: boolean;
 }
 
 /** Fan-in several sources into one listener. */
