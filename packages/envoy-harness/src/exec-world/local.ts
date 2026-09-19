@@ -6,7 +6,7 @@ import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { spawn } from "node:child_process";
 
-import { killProcessTree } from "../process/kill-tree.js";
+import { captureChildIdentity, reapChild } from "../process/reaper.js";
 import type {
   ExecShellResult,
   ExecWorld,
@@ -64,22 +64,47 @@ export function createLocalExecWorld(): ExecWorld {
       throwIfAborted(signal);
       const timeout = request.timeoutMs ?? 30_000;
       return new Promise<ExecShellResult>((resolve, reject) => {
+        // `detached` on POSIX: own process group, so the kill ladder can
+        // address the whole tree without touching the harness's group.
+        const detached = process.platform !== "win32";
         const child = spawn("sh", ["-c", request.command], {
           cwd: request.cwd,
           env: request.env ?? process.env,
+          detached,
           stdio: ["ignore", "pipe", "pipe"],
         });
+        const identity = captureChildIdentity(child);
         let stdout = "";
         let stderr = "";
         let timedOut = false;
+        let settled = false;
+
+        const kill = (): void => {
+          // TERM → grace → KILL against the group, then a bounded wait for
+          // the pipes; a backgrounded grandchild would otherwise keep
+          // `close` from ever firing and hang the turn.
+          void reapChild(child, {
+            processGroup: detached,
+            ...(identity !== undefined ? { identity } : {}),
+            onForceClose: () => {
+              if (settled) return;
+              settled = true;
+              clearTimeout(timer);
+              signal.removeEventListener("abort", onAbort);
+              resolve({ stdout, stderr, exitCode: 137, timedOut });
+            },
+          });
+        };
 
         const timer = setTimeout(() => {
           timedOut = true;
-          killProcessTree(child.pid);
+          kill();
         }, timeout);
 
-        const onAbort = () => {
-          killProcessTree(child.pid);
+        const onAbort = (): void => {
+          kill();
+          if (settled) return;
+          settled = true;
           clearTimeout(timer);
           reject(new ExecWorldError("exec-world aborted", "TRANSPORT"));
         };
@@ -96,11 +121,15 @@ export function createLocalExecWorld(): ExecWorld {
           stderr += d.toString("utf8");
         });
         child.on("error", (err) => {
+          if (settled) return;
+          settled = true;
           clearTimeout(timer);
           signal.removeEventListener("abort", onAbort);
           reject(new ExecWorldError(err.message, "IO"));
         });
         child.on("close", (code) => {
+          if (settled) return;
+          settled = true;
           clearTimeout(timer);
           signal.removeEventListener("abort", onAbort);
           resolve({

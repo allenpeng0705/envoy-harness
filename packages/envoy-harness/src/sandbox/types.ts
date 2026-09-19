@@ -107,6 +107,14 @@ export interface SandboxResult {
   readonly stdoutTruncated?: boolean;
   /** Same as {@link SandboxResult.stdoutTruncated} but for stderr. */
   readonly stderrTruncated?: boolean;
+  /**
+   * The signal that killed the process, when it did not exit normally.
+   *
+   * `null` (or absent) means a real exit status. This matters for
+   * classification: `SIGSYS` from a seccomp filter is a sandbox denial by
+   * definition, whereas a `SIGKILL` usually means our own timeout ladder.
+   */
+  readonly signal?: string | null;
 }
 
 /**

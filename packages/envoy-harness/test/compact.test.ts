@@ -118,23 +118,36 @@ describe("compactMessagesWithSummary (LLM summarize)", () => {
     expect(out).toEqual(transcript);
   });
 
-  it("drops the oldest messages even when the summary is empty", async () => {
+  it("REFUSES to drop context when the summary is empty", async () => {
+    // COMMIT-OR-DISCARD. Dropping the oldest messages with no replacement
+    // summary is context loss, so an empty summary is a refusal and the
+    // transcript is left untouched.
     const transcript = [
       sys("S"),
       user("u1"),
       assistant("a1"),
       user("u2"),
     ];
-    const { messages: out, droppedCount } = await compactMessagesWithSummary(
-      transcript,
-      1,
-      async () => "",
-    );
-    expect(droppedCount).toBe(2);
-    expect(out).toEqual([sys("S"), user("u2")]);
+    const { messages: out, droppedCount, refusedReason } =
+      await compactMessagesWithSummary(transcript, 1, async () => "");
+    expect(droppedCount).toBe(0);
+    expect(out).toEqual(transcript);
+    expect(refusedReason).toContain("empty summary");
   });
 
-  it("falls through to drop-oldest when the summarizer throws", async () => {
+  it("REFUSES when the summary is only whitespace", async () => {
+    const transcript = [sys("S"), user("u1"), assistant("a1"), user("u2")];
+    const { messages: out, droppedCount, refusedReason } =
+      await compactMessagesWithSummary(transcript, 1, async () => "   \n  ");
+    expect(droppedCount).toBe(0);
+    expect(out).toEqual(transcript);
+    expect(refusedReason).toContain("empty summary");
+  });
+
+  it("REFUSES and preserves history when the summarizer throws", async () => {
+    // COMMIT-OR-DISCARD. A transient LLM failure must NOT silently destroy
+    // the oldest part of the conversation: history is returned unchanged
+    // and the reason is surfaced so the caller can retry or tell the user.
     const transcript = [
       sys("S"),
       user("u1"),
@@ -142,18 +155,13 @@ describe("compactMessagesWithSummary (LLM summarize)", () => {
       user("u2"),
       assistant("a2"),
     ];
-    const { messages: out, droppedCount } = await compactMessagesWithSummary(
-      transcript,
-      2,
-      async () => {
+    const { messages: out, droppedCount, refusedReason } =
+      await compactMessagesWithSummary(transcript, 2, async () => {
         throw new Error("LLM unavailable");
-      },
-    );
-    // No summary block (the fallback didn't call the
-    // summarizer). The kept messages are the same as
-    // `compactMessages(transcript, 2)`.
-    expect(droppedCount).toBe(2);
-    expect(out).toEqual([sys("S"), user("u2"), assistant("a2")]);
+      });
+    expect(droppedCount).toBe(0);
+    expect(out).toEqual(transcript);
+    expect(refusedReason).toContain("LLM unavailable");
   });
 });
 

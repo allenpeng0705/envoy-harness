@@ -92,6 +92,25 @@ export {
   type HookMiddleware,
 } from "./hooks/index.js";
 
+// Lifecycle hook fire sites (the 12 declared events). Ten of these had
+// no fire site until now; the helpers define each payload shape once.
+export {
+  HOOK_CONTEXT_PREFIX,
+  fireNotification,
+  firePermissionRequest,
+  firePostCompact,
+  firePreCompact,
+  fireSessionEnd,
+  fireSessionStart,
+  fireSetup,
+  fireStop,
+  fireSubagentStop,
+  fireUserPromptSubmit,
+  isHookContextText,
+  renderHookContext,
+  type HookFirer,
+} from "./hooks/index.js";
+
 // Re-export the tool system (§10 of the design doc)
 export {
   DuplicateToolError,
@@ -115,8 +134,12 @@ export type {
 // Re-export the session (§3.2 of the design doc)
 export {
   InMemorySession,
+  MAX_SESSION_DIAGNOSTICS,
+  appendDiagnostic,
   newSessionId,
   type Session,
+  type SessionDiagnosticEvent,
+  type SessionDiagnosticKind,
   type SessionMetadata,
   type SessionProvenance,
 } from "./session.js";
@@ -138,8 +161,25 @@ export {
   migrateSessionFile,
   SessionFileBusyError,
   PERSISTED_SESSION_FORMAT_VERSION,
+  DurableLineWriter,
+  EMPTY_REPAIR_REPORT,
+  SessionInitGuard,
+  UNKNOWN_OUTCOME_NOTICE,
+  nodeDurableFileSystem,
+  repairDanglingToolCalls,
+  resetWriteLeaseProvider,
+  setWriteLeaseProvider,
+  withSessionInitGuard,
+  repairLoadedTranscript,
+  splitCompleteLines,
   TurnOutlineRegistry,
   buildTurnOutlineFromMessages,
+  type DurableFileHandle,
+  type DurableFileSystem,
+  type DurableLineWriterOptions,
+  type SessionRepairReport,
+  type SessionWriteLease,
+  type WriteLeaseProvider,
   loadTurnOutlineFromFile,
   type SessionIndexEntry,
   type SessionIndexerOptions,
@@ -171,6 +211,14 @@ export {
   type ToolExecutorContext,
   type ToolResultSink,
 } from "./agent/tool-executor.js";
+export {
+  DEFAULT_TOOL_TIMEOUT_MS,
+  TOOL_TIMEOUT_GRACE_MS,
+  ToolTimeoutError,
+  isToolTimeout,
+  runWithToolTimeout,
+  type ToolTimeoutOutcome,
+} from "./agent/tool-timeout.js";
 
 // Re-export built-in tools (§10 of the design doc)
 export {
@@ -208,8 +256,22 @@ export {
   parseAnthropicError,
   parseChatResponse,
   parseMessagesResponse,
+  DEFAULT_RETRY_POLICY,
+  DEFAULT_RETRYABLE_CLASSES,
+  backoffDelayMs,
+  cancellableDelay,
+  classifyFailure,
+  decideRetry,
+  isRetryable,
   openAiUsage,
   parseOpenAIError,
+  parseRetryAfterMs,
+  withRetry,
+  type ClassifiedFailure,
+  type RetryDecision,
+  type RetryPolicy,
+  type RetryRefusal,
+  type RetryableClass,
   splitSystemAndMessages,
   toolsToAnthropic,
   toolsToOpenAI,
@@ -590,9 +652,35 @@ export {
   resolveSandboxExecutor,
   policyToLandlockGrants,
   policyToSeatbeltProfile,
+  // Failure classification: denial vs program error vs infrastructure.
+  OUTPUT_SNIPPET_MAX_CHARS,
+  SANDBOX_LAUNCHER_FAILURE_EXIT,
+  classifySandboxFailure,
+  describeSandboxDenial,
+  describeSandboxInfrastructureFailure,
+  extractDeniedPath,
+  formatSandboxFailure,
+  isSandboxDenial,
+  policyToViolationBackend,
+  // Escalation: turning a denial into a user-widenable decision.
+  canEscalate,
+  describeSandboxEscalation,
+  describeWidening,
+  rootsCover,
+  widenSandboxPolicy,
+  writableRootFor,
+  type DenialReason,
   type SandboxContext,
+  type SandboxDenial,
+  type SandboxEscalationDecision,
+  type SandboxEscalationHandler,
+  type SandboxEscalationOutcome,
+  type SandboxEscalationRequest,
   type SandboxExecutor,
+  type SandboxFailure,
+  type SandboxInfrastructureFailure,
   type SandboxResult,
+  type SandboxViolationBackend,
   type LandlockGrants,
   type LandlockLauncherApi,
   type LandlockSandboxExecutorOptions,
@@ -600,5 +688,13 @@ export {
   type ResolveSandboxExecutorOptions,
 } from "./sandbox/index.js";
 
+export {
+  captureChildIdentity,
+  reapChild,
+  type ReapChildOptions,
+} from "./process/reaper.js";
+
 export { killProcessTree } from "./process/kill-tree.js";
+
+export { DEFAULT_REAP_SETTLE_MS } from "@envoymesh/envoy-process";
 

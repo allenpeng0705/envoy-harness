@@ -11,7 +11,11 @@
 
 import type { ChildProcess } from "node:child_process";
 
-import { killProcessTree } from "@envoymesh/envoy-process";
+import {
+  captureChildIdentity,
+  reapChild,
+  type ProcessIdentity,
+} from "@envoymesh/envoy-process";
 import type { SandboxPolicy } from "@envoymesh/envoy-harness";
 
 import type { SidecarExecuteResult } from "./protocol.js";
@@ -109,8 +113,36 @@ function captureSpawn(
   signal?: AbortSignal,
 ): Promise<SidecarExecuteResult> {
   return new Promise((resolve) => {
+    // Captured while the child is definitely alive so a later kill cannot
+    // hit a recycled pid.
+    const identity: ProcessIdentity | undefined = child.pid !== undefined
+      ? captureChildIdentity(child)
+      : undefined;
+    let settled = false;
+    const settle = (result: SidecarExecuteResult): void => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+
     const onAbort = (): void => {
-      killProcessTree(child.pid);
+      // `taskkill /T` takes the whole tree; the reap helper adds the
+      // bounded pipe teardown so a surviving descendant cannot keep this
+      // promise pending forever.
+      void reapChild(child, {
+        ...(identity !== undefined ? { identity } : {}),
+        onForceClose: () => {
+          settle({
+            stdout: Buffer.concat(outChunks).toString("utf8"),
+            stderr: Buffer.concat(errChunks).toString("utf8"),
+            exitCode: 137,
+            isError: true,
+            stdoutTruncated: outTruncated,
+            stderrTruncated: errTruncated,
+            fsIsolation: meta.fsIsolation,
+          });
+        },
+      });
     };
     if (signal !== undefined) {
       if (signal.aborted) {
@@ -156,7 +188,7 @@ function captureSpawn(
     child.stderr?.on("data", onErr);
     child.on("error", (err) => {
       cleanup();
-      resolve({
+      settle({
         stdout: "",
         stderr: err.message,
         exitCode: 1,
@@ -171,7 +203,7 @@ function captureSpawn(
       const stdout = Buffer.concat(outChunks).toString("utf8");
       const stderr = Buffer.concat(errChunks).toString("utf8");
       const exitCode = code ?? 1;
-      resolve({
+      settle({
         stdout,
         stderr,
         exitCode,

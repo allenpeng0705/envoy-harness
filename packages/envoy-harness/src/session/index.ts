@@ -59,3 +59,24 @@ export {
   type TurnOutline,
   type TurnOutlineEntry,
 } from "./turn-outline.js";
+
+export {
+  DurableLineWriter,
+  nodeDurableFileSystem,
+  type DurableFileHandle,
+  type DurableFileSystem,
+  type DurableLineWriterOptions,
+} from "./durable-writer.js";
+export {
+  EMPTY_REPAIR_REPORT,
+  UNKNOWN_OUTCOME_NOTICE,
+  repairDanglingToolCalls,
+  repairLoadedTranscript,
+  splitCompleteLines,
+  type SessionRepairReport,
+} from "./repair.js";
+
+export {
+  SessionInitGuard,
+  withSessionInitGuard,
+} from "./lease-guard.js";

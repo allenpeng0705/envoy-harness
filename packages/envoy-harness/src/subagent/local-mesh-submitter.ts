@@ -46,6 +46,7 @@
  */
 
 import { Agent } from "../agent.js";
+import type { RetryPolicy } from "../llm/retry.js";
 import { BUILTIN_TOOLS } from "../tools/builtin/index.js";
 import { HookRegistry } from "../hooks/index.js";
 import { InMemorySession, newSessionId } from "../session.js";
@@ -243,6 +244,13 @@ export class LocalMeshSubmitter implements MeshSubmitter {
 export interface DefaultBuildSubagentFactoryOptions {
   /** The sub-agent's model. */
   model: ModelAdapter;
+  /**
+   * Retry policy for the sub-agent's model calls. Defaults to
+   * `DEFAULT_RETRY_POLICY` (5 retries, bounded backoff) — the same
+   * resilience the parent gets. Hosts that want a sub-agent to fail fast
+   * (or tests that assert on error surfacing) pass `{ maxRetries: 0 }`.
+   */
+  retryPolicy?: RetryPolicy;
   /** Working directory. Default: `process.cwd()`. */
   cwd?: string;
   /** Permission mode. Default: `"read-only"`. The
@@ -351,6 +359,9 @@ export function defaultBuildSubagentFactory(
       ...(options.parentTracer ? { tracer: options.parentTracer } : {}),
       ...(options.parentSessionId ? { subagentOf: options.parentSessionId } : {}),
       ...(options.meshSubmitter ? { meshSubmitter: options.meshSubmitter } : {}),
+      ...(options.retryPolicy !== undefined
+        ? { retryPolicy: options.retryPolicy }
+        : {}),
     });
   };
 }

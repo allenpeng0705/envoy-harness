@@ -70,6 +70,11 @@ import type { MeshSubmitter, SubagentResult } from "./subagent/index.js";
 import { makeTaskTool } from "./subagent/tools.js";
 import type { FanOutRegistry } from "./subagent/fan-out.js";
 import { ToolExecutor, type ToolExecutorContext } from "./agent/tool-executor.js";
+import type { RetryPolicy } from "./llm/retry.js";
+import {
+  firePostCompact,
+  firePreCompact,
+} from "./hooks/lifecycle.js";
 import { runAgentLoop } from "./agent/run-loop.js";
 import {
   compactMessages,
@@ -130,6 +135,13 @@ export interface AgentOptions {
   cwd?: string;
   /** Max iterations before throwing. Default 50. */
   maxIterations?: number;
+  /**
+   * Retry policy for transient model failures (429 / 5xx / dropped
+   * socket / timeout). Defaults to {@link DEFAULT_RETRY_POLICY}
+   * (5 retries, 500ms→10s exponential backoff with jitter). Set
+   * `{ maxRetries: 0 }` to disable.
+   */
+  retryPolicy?: RetryPolicy;
   /**
    * Abort signal. When aborted, the agent stops the loop and
    * any in-flight tool is canceled (via the `ToolContext`'s
@@ -466,8 +478,17 @@ export class Agent {
   cwd: string;
   /** @internal */
   maxIterations: number;
+  readonly retryPolicy: RetryPolicy | undefined;
   /** @internal */
   abortController: AbortController;
+  /**
+   * Identity of the turn currently running, or `undefined` between
+   * turns. Used by {@link abortTurnIfActive} so a late abort (a
+   * watchdog, a hook timeout, an extension) cannot kill the turn that
+   * started after the one it meant to stop.
+   */
+  #activeTurnId: string | undefined;
+  #turnSeq = 0;
   /** @internal */
   systemPrompt: string | undefined;
   /** @internal */
@@ -616,6 +637,7 @@ export class Agent {
     this.hooks = options.hooks ?? new HookRegistry();
     this.cwd = options.cwd ?? process.cwd();
     this.maxIterations = options.maxIterations ?? DEFAULT_MAX_ITERATIONS;
+    this.retryPolicy = options.retryPolicy;
     this.maxCostUsd =
       options.maxCostUsd !== undefined && options.maxCostUsd > 0
         ? options.maxCostUsd
@@ -850,10 +872,84 @@ export class Agent {
   }
 
   /**
-   * Abort the agent. The current iteration finishes (we don't
-   * interrupt in-flight model calls), but the loop exits before
-   * the next one starts. Tools in flight see their `abortSignal`
-   * fire.
+   * Await the session's durability barrier.
+   *
+   * Compaction publishes atomically but does not itself wait for the
+   * fsync, so a host that wants "the compaction is on disk before I
+   * report success" awaits this. Called internally after summarised
+   * compaction.
+   */
+  async flushSession(): Promise<void> {
+    await this.session.flush();
+  }
+
+  /**
+   * Fire `PostCompact` and (for `PreCompact`'s `add-context`) inject the
+   * hook's contribution as durable transcript context.
+   */
+  async #postCompact(messagesBefore: number, summarized: boolean): Promise<void> {
+    await firePostCompact(this.hooks, {
+      sessionId: this.session.id,
+      messagesBefore,
+      messagesAfter: this.session.messages.length,
+      droppedCount: Math.max(0, messagesBefore - this.session.messages.length),
+      summarized,
+    });
+  }
+
+  /** Identity of the running turn, or `undefined` when idle. */
+  get activeTurnId(): string | undefined {
+    return this.#activeTurnId;
+  }
+
+  /**
+   * Mark a turn as running and return its identity.
+   *
+   * Called by the run loop. Exposed so a host can capture the id and
+   * later abort *that* turn specifically.
+   */
+  beginTurn(): string {
+    this.#turnSeq += 1;
+    const id = `turn-${this.#turnSeq}`;
+    this.#activeTurnId = id;
+    return id;
+  }
+
+  /** Mark the running turn finished (no-op when a newer turn started). */
+  endTurn(turnId: string): void {
+    if (this.#activeTurnId === turnId) this.#activeTurnId = undefined;
+  }
+
+  /**
+   * Abort `turnId` only if it is still the running turn.
+   *
+   * **The race this closes.** A deadline, watchdog, hook timeout or
+   * extension typically captures a turn reference and fires later. With
+   * an unconditional abort, if the turn had already completed and a new
+   * one had started, the late abort killed the **wrong** turn — the
+   * symptom is a turn that mysteriously dies for no visible reason.
+   *
+   * @returns `true` when the abort was applied.
+   */
+  abortTurnIfActive(turnId: string, reason?: unknown): boolean {
+    // An empty/absent identifier must never match "idle": `undefined`
+    // compared equal to `undefined` would otherwise abort whatever turn
+    // happened to be running.
+    if (typeof turnId !== "string" || turnId.length === 0) return false;
+    if (this.#activeTurnId !== turnId) return false;
+    this.abort(reason);
+    return true;
+  }
+
+  /**
+   * Abort whatever is running, unconditionally. The current iteration
+   * finishes (we don't interrupt in-flight model calls), but the loop
+   * exits before the next one starts. Tools in flight see their
+   * `abortSignal` fire.
+   *
+   * Prefer {@link abortTurnIfActive} when you captured a turn id: this
+   * method cannot tell whether the turn you meant is still the one
+   * running.
    */
   abort(reason?: unknown): void {
     this.abortController.abort(reason);
@@ -1087,15 +1183,10 @@ export class Agent {
   setApprovalPolicy(
     mode: import("./types.js").AskForApproval,
   ): void {
+    // The mode is read by the tool executor (`getApproval() === "never"` denies a step that
+    // still asked). Do not replace `askHandler` here. `setAskHandler(undefined)` restores the
+    // user-question shim and drops the host handler, so Allow on the card comes back denied.
     this.approval = mode;
-    if (mode === "never") {
-      this.setAskHandler(async () => ({
-        kind: "deny",
-        reason: "approval mode is 'never'",
-      }));
-    } else {
-      this.setAskHandler(undefined);
-    }
   }
 
   /** Current approval policy label. */
@@ -1183,11 +1274,17 @@ export class Agent {
     this.retainedContext.clear();
   }
 
-  private replaceTranscript(next: ReadonlyArray<import("./tools/index.js").Message>): void {
-    this.session.clear();
-    for (const m of next) {
-      this.session.appendMessage(m.role, m.content);
-    }
+  /**
+   * Swap the transcript for `next` atomically.
+   *
+   * **Never** `clear()` + re-append: that publishes an empty log first
+   * and loses the whole session if the process dies before the kept
+   * messages land. `replaceMessages` does a single atomic publish.
+   */
+  private replaceTranscript(
+    next: ReadonlyArray<import("./tools/index.js").Message>,
+  ): void {
+    this.session.replaceMessages(next);
   }
 
   /**
@@ -1215,17 +1312,37 @@ export class Agent {
     keep: number,
     summarize: (dropped: ReadonlyArray<import("./tools/index.js").Message>) => Promise<string>,
   ): Promise<void> {
-    const { messages: next, droppedCount } = await compactMessagesWithSummary(
-      this.session.messages,
+    const messagesBefore = this.session.messages.length;
+    const pre = await firePreCompact(this.hooks, {
+      sessionId: this.session.id,
       keep,
-      summarize,
-    );
+      messagesBefore,
+      droppedCount: Math.max(0, messagesBefore - keep),
+    });
+    // A `PreCompact` hook may refuse the compaction outright (e.g. a
+    // project rule that says "never drop the design discussion").
+    if (pre.blocked !== undefined) {
+      throw new Error(`compaction refused by PreCompact hook: ${pre.blocked}`);
+    }
+
+    const { messages: next, droppedCount, refusedReason } =
+      await compactMessagesWithSummary(this.session.messages, keep, summarize);
+    // COMMIT-OR-DISCARD: a failed summary leaves history intact and
+    // surfaces why. Silently dropping the oldest context with no
+    // replacement was a real context-loss bug.
+    if (refusedReason !== undefined) {
+      throw new Error(`compaction refused: ${refusedReason}`);
+    }
     // No-op when there was nothing to drop (the function returns
     // the same transcript unchanged). Note: message COUNT is not a
     // reliable no-op signal — a one-for-one summary insertion keeps
     // the count equal while changing content.
     if (droppedCount === 0) return;
     this.replaceTranscript(injectRetainedContext(next, this.retainedContext));
+    // The swap is atomic; make it durable before reporting success so a
+    // crash right after `/compact` cannot silently revert the compaction.
+    await this.flushSession();
+    await this.#postCompact(messagesBefore, true);
   }
 
   /**

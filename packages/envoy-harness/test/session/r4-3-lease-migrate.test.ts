@@ -2,7 +2,8 @@
  * R4.3 — write lease + session format migration tests.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { removeTempDir } from "../support/tmp-dir.js";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
@@ -23,7 +24,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   resetWriteLeaseProvider();
-  await rm(tmpDir, { recursive: true, force: true });
+  await removeTempDir(tmpDir);
 });
 
 function meta() {

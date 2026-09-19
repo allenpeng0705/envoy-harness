@@ -247,4 +247,32 @@ describe("ACP capability declaration (standard-client shape)", () => {
     };
     expect(legacy.sessions).toHaveLength(spec.sessions.length);
   });
+
+  it("session/new publishes the slash commands, names without a leading slash", async () => {
+    const pair = createInProcessJsonRpcPair();
+    const updates: Array<{ update?: { sessionUpdate?: string; availableCommands?: Array<{ name: string }> } }> = [];
+    pair.client.setNotificationHandler((method, params) => {
+      if (method === "session/update") {
+        updates.push(params as (typeof updates)[number]);
+      }
+    });
+    attachAcpServer({
+      connection: pair.server,
+      backend: createFakeSessionBackend(),
+    });
+    await pair.client.request("initialize", {});
+    await pair.client.request("session/new", {});
+
+    const published = updates
+      .map((note) => note.update)
+      .find((update) => update?.sessionUpdate === "available_commands_update");
+    const names = (published?.availableCommands ?? []).map((command) => command.name);
+    expect(names).toContain("help");
+    expect(names).toContain("compact");
+    expect(names).toContain("quit");
+    expect(names).not.toContain("exit");
+    expect(names.every((name) => !name.startsWith("/") && !/\s/.test(name))).toBe(true);
+
+    pair.close();
+  });
 });

@@ -53,7 +53,23 @@ import type { MeshSubmitter } from "../subagent/index.js";
 // with the name-construction in run-loop.ts:115.
 import { MCP_TOOL_PREFIX } from "../mcp/types.js";
 import { collaborationModeBlockReason } from "../plan/tool-policy.js";
+import {
+  durabilityToolRefusalMessage,
+  ensureDurable,
+} from "./durability.js";
+import {
+  fireNotification,
+  firePermissionRequest,
+  fireSubagentStop,
+} from "../hooks/lifecycle.js";
+import { executeMcpCall } from "./mcp-call.js";
+import { runWithToolTimeout } from "./tool-timeout.js";
 import { inferToolNameFromArgs } from "./tool-name-inference.js";
+import {
+  createToolCallSurfaces,
+  type ToolCallSurfaces,
+} from "./sandbox-escalation-wiring.js";
+import type { ToolResultMeta } from "../tools/types.js";
 import {
   DEFAULT_MAX_PARALLEL_TOOL_CALLS,
   runToolGroupInModelOrder,
@@ -92,14 +108,12 @@ export { inferToolNameFromArgs } from "./tool-name-inference.js";
  * during the agent's lifetime.
  */
 export interface ToolExecutorContext {
-  /** The hook registry. Pre/PostToolUse fire here. */
-  readonly hooks: {
-    fire(event: "PreToolUse", payload: unknown): Promise<HookDecision>;
-    fire(
-      event: "PostToolUse",
-      payload: unknown,
-    ): Promise<HookDecision>;
-  };
+  /**
+   * The hook firer. Any event may be fired from here — the context used
+   * to narrow this to `PreToolUse`/`PostToolUse`, which is part of why
+   * the other ten declared events had no fire site.
+   */
+  readonly hooks: import("../hooks/lifecycle.js").HookFirer;
   /** The tool registry. The executor looks up tools by name. */
   readonly tools: ToolRegistry;
   /** The session. The executor appends `tool_result` messages. */
@@ -195,7 +209,30 @@ export interface ToolExecutorContext {
 
 
 export class ToolExecutor {
-  constructor(private readonly ctx: ToolExecutorContext) {}
+  /**
+   * The approval + diagnostics wiring for sandbox escalation.
+   *
+   * Built once in the constructor so the tool-call path stays a thin
+   * delegation; the logic lives in `sandbox-escalation-wiring.ts` (this
+   * file is already at the module-size ceiling).
+   */
+  private readonly escalation: ToolCallSurfaces;
+
+  constructor(private readonly ctx: ToolExecutorContext) {
+    this.escalation = createToolCallSurfaces({
+      session: ctx.session,
+      cwd: ctx.cwd,
+      hooks: ctx.hooks,
+      abortSignal: ctx.abortSignal,
+      getSandboxPolicy: ctx.getSandboxPolicy,
+      getSandboxExecutor: ctx.getSandboxExecutor,
+      getApproval: ctx.getApproval,
+      getAskHandler: ctx.getAskHandler,
+      ...(ctx.getShellEnv !== undefined ? { getShellEnv: ctx.getShellEnv } : {}),
+      ...(ctx.recordUndo !== undefined ? { recordUndo: ctx.recordUndo } : {}),
+      ...(ctx.execWorld !== undefined ? { execWorld: ctx.execWorld } : {}),
+    });
+  }
 
   /**
    * Run a batch of tool calls. When ALL calls are
@@ -437,6 +474,25 @@ export class ToolExecutor {
         });
         return;
       }
+      // `PermissionRequest`: a hook that knows this action is forbidden
+      // should deny it outright rather than putting the question to a
+      // human. `Notification` tells observers a decision is pending.
+      const permission = await firePermissionRequest(this.ctx.hooks, {
+        sessionId: this.ctx.session.id,
+        tool: call.name,
+        args: call.args,
+        question: preDecision.question,
+      });
+      if (permission.blocked !== undefined) {
+        commit(call.id, `blocked by PermissionRequest: ${permission.blocked}`, true);
+        return;
+      }
+      await fireNotification(this.ctx.hooks, {
+        sessionId: this.ctx.session.id,
+        kind: "permission_request",
+        message: preDecision.question,
+      });
+
       const askReq: AskRequest = {
         tool: call.name,
         args: call.args,
@@ -512,7 +568,15 @@ export class ToolExecutor {
     // flows through the normal path so envoy's hooks,
     // arg validation, and permissions govern it.
     if (isMcpCall && tool === undefined) {
-      await this.executeMcpCall(call, iteration, commit);
+      await executeMcpCall(call, iteration, {
+        mcpClients: this.ctx.mcpClients,
+        emit: (event) => this.ctx.emit(event),
+        commit,
+        firePostToolUse: (c, r) => this.firePostToolUse(c, r),
+        ...(this.ctx.emitToolOutput !== undefined
+          ? { emitToolOutput: this.ctx.emitToolOutput }
+          : {}),
+      });
       return;
     }
 
@@ -560,6 +624,8 @@ export class ToolExecutor {
     // Execute. Errors are caught — the model needs to see them.
     let resultContent: unknown;
     let isError = false;
+    /** Structured sandbox/escalation outcome reported by the tool. */
+    let resultMeta: ToolResultMeta | undefined;
     // F9.4: track tool execution duration for the
     // tool_result event. The timer starts AFTER arg
     // validation (we don't want to count time spent
@@ -567,38 +633,62 @@ export class ToolExecutor {
     // tool execution time).
     const toolStart = Date.now();
 
+    // DURABILITY BARRIER. The `tool_call` was just appended; make it
+    // durable BEFORE the body runs. A tool with side effects whose call
+    // is not recorded can be re-executed after a crash, and the model
+    // cannot be told the truth about what happened.
+    {
+      const durable = await ensureDurable(this.ctx.session);
+      if (!durable.ok) {
+        const refusal = durabilityToolRefusalMessage(durable.message);
+        commit(call.id, refusal, true);
+        this.ctx.emit({
+          kind: "tool_result",
+          ts: new Date().toISOString(),
+          iteration,
+          callId: call.id,
+          toolName: call.name,
+          result: { content: refusal, isError: true },
+          durationMs: 0,
+        });
+        return;
+      }
+    }
+
     try {
-      const sandboxExecutor = this.ctx.getSandboxExecutor();
-      const result = await registeredTool.execute(parsed.data, {
-        cwd: this.ctx.cwd,
-        session: this.ctx.session,
-        abortSignal: this.ctx.abortSignal,
-        // Pass the live policy so the bash tool enforces the
-        // current mode, not the session-start mode.
-        sandboxPolicy: this.ctx.getSandboxPolicy(),
-        ...(this.ctx.getShellEnv !== undefined
-          ? { shellEnv: this.ctx.getShellEnv() }
-          : {}),
-        ...(sandboxExecutor !== undefined ? { sandboxExecutor } : {}),
-        ...(this.ctx.emitToolOutput !== undefined
-          ? {
-              onToolOutput: (stdout: string) =>
-                this.ctx.emitToolOutput!({
-                  toolName: call.name,
-                  callId: call.id,
-                  stdout,
-                }),
-            }
-          : {}),
-        ...(this.ctx.recordUndo !== undefined
-          ? { recordUndo: this.ctx.recordUndo }
-          : {}),
-        ...(this.ctx.execWorld !== undefined
-          ? { execWorld: this.ctx.execWorld }
-          : {}),
+      // Per-tool wall-clock budget. `read_file`/`write`/`edit`/`git`
+      // declared none, so a stuck filesystem or a hung git could hang the
+      // turn forever. See `tool-timeout.ts` for the cooperative-then-bounded
+      // strategy.
+      const timeoutOutcome = await runWithToolTimeout({
+        timeoutMs: registeredTool.timeoutMs,
+        signal: this.ctx.abortSignal,
+        body: (toolSignal) =>
+          registeredTool.execute(parsed.data, {
+            ...this.escalation.buildToolContext(toolSignal),
+            ...(this.ctx.emitToolOutput !== undefined
+              ? {
+                  onToolOutput: (stdout: string) =>
+                    this.ctx.emitToolOutput!({
+                      toolName: call.name,
+                      callId: call.id,
+                      stdout,
+                    }),
+                }
+              : {}),
+          }),
+        onTimeout: ({ timeoutMs, abandoned }) => ({
+          content: abandoned
+            ? `tool timed out after ${timeoutMs}ms and did not respond to ` +
+              "cancellation. It may STILL BE RUNNING — do not assume it had " +
+              "no effect; verify external state before retrying."
+            : `tool timed out after ${timeoutMs}ms`,
+          isError: true,
+        }),
       });
-      resultContent = result.content;
-      isError = result.isError ?? false;
+      resultContent = timeoutOutcome.result.content;
+      isError = timeoutOutcome.result.isError ?? false;
+      resultMeta = timeoutOutcome.result.meta;
     } catch (err) {
       resultContent = `tool execution error: ${(err as Error).message}`;
       isError = true;
@@ -614,9 +704,18 @@ export class ToolExecutor {
       iteration,
       callId: call.id,
       toolName: call.name,
-      result: { content: resultContent, ...(isError ? { isError } : {}) },
+      result: {
+        content: resultContent,
+        ...(isError ? { isError } : {}),
+        ...(resultMeta !== undefined ? { meta: resultMeta } : {}),
+      },
       durationMs: toolDurationMs,
     });
+    // The prose above is for the model; this is the durable, switchable
+    // record. A resumed session can then answer "was this turn ever
+    // refused by the sandbox, and did the user widen it?" without a trace
+    // stream (which is off by default).
+    this.escalation.recordSandboxDiagnostics(iteration, call.name, resultMeta);
 
     // PostToolUse hook (modify the result, add context).
     const postDecision = await this.firePostToolUse(call, {
@@ -634,6 +733,21 @@ export class ToolExecutor {
         resultContent = postDecision.modified;
       }
     }
+    // `SubagentStop`: a `task` call IS a sub-agent, and this is the one
+    // boundary holding the PARENT's hook registry (the submitter only
+    // knows its own sub-session). Fired once the result is final so the
+    // hook observes the outcome that actually happened.
+    if (call.name === "task") {
+      await fireSubagentStop(this.ctx.hooks, {
+        parentSessionId: this.ctx.session.id,
+        // The submitter does not advertise a peer id on the base
+        // interface; the result's own `workerPeerId` is authoritative
+        // and travels in the result, so report the local default here.
+        workerPeerId: "local",
+        status: isError ? "failed" : "completed",
+      });
+    }
+
     commit(call.id, resultContent, isError);
   }
 
@@ -667,114 +781,4 @@ export class ToolExecutor {
     });
   }
 
-  /**
-   * T3.3: route a single `mcp__*` tool call to the
-   * matching client. Mirrors the regular `execute`
-   * flow (PreToolUse already fired; PostToolUse +
-   * tool_result append happen here; trace events
-   * emitted). The MCP client owns the actual JSON-
-   * RPC call.
-   *
-   * **Why in ToolExecutor, not in the ToolRegistry:**
-   * MCP tools don't fit the `Tool` interface (no
-   * `parameters` zod schema, no `costUsd`, the
-   * execute call is async JSON-RPC over a child
-   * process). A dedicated branch in the executor
-   * is simpler than a fake `Tool` shim.
-   */
-  private async executeMcpCall(
-    call: Extract<ContentBlock, { type: "tool_call" }>,
-    iteration: number,
-    commit: ToolResultSink,
-  ): Promise<void> {
-    const { parseMcpToolName } = await import("../mcp/types.js");
-    const parsed = parseMcpToolName(call.name);
-    if (parsed === null) {
-      commit(
-        call.id,
-        `invalid MCP tool name: ${call.name}`,
-        true,
-      );
-      return;
-    }
-    const registry = this.ctx.mcpClients;
-    if (registry === undefined) {
-      commit(
-        call.id,
-        `MCP server not registered: ${parsed.serverName} (no McpClientRegistry configured)`,
-        true,
-      );
-      return;
-    }
-    const client = registry.get(parsed.serverName);
-    if (client === undefined) {
-      commit(
-        call.id,
-        `MCP server not registered: ${parsed.serverName}`,
-        true,
-      );
-      return;
-    }
-
-    // F9.4: emit tool_call (the model sees the call
-    // in its next turn; the trace records it).
-    this.ctx.emit({
-      kind: "tool_call",
-      ts: new Date().toISOString(),
-      iteration,
-      call,
-    });
-
-    const toolStart = Date.now();
-    let resultContent: unknown;
-    let isError = false;
-    try {
-      const mcpResult = await client.callTool(
-        parsed.toolName,
-        call.args,
-        this.ctx.emitToolOutput !== undefined
-          ? {
-              onProgress: (text) =>
-                this.ctx.emitToolOutput!({
-                  toolName: call.name,
-                  callId: call.id,
-                  stdout: text,
-                }),
-            }
-          : undefined,
-      );
-      resultContent = mcpResult.content;
-      isError = mcpResult.isError ?? false;
-    } catch (err) {
-      resultContent = `MCP tool error: ${(err as Error).message}`;
-      isError = true;
-    }
-
-    const toolDurationMs = Date.now() - toolStart;
-    this.ctx.emit({
-      kind: "tool_result",
-      ts: new Date().toISOString(),
-      iteration,
-      callId: call.id,
-      toolName: call.name,
-      result: { content: resultContent, ...(isError ? { isError } : {}) },
-      durationMs: toolDurationMs,
-    });
-
-    // PostToolUse hook (same as regular tools).
-    const postDecision = await this.firePostToolUse(call, {
-      content: resultContent,
-      isError,
-    });
-    if (postDecision.kind === "modify") {
-      const m = postDecision.modified as { content?: unknown; isError?: boolean } | undefined;
-      if (m && typeof m === "object") {
-        resultContent = m.content ?? resultContent;
-        isError = m.isError ?? isError;
-      } else {
-        resultContent = postDecision.modified;
-      }
-    }
-    commit(call.id, resultContent, isError);
-  }
 }

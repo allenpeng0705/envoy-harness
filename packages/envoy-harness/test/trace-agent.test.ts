@@ -27,6 +27,7 @@ import { z } from "zod";
 
 import {
   Agent,
+  DEFAULT_RETRY_POLICY,
   HookRegistry,
   InMemorySession,
   JsonLinesTracer,
@@ -80,6 +81,8 @@ function buildAgent(opts: {
   tracer?: import("@envoymesh/envoy-harness").Tracer;
   tool?: Tool;
   cwd?: string;
+  /** Disable transient-failure retry for error-surfacing tests. */
+  maxRetries?: number;
 }) {
   const tools = new ToolRegistry();
   if (opts.tool) tools.register(opts.tool);
@@ -91,6 +94,10 @@ function buildAgent(opts: {
   });
   const agent = new Agent({
     model: opts.model,
+    // Default: no retry, so a test that makes the model throw sees the
+    // error immediately instead of after a backoff sequence. Retry is
+    // covered by `test/llm-retry.test.ts`.
+    retryPolicy: { ...DEFAULT_RETRY_POLICY, maxRetries: opts.maxRetries ?? 0 },
     tools,
     session,
     hooks: new HookRegistry(),

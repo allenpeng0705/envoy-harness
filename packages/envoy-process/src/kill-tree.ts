@@ -1,21 +1,24 @@
 /**
- * Kill a process and its descendants.
+ * Immediate, best-effort hard kill of a process tree.
  *
- * **Single source of truth** for the monorepo. Consumers:
- * - `@envoymesh/envoy-harness` (re-exports via `src/process/kill-tree.ts`)
- * - `@envoymesh/envoy-sandbox-win`
+ * **Prefer {@link reapChild} (or {@link terminateProcessTree}) for anything
+ * you spawned.** This helper is deliberately the *last resort*: it sends
+ * `SIGKILL` with no grace, no process-group targeting, no PID-reuse fence,
+ * and no wait for the stdio pipes to close. That combination is what let a
+ * backgrounded descendant keep a tool's stdout pipe open and wedge the
+ * agent forever — see `reap.ts` for the fix and the reasoning.
  *
- * Do not reintroduce a private copy (the former duplicate in
- * `envoy-sandbox-win/src/execute.ts` was deleted in the R6 review pass).
+ * Reach for this only where the event loop is already gone (`process.on
+ * ("exit")`, a last-chance cleanup handler) and signalling synchronously
+ * is the whole requirement.
  *
  * On Windows, Node's `ChildProcess.kill` / `process.kill(pid)` only
  * terminates the direct child. Nested `cmd.exe` / shell grandchildren
- * survive. Use `taskkill /T /F` for a best-effort tree kill.
+ * survive, so this shells out to `taskkill /T /F` for a best-effort tree
+ * kill.
  *
- * On Unix, `SIGKILL` the pid (callers that need SIGTERM-first grace
- * should send SIGTERM themselves, then call this for the hard kill).
+ * @returns nothing; never throws (an already-reaped pid is a no-op).
  */
-
 import { spawnSync } from "node:child_process";
 
 /**

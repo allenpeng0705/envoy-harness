@@ -4,7 +4,7 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 
-import { killProcessTree } from "../process/kill-tree.js";
+import { captureChildIdentity, reapChild } from "../process/reaper.js";
 import type { JobHooks, JobOutcome } from "./types.js";
 
 export interface ProcessJobOptions {
@@ -32,7 +32,6 @@ export function createProcessJobHooks(options: ProcessJobOptions): JobHooks {
   let cancelled = false;
   let settled = false;
   let child: ChildProcess | undefined;
-  let killTimer: ReturnType<typeof setTimeout> | undefined;
 
   const append = (chunk: Buffer): void => {
     if (settled) return;
@@ -56,15 +55,21 @@ export function createProcessJobHooks(options: ProcessJobOptions): JobHooks {
   const finish = (outcome: JobOutcome): void => {
     if (settled) return;
     settled = true;
-    if (killTimer !== undefined) clearTimeout(killTimer);
     resolveDone(outcome);
   };
 
+  // Jobs are the place where orphaned grandchildren hurt most: a
+  // backgrounded child inherits our pipes, so killing only the shell
+  // leaves the job permanently "running". `detached` gives the job its
+  // own process group so the ladder can take the whole tree.
+  const detached = process.platform !== "win32";
   child = spawn("sh", ["-c", options.command], {
     cwd: options.cwd,
     env: options.env ?? process.env,
+    detached,
     stdio: ["ignore", "pipe", "pipe"],
   });
+  const identity = captureChildIdentity(child);
 
   child.stdout?.on("data", (c: Buffer) => append(c));
   child.stderr?.on("data", (c: Buffer) => append(c));
@@ -104,31 +109,24 @@ export function createProcessJobHooks(options: ProcessJobOptions): JobHooks {
     cancel(reason?: string): void {
       if (settled || cancelled) return;
       cancelled = true;
-      if (child === undefined || child.killed) return;
-      // Win32: taskkill /T is final — no grace. Unix: SIGTERM first, then
-      // SIGKILL via killProcessTree after `killGraceMs` so shells can clean up.
-      if (process.platform === "win32") {
-        killProcessTree(child.pid);
-        finish({
-          status: "killed",
-          detail: reason ?? "taskkill",
-          output: buffer.toString("utf8"),
-        });
-        return;
-      }
-      try {
-        child.kill("SIGTERM");
-      } catch {
-        // ignore
-      }
-      killTimer = setTimeout(() => {
-        killProcessTree(child?.pid);
-        finish({
-          status: "killed",
-          detail: reason ?? "SIGKILL",
-          output: buffer.toString("utf8"),
-        });
-      }, graceMs);
+      const target = child;
+      if (target === undefined || target.killed) return;
+      // SIGTERM → grace → SIGKILL against the job's process group, with a
+      // PID-reuse fence and a bounded wait for the pipes. The `close`
+      // handler normally reports `killed`; `onForceClose` is the backstop
+      // for a descendant that escaped the group (`setsid`, double-fork).
+      void reapChild(target, {
+        graceMs,
+        processGroup: detached,
+        ...(identity !== undefined ? { identity } : {}),
+        onForceClose: () => {
+          finish({
+            status: "killed",
+            detail: reason ?? "SIGKILL",
+            output: buffer.toString("utf8"),
+          });
+        },
+      });
     },
     done,
     readOutput(): string {

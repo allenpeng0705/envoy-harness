@@ -47,6 +47,16 @@ export interface HttpResponse {
 }
 
 /** The seam where adapters make HTTP calls. */
+/**
+ * Default per-request ceiling for a model HTTP call.
+ *
+ * Generous enough for a large reasoning model on a slow link, finite
+ * enough that a black-holed connection surfaces as an error instead of
+ * an indefinite hang. The retry policy then decides whether to try
+ * again (a timeout is classified retryable).
+ */
+export const DEFAULT_LLM_TIMEOUT_MS = 600_000;
+
 export interface HttpClient {
   request(req: HttpRequest): Promise<HttpResponse>;
 }
@@ -60,7 +70,12 @@ export interface HttpClient {
  * has `fetch` built-in (via undici); this works without
  * any external dependency.
  *
- * **Timeout:** optional `timeoutMs` (default: none — callers
+ * **Timeout:** optional `timeoutMs`, defaulting to
+ * {@link DEFAULT_LLM_TIMEOUT_MS}. A request that never times out is a
+ * hang the user cannot cancel except by killing the process, so the
+ * default is finite. Pass `0` to disable explicitly (a local model that
+ * legitimately thinks for a very long time). (Historically defaulted to
+ * none — callers
  * that want a bound pass one). The agent's abort signal is
  * also honored via `HttpRequest.signal`, so a user cancel
  * aborts an in-flight model call instead of hanging.
@@ -69,7 +84,9 @@ export class FetchHttpClient implements HttpClient {
   private readonly timeoutMs: number | undefined;
 
   constructor(options: { timeoutMs?: number } = {}) {
-    this.timeoutMs = options.timeoutMs;
+    // `undefined` → the finite default; `0` → explicitly disabled.
+    this.timeoutMs =
+      options.timeoutMs === undefined ? DEFAULT_LLM_TIMEOUT_MS : options.timeoutMs;
   }
 
   async request(req: HttpRequest): Promise<HttpResponse> {

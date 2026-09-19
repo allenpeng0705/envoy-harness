@@ -3,6 +3,7 @@
  * must not appear as human chat bubbles in EH / Social / EnvoyGo.
  */
 
+import { isHookContextText } from "../hooks/lifecycle.js";
 import type { Message } from "../tools/types.js";
 
 /** True when `text` is turn-context injection, not a human prompt. */
@@ -13,6 +14,10 @@ export function isEphemeralUserContextText(text: string): boolean {
   if (trimmed.startsWith("ACTIVE PLAN (approved at")) return true;
   if (trimmed.startsWith("Available memories (read with")) return true;
   if (trimmed.startsWith("[system] Your previous response")) return true;
+  // Text a lifecycle hook contributed via `add-context` is model-only
+  // context, exactly like the skill catalog — it must not appear as a
+  // human bubble in EH / Social / EnvoyGo.
+  if (isHookContextText(text)) return true;
   return false;
 }
 

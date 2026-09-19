@@ -5,6 +5,36 @@
  * T3.4 seam (`SandboxExecutor` + `NoopSandboxExecutor`).
  */
 export {
+  OUTPUT_SNIPPET_MAX_CHARS,
+  SANDBOX_LAUNCHER_FAILURE_EXIT,
+  classifySandboxFailure,
+  describeSandboxDenial,
+  describeSandboxInfrastructureFailure,
+  extractDeniedPath,
+  formatSandboxFailure,
+  isSandboxDenial,
+  policyToViolationBackend,
+  type DenialReason,
+  type SandboxDenial,
+  type SandboxFailure,
+  type SandboxInfrastructureFailure,
+  type SandboxViolationBackend,
+} from "./classify.js";
+
+export {
+  canEscalate,
+  describeSandboxEscalation,
+  describeWidening,
+  rootsCover,
+  widenSandboxPolicy,
+  writableRootFor,
+  type SandboxEscalationDecision,
+  type SandboxEscalationHandler,
+  type SandboxEscalationOutcome,
+  type SandboxEscalationRequest,
+} from "./escalation.js";
+
+export {
   NoopSandboxExecutor,
   type SandboxContext,
   type SandboxExecutor,

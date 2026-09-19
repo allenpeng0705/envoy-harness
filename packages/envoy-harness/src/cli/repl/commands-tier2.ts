@@ -199,6 +199,11 @@ const compactCommand: ReplCommand = {
     // contract).
     if (parsed.budget !== undefined) {
       const r = ctx.agent.compactWithBudget(parsed.budget);
+      // Durability barrier before the success message. The atomic swap
+      // means a crash keeps the OLD transcript, so without this the user
+      // is told "compacted" and then finds the full history back after a
+      // crash — a silent revert with no warning.
+      await ctx.agent.flushSession();
       const after = ctx.agent.getMessageCount();
       const note = r.overBudget
         ? " (over budget — consider --summarize)"
@@ -243,11 +248,16 @@ const compactCommand: ReplCommand = {
             .trim();
         });
       } catch (err) {
+        // Do NOT fall back to drop-oldest: dropping the oldest messages
+        // with no summary is context loss, and the summariser failure is
+        // usually transient. Leave history intact and say so.
         ctx.stderr.write(
-          `error: summarization failed (${(err as Error).message}); falling back to drop-oldest\n`,
+          `error: summarization failed (${(err as Error).message}); ` +
+            "history left unchanged (retry, or use --keep to drop-oldest explicitly)\n",
         );
-        ctx.agent.compact(keep);
+        return;
       }
+      await ctx.agent.flushSession();
       const after = ctx.agent.getMessageCount();
       ctx.stdout.write(
         `compacted (summarize): ${before} → ${after} messages (kept last ${keep}, with summary)\n`,
@@ -262,6 +272,7 @@ const compactCommand: ReplCommand = {
     // because they're opt-in.
     const keep = parsed.keep ?? DEFAULT_COMPACT_KEEP;
     ctx.agent.compact(keep);
+    await ctx.agent.flushSession();
     const after = ctx.agent.getMessageCount();
     ctx.stdout.write(
       `compacted: ${before} → ${after} messages (kept last ${keep})\n`,

@@ -27,12 +27,16 @@ export interface HostUserQuestionRequest {
   options?: ReadonlyArray<string>;
   recommendedIndex?: number;
   multiline?: boolean;
+  /** When true, the human may pick more than one option. */
+  multiple?: boolean;
 }
 
 /** Canonical wire answer for `session/user_question` (client → server). */
 export interface HostUserQuestionAnswer {
   value: string;
   optionIndex?: number;
+  /** Set when the human picked more than one option. */
+  optionIndexes?: readonly number[];
   cancelled?: boolean;
 }
 
@@ -80,6 +84,7 @@ export function createHostBridgeUserQuestionProvider(
           ? { recommendedIndex: req.recommendedIndex }
           : {}),
         ...(req.multiline !== undefined ? { multiline: req.multiline } : {}),
+        ...(req.multiple === true ? { multiple: true } : {}),
       });
 
       return await new Promise<UserQuestionAnswer>((resolve) => {

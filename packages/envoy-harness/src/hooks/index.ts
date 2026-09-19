@@ -31,3 +31,30 @@ export { runShellHandler, runModuleHandler } from "./runner.js";
 export { registerHooksFromConfig } from "./register-from-config.js";
 
 export type { HookDecision } from "../types.js";
+
+export {
+  HOOK_CONTEXT_PREFIX,
+  fireNotification,
+  firePermissionRequest,
+  firePostCompact,
+  firePreCompact,
+  fireSessionEnd,
+  fireSessionStart,
+  fireSetup,
+  fireStop,
+  fireSubagentStop,
+  fireUserPromptSubmit,
+  isHookContextText,
+  renderHookContext,
+  type HookFirer,
+  type NotificationPayload,
+  type PermissionRequestPayload,
+  type PostCompactPayload,
+  type PreCompactPayload,
+  type SessionEndPayload,
+  type SessionStartPayload,
+  type SetupPayload,
+  type StopPayload,
+  type SubagentStopPayload,
+  type UserPromptSubmitPayload,
+} from "./lifecycle.js";

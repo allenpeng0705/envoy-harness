@@ -50,6 +50,7 @@ export const editTool: Tool<
   }>
 > = {
   name: "edit",
+  timeoutMs: 60_000,
   description:
     "Apply a targeted edit to the file at `path`. Three modes: " +
     "'replace' (default; replace the first occurrence of `oldText` with " +

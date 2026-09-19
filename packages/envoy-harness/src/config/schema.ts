@@ -97,6 +97,23 @@ export const ConfigLayerSchema = z
   .object({
     /** Mirrors `PermissionMode`. */
     permissionMode: PermissionModeSchema.optional(),
+    /**
+     * Transient-failure retry policy for model requests.
+     *
+     * A long agent run WILL hit a 429/503/timeout; without this the turn
+     * dies on the first one. Defaults match `DEFAULT_RETRY_POLICY`
+     * (5 retries, 500ms→10s exponential backoff with 10% jitter).
+     * `maxRetries: 0` disables retrying entirely.
+     */
+    retry: z
+      .object({
+        maxRetries: z.number().int().min(0).max(50).optional(),
+        initialDelayMs: z.number().int().min(0).max(600_000).optional(),
+        maxDelayMs: z.number().int().min(0).max(600_000).optional(),
+        jitterRatio: z.number().min(0).max(1).optional(),
+      })
+      .strict()
+      .optional(),
     /** Mirrors `AskForApproval`. */
     askForApproval: AskForApprovalSchema.optional(),
     /**

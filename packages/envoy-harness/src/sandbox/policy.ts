@@ -15,11 +15,20 @@ export interface LandlockGrants {
  *
  * Allow-list: grant read-only `/` so binaries stay runnable,
  * then add write roots from the policy.
+ *
+ * `danger-full-access` short-circuits to a full write grant. Without it
+ * the function fell through to the `workspace-write` shape, granting write
+ * to `/tmp` only — so a session explicitly at full access was still
+ * confined by the kernel layer, and the denial would look inexplicable to
+ * the user who had just approved the escalation.
  */
 export function policyToLandlockGrants(
   policy: SandboxPolicy,
   cwd: string,
 ): LandlockGrants {
+  if (policy.mode === "danger-full-access") {
+    return { readOnly: [], readWrite: ["/"] };
+  }
   const readWrite: string[] = [];
   if (policy.mode === "workspace-write") {
     const roots =

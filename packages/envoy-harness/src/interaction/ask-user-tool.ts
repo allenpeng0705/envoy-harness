@@ -91,6 +91,13 @@ const AskUserInputSchema = z.object({
       "Optional fixed-choice options. When set, the human sees a numbered picker. " +
         "The answer carries the chosen option's `value` and 0-based `optionIndex`.",
     ),
+  multiple: z
+    .boolean()
+    .optional()
+    .describe(
+      "When true, the human may pick more than one of `options`. " +
+        "Ignored when `options` is unset. The answer lists every chosen index.",
+    ),
   recommendedIndex: z
     .number()
     .int()
@@ -149,7 +156,8 @@ export function makeAskUserTool(
       "Ask the human a question and return their answer. Use this when you " +
       "need clarification before proceeding (e.g. which option to pick, what " +
       "the project root is, or to paste back a log / diff). Pass `options` " +
-      "for a fixed-choice picker; pass `multiline: true` for paste-style " +
+      "for a fixed-choice picker; pass `multiple: true` when more than one option " +
+      "applies; pass `multiline: true` for paste-style " +
       "input. The result includes either the human's answer or a " +
       "cancellation reason — read the message and act accordingly.",
     parameters: AskUserInputSchema,
@@ -162,6 +170,7 @@ export function makeAskUserTool(
       const req: UserQuestionRequest = {
         prompt: args.prompt,
         ...(args.options !== undefined ? { options: args.options } : {}),
+        ...(args.multiple === true ? { multiple: true } : {}),
         ...(args.recommendedIndex !== undefined
           ? { recommendedIndex: args.recommendedIndex }
           : {}),
@@ -219,6 +228,14 @@ function formatAnswer(
   }
   if (args.multiline === true) {
     return `User answered:\n${answer.value}`;
+  }
+  if (answer.optionIndexes !== undefined && answer.optionIndexes.length > 0) {
+    const labels = answer.optionIndexes.map(
+      (index) => args.options?.[index] ?? answer.value,
+    );
+    const shown = labels.map((label) => JSON.stringify(label)).join(", ");
+    const numbers = answer.optionIndexes.map((index) => index + 1).join(", ");
+    return `User selected: ${shown} (options ${numbers})`;
   }
   if (answer.optionIndex !== undefined) {
     const label = args.options?.[answer.optionIndex] ?? answer.value;

@@ -61,6 +61,32 @@ export function compactMessages(
 }
 
 /** The result of a summarized compaction. */
+/**
+ * Choose the index at which to split `messages` so the KEPT suffix does
+ * not begin with a `tool_result` whose `tool_call` was dropped.
+ *
+ * Returns an index into `messages` (the first kept message). Starts from
+ * the naive `length - keep` and walks BACKWARDS while the first kept
+ * message is a tool result, which pulls the issuing assistant message
+ * into the kept window.
+ */
+export function alignKeepBoundary(
+  messages: ReadonlyArray<Message>,
+  keep: number,
+): number {
+  let boundary = Math.max(0, messages.length - Math.max(0, keep));
+  // A kept window that starts on a tool result is orphaned: its call was
+  // dropped. Widening keeps the call/result pair together.
+  while (
+    boundary > 0 &&
+    boundary < messages.length &&
+    messages[boundary]!.role === "tool"
+  ) {
+    boundary -= 1;
+  }
+  return boundary;
+}
+
 export interface CompactWithSummaryResult {
   /** The new transcript (same content as the input when no-op). */
   messages: Message[];
@@ -71,6 +97,18 @@ export interface CompactWithSummaryResult {
    * content, so callers must not infer no-op from length).
    */
   droppedCount: number;
+  /**
+   * Set when the summary could not be produced. **`messages` is then the
+   * ORIGINAL transcript and `droppedCount` is 0** — the caller must not
+   * swap history.
+   *
+   * This is the commit-or-discard rule. The previous behavior silently
+   * degraded to drop-oldest when the summarizer threw, so a transient
+   * LLM error destroyed the oldest part of the conversation with no
+   * summary, no error, and no way for the user to tell. Dropping context
+   * is acceptable only when it is replaced by something that carries it.
+   */
+  refusedReason?: string;
 }
 
 /**
@@ -106,24 +144,42 @@ export async function compactMessagesWithSummary(
   if (parts.rest.length <= keep) {
     return { messages: messages.slice(), droppedCount: 0 };
   }
-  const toKeep = parts.rest.slice(-keep);
-  const dropped = parts.rest.slice(0, parts.rest.length - keep);
+  // Keep the boundary off a tool-result: dropping the assistant message
+  // that issued a `tool_call` while keeping its `tool_result` produces a
+  // transcript the provider rejects outright (every tool result must
+  // follow its call). Widen the kept window until it starts on a
+  // non-orphaned boundary.
+  const boundary = alignKeepBoundary(parts.rest, keep);
+  const toKeep = parts.rest.slice(boundary);
+  const dropped = parts.rest.slice(0, boundary);
+  if (dropped.length === 0) {
+    return { messages: messages.slice(), droppedCount: 0 };
+  }
+
   let summary: string;
   try {
     summary = await summarize(dropped);
-  } catch {
-    // Summarizer failed (LLM unavailable, timeout, etc.).
-    // Fall through to drop-oldest: the kept messages are
-    // the same as `compactMessages(messages, keep)` would
-    // produce, but we DON'T add a summary block (the
-    // caller can detect "no summary block" → "fallback
-    // fired"). The dropped count is unchanged from the
-    // pre-summarize view.
-    return { messages: compactMessages(messages, keep), droppedCount: dropped.length };
+  } catch (err) {
+    // COMMIT-OR-DISCARD: refuse, leaving history untouched. Never
+    // silently fall back to dropping context unreplaced.
+    return {
+      messages: messages.slice(),
+      droppedCount: 0,
+      refusedReason: `summarization failed: ${(err as Error).message ?? String(err)}`,
+    };
+  }
+  if (summary.trim().length === 0) {
+    return {
+      messages: messages.slice(),
+      droppedCount: 0,
+      refusedReason:
+        "summarization produced an empty summary; refusing to drop context " +
+        "with nothing to replace it",
+    };
   }
   const out: Message[] = [];
   if (parts.system) out.push(parts.system);
-  if (summary.trim().length > 0) {
+  {
     // Insert the summary as a USER message, NOT a system
     // message: `Agent.run()` treats the presence of ANY system
     // message as "the system prompt is already installed" and

@@ -15,6 +15,8 @@ import {
   shouldAskUnderAutoRun,
   type AutoRunPolicy,
 } from "../permissions/auto-run.js";
+import { SessionInitGuard } from "../session/lease-guard.js";
+import type { PersistedSession } from "../session/persisted-session.js";
 import type { AskHandler } from "../types.js";
 import { installToolPermissionAskHook } from "./permission-hook.js";
 
@@ -51,6 +53,7 @@ export interface LiveSession {
         options?: ReadonlyArray<string>;
         recommendedIndex?: number;
         multiline?: boolean;
+        multiple?: boolean;
       }) => Promise<UserQuestionAnswer>)
     | undefined;
   createdAt: number;
@@ -226,4 +229,104 @@ export function installLivePermissionHook(
       return shouldAskTool?.(toolName, args) ?? true;
     },
   });
+}
+
+
+/** Default bound on session acquisition. `0` disables it. */
+export const DEFAULT_SESSION_ACQUIRE_TIMEOUT_MS = 30_000;
+
+/**
+ * Resolve `true` when `promise` settles within `ms`.
+ *
+ * Never rejects: the caller still awaits the original promise, so a
+ * rejection is reported once, by the real await.
+ */
+export async function settledWithin<T>(
+  promise: Promise<T>,
+  ms: number,
+): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise.then(
+        () => false,
+        () => false,
+      ),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(true), ms);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+/**
+ * Acquire a persisted session under a bounded wait, without leaking the
+ * write lease when the wait expires.
+ *
+ * **The leak this prevents.** On timeout the naive move is to abandon the
+ * acquisition and report failure. But the acquisition is still running,
+ * and it will install a write lease on the session file when it finishes —
+ * a lease nobody holds a reference to and nobody releases. The next
+ * process to `--resume` that session then gets `SessionFileBusyError`
+ * until the stale-PID heuristic reclaims it.
+ *
+ * `SessionInitGuard` exists exactly for this: `discard()` **awaits** the
+ * in-flight acquisition and then closes whatever it produced. The guard is
+ * kept alive (rather than dropped) precisely so the release still happens
+ * after we have returned failure to the caller.
+ */
+export async function acquirePersistedSession(
+  factory: () => Promise<PersistedSession>,
+  timeoutMs: number,
+): Promise<PersistedSession> {
+  const guard = new SessionInitGuard();
+  const acquiring = guard.acquire(factory);
+  if (timeoutMs > 0) {
+    const timedOut = await settledWithin(acquiring, timeoutMs);
+    if (timedOut) {
+      // Deliberately not awaited: the caller must fail fast, while the
+      // guard keeps the release path alive in the background.
+      void guard.discard();
+      throw new Error(`session acquisition timed out after ${timeoutMs}ms`);
+    }
+  }
+  const session = await acquiring;
+  guard.commit();
+  return session;
+}
+
+/**
+ * Stop using a live session and release what it holds.
+ *
+ * Aborting alone is not enough for a persisted session: `Agent` keeps a
+ * `PersistedSession`, which holds an **exclusive write lease** on its
+ * JSONL file plus a pending batch-write timer. Dropping the reference
+ * without `close()` leaves the file locked for the life of the host
+ * process, so a later `--resume` (or another ACP client) fails with
+ * `SessionFileBusyError` until the stale-PID heuristic reclaims it. The
+ * ACP host is long-lived and evicts on a size cap, so the leak is
+ * guaranteed to fire, not hypothetical.
+ *
+ * `close()` flushes first, so the evicted session's transcript is still
+ * durable. Failures are swallowed: the caller is already tearing the
+ * session down and has no meaningful recovery.
+ */
+export function retireLiveSession(
+  doomed: LiveSession | undefined,
+  reason: string,
+): void {
+  if (doomed === undefined) return;
+  doomed.abort?.abort();
+  doomed.permissionWait?.resolve("deny");
+  cancelPendingUserQuestions(doomed);
+  doomed.agent.abort(reason);
+  // `createAgent` is host-supplied and tests pass minimal doubles, so
+  // probe rather than assume the full `Agent` surface.
+  if (typeof doomed.agent.getSession !== "function") return;
+  const session = doomed.agent.getSession();
+  if (session.close !== undefined) {
+    void session.close().catch(() => undefined);
+  }
 }

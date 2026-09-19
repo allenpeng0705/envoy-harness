@@ -57,6 +57,7 @@ export async function requestHostUserQuestion(
         ? { recommendedIndex: req.recommendedIndex }
         : {}),
       ...(req.multiline !== undefined ? { multiline: req.multiline } : {}),
+      ...(req.multiple === true ? { multiple: true } : {}),
     },
     HOST_REQUEST_TIMEOUT_MS,
   );
@@ -64,11 +65,18 @@ export async function requestHostUserQuestion(
     return { value: "", cancelled: true };
   }
   const obj = raw as Record<string, unknown>;
+  const optionIndexes = Array.isArray(obj.optionIndexes)
+    ? obj.optionIndexes.filter(
+        (index): index is number =>
+          typeof index === "number" && Number.isInteger(index),
+      )
+    : [];
   return {
     value: typeof obj.value === "string" ? obj.value : "",
     ...(typeof obj.optionIndex === "number"
       ? { optionIndex: obj.optionIndex }
       : {}),
+    ...(optionIndexes.length > 0 ? { optionIndexes } : {}),
     cancelled: obj.cancelled === true,
   };
 }

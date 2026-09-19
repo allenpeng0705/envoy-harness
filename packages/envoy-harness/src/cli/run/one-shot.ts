@@ -22,6 +22,7 @@ import {
   Agent,
   BUILTIN_TOOLS,
   ConfigLoadError,
+  EXIT_ERROR,
   EXIT_USAGE,
   HookRegistry,
   JsonLinesTracer,
@@ -34,7 +35,12 @@ import {
   type ConfigLayer,
   type Session,
   type SessionMetadata,
+  DEFAULT_RETRY_POLICY,
   buildAgentSystemPrompt,
+  fireSessionEnd,
+  fireSessionStart,
+  fireSetup,
+  renderHookContext,
   projectConfigWarning,
   systemPromptOptionsFromConfig,
 } from "../../index.js";
@@ -276,6 +282,33 @@ export async function runAgent(
   if (parsed.maxTurns !== undefined) {
     agentOptions.maxIterations = parsed.maxTurns;
   }
+  // Transient-failure retry policy from config.toml. Without this the
+  // policy was only reachable from embedding hosts, so a CLI user could
+  // not tune (or disable) retrying.
+  if (configLayer.retry !== undefined) {
+    agentOptions.retryPolicy = {
+      ...DEFAULT_RETRY_POLICY,
+      ...(configLayer.retry.maxRetries !== undefined
+        ? { maxRetries: configLayer.retry.maxRetries }
+        : {}),
+      ...(configLayer.retry.initialDelayMs !== undefined
+        ? { initialDelayMs: configLayer.retry.initialDelayMs }
+        : {}),
+      ...(configLayer.retry.maxDelayMs !== undefined
+        ? { maxDelayMs: configLayer.retry.maxDelayMs }
+        : {}),
+      ...(configLayer.retry.jitterRatio !== undefined
+        ? { jitterRatio: configLayer.retry.jitterRatio }
+        : {}),
+    };
+    if (agentOptions.retryPolicy.initialDelayMs > agentOptions.retryPolicy.maxDelayMs) {
+      throw new CliError(
+        `config: retry.initialDelayMs (${agentOptions.retryPolicy.initialDelayMs}) ` +
+          `must be <= retry.maxDelayMs (${agentOptions.retryPolicy.maxDelayMs})`,
+        EXIT_USAGE,
+      );
+    }
+  }
   if (parsed.maxCostUsd !== undefined) {
     agentOptions.maxCostUsd = parsed.maxCostUsd;
   } else {
@@ -378,6 +411,30 @@ export async function runAgent(
     });
   }
   const agent = new Agent(agentOptions);
+
+  // `Setup` runs once for this process; `SessionStart` per session. Both
+  // may contribute `add-context`, which is injected as durable user-role
+  // context (chat hosts already hide that shape) so it survives resume.
+  const setup = await fireSetup(agent.hooks, { cwd, sessionId: agent.session.id });
+  if (setup.blocked !== undefined) {
+    throw new CliError(`Setup hook refused to start: ${setup.blocked}`, EXIT_ERROR);
+  }
+  const started = await fireSessionStart(agent.hooks, {
+    sessionId: agent.session.id,
+    cwd,
+  });
+  if (started.blocked !== undefined) {
+    throw new CliError(
+      `SessionStart hook refused this session: ${started.blocked}`,
+      EXIT_ERROR,
+    );
+  }
+  for (const context of [setup.context, started.context]) {
+    if (context.length > 0) {
+      agent.session.appendMessage("user", [{ type: "text", text: context }]);
+    }
+  }
+  void renderHookContext;
 
   // Phase B / Item 15.2: register any hooks loaded from
   // the config layer. The `hooks` field is produced by
@@ -548,6 +605,21 @@ export async function runAgent(
       toolCalls: result.toolCalls,
     };
   } finally {
+    // `SessionEnd` is an observer: fire it on every exit path (success,
+    // error, or abort) so a hook can archive or report on the session.
+    await fireSessionEnd(agent.hooks, {
+      sessionId: session.id,
+      reason: "exit",
+      messages: session.messages.length,
+    }).catch(() => undefined);
     await disposePeers().catch(() => undefined);
+    // Release the exclusive write lease on EVERY exit path — including a
+    // throw out of `agent.run`. Flushing alone leaves `PersistedSession`'s
+    // lease held, so the next process to open the file fails with
+    // `SessionFileBusyError` until the stale-PID reclaim heuristic fires.
+    // `close()` flushes and releases; never let it mask the real error.
+    if (session.close !== undefined) {
+      await session.close().catch(() => undefined);
+    }
   }
 }

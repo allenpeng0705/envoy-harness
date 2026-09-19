@@ -51,6 +51,28 @@ export interface ToolCall {
 }
 
 /**
+ * Structured, machine-readable metadata about a tool result.
+ *
+ * **Why alongside `content`:** `content` is prose for the *model*, which
+ * has to be able to read it. A host (protocol frame, TUI, trace consumer,
+ * post-mortem script) should not have to regex that prose to learn that
+ * the OS sandbox refused a write or that the user widened the policy.
+ * Everything here is additive and optional.
+ */
+export interface ToolResultMeta {
+  /**
+   * The classified sandbox failure, when the tool's failure was one.
+   * `kind: "denied"` distinguishes a policy decision (which the user can
+   * widen) from `kind: "infrastructure"` (the sandbox never started).
+   */
+  sandbox?: import("../sandbox/classify.js").SandboxFailure;
+  /** What happened when the denial was offered for escalation. */
+  escalation?: import("../sandbox/escalation.js").SandboxEscalationOutcome;
+  /** The policy an approved escalation retried with. */
+  escalatedPolicy?: import("../types.js").SandboxPolicy;
+}
+
+/**
  * The result of running a tool. `content` is the data the tool
  * produced; the agent serializes it into a tool result message
  * that the model can read on the next turn.
@@ -63,6 +85,8 @@ export interface ToolResult<T = unknown> {
   content: T;
   /** True if the tool failed but the error is recoverable. */
   isError?: boolean;
+  /** Structured classification of the failure, when there is one. */
+  meta?: ToolResultMeta;
 }
 
 // ---------------------------------------------------------------------------
@@ -120,6 +144,20 @@ export interface ToolContext {
    * (local or peer-targeted) instead of the process filesystem.
    */
   execWorld?: import("../exec-world/types.js").ExecWorld;
+  /**
+   * Offer a sandbox denial to the user for a **widened retry**.
+   *
+   * Set by the agent's tool executor. A tool that classifies a policy
+   * denial (currently `bash` via the sandbox executor path) calls this
+   * once; on `kind: "allow"` it may retry the operation exactly once with
+   * the returned policy. Absent when no host approval path exists, in
+   * which case the tool must report the denial as-is rather than guess.
+   *
+   * The decision — including `approval: "never"` failing closed — belongs
+   * to the executor, not the tool: the tool must not be able to widen its
+   * own sandbox.
+   */
+  requestSandboxEscalation?: import("../sandbox/escalation.js").SandboxEscalationHandler;
 }
 
 // ---------------------------------------------------------------------------
@@ -164,6 +202,20 @@ export interface Tool<TParams extends z.ZodTypeAny = z.ZodTypeAny> {
     args: z.infer<TParams>,
     context: ToolContext,
   ): Promise<ToolResult>;
+  /**
+   * Optional per-tool wall-clock budget, enforced by the executor.
+   *
+   * **Why this lives on the tool and not the executor:** the right
+   * budget is a property of the operation, not of the harness — a shell
+   * command, an LSP request and an MCP round trip have nothing in common
+   * timewise. Without a declared budget the executor cannot bound
+   * anything, which is how `git`, `write` and `edit` could hang a turn
+   * forever on a stuck filesystem or a credentials prompt.
+   *
+   * `0` disables the budget for a tool that legitimately runs for a long
+   * time. Omitted means "use the executor default".
+   */
+  timeoutMs?: number;
 }
 
 // ---------------------------------------------------------------------------

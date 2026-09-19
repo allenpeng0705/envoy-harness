@@ -35,16 +35,30 @@ import { spawn } from "node:child_process";
 
 import { z } from "zod";
 
-import { killProcessTree } from "../../process/kill-tree.js";
+import { captureChildIdentity, reapChild } from "../../process/reaper.js";
+import {
+  classifySandboxFailure,
+  formatSandboxFailure,
+  isSandboxDenial,
+  policyToViolationBackend,
+  type SandboxFailure,
+} from "../../sandbox/classify.js";
+import { widenSandboxPolicy } from "../../sandbox/escalation.js";
 import {
   createProcessJobHooks,
   type JobRegistry,
 } from "../../jobs/index.js";
+import type { SandboxResult } from "../../sandbox/types.js";
 import { validateBash } from "../../permissions/bash/index.js";
 import { tokenizeShellCommand } from "../../permissions/bash/tokenize.js";
 import { policyFromMode } from "../../permissions/policy.js";
 import type { BashValidationInput, SandboxPolicy } from "../../types.js";
-import type { Tool, ToolContext, ToolResult } from "../types.js";
+import type {
+  Tool,
+  ToolContext,
+  ToolResult,
+  ToolResultMeta,
+} from "../types.js";
 import { retainHeadBytes } from "../../util/retention.js";
 
 /** Default timeout for a bash command, in milliseconds. */
@@ -215,7 +229,7 @@ async function runBash(
   timeoutMs: number | undefined,
   maxOutputBytes: number | undefined,
   preWarning: string | undefined,
-): Promise<{ content: string; isError?: boolean }> {
+): Promise<ToolResult> {
   const timeout = timeoutMs ?? DEFAULT_BASH_TIMEOUT_MS;
   const cap = maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
 
@@ -269,25 +283,66 @@ async function runBash(
   }
 
   return new Promise((resolve) => {
+    // `detached` on POSIX: the shell leads its own process group so the
+    // kill ladder can address `-pid` without touching the harness's own
+    // group. See `reaper.ts` for why the group matters.
+    const detached = process.platform !== "win32";
     const child = spawn("sh", ["-c", command], {
       cwd: ctx.cwd,
       env: ctx.shellEnv ?? process.env,
+      detached,
       stdio: ["ignore", "pipe", "pipe"],
     });
+    const identity = captureChildIdentity(child);
     let stdout = "";
     let stderr = "";
     let stdoutTruncated = false;
     let stderrTruncated = false;
     let killed = false;
+    let settled = false;
 
-    const timer = setTimeout(() => {
-      killed = true;
-      killProcessTree(child.pid);
-    }, timeout);
+    const settle = (result: ToolResult): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      ctx.abortSignal.removeEventListener("abort", onAbort);
+      resolve(result);
+    };
 
-    const onAbort = () => {
+    const finish = (note?: string): void => {
+      settle(
+        formatBashResult({
+          stdout,
+          stderr,
+          exitCode: killed ? 137 : child.exitCode,
+          stdoutTruncated,
+          stderrTruncated,
+          killed,
+          cap,
+          preWarning,
+          ...(note !== undefined ? { sandboxNote: note } : {}),
+        }),
+      );
+    };
+
+    const kill = (): void => {
       killed = true;
-      killProcessTree(child.pid);
+      // TERM → grace → KILL against the group, with a bounded wait for
+      // the pipes. A backgrounded grandchild that inherited stdout would
+      // otherwise keep `close` from ever firing and hang the turn.
+      void reapChild(child, {
+        processGroup: detached,
+        ...(identity !== undefined ? { identity } : {}),
+        onForceClose: () => {
+          finish();
+        },
+      });
+    };
+
+    const timer = setTimeout(kill, timeout);
+
+    const onAbort = (): void => {
+      kill();
     };
     if (ctx.abortSignal.aborted) {
       onAbort();
@@ -316,27 +371,14 @@ async function runBash(
       }
     });
 
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      ctx.abortSignal.removeEventListener("abort", onAbort);
-      resolve(
-        formatBashResult({
-          stdout,
-          stderr,
-          exitCode: code,
-          stdoutTruncated,
-          stderrTruncated,
-          killed,
-          cap,
-          preWarning,
-        }),
-      );
+    child.on("close", () => {
+      // `code` may be null (signal death); `finish` derives a
+      // conventional 137 for a killed child.
+      finish();
     });
 
     child.on("error", (err) => {
-      clearTimeout(timer);
-      ctx.abortSignal.removeEventListener("abort", onAbort);
-      resolve({
+      settle({
         content: `bash spawn error: ${err.message}`,
         isError: true,
       });
@@ -350,7 +392,7 @@ async function runBashViaExecutor(
   timeoutMs: number,
   cap: number,
   preWarning: string | undefined,
-): Promise<{ content: string; isError?: boolean }> {
+): Promise<ToolResult> {
   const executor = ctx.sandboxExecutor!;
   const policy =
     ctx.sandboxPolicy ??
@@ -361,9 +403,11 @@ async function runBashViaExecutor(
   if (ctx.abortSignal.aborted) ac.abort();
   else ctx.abortSignal.addEventListener("abort", onAbort, { once: true });
 
-  try {
-    const result = await executor.execute(command, {
-      policy,
+  const runOnce = (
+    runPolicy: SandboxPolicy,
+  ): Promise<SandboxResult> =>
+    executor.execute(command, {
+      policy: runPolicy,
       cwd: ctx.cwd,
       signal: ac.signal,
       maxOutputBytes: cap,
@@ -371,19 +415,105 @@ async function runBashViaExecutor(
         ? { onStdout: ctx.onToolOutput }
         : {}),
     });
-    const stdout =
-      result.stdout.length > cap ? result.stdout.slice(0, cap) : result.stdout;
-    const stderr =
-      result.stderr.length > cap ? result.stderr.slice(0, cap) : result.stderr;
-    return formatBashResult({
-      stdout,
-      stderr,
+
+  const project = (
+    result: SandboxResult,
+    runPolicy: SandboxPolicy,
+  ): BashProjection => ({
+    stdout: result.stdout.length > cap ? result.stdout.slice(0, cap) : result.stdout,
+    stderr: result.stderr.length > cap ? result.stderr.slice(0, cap) : result.stderr,
+    exitCode: result.exitCode,
+    stdoutTruncated:
+      result.stdout.length > cap || result.stdoutTruncated === true,
+    stderrTruncated:
+      result.stderr.length > cap || result.stderrTruncated === true,
+    failure: classifySandboxFailure({
+      backend: policyToViolationBackend(runPolicy.backend),
       exitCode: result.exitCode,
-      stdoutTruncated: result.stdout.length > cap || result.stdoutTruncated === true,
-      stderrTruncated: result.stderr.length > cap || result.stderrTruncated === true,
+      signal: result.signal ?? null,
+      stdout: result.stdout,
+      stderr: result.stderr,
+    }),
+  });
+
+  try {
+    const result = await runOnce(policy);
+    const projected = project(result, policy);
+    const failure = projected.failure;
+
+    // A policy denial is the one failure the model cannot act on: it
+    // cannot widen its own sandbox, and re-running identically fails
+    // identically. Offer the human the decision, then retry EXACTLY once.
+    //
+    // The approval decision is not made here — `requestSandboxEscalation`
+    // is the executor's method, so `approval: "never"`, the
+    // `PermissionRequest` veto, and the widening computation all stay
+    // outside the tool's reach. The only local check is whether a wider
+    // policy exists at all, which is pure.
+    const wider: SandboxPolicy | undefined = isSandboxDenial(failure)
+      ? widenSandboxPolicy(policy, { cwd: ctx.cwd, deniedPath: failure.path })
+      : undefined;
+
+    if (
+      isSandboxDenial(failure) &&
+      wider !== undefined &&
+      ctx.requestSandboxEscalation !== undefined
+    ) {
+      const decision = await ctx.requestSandboxEscalation({
+        tool: "bash",
+        subject: command,
+        denial: failure,
+        currentPolicy: policy,
+        cwd: ctx.cwd,
+      });
+      if (decision.kind === "allow") {
+        const retried = project(await runOnce(decision.policy), decision.policy);
+        return formatBashResult({
+          ...retried,
+          killed: ac.signal.aborted,
+          cap,
+          preWarning,
+          meta: {
+            ...(failure !== undefined ? { sandbox: failure } : {}),
+            escalation: "granted",
+            escalatedPolicy: decision.policy,
+          },
+          escalationNote:
+            `[sandbox] escalation GRANTED (${decision.note}). The command was ` +
+            "re-run with the wider policy; the output above is from that run.",
+        });
+      }
+      return formatBashResult({
+        ...projected,
+        killed: ac.signal.aborted,
+        cap,
+        preWarning,
+        meta: {
+          ...(failure !== undefined ? { sandbox: failure } : {}),
+          escalation: "denied",
+        },
+        escalationNote:
+          `Escalation was NOT granted (${decision.reason}); the sandbox was ` +
+          "not widened and the denial above stands.",
+      });
+    }
+
+    return formatBashResult({
+      ...projected,
       killed: ac.signal.aborted,
       cap,
       preWarning,
+      ...(failure !== undefined
+        ? {
+            meta: {
+              sandbox: failure,
+              ...(isSandboxDenial(failure) &&
+              ctx.requestSandboxEscalation !== undefined
+                ? { escalation: "unavailable" as const }
+                : {}),
+            },
+          }
+        : {}),
     });
   } catch (err) {
     return {
@@ -396,6 +526,16 @@ async function runBashViaExecutor(
   }
 }
 
+/** A sandbox result projected into the shape `formatBashResult` consumes. */
+interface BashProjection {
+  stdout: string;
+  stderr: string;
+  exitCode: number | null;
+  stdoutTruncated: boolean;
+  stderrTruncated: boolean;
+  failure: SandboxFailure | undefined;
+}
+
 function formatBashResult(opts: {
   stdout: string;
   stderr: string;
@@ -405,7 +545,18 @@ function formatBashResult(opts: {
   killed: boolean;
   cap: number;
   preWarning: string | undefined;
-}): { content: string; isError?: boolean } {
+  /**
+   * Model-facing classification of a sandbox denial / infra failure.
+   * Derived from `meta.sandbox` when the caller does not pass one, so a
+   * denial can never be labelled in prose but missing from the structured
+   * metadata (or vice versa).
+   */
+  sandboxNote?: string;
+  /** Model-facing note about an escalation attempt. */
+  escalationNote?: string;
+  /** Structured metadata handed back to the executor and the trace. */
+  meta?: ToolResultMeta;
+}): ToolResult {
   const parts: string[] = [];
   if (opts.preWarning) parts.push(`[warning] ${opts.preWarning}\n`);
   if (opts.stdout.length > 0) {
@@ -422,5 +573,12 @@ function formatBashResult(opts: {
   }
   parts.push(`\n[exit code: ${opts.exitCode ?? "null"}]`);
   if (opts.killed) parts.push(`\n[command was killed]`);
-  return { content: parts.join(""), isError: opts.exitCode !== 0 };
+  const note = opts.sandboxNote ?? formatSandboxFailure(opts.meta?.sandbox);
+  if (note !== undefined) parts.push(`\n${note}`);
+  if (opts.escalationNote !== undefined) parts.push(`\n${opts.escalationNote}`);
+  return {
+    content: parts.join(""),
+    isError: opts.exitCode !== 0,
+    ...(opts.meta !== undefined ? { meta: opts.meta } : {}),
+  };
 }

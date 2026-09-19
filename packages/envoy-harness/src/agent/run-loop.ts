@@ -51,6 +51,24 @@ import { injectEphemeralUserContext } from "../context/ephemeral-user-context.js
 import { assembleTurnContext } from "../context/turn-context.js";
 import { collaborationModeBlockReason } from "../plan/tool-policy.js";
 import { stripThinking } from "../util/strip-thinking.js";
+import {
+  durabilityRefusalMessage,
+  ensureDurable,
+} from "./durability.js";
+import {
+  fireStop,
+  fireUserPromptSubmit,
+} from "../hooks/lifecycle.js";
+import {
+  captureStep,
+  describeSnapshotChange,
+  type StepSnapshot,
+} from "./step-snapshot.js";
+import {
+  DEFAULT_RETRY_POLICY,
+  withRetry,
+  type RetryPolicy,
+} from "../llm/retry.js";
 
 /**
  * Run the agent's turn loop. Reads from the
@@ -75,6 +93,37 @@ import { stripThinking } from "../util/strip-thinking.js";
 export async function runAgentLoop(
   agent: Agent,
   prompt: string | ReadonlyArray<ContentBlock>,
+): Promise<AgentResult> {
+  // The turn's identity exists from the moment `run()` is called — not
+  // from the first await — so a host can capture it immediately and a
+  // late abort can be attributed correctly.
+  const turnId = agent.beginTurn();
+  try {
+    const result = await runAgentTurn(agent, prompt, turnId);
+    // `Stop`: the main agent stopped and the user may intervene. An
+    // observer event — its decision is recorded by the registry but has
+    // nothing to veto at this point.
+    await fireStop(agent.hooks, {
+      sessionId: agent.session.id,
+      stopReason: result.stopReason,
+      iterations: result.iterations,
+    });
+    return result;
+  } finally {
+    agent.endTurn(turnId);
+  }
+}
+
+/**
+ * One turn's body. Split from {@link runAgentLoop} so the turn-identity
+ * lifecycle brackets the *whole* turn (including context assembly) in a
+ * `finally` — a throw during assembly must not leave the agent
+ * permanently "busy".
+ */
+async function runAgentTurn(
+  agent: Agent,
+  prompt: string | ReadonlyArray<ContentBlock>,
+  turnId: string,
 ): Promise<AgentResult> {
   // System prompt goes first (idempotent: skip if a system
   // message is already present).
@@ -111,6 +160,35 @@ export async function runAgentLoop(
   // Do not persist turn context (skills / memory index / plan) — it is
   // model-only and would show up as a phantom user bubble above the real
   // human message in EH chat UIs.
+
+  // `UserPromptSubmit` may veto the turn before the model ever sees it.
+  const promptText =
+    typeof prompt === "string"
+      ? prompt
+      : prompt
+          .filter((b): b is Extract<ContentBlock, { type: "text" }> => b.type === "text")
+          .map((b) => b.text)
+          .join("\n");
+  {
+    const { blocked } = await fireUserPromptSubmit(agent.hooks, {
+      sessionId: agent.session.id,
+      prompt: promptText,
+    });
+    if (blocked !== undefined) {
+      const note: ContentBlock = {
+        type: "text",
+        text: `[blocked] UserPromptSubmit hook rejected this prompt: ${blocked}`,
+      };
+      agent.emit({
+        kind: "error",
+        ts: new Date().toISOString(),
+        iteration: 0,
+        message: `UserPromptSubmit hook blocked the prompt: ${blocked}`,
+      });
+      agent.session.appendMessage("assistant", [note]);
+      return agent.makeResult([note], "aborted", 0);
+    }
+  }
 
   if (typeof prompt === "string") {
     agent.session.appendMessage("user", [{ type: "text", text: prompt }]);
@@ -166,6 +244,7 @@ export async function runAgentLoop(
     (def) => !registryToolNames.has(def.name),
   );
 
+  void turnId;
   let iterations = 0;
   // Self-healing: track how many consecutive times the model attempted
   // the SAME failing tool call, so the loop can inject a corrective
@@ -177,6 +256,8 @@ export async function runAgentLoop(
   >();
   let emptyResponseHinted = false;
   let turnContextInjected = false;
+  let previousStep: StepSnapshot | undefined;
+
   while (iterations < agent.maxIterations) {
     if (agent.abortController.signal.aborted) {
       return agent.makeResult([], "aborted", iterations);
@@ -194,39 +275,132 @@ export async function runAgentLoop(
             )
           : agent.session.messages;
       if (!turnContextInjected) turnContextInjected = true;
-      const modeKind = agent.session.getCollaborationMode().kind;
-      // R4.6: recompute each iteration — enter/exit_plan_mode can flip mid-turn.
-      const toolsForModel = [
-        ...agent.tools.list(),
-        ...mcpToolDefinitions,
-      ].filter(
-        (t) => collaborationModeBlockReason(modeKind, t.name) === undefined,
-      );
+
+      // IMMUTABLE PER-STEP SNAPSHOT. Everything this iteration uses —
+      // model, tool list, sandbox policy, collaboration mode, retry
+      // policy — is captured once here. A `/model` or `/sandbox` swap
+      // that lands mid-iteration is adopted at the NEXT boundary, so one
+      // request can never mix a pre-change model with a post-change
+      // policy (a turn that is neither configuration, and not
+      // replayable).
+      const step = captureStep(agent, {
+        turnId,
+        iteration: iterations,
+        filterTools: (tools) =>
+          [...tools, ...mcpToolDefinitions].filter(
+            (t) =>
+              collaborationModeBlockReason(
+                agent.session.getCollaborationMode().kind,
+                t.name,
+              ) === undefined,
+          ),
+      });
+      const changed = describeSnapshotChange(previousStep, step);
+      if (changed !== undefined) {
+        agent.emit({
+          kind: "error",
+          ts: new Date().toISOString(),
+          iteration: iterations,
+          message: `step configuration changed (${changed}); applying from this iteration`,
+        });
+      }
+      previousStep = step;
+
+      const toolsForModel = step.tools;
+      // DURABILITY BARRIER. Everything the model is about to see must be
+      // on disk before it acts on it again: if we crash after this
+      // request, a resume must replay the exact transcript the model was
+      // given. Without this, a crash could leave a `tool_call` durably
+      // logged with its result missing — for a tool that already ran.
+      {
+        const durable = await ensureDurable(agent.session);
+        if (!durable.ok) {
+          agent.emit({
+            kind: "error",
+            ts: new Date().toISOString(),
+            iteration: iterations,
+            message: `session persistence failed — refusing to continue: ${durable.message}`,
+          });
+          const note: ContentBlock = {
+            type: "text",
+            text: durabilityRefusalMessage(durable.message),
+          };
+          agent.session.appendMessage("assistant", [note]);
+          return agent.makeResult([note], "aborted", iterations);
+        }
+      }
+
       // Prefix-cache discipline (see `context/ephemeral-user-context.ts`):
       // 1. the transcript is append-only, so this request is a strict
       //    prefix-extension of the previous one;
       // 2. `promptCacheKey` pins the conversation (and every request in
       //    it) to one provider-side cache partition, so the cached
       //    prefix is actually reused instead of being re-billed.
-      response = await agent.model.complete({
-        messages: messagesForModel,
-        tools: toolsForModel,
+      // Transient failures (429 / 5xx / dropped socket / timeout) are
+      // the most common way a long run dies. Retry them with bounded
+      // exponential backoff before surfacing an error to the user; a
+      // non-transient failure (bad request, auth) is never retried.
+      const retryPolicy: RetryPolicy = step.retryPolicy ?? DEFAULT_RETRY_POLICY;
+      response = await withRetry({
         signal: agent.abortController.signal,
-        promptCacheKey: agent.session.id,
-        ...(agent.assistantStreamSink !== undefined
-          ? { onTextDelta: agent.assistantStreamSink }
-          : {}),
+        policy: retryPolicy,
+        attempt: () =>
+          step.model.complete({
+            messages: messagesForModel,
+            tools: toolsForModel,
+            signal: agent.abortController.signal,
+            promptCacheKey: agent.session.id,
+            ...(agent.assistantStreamSink !== undefined
+              ? { onTextDelta: agent.assistantStreamSink }
+              : {}),
+          }),
+        onRetry: (decision, failure) => {
+          agent.emit({
+            kind: "error",
+            ts: new Date().toISOString(),
+            iteration: iterations,
+            message:
+              `transient model failure (${failure.class}); retry ` +
+              `${decision.retryNumber}/${retryPolicy.maxRetries} in ${decision.delayMs}ms — ${decision.reason}`,
+          });
+          // Durable: the trace above is disabled by default
+          // (`NullTracer`), so without this a session that survived a
+          // rate-limit storm looks identical to one that never hit
+          // trouble when it is later resumed.
+          agent.session.recordDiagnostic?.({
+            kind: "retry",
+            at: new Date().toISOString(),
+            iteration: iterations,
+            failureClass: failure.class,
+            retryNumber: decision.retryNumber,
+            delayMs: decision.delayMs,
+            detail: decision.reason,
+          });
+        },
+        onGiveUp: (refusal, failure) => {
+          // Distinguish "we ran out of attempts" from "the turn was
+          // cancelled mid-backoff": the first is a failure the user must
+          // know about, the second is expected.
+          const aborted = agent.abortController.signal.aborted;
+          agent.session.recordDiagnostic?.({
+            kind: aborted ? "retry-abandoned" : "retry-exhausted",
+            at: new Date().toISOString(),
+            iteration: iterations,
+            failureClass: failure.class,
+            detail: refusal.reason,
+          });
+        },
       });
     } catch (err) {
       if (agent.abortController.signal.aborted) {
         return agent.makeResult([], "aborted", iterations);
       }
-      // Model errors are surfaced as a synthetic assistant
-      // message so the user sees the error in the transcript
-      // and the loop exits cleanly. (No retry here: a retry
-      // doubles the hang on bad configs / dead endpoints —
-      // the tool-loop + empty-response heals below cover the
-      // recoverable cases.)
+      // A failure that survived retry (non-transient, or retries
+      // exhausted) is surfaced as a synthetic assistant message so the
+      // user sees it in the transcript and the loop exits cleanly.
+      // Non-transient errors are deliberately NOT retried: retrying a
+      // 400 or an auth failure only doubles the wait before the user
+      // sees the real problem.
       const message = (err as Error).message ?? String(err);
       agent.emit({
         kind: "error",

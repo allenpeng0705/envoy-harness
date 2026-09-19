@@ -22,7 +22,8 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { removeTempDir } from "./support/tmp-dir.js";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
@@ -49,7 +50,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await rm(tmpDir, { recursive: true, force: true });
+  await removeTempDir(tmpDir);
 });
 
 // ---------------------------------------------------------------------------
@@ -71,8 +72,10 @@ describe("runRepl: sessionStore + resumeFromId", () => {
     written.appendMessage("assistant", [
       { type: "text", text: "prior assistant" },
     ]);
-    // Wait for the fire-and-forget disk write.
-    await new Promise((r) => setTimeout(r, 50));
+    // Durability barrier: the REPL loads this file next, so the seed must
+    // be on disk. `close()` flushes AND releases the lease, matching what
+    // a separate process would have done.
+    await written.close();
 
     // 2. Run the REPL with the session store + id.
     const out = new StringWritable();
@@ -136,7 +139,7 @@ describe("runRepl: sessionStore + resumeFromId", () => {
       title: "round-trip",
     });
     written.appendMessage("user", [{ type: "text", text: "hi" }]);
-    await new Promise((r) => setTimeout(r, 50));
+    await written.close();
 
     // Run a REPL turn that appends a new user +
     // assistant message to the loaded session.
@@ -150,8 +153,9 @@ describe("runRepl: sessionStore + resumeFromId", () => {
       stderr: new StringWritable(),
       historyPath: "",
     });
-    // Wait for the fire-and-forget writes.
-    await new Promise((r) => setTimeout(r, 50));
+    // No sleep needed: `runRepl` closes the session it owns on the way
+    // out (which flushes), so the transcript is durable by the time it
+    // returns. A fixed sleep here was a load-dependent race.
 
     // Reload via the store + verify the file has the
     // new messages.
@@ -233,9 +237,8 @@ describe("runRepl: createSession factory", () => {
     expect(result.sessionId).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
     );
-    // The new session is on disk (fire-and-forget
-    // wait).
-    await new Promise((r) => setTimeout(r, 50));
+    // The new session is on disk: `runRepl` closes the session it owns
+    // before returning, which flushes.
     const ids = await store.list();
     expect(ids).toContain(result.sessionId);
   });

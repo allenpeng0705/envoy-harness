@@ -1,4 +1,30 @@
 /**
+ * Serialize a session to its on-disk JSONL form (header + messages).
+ *
+ * Module-level so both the instance method and the static `open()`
+ * repair path share one implementation — a second copy is exactly how
+ * a "rewrite" silently starts dropping a field.
+ */
+function serializeSession(
+  id: string,
+  metadata: SessionMetadata,
+  formatVersion: number,
+  generation: number,
+  messages: ReadonlyArray<Message>,
+): string {
+  const header: PersistedHeader = {
+    _kind: "header",
+    id,
+    metadata,
+    formatVersion,
+    ...(formatVersion >= 2 ? { generation } : {}),
+  };
+  const lines = [JSON.stringify(header)];
+  for (const m of messages) lines.push(JSON.stringify(m));
+  return `${lines.join("\n")}\n`;
+}
+
+/**
  * F14.1 — `PersistedSession`: a `Session` implementation
  * backed by a JSONL file on disk.
  *
@@ -27,25 +53,20 @@
  * field is a sentinel that distinguishes the header
  * from a `Message` (which has `role`, not `_kind`).
  *
- * **Sync `appendMessage` + fire-and-forget disk
- * write:** the existing `Session` interface is
- * synchronous (13+ call sites in `agent.ts` use
- * it without `await`). PersistedSession matches:
- * the in-memory push is sync, the disk write is
- * fired in the background. Errors in the disk
- * write are swallowed (no logger to pass in).
- * The in-memory list is the source of truth for
- * the running session; the file is best-effort
- * durability. If the process crashes mid-write,
- * the user can re-run with `--resume` to recover
- * from the file (which is up-to-date as of the
- * last successful write).
+ * **Sync `appendMessage` + buffered durable write:** the `Session`
+ * interface is synchronous (13+ call sites), so `appendMessage` pushes
+ * to memory and buffers one line in the durable writer. The agent loop
+ * awaits `flush()` before each model request and before each tool body,
+ * so the on-disk log is a faithful record of what the model saw and
+ * what the tools did.
  *
- * **No fsync:** durability beyond the OS's normal
- * flushing is the host's concern. F14 doesn't ship
- * an explicit `fsync` — it's a YAGNI. The user can
- * always `--resume` from a different session if the
- * OS crashes.
+ * **Durability is explicit, not assumed:** the writer batches, `fsync`s,
+ * rolls back a partial append to the previous file size, and *rejects*
+ * `flush()` on failure instead of swallowing it. A crash mid-append
+ * leaves a torn tail that `open()` drops and reports; a crash between a
+ * `tool_call` and its result is repaired on load with an explicit
+ * "outcome UNKNOWN" result, so a resumed session can neither be rejected
+ * by the provider nor silently re-run a side-effecting tool.
  *
  * **Stability:** additive. New fields on the
  * `header` line are forward-compatible (loaders
@@ -56,10 +77,23 @@
  */
 
 import { promises as fs } from "node:fs";
+
+import { DurableLineWriter } from "./durable-writer.js";
+import {
+  EMPTY_REPAIR_REPORT,
+  repairDanglingToolCalls,
+  splitCompleteLines,
+  type SessionRepairReport,
+} from "./repair.js";
 import * as path from "node:path";
 
 import type { ContentBlock, Message, Role } from "../tools/types.js";
-import type { Session, SessionMetadata } from "../session.js";
+import {
+  appendDiagnostic,
+  type Session,
+  type SessionDiagnosticEvent,
+  type SessionMetadata,
+} from "../session.js";
 import {
   PERSISTED_SESSION_FORMAT_VERSION,
   buildCreateHeader,
@@ -107,10 +141,24 @@ export class PersistedSession implements Session {
   readonly id: string;
   readonly metadata: SessionMetadata;
   private _messages: Message[] = [];
-  private readonly filePath: string;
+  /**
+   * Absolute path of the JSONL file backing this session. Public because
+   * hosts need it for `--resume`, the session picker, and `doctor`.
+   */
+  readonly filePath: string;
   private lease: SessionWriteLease | undefined;
   private formatVersion: number;
   private generation: number;
+  /**
+   * Durable, batched, ordered writer for the JSONL file. Replaced the
+   * per-message `writeFile(..., {flag:"a"})` + swallowed-error chain:
+   * see `durable-writer.ts` for the five defects it fixes.
+   */
+  private writer: DurableLineWriter;
+  /** What had to be repaired when this session was opened. */
+  private repairReport: SessionRepairReport = EMPTY_REPAIR_REPORT;
+  /** Last write failure surfaced by the writer (for diagnostics). */
+  private lastWriteError: Error | undefined;
 
   private constructor(
     id: string,
@@ -124,6 +172,25 @@ export class PersistedSession implements Session {
     this.filePath = filePath;
     this.formatVersion = formatVersion;
     this.generation = generation;
+    this.writer = new DurableLineWriter({
+      filePath,
+      onError: (err) => {
+        // Recorded AND reported: never silently swallowed (that was the
+        // old behavior, and it hid disk-full / permission failures until
+        // the user tried to resume).
+        this.lastWriteError = err;
+      },
+    });
+  }
+
+  /** How the log was repaired on open (torn tail / dangling calls). */
+  get repairedOnOpen(): SessionRepairReport {
+    return this.repairReport;
+  }
+
+  /** The most recent write failure, if any (diagnostics / doctor). */
+  get writeError(): Error | undefined {
+    return this.lastWriteError;
   }
 
   get messages(): ReadonlyArray<Message> {
@@ -204,10 +271,18 @@ export class PersistedSession implements Session {
       }
       throw err;
     }
-    const lines = content.split("\n").filter((l) => l.length > 0);
+    // A crash mid-append leaves a partial final line. Guessing at it is
+    // impossible, so drop it and report — the alternative (throwing
+    // "invalid message at line N") made a crashed session permanently
+    // unopenable, which is the worst outcome for the only copy of the
+    // user's work.
+    const { lines: completeLines, torn } = splitCompleteLines(content);
+    const lines = completeLines.filter((l) => l.length > 0);
     if (lines.length === 0) {
       throw new Error(`PersistedSession.open: file is empty: ${filePath}`);
     }
+    const tornBytes =
+      torn === undefined ? 0 : Buffer.byteLength(torn, "utf8");
     // Line 1: header.
     let header: PersistedHeader;
     try {
@@ -265,21 +340,53 @@ export class PersistedSession implements Session {
         );
       }
     }
+    // Close any tool_call whose result was never recorded. The tool may
+    // already have run, so the model must be told the outcome is unknown
+    // rather than being allowed to retry it blindly (or having the
+    // provider reject a dangling call outright).
+    const closed = repairDanglingToolCalls(session._messages);
+    const appendedResults = closed.messages.length - session._messages.length;
+    if (appendedResults > 0) {
+      session._messages = closed.messages;
+    }
+    session.repairReport = {
+      tornTail: torn !== undefined,
+      tornBytes,
+      danglingToolCalls: closed.repaired,
+    };
+
     if (!options.readOnly) {
       session.lease = await acquireSessionWriteLease(filePath);
+      // Persist the repair so the transcript on disk matches what the
+      // model will actually be sent (otherwise every resume re-repairs).
+      if (torn !== undefined || closed.repaired > 0) {
+        session.writer.rewrite(
+          serializeSession(
+            session.id,
+            session.metadata,
+            session.formatVersion,
+            session.generation,
+            session._messages,
+          ),
+        );
+        await session.writer.flush();
+      }
     }
     return session;
   }
 
   /**
-   * Append a message to the transcript. Sync
-   * (matches the `Session` interface contract):
-   * the in-memory push is sync, the disk write is
-   * fire-and-forget (errors swallowed).
+   * Append a message to the transcript.
    *
-   * The return value matches `InMemorySession`
-   * (the new length); the disk write is
-   * best-effort.
+   * Sync by contract (the `Session` interface is synchronous and has 13+
+   * call sites): the in-memory push happens immediately and the line is
+   * **buffered** in the durable writer. The return value matches
+   * `InMemorySession` (the new length).
+   *
+   * **Durability:** buffering is not durability. The line survives a
+   * crash only after a resolved `flush()` — which the agent loop awaits
+   * at the two boundaries that matter (before a model request, and
+   * before a tool body). A buffered write is *ordered* but not promised.
    */
   appendMessage(
     role: Role,
@@ -287,7 +394,10 @@ export class PersistedSession implements Session {
   ): number {
     const message: Message = { role, content: [...content] };
     this._messages.push(message);
-    this.appendLineFireAndForget(JSON.stringify(message));
+    // Buffered + ordered. Durable only after a resolved `flush()` — the
+    // caller decides when that must happen (see the barriers in
+    // `agent/run-loop.ts` and `agent/tool-executor.ts`).
+    this.writer.append(JSON.stringify(message));
     return this._messages.length;
   }
 
@@ -297,8 +407,7 @@ export class PersistedSession implements Session {
    * pass in; the in-memory state is the source of
    * truth during the run).
    *
-   * **Write ordering:** writes are chained via
-   * `this.writeChain` so the file ends up with
+   * **Write ordering:** writes are serialized by the durable writer so the file ends up with
    * lines in the order `appendMessage` was called.
    * Without the chain, libuv's threadpool could
    * schedule the writes in parallel, and the
@@ -309,19 +418,20 @@ export class PersistedSession implements Session {
    * a different `PersistedSession` instance has
    * its own chain.
    */
-  private writeChain: Promise<void> = Promise.resolve();
-  private appendLineFireAndForget(line: string): void {
-    this.writeChain = this.writeChain.then(() =>
-      fs
-        .writeFile(this.filePath, line + "\n", {
-          encoding: "utf-8",
-          flag: "a",
-        })
-        .then(() => undefined)
-        .catch(() => {
-          // Swallow: no logger, no recovery path in v0.
-          // The user can recover via --resume.
-        }),
+  /**
+   * The full file contents: header line + one line per message.
+   *
+   * Used by `rewriteHeader` and `clear`. Building it from the live
+   * in-memory transcript means a rewrite can never drop a message the
+   * session already holds.
+   */
+  private serialize(): string {
+    return serializeSession(
+      this.id,
+      this.metadata,
+      this.formatVersion,
+      this.generation,
+      this._messages,
     );
   }
 
@@ -330,40 +440,41 @@ export class PersistedSession implements Session {
   }
 
   /**
-   * Clear the transcript. Sync (in-memory reset);
-   * the disk truncation is fire-and-forget (chained
-   * via `writeChain` so it doesn't interleave with
-   * in-flight `appendMessage` writes).
+   * Replace the entire transcript in ONE atomic publish.
+   *
+   * The old implementation of this operation was `clear()` (which
+   * durably rewrote the file to header-only) followed by re-appending the
+   * kept messages. Between those two steps the session's only durable
+   * copy was empty, so a crash lost the entire history — and compaction
+   * is reachable from `/compact` and from the ACP/SDK `compact` method.
+   *
+   * Here the new content is serialized and published with a single
+   * temp-file + rename, so disk holds either the previous transcript or
+   * the new one, never a header-only intermediate.
+   */
+  replaceMessages(messages: ReadonlyArray<Message>): void {
+    this._messages = messages.map((m) => ({
+      role: m.role,
+      content: [...m.content],
+    }));
+    this.writer.rewrite(this.serialize());
+  }
+
+  /**
+   * Clear the transcript. Sync (in-memory reset); the disk rewrite is
+   * enqueued in the writer's serial chain so it cannot interleave with
+   * in-flight appends. Call `flush()` for durability.
    */
   clear(): void {
     this._messages = [];
     // Rewrite the file with just the header (preserve format).
-    const header: PersistedHeader = {
-      _kind: "header",
-      id: this.id,
-      metadata: this.metadata,
-      formatVersion: this.formatVersion,
-      ...(this.formatVersion >= 2 ? { generation: this.generation } : {}),
-    };
-    this.writeChain = this.writeChain.then(() =>
-      fs
-        .writeFile(
-          this.filePath,
-          JSON.stringify(header) + "\n",
-          "utf-8",
-        )
-        .then(() => undefined)
-        .catch(() => {
-          // Swallow: see appendLineFireAndForget.
-        }),
-    );
+    this.writer.rewrite(this.serialize());
   }
 
   /**
-   * F14.1: update the display title. Mutates
-   * `metadata.title` (in memory) AND rewrites the
-   * file (fire-and-forget) so the title survives
-   * a `--resume`.
+   * F14.1: update the display title. Mutates `metadata.title` (in
+   * memory) AND enqueues an atomic file rewrite so the title survives a
+   * `--resume`.
    *
    * **Why rewrite the whole file:** the header is
    * the first line of the file. Appending the
@@ -419,44 +530,55 @@ export class PersistedSession implements Session {
   }
 
   /**
-   * Rewrite the JSONL header (first line) without
-   * touching the messages. Used by `setTitle` +
-   * `setPlan`. Same error-swallowing pattern.
+   * Append a durable diagnostic record and republish the header.
+   *
+   * **Cost:** `rewriteHeader` serializes header + ALL messages and swaps
+   * the file atomically, so this is O(transcript) per record. That is
+   * acceptable because only retries and sandbox denials call it and both
+   * are rare and bounded — but it is why the log is capped at
+   * {@link MAX_SESSION_DIAGNOSTICS} rather than being an unbounded audit
+   * trail.
    */
-  private rewriteHeader(): void {
-    const header: PersistedHeader = {
-      _kind: "header",
-      id: this.id,
-      metadata: this.metadata,
-      formatVersion: this.formatVersion,
-      ...(this.formatVersion >= 2 ? { generation: this.generation } : {}),
-    };
-    const lines: string[] = [JSON.stringify(header)];
-    for (const m of this._messages) {
-      lines.push(JSON.stringify(m));
-    }
-    this.writeChain = this.writeChain.then(() =>
-      fs
-        .writeFile(this.filePath, lines.join("\n") + "\n", "utf-8")
-        .then(() => undefined)
-        .catch(() => {
-          // Swallow.
-        }),
-    );
+  recordDiagnostic(event: SessionDiagnosticEvent): void {
+    appendDiagnostic(this.metadata, event);
+    this.rewriteHeader();
+  }
+
+  diagnostics(): ReadonlyArray<SessionDiagnosticEvent> {
+    return this.metadata.diagnostics ?? [];
   }
 
   /**
-   * F-fix: await the write chain so the transcript is durable
-   * before the CLI returns. Without this, fire-and-forget
-   * appends can be lost if the process exits immediately after
-   * `run()` (e.g. a host calling `process.exit()`).
+   * Rewrite the JSONL header (first line) without touching the messages.
+   * Used by `setTitle`, `setPlan`, `setCollaborationMode`, and
+   * `recordDiagnostic`.
    *
-   * Errors are already swallowed by each chain link (the
-   * in-memory state is the source of truth); `flush()` resolves
+   * Goes through the writer's atomic rewrite path (temp file + rename),
+   * so a crash mid-rewrite leaves the previous transcript intact rather
+   * than truncating it — which a plain in-place `writeFile` would.
+   */
+  private rewriteHeader(): void {
+    this.writer.rewrite(this.serialize());
+  }
+
+  /**
+   * Durability barrier: resolve only after everything buffered has been
+   * written **and fsynced**.
+   *
+   * **Rejects when a write failed.** Callers that treat the transcript
+   * as the record of what happened must not ignore that — the agent loop
+   * aborts the turn, and the tool executor refuses to run a tool whose
+   * result could not be recorded.
+   *
+   * (Historical note: this used to say errors "are already swallowed by
+   * each chain link". They no longer are — that was the defect.)
    * when the queued writes have been attempted.
    */
   async flush(): Promise<void> {
-    await this.writeChain;
+    // Rejects when a write failed. Callers that treat the transcript as
+    // the record of what happened MUST NOT ignore this: continuing would
+    // mean acting on state that cannot be recovered.
+    await this.writer.flush();
   }
 
   /**
@@ -464,7 +586,7 @@ export class PersistedSession implements Session {
    * can open the same file.
    */
   async close(): Promise<void> {
-    await this.flush();
+    await this.writer.close();
     if (this.lease !== undefined) {
       await this.lease.release();
       this.lease = undefined;

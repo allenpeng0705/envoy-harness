@@ -31,6 +31,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   Agent,
+  DEFAULT_RETRY_POLICY,
   defaultBuildSubagentFactory,
   HookRegistry,
   InMemorySession,
@@ -308,7 +309,14 @@ describe("LocalMeshSubmitter verdict synthesis", () => {
       },
     };
     const submitter = new LocalMeshSubmitter({
-      buildSubagent: defaultBuildSubagentFactory({ model: failingModel }),
+      buildSubagent: defaultBuildSubagentFactory({
+        model: failingModel,
+        // This test asserts VERDICT SYNTHESIS on a model failure, so
+        // disable retry: otherwise the transient-failure policy retries
+        // "rate limit" five times with backoff and the test times out.
+        // Retry itself is covered by `test/llm-retry.test.ts`.
+        retryPolicy: { ...DEFAULT_RETRY_POLICY, maxRetries: 0 },
+      }),
       workerPeerId: "p1",
     });
     const result = await submitter.submit(

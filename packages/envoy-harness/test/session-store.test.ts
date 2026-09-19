@@ -17,7 +17,8 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
+import { removeTempDir } from "./support/tmp-dir.js";
+import { mkdtemp, utimes, writeFile } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
@@ -31,7 +32,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await rm(tmpDir, { recursive: true, force: true });
+  await removeTempDir(tmpDir);
 });
 
 function makeMeta(title = "test") {
@@ -78,8 +79,8 @@ describe("SessionStore.load", () => {
     const store = new SessionStore({ dir: tmpDir });
     const written = await store.create(makeMeta("loaded title"));
     written.appendMessage("user", [{ type: "text", text: "hi" }]);
-    // Wait for the fire-and-forget disk write.
-    await new Promise((r) => setTimeout(r, 50));
+    // Durability barrier, not a sleep.
+    await written.flush();
     const loaded = await store.load(written.id);
     expect(loaded.id).toBe(written.id);
     expect(loaded.metadata.title).toBe("loaded title");
@@ -161,12 +162,11 @@ describe("SessionStore + PersistedSession integration", () => {
   it("a session created via the store round-trips through load", async () => {
     const store = new SessionStore({ dir: tmpDir });
     const written = await store.create(makeMeta("round trip"));
-    // Append a few messages; the fire-and-forget
-    // disk writes need a tick to flush before the
-    // reload sees them.
+    // Append a few messages, then wait for the durability barrier before
+    // reloading: the appends themselves are batched.
     written.appendMessage("user", [{ type: "text", text: "hi" }]);
     written.appendMessage("assistant", [{ type: "text", text: "hello" }]);
-    await new Promise((r) => setTimeout(r, 50));
+    await written.flush();
     const loaded = await store.load(written.id);
     expect(loaded.id).toBe(written.id);
     expect(loaded.metadata.title).toBe("round trip");

@@ -41,6 +41,8 @@ export const readFileTool: Tool<
   z.ZodObject<{ path: z.ZodString; maxBytes: z.ZodOptional<z.ZodNumber> }>
 > = {
   name: "read_file",
+  // A stuck network mount should surface, not hang.
+  timeoutMs: 30_000,
   description:
     "Read the contents of a file at `path` (relative to cwd or absolute). " +
     "Returns the file contents as a UTF-8 string. Use `maxBytes` to cap " +

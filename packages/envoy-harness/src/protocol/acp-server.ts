@@ -25,6 +25,7 @@ import {
   readOptionalCwd,
   readSessionId,
 } from "./acp-params.js";
+import { notifyAcpAvailableCommands } from "./slash-dispatch.js";
 
 export const ACP_PROTOCOL_VERSION = 1;
 
@@ -92,6 +93,10 @@ export function attachAcpServer(options: AcpServerOptions): () => void {
           cwd !== undefined ? { cwd } : undefined,
         );
         sessions.set(sessionId, { busy: false, abort: undefined });
+        await notifyAcpAvailableCommands(
+          (method, note) => connection.notify(method, note),
+          sessionId,
+        );
         return { sessionId };
       }
 
@@ -110,6 +115,10 @@ export function attachAcpServer(options: AcpServerOptions): () => void {
           ...(cwd !== undefined ? { cwd } : {}),
         });
         sessions.set(loaded.sessionId, { busy: false, abort: undefined });
+        await notifyAcpAvailableCommands(
+          (method, note) => connection.notify(method, note),
+          loaded.sessionId,
+        );
         return {
           sessionId: loaded.sessionId,
           ...(loaded.messages !== undefined ? { messages: loaded.messages } : {}),

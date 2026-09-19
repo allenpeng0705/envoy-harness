@@ -33,10 +33,13 @@ import { SessionStore } from "../session/session-store.js";
 import { messagesToUiTranscript } from "./transcript-ui.js";
 import type { UserQuestionService } from "../interaction/user-questions.js";
 import {
+  DEFAULT_SESSION_ACQUIRE_TIMEOUT_MS,
+  acquirePersistedSession,
   cancelPendingUserQuestions,
   createHostAskHandler,
   emptyLiveSession,
   installLivePermissionHook,
+  retireLiveSession,
   wireHostUserQuestions,
   type LiveSession,
 } from "./agent-backend-host.js";
@@ -50,8 +53,19 @@ import type {
   ProtocolSessionBackend,
   ProtocolToolInfo,
 } from "./session-backend.js";
+import { dispatchAcpSlash, rememberAcpTurn } from "./slash-dispatch.js";
 
 export interface AgentSessionBackendOptions {
+  /**
+   * Bound on session acquisition (file open + lease + transcript parse).
+   *
+   * ACP requests have no deadline of their own, so a contended lock or a
+   * very large transcript would hang the request forever with no output.
+   * On timeout the acquisition is **not abandoned**: `SessionInitGuard`
+   * retains the in-flight promise and releases whatever lease it installs,
+   * which is the whole reason the guard exists. `0` disables the bound.
+   */
+  sessionAcquireTimeoutMs?: number;
   createAgent: (opts: {
     sessionId: string;
     cwd: string | undefined;
@@ -168,6 +182,9 @@ export function createAgentSessionBackend(
 ): ProtocolSessionBackend {
   const sessions = new Map<string, LiveSession>();
   const maxSessions = options.maxSessions ?? 32;
+  const acquireTimeoutMs =
+    options.sessionAcquireTimeoutMs ?? DEFAULT_SESSION_ACQUIRE_TIMEOUT_MS;
+
 
   const pruneIfNeeded = (): void => {
     while (sessions.size >= maxSessions) {
@@ -182,10 +199,7 @@ export function createAgentSessionBackend(
       if (oldestId === undefined) break;
       const doomed = sessions.get(oldestId);
       sessions.delete(oldestId);
-      doomed?.abort?.abort();
-      doomed?.permissionWait?.resolve("deny");
-      if (doomed !== undefined) cancelPendingUserQuestions(doomed);
-      doomed?.agent.abort("session evicted");
+      retireLiveSession(doomed, "session evicted");
     }
   };
 
@@ -198,11 +212,15 @@ export function createAgentSessionBackend(
         | import("../session/persisted-session.js").PersistedSession
         | undefined;
       if (options.sessionStore !== undefined) {
-        persisted = await options.sessionStore.create({
-          cwd,
-          startedAt: new Date().toISOString(),
-          permissionMode: "workspace-write",
-        });
+        persisted = await acquirePersistedSession(
+          () =>
+            options.sessionStore!.create({
+              cwd,
+              startedAt: new Date().toISOString(),
+              permissionMode: "workspace-write",
+            }),
+          acquireTimeoutMs,
+        );
         sessionId = persisted.id;
       } else {
         sessionId = newSessionId();
@@ -227,7 +245,10 @@ export function createAgentSessionBackend(
         throw new Error("session store not configured");
       }
       pruneIfNeeded();
-      const persisted = await options.sessionStore.load(params.sessionId);
+      const persisted = await acquirePersistedSession(
+        () => options.sessionStore!.load(params.sessionId),
+        acquireTimeoutMs,
+      );
       const sessionId = persisted.id;
       const cwd =
         params.cwd ??
@@ -235,10 +256,7 @@ export function createAgentSessionBackend(
         options.defaultCwd;
       const doomed = sessions.get(sessionId);
       if (doomed !== undefined) {
-        doomed.abort?.abort();
-        doomed.permissionWait?.resolve("deny");
-        cancelPendingUserQuestions(doomed);
-        doomed.agent.abort("session replaced");
+        retireLiveSession(doomed, "session replaced");
         sessions.delete(sessionId);
       }
       const live = emptyLiveSession();
@@ -271,6 +289,22 @@ export function createAgentSessionBackend(
       if (live === undefined) {
         throw new Error(`unknown session: ${params.sessionId}`);
       }
+      // A leading `/` is a REPL command, not a model turn.
+      const slash = await dispatchAcpSlash({
+        agent: live.agent,
+        prompt: params.prompt,
+        ...(options.memoryStore !== undefined
+          ? { memoryStore: options.memoryStore }
+          : {}),
+        ...(options.scoreboardSummary !== undefined
+          ? { scoreboard: { entries: () => options.scoreboardSummary!() } }
+          : {}),
+      });
+      if (slash !== undefined) {
+        const message = slash.messages[0];
+        if (message !== undefined) params.onUpdate?.(message);
+        return slash;
+      }
       live.requestPermission = params.requestPermission;
       live.requestUserQuestion =
         params.requestUserQuestion !== undefined
@@ -280,6 +314,9 @@ export function createAgentSessionBackend(
                 value: typeof raw.value === "string" ? raw.value : "",
                 ...(typeof raw.optionIndex === "number"
                   ? { optionIndex: raw.optionIndex }
+                  : {}),
+                ...(Array.isArray(raw.optionIndexes) && raw.optionIndexes.length > 0
+                  ? { optionIndexes: raw.optionIndexes }
                   : {}),
                 cancelled: raw.cancelled === true,
                 ...(raw.cancelled === true
@@ -375,6 +412,17 @@ export function createAgentSessionBackend(
         const stopReason = params.signal.aborted
           ? "cancelled"
           : result.stopReason;
+        const lastAssistant = [...messages]
+          .reverse()
+          .find((m) => m.role === "assistant");
+        const costUsd =
+          typeof live.agent.getCost === "function"
+            ? live.agent.getCost().costUsd
+            : 0;
+        rememberAcpTurn(live.agent, {
+          ...(lastAssistant !== undefined ? { text: lastAssistant.text } : {}),
+          costUsd,
+        });
         return {
           stopReason,
           messages,
@@ -411,6 +459,12 @@ export function createAgentSessionBackend(
       const before = live.agent.getMessageCount();
       if (params.budget !== undefined) {
         const r = live.agent.compactWithBudget(params.budget);
+        // The swap is atomic, but "atomic" only means the OLD transcript
+        // survives a crash — not that the compaction does. Await durability
+        // before reporting success, or a client that compacts and
+        // immediately disconnects sees the pre-compaction history back on
+        // `--resume` with no indication anything was lost.
+        await live.agent.flushSession();
         const after = live.agent.getMessageCount();
         return {
           messageCountBefore: before,
@@ -422,20 +476,13 @@ export function createAgentSessionBackend(
       }
       const keep = params.keep ?? DEFAULT_COMPACT_KEEP;
       if (params.summarize === true) {
-        try {
-          await live.agent.compactWithSummary(keep, (dropped) =>
-            summarizeDroppedMessages(live.agent, dropped),
-          );
-        } catch {
-          live.agent.compact(keep);
-          const after = live.agent.getMessageCount();
-          return {
-            messageCountBefore: before,
-            messageCountAfter: after,
-            droppedCount: Math.max(0, before - after),
-            summarized: false,
-          };
-        }
+        // COMMIT-OR-DISCARD: a failed summary must NOT degrade to
+        // drop-oldest here. That fallback would destroy the oldest part
+        // of the conversation with no replacement — the exact context
+        // loss `compactWithSummary` now refuses to commit.
+        await live.agent.compactWithSummary(keep, (dropped) =>
+          summarizeDroppedMessages(live.agent, dropped),
+        );
         const after = live.agent.getMessageCount();
         return {
           messageCountBefore: before,
@@ -445,6 +492,8 @@ export function createAgentSessionBackend(
         };
       }
       live.agent.compact(keep);
+      // Publish is atomic; wait for it to be durable before reporting.
+      await live.agent.flushSession();
       const after = live.agent.getMessageCount();
       return {
         messageCountBefore: before,

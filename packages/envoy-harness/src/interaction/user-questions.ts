@@ -64,6 +64,12 @@ export interface UserQuestionRequest {
    */
   recommendedIndex?: number;
   /**
+   * When true and `options` is set, the human may pick more
+   * than one. The answer carries `optionIndexes`. Ignored
+   * when `options` is unset.
+   */
+  multiple?: boolean;
+  /**
    * Multiline mode: the human types until a sentinel
    * (default `"""` on its own line). Useful for diffs +
    * error logs + anything the LLM asks the human to paste
@@ -103,6 +109,11 @@ export interface UserQuestionAnswer {
    * when the request had no fixed options (free-form).
    */
   optionIndex?: number;
+  /**
+   * Every 0-based index the human picked, when the request
+   * set `multiple`. Absent for a single pick or free text.
+   */
+  optionIndexes?: readonly number[];
   /**
    * `true` when the service has no provider, the signal
    * aborted, or the timeout fired. The model SHOULD treat

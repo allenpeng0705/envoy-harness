@@ -52,13 +52,8 @@ import {
 } from "../../interaction/index.js";
 import { LocalMemoryStore } from "../../memories/index.js";
 import type { MemoryStore } from "../../memories/index.js";
-import { BUILTIN_COMMANDS } from "./commands.js";
-import { BUILTIN_INFO_COMMANDS } from "./commands-info.js";
-import { BUILTIN_TIER2_BATCH2_COMMANDS } from "./commands-tier2-batch2.js";
-import { BUILTIN_TIER2_BATCH3_COMMANDS } from "./commands-tier2-batch3.js";
-import { BUILTIN_TIER2_BATCH4_COMMANDS } from "./commands-tier2-batch4.js";
-import { BUILTIN_TIER2_COMMANDS } from "./commands-tier2.js";
-import { EXIT_NAMES, ReplCommandRegistry, dispatchCommand, parseCommandLine } from "./registry.js";
+import { buildBuiltinRegistry } from "./builtin-registry.js";
+import { EXIT_NAMES, dispatchCommand, parseCommandLine } from "./registry.js";
 import type { LineReader, ReplOptions, ReplResult } from "./types.js";
 
 /**
@@ -132,333 +127,341 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
       sandbox: opts.args.sandbox ?? "read-only",
     });
   }
-  const tools = new ToolRegistry();
-  for (const t of BUILTIN_TOOLS) tools.register(t);
-  const { layer: configLayer } = await loadConfigStack({
-    cwd,
-    ...(opts.args.config !== undefined ? { filePath: opts.args.config } : {}),
-  });
-  const mcpWire = await wireMcpClientsFromConfig(
-    configLayer.mcpServers,
-    tools,
-  );
-  // Phase C: jobs / web / terminal (Cordis-free L3 ports).
-  const environment = wireEnvironmentTools(tools, {
-    ...(opts.skills !== undefined ? { skills: opts.skills } : {}),
-  });
-  const cordisWire = await wireCordisExtensions({
-    plugins: configLayer.cordisPlugins,
-    cwd,
-    tools,
-    environment,
-  });
-  const jobRegistry = cordisWire.jobs;
-  const hooks = opts.hooks ?? new HookRegistry();
-
-  const agentOptions: ConstructorParameters<typeof Agent>[0] = {
-    model: opts.model,
-    tools,
-    session,
-    hooks,
-    cwd,
-    jobRegistry,
-    terminalService: environment.terminals,
-    skills: environment.skills,
-    ...(mcpWire !== undefined ? { mcpClients: mcpWire.registry } : {}),
-    ...(configLayer.shellEnvironmentPolicy !== undefined
-      ? { shellEnvironmentPolicy: configLayer.shellEnvironmentPolicy }
-      : {}),
-    ...(configLayer.askForApproval !== undefined
-      ? { approval: configLayer.askForApproval }
-      : {}),
-  };
-  // Phase G — the REPL's system prompt: AGENTS.md discovery + terminal
-  // guidance (the REPL wires terminal tools via wireEnvironmentTools).
-  agentOptions.systemPrompt = await buildAgentSystemPrompt({
-    cwd,
-    ...systemPromptOptionsFromConfig(configLayer),
-    permissionMode: session.metadata.permissionMode ?? "read-only",
-    ...(configLayer.askForApproval !== undefined
-      ? { askForApproval: configLayer.askForApproval }
-      : {}),
-  });
-  // R8.2 — REPL default turn budget (long-run friendly). One-shot keeps 50.
-  const REPL_DEFAULT_MAX_TURNS = 200;
-  if (opts.args.maxTurns !== undefined) {
-    agentOptions.maxIterations = opts.args.maxTurns;
-  } else {
-    agentOptions.maxIterations = REPL_DEFAULT_MAX_TURNS;
-  }
-  if (opts.args.maxCostUsd !== undefined) {
-    agentOptions.maxCostUsd = opts.args.maxCostUsd;
-  }
-  // F-fix: `--approval` was validated by argv but never wired in
-  // REPL mode (the one-shot path got this wiring earlier). The
-  // agent's `approval === "never"` fail-closed check now works
-  // from the CLI flag, not just from the `/approval` command.
-  if (opts.args.approval !== undefined) {
-    agentOptions.approval = opts.args.approval as
-      | "unless-trusted"
-      | "on-request"
-      | "granular"
-      | "never";
-  }
-  // R8.2 — align sandbox policy with one-shot / ACP via config layer.
-  {
-    const { resolveAgentRuntimeConfig } = await import("../../config/apply.js");
-    const runtime = resolveAgentRuntimeConfig(cwd, configLayer, {
-      permissionMode: session.metadata.permissionMode ?? "read-only",
-      ...(agentOptions.approval !== undefined
-        ? { askForApproval: agentOptions.approval }
-        : {}),
-    });
-    agentOptions.sandboxPolicy = runtime.sandboxPolicy;
-  }
-  if (opts.lspManager) {
-    agentOptions.lspManager = opts.lspManager;
-  }
-  // F9.4: when --json is set, wire a JsonLinesTracer to stdout.
-  // The trace events stream alongside the agent's final text;
-  // downstream tools (jq, a viewer) parse the stream.
-  if (opts.args.json) {
-    agentOptions.tracer = new JsonLinesTracer(out);
-  } else {
-    agentOptions.tracer = new NullTracer();
-  }
-
-  // Phase A / Item 5: build a `UserQuestionService` +
-  // register the REPL stdin provider. The agent's
-  // constructor uses this to auto-register the
-  // `ask_user` tool + install the approval shim.
-  //
-  // The provider uses the SAME `process.stdin` /
-  // `process.stdout` as the main loop's readline. The
-  // Node `readline` package handles concurrent
-  // interfaces correctly (the second interface pauses
-  // the first; closing the second resumes the first),
-  // so the user prompt for `ask_user` interleaves
-  // cleanly with the main REPL prompt.
-  const userQuestions: UserQuestionService = opts.userQuestions ??
-    createUserQuestionService();
-  const disposeUserQuestionsProvider = userQuestions.registerProvider(
-    createReplStdinProvider(),
-  );
-  agentOptions.userQuestions = userQuestions;
-
-  // Phase A / Item 2: build the default memory store
-  // when the host didn't inject one. The default is
-  // `./memories` (relative to the REPL's cwd) or
-  // `$ENVOY_MEMORY_DIR` when set. The store is NOT
-  // created (just referenced) — the first `write`
-  // call creates the directory on demand. Tests
-  // inject a `LocalMemoryStore` rooted at a temp dir.
-  const memoryStore: MemoryStore = opts.memoryStore ??
-    new LocalMemoryStore({
-      memoryRoot: process.env["ENVOY_MEMORY_DIR"] ?? "./memories",
-    });
-  agentOptions.memoryStore = memoryStore;
-
-  // R8.1 — default LocalMeshSubmitter so standalone REPL gets `task`.
-  if (!opts.args.noSubagents) {
-    const { buildCliLocalMeshSubmitter } = await import(
-      "../run/build-local-mesh-submitter.js"
-    );
-    agentOptions.meshSubmitter = buildCliLocalMeshSubmitter({
-      model: opts.model,
-      cwd,
-      permissionMode: session.metadata.permissionMode ?? "workspace-write",
-      ...(agentOptions.tracer !== undefined
-        ? { parentTracer: agentOptions.tracer }
-        : {}),
-      parentSessionId: session.id,
-    });
-  }
-
-  const agent = new Agent(agentOptions);
-
-  // F17.6: extract the sub-agent registry from the
-  // agent's mesh submitter (when one is configured).
-  // The host can override via `opts.subagentRegistry`
-  // (used by tests). The default is the agent's own
-  // submitter's `listSubagents()` (if it implements
-  // the optional method). When neither is set, the
-  // `/agents` command prints "no sub-agents".
-  let subagentRegistry: import("./types.js").SubagentRegistry | undefined =
-    opts.subagentRegistry;
-  if (!subagentRegistry) {
-    const submitter = agent.getMeshSubmitter();
-    if (submitter && typeof submitter.listSubagents === "function") {
-      const list = submitter.listSubagents.bind(submitter);
-      subagentRegistry = { list };
-    }
-  }
-
-  // 3. F17.2 + F17.2.5 + F17.5 + F17.6 + F14.1 + F14.3: build the command registry.
-  //    Custom commands register FIRST; built-ins register
-  //    LAST so they override on name collision. The plan
-  //    says "Built-ins always win on name collision"; this
-  //    order makes that contract true. BUILTIN_COMMANDS is
-  //    the F17.2 set (9 commands); BUILTIN_INFO_COMMANDS is
-  //    the F17.2.5 set (8 info commands); BUILTIN_TIER2_COMMANDS
-  //    is the F17.5 set (3 commands: /new, /compact, /init);
-  //    BUILTIN_TIER2_BATCH2_COMMANDS is the F17.6 set
-  //    (2 commands: /agents, /diff); BUILTIN_TIER2_BATCH3_COMMANDS
-  //    is the F14.1 set (2 commands: /rename, /copy);
-  //    BUILTIN_TIER2_BATCH4_COMMANDS is the F14.3 set
-  //    (2 commands: /review, /export).
-  //    `/undo` is deferred to F17.7.
-  const registry = new ReplCommandRegistry();
-  if (opts.customCommands) {
-    registry.registerAll(opts.customCommands);
-  }
-  registry.registerAll(BUILTIN_COMMANDS);
-  registry.registerAll(BUILTIN_INFO_COMMANDS);
-  registry.registerAll(BUILTIN_TIER2_COMMANDS);
-  registry.registerAll(BUILTIN_TIER2_BATCH2_COMMANDS);
-  registry.registerAll(BUILTIN_TIER2_BATCH3_COMMANDS);
-  registry.registerAll(BUILTIN_TIER2_BATCH4_COMMANDS);
-
-  // 4. The loop.
-  let turns = 0;
-  let totalCostUsd = 0;
-  // F17.3: `exiting` flag so the dispatcher's "exit" can
-  // break out of the loop (rather than `return` from
-  // `runRepl`). Returning would skip the `finally` block
-  // that writes the history file.
-  let exiting = false;
-  // F14.1: track the last assistant text so `/copy`
-  // can print it. Initialized from `opts.lastResponse`
-  // (used by tests for deterministic assertions);
-  // the loop overwrites it on every turn.
-  let lastResponse: string | undefined = opts.lastResponse;
-
-  // F17.3: history. We maintain our own array (the
-  // readline interface's history is per-session and not
-  // seedable from disk; persistence is our concern). The
-  // history covers all non-blank lines the user types
-  // (slash commands included — the user might want to
-  // recall `/model foo` later). Blank lines are skipped.
-  const historySize = opts.historySize ?? 1000;
-  const history: string[] = [];
-  const historyPath = resolveHistoryPath(opts.historyPath);
-  if (historyPath) {
-    const loaded = await loadHistory(historyPath, historySize);
-    history.push(...loaded);
-  }
-
+  // Everything below runs with an acquired session; a failure here must
+  // release the write lease before propagating (the loop's `finally` has
+  // not been entered yet).
   try {
-    for await (const rawLine of lineReader) {
-      // F17.3: if the previous iteration asked us to
-      // exit, break here. We check at the TOP of each
-      // iteration because `break` inside the switch
-      // below only breaks the switch, not the for-await.
-      if (exiting) break;
-      const line = rawLine.trim();
-      if (line === "") continue; // ignore blank lines
+    const tools = new ToolRegistry();
+    for (const t of BUILTIN_TOOLS) tools.register(t);
+    const { layer: configLayer } = await loadConfigStack({
+      cwd,
+      ...(opts.args.config !== undefined ? { filePath: opts.args.config } : {}),
+    });
+    const mcpWire = await wireMcpClientsFromConfig(
+      configLayer.mcpServers,
+      tools,
+    );
+    // Phase C: jobs / web / terminal (Cordis-free L3 ports).
+    const environment = wireEnvironmentTools(tools, {
+      ...(opts.skills !== undefined ? { skills: opts.skills } : {}),
+    });
+    const cordisWire = await wireCordisExtensions({
+      plugins: configLayer.cordisPlugins,
+      cwd,
+      tools,
+      environment,
+    });
+    const jobRegistry = cordisWire.jobs;
+    const hooks = opts.hooks ?? new HookRegistry();
 
-      // F17.3: append to history (dedupe consecutive,
-      // like readline's default). Cap at historySize.
-      // Skip exit commands (/quit, /exit) — they're noise
-      // (the user almost never wants to recall them).
-      if (!EXIT_NAMES.has(line)) {
-        appendHistory(history, line, historySize);
-      }
+    const agentOptions: ConstructorParameters<typeof Agent>[0] = {
+      model: opts.model,
+      tools,
+      session,
+      hooks,
+      cwd,
+      jobRegistry,
+      terminalService: environment.terminals,
+      skills: environment.skills,
+      ...(mcpWire !== undefined ? { mcpClients: mcpWire.registry } : {}),
+      ...(configLayer.shellEnvironmentPolicy !== undefined
+        ? { shellEnvironmentPolicy: configLayer.shellEnvironmentPolicy }
+        : {}),
+      ...(configLayer.askForApproval !== undefined
+        ? { approval: configLayer.askForApproval }
+        : {}),
+    };
+    // Phase G — the REPL's system prompt: AGENTS.md discovery + terminal
+    // guidance (the REPL wires terminal tools via wireEnvironmentTools).
+    agentOptions.systemPrompt = await buildAgentSystemPrompt({
+      cwd,
+      ...systemPromptOptionsFromConfig(configLayer),
+      permissionMode: session.metadata.permissionMode ?? "read-only",
+      ...(configLayer.askForApproval !== undefined
+        ? { askForApproval: configLayer.askForApproval }
+        : {}),
+    });
+    // R8.2 — REPL default turn budget (long-run friendly). One-shot keeps 50.
+    const REPL_DEFAULT_MAX_TURNS = 200;
+    if (opts.args.maxTurns !== undefined) {
+      agentOptions.maxIterations = opts.args.maxTurns;
+    } else {
+      agentOptions.maxIterations = REPL_DEFAULT_MAX_TURNS;
+    }
+    if (opts.args.maxCostUsd !== undefined) {
+      agentOptions.maxCostUsd = opts.args.maxCostUsd;
+    }
+    // F-fix: `--approval` was validated by argv but never wired in
+    // REPL mode (the one-shot path got this wiring earlier). The
+    // agent's `approval === "never"` fail-closed check now works
+    // from the CLI flag, not just from the `/approval` command.
+    if (opts.args.approval !== undefined) {
+      agentOptions.approval = opts.args.approval as
+        | "unless-trusted"
+        | "on-request"
+        | "granular"
+        | "never";
+    }
+    // R8.2 — align sandbox policy with one-shot / ACP via config layer.
+    {
+      const { resolveAgentRuntimeConfig } = await import("../../config/apply.js");
+      const runtime = resolveAgentRuntimeConfig(cwd, configLayer, {
+        permissionMode: session.metadata.permissionMode ?? "read-only",
+        ...(agentOptions.approval !== undefined
+          ? { askForApproval: agentOptions.approval }
+          : {}),
+      });
+      agentOptions.sandboxPolicy = runtime.sandboxPolicy;
+    }
+    if (opts.lspManager) {
+      agentOptions.lspManager = opts.lspManager;
+    }
+    // F9.4: when --json is set, wire a JsonLinesTracer to stdout.
+    // The trace events stream alongside the agent's final text;
+    // downstream tools (jq, a viewer) parse the stream.
+    if (opts.args.json) {
+      agentOptions.tracer = new JsonLinesTracer(out);
+    } else {
+      agentOptions.tracer = new NullTracer();
+    }
 
-      // 4a. Slash commands.
-      const parsed = parseCommandLine(line);
-      if (parsed !== null) {
-        const ctx = {
-          agent,
-          args: opts.args,
-          stdout: out,
-          stderr: err,
-          turns,
-          totalCostUsd,
-          registry,
-          ...(opts.scoreboard ? { scoreboard: opts.scoreboard } : {}),
-          ...(opts.verifierRules ? { verifierRules: opts.verifierRules } : {}),
-          ...(opts.profileLoader ? { profileLoader: opts.profileLoader } : {}),
-          ...(subagentRegistry ? { subagentRegistry } : {}),
-          ...(lastResponse !== undefined ? { lastResponse } : {}),
-          ...(opts.reviewDiff ? { reviewDiff: opts.reviewDiff } : {}),
-          ...(memoryStore ? { memoryStore } : {}),
-        };
-        const result = await dispatchCommand(registry, parsed.name, parsed.args, ctx);
-        switch (result.kind) {
-          case "ok":
-            continue;
-          case "exit":
-            // Clean exit. Set the flag + continue so we
-            // re-check `exiting` at the top of the loop
-            // and break out (without falling through to
-            // the non-slash block below).
-            exiting = true;
-            continue;
-          case "unknown":
-            err.write(
-              `unknown command: ${result.name}\n` +
-                `type /help for a list of commands\n`,
-            );
-            continue;
-          case "error":
-            err.write(`error: ${result.message}\n`);
-            continue;
-        }
-      }
+    // Phase A / Item 5: build a `UserQuestionService` +
+    // register the REPL stdin provider. The agent's
+    // constructor uses this to auto-register the
+    // `ask_user` tool + install the approval shim.
+    //
+    // The provider uses the SAME `process.stdin` /
+    // `process.stdout` as the main loop's readline. The
+    // Node `readline` package handles concurrent
+    // interfaces correctly (the second interface pauses
+    // the first; closing the second resumes the first),
+    // so the user prompt for `ask_user` interleaves
+    // cleanly with the main REPL prompt.
+    const userQuestions: UserQuestionService = opts.userQuestions ??
+      createUserQuestionService();
+    const disposeUserQuestionsProvider = userQuestions.registerProvider(
+      createReplStdinProvider(),
+    );
+    agentOptions.userQuestions = userQuestions;
 
-      // 4b. Non-slash input → send to the agent as a new turn.
-      //     The session is shared, so each turn appends to
-      //     the same transcript.
-      try {
-        const result = await agent.run(line);
-        const text = result.content
-          .filter((b): b is Extract<typeof b, { type: "text" }> => b.type === "text")
-          .map((b) => b.text)
-          .join("\n");
-        // F14.1: track the last assistant text so the
-        // `/copy` command can print it. Empty text is
-        // a valid response (the model returned a tool
-        // call only); we still set it to "" so the
-        // user gets a clear "no text" message from
-        // /copy rather than a stale previous response.
-        lastResponse = text;
-        if (!opts.args.quiet) {
-          out.write(text + "\n");
-        }
-        turns++;
-        totalCostUsd += result.metrics.costUsd;
-      } catch (caught) {
-        // Don't kill the REPL on a single turn's failure.
-        // Print the error and let the user try again.
-        err.write(`error: ${(caught as Error).message}\n`);
+    // Phase A / Item 2: build the default memory store
+    // when the host didn't inject one. The default is
+    // `./memories` (relative to the REPL's cwd) or
+    // `$ENVOY_MEMORY_DIR` when set. The store is NOT
+    // created (just referenced) — the first `write`
+    // call creates the directory on demand. Tests
+    // inject a `LocalMemoryStore` rooted at a temp dir.
+    const memoryStore: MemoryStore = opts.memoryStore ??
+      new LocalMemoryStore({
+        memoryRoot: process.env["ENVOY_MEMORY_DIR"] ?? "./memories",
+      });
+    agentOptions.memoryStore = memoryStore;
+
+    // R8.1 — default LocalMeshSubmitter so standalone REPL gets `task`.
+    if (!opts.args.noSubagents) {
+      const { buildCliLocalMeshSubmitter } = await import(
+        "../run/build-local-mesh-submitter.js"
+      );
+      agentOptions.meshSubmitter = buildCliLocalMeshSubmitter({
+        model: opts.model,
+        cwd,
+        permissionMode: session.metadata.permissionMode ?? "workspace-write",
+        ...(agentOptions.tracer !== undefined
+          ? { parentTracer: agentOptions.tracer }
+          : {}),
+        parentSessionId: session.id,
+      });
+    }
+
+    const agent = new Agent(agentOptions);
+
+    // F17.6: extract the sub-agent registry from the
+    // agent's mesh submitter (when one is configured).
+    // The host can override via `opts.subagentRegistry`
+    // (used by tests). The default is the agent's own
+    // submitter's `listSubagents()` (if it implements
+    // the optional method). When neither is set, the
+    // `/agents` command prints "no sub-agents".
+    let subagentRegistry: import("./types.js").SubagentRegistry | undefined =
+      opts.subagentRegistry;
+    if (!subagentRegistry) {
+      const submitter = agent.getMeshSubmitter();
+      if (submitter && typeof submitter.listSubagents === "function") {
+        const list = submitter.listSubagents.bind(submitter);
+        subagentRegistry = { list };
       }
     }
-  } finally {
-    lineReader.close();
-    // F-fix: flush persisted-session writes before exit.
-    await session.flush().catch(() => undefined);
-    // F17.3: save history on exit. Errors here are silent
-    // (the user is closing the REPL; we don't want a
-    // history-write error to surface as a confusing
-    // "error: ..." right at exit).
+
+    // 3. Same registry ACP publishes. Custom commands first;
+    //    built-ins last so they win on a name collision.
+    const registry = buildBuiltinRegistry(opts.customCommands);
+
+    // 4. The loop.
+    let turns = 0;
+    let totalCostUsd = 0;
+    // F17.3: `exiting` flag so the dispatcher's "exit" can
+    // break out of the loop (rather than `return` from
+    // `runRepl`). Returning would skip the `finally` block
+    // that writes the history file.
+    let exiting = false;
+    // F14.1: track the last assistant text so `/copy`
+    // can print it. Initialized from `opts.lastResponse`
+    // (used by tests for deterministic assertions);
+    // the loop overwrites it on every turn.
+    let lastResponse: string | undefined = opts.lastResponse;
+
+    // F17.3: history. We maintain our own array (the
+    // readline interface's history is per-session and not
+    // seedable from disk; persistence is our concern). The
+    // history covers all non-blank lines the user types
+    // (slash commands included — the user might want to
+    // recall `/model foo` later). Blank lines are skipped.
+    const historySize = opts.historySize ?? 1000;
+    const history: string[] = [];
+    const historyPath = resolveHistoryPath(opts.historyPath);
     if (historyPath) {
-      await saveHistory(historyPath, history).catch(() => undefined);
+      const loaded = await loadHistory(historyPath, historySize);
+      history.push(...loaded);
     }
-    // Phase A / Item 5: unregister the REPL stdin
-    // provider. The service itself is GC'd with the
-    // agent. Errors here are silent (we're at exit;
-    // a provider-disposal failure is not actionable).
-    disposeUserQuestionsProvider();
-    if (cordisWire.cordisDispose !== undefined) {
-      await cordisWire.cordisDispose().catch(() => undefined);
-    }
-    await environment.dispose().catch(() => undefined);
-    if (mcpWire !== undefined) {
-      await mcpWire.dispose().catch(() => undefined);
-    }
-  }
 
-  return { exitCode: 0, turns, totalCostUsd, sessionId: agent.getSessionId() };
+    try {
+      for await (const rawLine of lineReader) {
+        // F17.3: if the previous iteration asked us to
+        // exit, break here. We check at the TOP of each
+        // iteration because `break` inside the switch
+        // below only breaks the switch, not the for-await.
+        if (exiting) break;
+        const line = rawLine.trim();
+        if (line === "") continue; // ignore blank lines
+
+        // F17.3: append to history (dedupe consecutive,
+        // like readline's default). Cap at historySize.
+        // Skip exit commands (/quit, /exit) — they're noise
+        // (the user almost never wants to recall them).
+        if (!EXIT_NAMES.has(line)) {
+          appendHistory(history, line, historySize);
+        }
+
+        // 4a. Slash commands.
+        const parsed = parseCommandLine(line);
+        if (parsed !== null) {
+          const ctx = {
+            agent,
+            args: opts.args,
+            stdout: out,
+            stderr: err,
+            turns,
+            totalCostUsd,
+            registry,
+            ...(opts.scoreboard ? { scoreboard: opts.scoreboard } : {}),
+            ...(opts.verifierRules ? { verifierRules: opts.verifierRules } : {}),
+            ...(opts.profileLoader ? { profileLoader: opts.profileLoader } : {}),
+            ...(subagentRegistry ? { subagentRegistry } : {}),
+            ...(lastResponse !== undefined ? { lastResponse } : {}),
+            ...(opts.reviewDiff ? { reviewDiff: opts.reviewDiff } : {}),
+            ...(memoryStore ? { memoryStore } : {}),
+          };
+          const result = await dispatchCommand(registry, parsed.name, parsed.args, ctx);
+          switch (result.kind) {
+            case "ok":
+              continue;
+            case "exit":
+              // Clean exit. Set the flag + continue so we
+              // re-check `exiting` at the top of the loop
+              // and break out (without falling through to
+              // the non-slash block below).
+              exiting = true;
+              continue;
+            case "unknown":
+              err.write(
+                `unknown command: ${result.name}\n` +
+                  `type /help for a list of commands\n`,
+              );
+              continue;
+            case "error":
+              err.write(`error: ${result.message}\n`);
+              continue;
+          }
+        }
+
+        // 4b. Non-slash input → send to the agent as a new turn.
+        //     The session is shared, so each turn appends to
+        //     the same transcript.
+        try {
+          const result = await agent.run(line);
+          const text = result.content
+            .filter((b): b is Extract<typeof b, { type: "text" }> => b.type === "text")
+            .map((b) => b.text)
+            .join("\n");
+          // F14.1: track the last assistant text so the
+          // `/copy` command can print it. Empty text is
+          // a valid response (the model returned a tool
+          // call only); we still set it to "" so the
+          // user gets a clear "no text" message from
+          // /copy rather than a stale previous response.
+          lastResponse = text;
+          if (!opts.args.quiet) {
+            out.write(text + "\n");
+          }
+          turns++;
+          totalCostUsd += result.metrics.costUsd;
+        } catch (caught) {
+          // Don't kill the REPL on a single turn's failure.
+          // Print the error and let the user try again.
+          err.write(`error: ${(caught as Error).message}\n`);
+        }
+      }
+    } finally {
+      lineReader.close();
+      // Flush persisted-session writes AND release the write lease. A
+      // failure here means the transcript on disk is INCOMPLETE — reporting
+      // it is the whole point (silently swallowing it is how a user
+      // discovers at `--resume` that hours of work are missing).
+      //
+      // `close()` rather than `flush()`: flush alone leaves the exclusive
+      // write lease held, so the next process to `--resume` this session
+      // fails with `SessionFileBusyError` until the stale-PID reclaim
+      // heuristic fires. `close()` flushes and releases.
+      try {
+        if (session.close !== undefined) await session.close();
+        else await session.flush();
+      } catch (flushErr) {
+        err.write(
+          `warning: session transcript may be incomplete on disk: ${(flushErr as Error).message}\n`,
+        );
+      }
+      // F17.3: save history on exit. Errors here are silent
+      // (the user is closing the REPL; we don't want a
+      // history-write error to surface as a confusing
+      // "error: ..." right at exit).
+      if (historyPath) {
+        await saveHistory(historyPath, history).catch(() => undefined);
+      }
+      // Phase A / Item 5: unregister the REPL stdin
+      // provider. The service itself is GC'd with the
+      // agent. Errors here are silent (we're at exit;
+      // a provider-disposal failure is not actionable).
+      disposeUserQuestionsProvider();
+      if (cordisWire.cordisDispose !== undefined) {
+        await cordisWire.cordisDispose().catch(() => undefined);
+      }
+      await environment.dispose().catch(() => undefined);
+      if (mcpWire !== undefined) {
+        await mcpWire.dispose().catch(() => undefined);
+      }
+    }
+
+    return { exitCode: 0, turns, totalCostUsd, sessionId: agent.getSessionId() };
+  } catch (startupErr) {
+    // Startup threw after the session was acquired. The loop's own
+    // `finally` never ran, so the exclusive write lease is still held —
+    // leaving it would lock out the next `--resume` of this session
+    // until the stale-PID reclaim heuristic fires.
+    if (session.close !== undefined) {
+      await session.close().catch(() => undefined);
+    }
+    throw startupErr;
+  }
 }
 
 // ---------------------------------------------------------------------------

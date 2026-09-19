@@ -25,6 +25,69 @@
 
 import type { ContentBlock, Message, Role } from "./tools/types.js";
 
+/**
+ * Kinds of durable diagnostic record.
+ *
+ * Deliberately a closed vocabulary: a resumed session, a UI, or a
+ * post-mortem script can switch on these without parsing prose.
+ */
+export type SessionDiagnosticKind =
+  /** A transient model failure was retried. */
+  | "retry"
+  /** Retries were refused, exhausted, or the server asked for too long. */
+  | "retry-exhausted"
+  /** Retrying was abandoned because the turn was cancelled. */
+  | "retry-abandoned"
+  /** The OS sandbox blocked an operation. */
+  | "sandbox-denied"
+  /** A denial was escalated and the user widened the policy. */
+  | "sandbox-escalated"
+  /** A denial was escalated and the user (or policy) refused. */
+  | "sandbox-escalation-denied";
+
+/**
+ * A bounded, durable record of something that happened *to* the session
+ * rather than *in* it.
+ *
+ * **Why durable, and why not a transcript message.** The transcript is the
+ * conversation the model sees; injecting synthetic messages for retries
+ * would break prompt-cache prefix stability and the transcript
+ * invariants. But a session that survived a rate-limit storm should be
+ * able to say so after `--resume` — otherwise the only evidence is a trace
+ * stream that is disabled by default (`NullTracer`). These records ride in
+ * the session header, which is already rewritten atomically.
+ */
+export interface SessionDiagnosticEvent {
+  readonly kind: SessionDiagnosticKind;
+  /** ISO timestamp. */
+  readonly at: string;
+  /** Turn iteration the event happened in, when known. */
+  readonly iteration?: number;
+  /** Failure class from `classifyFailure` (`rate_limit`, `server`, …). */
+  readonly failureClass?: string;
+  /** 1-based retry counter, for `retry`. */
+  readonly retryNumber?: number;
+  /** Backoff applied before the retry, in ms. */
+  readonly delayMs?: number;
+  /** Sandbox backend that produced a denial. */
+  readonly backend?: string;
+  /** Machine-readable denial/escalation reason. */
+  readonly reason?: string;
+  /** Path the failure named, when one was extracted. */
+  readonly path?: string;
+  /** Short human-readable detail. */
+  readonly detail?: string;
+}
+
+/**
+ * Cap on retained diagnostics: newest wins.
+ *
+ * Diagnostics are a forensic aid, not an audit log. A tight cap keeps the
+ * header (rewritten in full on every update) from growing without bound in
+ * a session that has been alive for days.
+ */
+export const MAX_SESSION_DIAGNOSTICS = 50;
+
 /** Optional metadata about a session. */
 export interface SessionMetadata {
   /** User-visible label (e.g. the first 60 chars of the prompt). */
@@ -57,6 +120,13 @@ export interface SessionMetadata {
    * (mesh adapter) stamps `originNode` / `resumedFrom`.
    */
   provenance?: SessionProvenance;
+  /**
+   * Bounded, durable record of retries and sandbox denials/escalations.
+   *
+   * Newest last. Absent when the session has had none, so a clean session
+   * header stays clean. See {@link SessionDiagnosticEvent}.
+   */
+  diagnostics?: ReadonlyArray<SessionDiagnosticEvent>;
 }
 
 /** Provenance fields for cross-machine / checkpoint resume. */
@@ -97,6 +167,21 @@ export interface Session {
   /** Remove all messages. Test-only utility. */
   clear(): void;
   /**
+   * Replace the ENTIRE transcript in one durable step.
+   *
+   * **Why this exists instead of `clear()` + re-append:** that pattern
+   * publishes a header-only file first and only then buffers the kept
+   * messages, so for a window (a batch interval, or until a crash) the
+   * only durable copy of the session is EMPTY. A crash in that window
+   * destroyed the whole transcript — the single worst data-loss bug in
+   * the harness, reachable from `/compact` and the ACP `compact` method.
+   *
+   * Implementations must make the swap atomic: the previous transcript
+   * stays readable until the new one replaces it, so a crash either
+   * leaves the old (longer) transcript or the new one — never nothing.
+   */
+  replaceMessages(messages: ReadonlyArray<Message>): void;
+  /**
    * F-fix: flush any pending persistence writes. The in-memory
    * implementation is a no-op; `PersistedSession` awaits its
    * write chain so the transcript is durable before the CLI
@@ -104,6 +189,42 @@ export interface Session {
    * an immediate process exit).
    */
   flush(): Promise<void>;
+  /**
+   * Release the session's resources and flush.
+   *
+   * **Why this is separate from `flush()`:** `PersistedSession` holds an
+   * exclusive *write lease* on its file for as long as it is open. Flushing
+   * makes the transcript durable but keeps the lease — so a host that only
+   * ever flushes leaves the session file locked, and the next process to
+   * open it fails with `SessionFileBusyError` until the stale-PID reclaim
+   * heuristic fires. Any owner that finishes with a session it acquired
+   * (created or opened) must call `close()`.
+   *
+   * Optional so non-persisting implementations and test doubles need not
+   * implement it; {@link InMemorySession} provides a no-op.
+   */
+  close?(): Promise<void>;
+  /**
+   * Append a durable diagnostic record (bounded; newest wins).
+   *
+   * **Durability differs by implementation, by design.**
+   * `PersistedSession` rewrites the header atomically, so the record
+   * survives `--resume`; `InMemorySession` keeps it in `metadata`, so
+   * tests can assert on it. Callers must not depend on the *timing* of the
+   * disk write — it rides the same batched writer as everything else and
+   * `flush()`/`close()` makes it durable.
+   *
+   * Optional so non-persisting doubles need not implement it; both shipped
+   * implementations do.
+   */
+  recordDiagnostic?(event: SessionDiagnosticEvent): void;
+  /**
+   * Read recorded diagnostics (empty when none).
+   *
+   * Convenience over `metadata.diagnostics` so callers don't repeat the
+   * `?? []`.
+   */
+  diagnostics?(): ReadonlyArray<SessionDiagnosticEvent>;
   /**
    * F14.1: update the session's display title. The
    * `metadata.title` field is the user-facing label
@@ -185,6 +306,10 @@ export class InMemorySession implements Session {
     this._messages = [];
   }
 
+  replaceMessages(messages: ReadonlyArray<Message>): void {
+    this._messages = messages.map((m) => ({ role: m.role, content: [...m.content] }));
+  }
+
   /**
    * F14.1: set the session's display title. The
    * `metadata.title` field is mutable (the object
@@ -236,6 +361,38 @@ export class InMemorySession implements Session {
   async flush(): Promise<void> {
     // nothing to persist
   }
+
+  async close(): Promise<void> {
+    // Nothing to release: the in-memory session holds no lease.
+    await this.flush();
+  }
+
+  recordDiagnostic(event: SessionDiagnosticEvent): void {
+    appendDiagnostic(this.metadata, event);
+  }
+
+  diagnostics(): ReadonlyArray<SessionDiagnosticEvent> {
+    return this.metadata.diagnostics ?? [];
+  }
+}
+
+/**
+ * Append to a session's bounded diagnostic log (newest last).
+ *
+ * Shared by both `Session` implementations so the trimming rule cannot
+ * diverge: a session that retried 500 times in memory and one that did so
+ * on disk must report the same window.
+ */
+export function appendDiagnostic(
+  metadata: SessionMetadata,
+  event: SessionDiagnosticEvent,
+): void {
+  const existing = metadata.diagnostics ?? [];
+  const next = [...existing, event];
+  metadata.diagnostics =
+    next.length > MAX_SESSION_DIAGNOSTICS
+      ? next.slice(next.length - MAX_SESSION_DIAGNOSTICS)
+      : next;
 }
 
 /**

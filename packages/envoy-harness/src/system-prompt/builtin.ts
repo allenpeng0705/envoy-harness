@@ -115,7 +115,8 @@ export function interactionGuidanceSection(): PromptSection {
     order: 65,
     text:
       "When you need a decision, call `ask_user` with short `options` and set " +
-      "`recommendedIndex` to your preferred choice. For large or risky work, call " +
+      "`recommendedIndex` to your preferred choice. Set `multiple: true` when " +
+      "they should pick more than one. For large or risky work, call " +
       "`enter_plan_mode` so the human can switch to plan mode; when the plan is ready, " +
       "call `exit_plan_mode` with the full markdown plan for approval.",
   };

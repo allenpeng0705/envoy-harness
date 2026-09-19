@@ -1,9 +1,11 @@
 # Gap-closure plan — envoy-harness vs codex / deepseek-harness
 
 > **Status:** DRAFT v2 → progress updated 2026-08-22; **Round 4 pointer
-> added 2026-09-05**. Scheduled A–G gap items are done; optional future
-> work lives under Intentional deferrals. **Next major workstream:**
-> distributed Round 4 — refine local sub-agents + deepen multi-node ops
+> added 2026-09-05**; **Pass 4 (stability hardening) added — see
+> [Review pass status](#review-pass-status)**. Scheduled A–G gap items are
+> done; optional future work lives under Intentional deferrals. **Next major
+> workstream:** distributed Round 4 — refine local sub-agents + deepen
+> multi-node ops
 > ([`implementation-plan-round-4.md`](./implementation-plan-round-4.md),
 > design §11 in [`distributed-collaboration.md`](./distributed-collaboration.md)).
 >
@@ -809,13 +811,17 @@ is optional future work — not unfinished Package-1 gaps.
 
 | Item | Why optional | When to pick up |
 |------|--------------|-----------------|
-| **Cordis-compat (L4)** | Plan forbids adopting Cordis as platform; whitelist-only if ever | Real unmodified Cordis plugin demand |
+| **Cordis-compat (L4)** | Plan forbids adopting Cordis as platform; whitelist-only if ever | ✅ **shipped** (`envoy-harness-cordis`, 27 tests) and pinned to `@deepseek-ai/dsh-*@0.1.6-alpha.2` / `cordis@4.0.2` — the reference tree's own version. Re-audit on each DSH bump |
 | **Python SDK (11)** | EnvoyMesh nodes are TS; no Python consumer | A Python host appears |
 | **12c extra desktop/web host** | 12a + 12b cover hosts | A consumer needs a third host in this monorepo |
 | **Windows job-object sandbox (4)** | Linux/macOS backends shipped; Windows uses validators | Windows CI + demand |
 | **Mesh-remote JobHandle / terminal** | Local jobs/terminal done; remote needs mesh protocol | **Round 4 D-Mesh** (R4.12–R4.13) when EnvoyMesh protocol lands — see [`implementation-plan-round-4.md`](./implementation-plan-round-4.md) |
 | **Async ask / retained context / session lease** | A–G closed local agent basics; Codex/dsh advanced patterns remain | **Round 4 D-Refine** (R4.1–R4.3) |
 | **Peer `team/jobs` + parallel DAG + continuable tasks** | D1–D7 shipped primitive; ops depth still thin | **Round 4 D-Ops** (R4.7–R4.9, P0) |
+| **Feature-tier codex/dsh patterns** | Not defects; no consumer yet | `tool_search`/deferred exposure, Guardian auto-review, todo tool, goal subsystem, `present`/deliverables, MCP resources+prompts+elicitation, fuzzy `apply_patch` matching, world-state merge-patch context, projection registry, subagent generation fencing, handshake backoff |
+| **Append-only compaction record** | Current atomic swap is crash-safe; a durable `compaction` record + format bump adds resume forensics | Next transcript format bump |
+| **Prompt-cache prefix contract** | The per-turn prefix breaker is fixed; a formal section-order + prefix-identity test would make it a guarantee | When cache hit-rate matters |
+| **Orphan-snapshot / schema-parity CI gates** | Detected during the reference audit; needs a CI budget decision | Next CI investment |
 
 **Resolved (removed from deferrals):** 12b per-tool `pi:proposal`; 13
 `createMeshCredentialsProvider`; 14b `loadRemoteSession`. Live mesh
@@ -825,10 +831,10 @@ is optional future work — not unfinished Package-1 gaps.
 
 ## Review pass status
 
-Three review passes have landed since the gap-closure work
+Four review passes have landed since the gap-closure work
 finished. Each pass found real bugs in the prior work; the
 fixes are committed as discrete commits on the `fix_gaps`
-branch.
+branch (Pass 4 is still in the working tree).
 
 ### Pass 1 — internal self-review (`d7d46b0`)
 
@@ -912,12 +918,209 @@ Two commits on `fix_gaps` after Pass 2:
   allow-list as a required parameter. Tests:
   1522 → 1530 (+8 allowlist tests).
 
+### Pass 4 — stability hardening (uncommitted working tree)
+
+Passes 1–3 reviewed *new* work. Pass 4 went after the **runtime
+instability** that tests could not see: three consecutive full-suite runs
+were byte-identical with zero failures, so the reported "not stable" was
+never test nondeterminism — it was crash consistency, transient failures,
+and indefinite hangs. Two of the bugs below reproduce as a **permanent
+hang**, proved with a probe before the fix.
+
+**Hangs (P0 — the agent stops responding, no timeout, no error):**
+
+- **A backgrounded descendant held the stdout pipe.** `sh -c 'sleep 30 &
+  echo hi'` exits immediately, but `sleep` inherits the write end of our
+  pipe. Node fires `close` only when the process *and* all stdio have
+  closed, so the tool's promise never settled. Probe: no `close` after
+  2.5 s. Fix: spawn detached on POSIX (own process group), kill the
+  **group** with a `SIGTERM → grace → SIGKILL` ladder, then a bounded
+  settle window with an explicit pipe teardown for a process that escaped
+  the group. New `packages/envoy-process/src/reap.ts` + `terminate.ts`.
+- **A signal-killed child never produced an exit code.** `close` reports
+  `code === null` on signal death, and `spawn-capture`'s settle predicate
+  was `if (code === null) return` — so a seccomp `SIGSYS`, an OOM kill,
+  or our own `SIGKILL` left the sandbox promise pending forever. The
+  predicate is now the `close` event itself.
+- **Hooks could wedge a turn the same way** (timeout path), and the
+  direct bash / exec-world / job paths had the same shape.
+
+**Crash consistency and data loss:**
+
+- **Compaction could destroy the only copy of a transcript.**
+  `replaceTranscript` was `clear()` + re-append: a non-atomic,
+  truncating header-only write followed by buffered appends. A crash in
+  that window left an empty session. Replaced with one atomic
+  temp+fsync+rename `replaceMessages()`; the test asserts the inode
+  changes, so the old transcript stays readable until the swap.
+- **A torn tail made a session permanently unopenable**
+  (`invalid message at line N`). `PersistedSession.open` now drops the
+  torn tail, repairs dangling tool calls, and reports both.
+- **Two paths still fell back to drop-oldest when summarization failed**,
+  reintroducing silent context loss. Both now refuse and surface the
+  reason.
+- **Two of the four compaction call sites reported success without a
+  durability barrier.** The atomic swap guarantees a crash keeps the OLD
+  transcript — not that the compaction survives — so a caller that does
+  not `await flushSession()` tells the user "compacted" and then silently
+  reverts on a crash. The two `compactWithBudget` call sites (ACP
+  `compact`, REPL `/compact --budget`) now await it, matching the two
+  paths that already did. The regression test gates the flush on a
+  promise and asserts the caller has *not* resolved while it is pending,
+  which is what "awaited" means — no timer race.
+
+**Session acquisition is bounded, and the lease guard is load-bearing:**
+
+- `SessionInitGuard` (ported from codex's `LiveThreadInitGuard`) had no
+  production caller. It does now: ACP `createSession`/`loadSession` run
+  under a `sessionAcquireTimeoutMs` bound (default 30 s, `0` disables), so
+  a contended lock or an enormous transcript fails the request instead of
+  hanging it forever. On timeout the acquisition is **not abandoned** —
+  `discard()` awaits the in-flight promise and closes whatever it
+  produced, because otherwise the late-finishing acquisition would install
+  a write lease nobody holds and nobody releases, locking out the next
+  `--resume` until the stale-PID heuristic fired. The test now asserts on
+  the lock file, and removing the retained discard makes it fail.
+
+**Resource leaks:**
+
+- **The REPL and one-shot never released the session write lease.** Both
+  called `flush()` (which does not release) and never `close()`, so a
+  finished session left `<id>.jsonl.lock` on disk and the next process to
+  `--resume` it got `SessionFileBusyError` until the stale-PID heuristic
+  fired. `Session` gained an optional `close()`, both hosts now call it on
+  every exit path, and a startup failure between acquisition and the loop
+  releases explicitly. The test asserts on the lock file itself, because
+  the same-process reference count hides the leak otherwise.
+
+**Transient-failure handling:**
+
+- `withRetry` (bounded exponential backoff, `Retry-After` honored but
+  abandoned past the ceiling, `onGiveUp` on the abort path) is now
+  reachable from `config.toml` via a `retry` table. Retry had existed;
+  nothing configured it.
+- **The retry record is durable.** Every scheduled retry, exhaustion, and
+  mid-backoff cancellation is written to the session header as a
+  `SessionDiagnosticEvent`, not just to a trace stream that is disabled by
+  default (`NullTracer`). Without it, a session that survived a rate-limit
+  storm is indistinguishable from one that never hit trouble after
+  `--resume`. The log is bounded (newest 50) so a days-long session's
+  header cannot grow without limit.
+- **A cancellation during the backoff was silently unreported** — the
+  sleep returned "not completed" and the error was rethrown with no
+  `onGiveUp`, so neither the trace nor the diagnostics could answer "why
+  did the turn stop?". Fixed in `withRetry`.
+- The LLM HTTP client had no default timeout (`600 s` now, `0` disables).
+
+**Observability and honesty of failures:**
+
+- **Ten of the twelve declared hook events never fired.**
+- **Sandbox failures were an opaque non-zero exit.** `classify.ts` ports
+  codex's violation taxonomy — with the load-bearing false-positive guard
+  that exit `2` / `126` / `127` are *never* denials (a typo must not
+  produce "retry with a wider sandbox") — and the bash executor path now
+  annotates the result with an actionable explanation.
+- **A denial had no way forward.** Telling the model "the sandbox blocked
+  this" is a dead end: it cannot widen its own sandbox, and re-running
+  identically fails identically. `escalation.ts` adds the missing rung —
+  one **widened retry**, offered to the human — with the ladder computed
+  narrowest-first (`read-only` → `workspace-write` scoped to the denied
+  directory → add that directory to the writable roots → only then
+  `danger-full-access`). Granting `/` is never inferred from a message.
+  The decision is owned by the executor, not the tool, so `approval:
+  "never"` fails closed, a `PermissionRequest` hook can veto without
+  troubling a human, and a tool can never widen its own sandbox. The
+  outcome rides on `ToolResult.meta` (`sandbox` + `escalation` +
+  `escalatedPolicy`) so a protocol host or post-mortem script does not
+  have to regex the prose.
+- **`policyToLandlockGrants` silently ignored `danger-full-access`**,
+  falling through to the `workspace-write` shape and confining writes to
+  `/tmp`. A user who had just approved an escalation to full access would
+  have hit another denial for no visible reason.
+- **`killProcessTree` was `SIGKILL`-only with no PID-reuse fence.** A
+  recycled pid meant killing an unrelated process. Identity is now
+  captured at spawn and re-verified before signalling. The old helper is
+  kept only as the documented last-resort primitive.
+- **Per-step state was read live**, so a `/model` or `/sandbox` change
+  mid-turn could split a single request across two configurations. Each
+  step now captures an immutable snapshot (tools still read policy live —
+  deliberate: enforcement needs immediacy).
+- **`abortTurnIfActive(undefined)` matched idle state**, ending turns it
+  should not have; the guard now requires a non-empty id.
+- Token accounting double-counted cached input; `openAiUsage()` now maps
+  to disjoint `{inputTokens, outputTokens, cacheReadTokens}`.
+
+**Toward the updated references:** envoy's Cordis container was hosting
+`@deepseek-ai/dsh-*@0.1.1-rc.2` against a reference tree at `0.1.6-alpha.2`
+(five minor versions of skew). Now pinned to `0.1.6-alpha.2` with
+`@deepseek-ai/cordis@4.0.2`, and the transitive peers
+(`dsh-session`, `dsh-system-prompt`, `dsh-sandbox`) are pinned explicitly
+so pnpm cannot silently reuse an older resolution. Exactly one API change
+was needed — the new `FileSystem.readByteRange`, which is a *bounded
+byte-window* read; implementing it by slicing `readBytes` would have
+buffered a whole file to answer a 4 KiB request, so it uses
+`FileHandle.read` with an explicit position instead.
+
+**Verification:** `pnpm run typecheck` 10/10 projects clean;
+`pnpm run build` 10/10; module-size gate green (397 files, 0 over the
+800-line hard cap outside the allowlist — `tool-executor.ts` and
+`agent-backend.ts` were each split into a second module to stay under it
+rather than being allowlisted); full monorepo suite **2537 passed /
+5 skipped / 0 failed** across 10 packages (core alone: 2070 passed, +94 on
+this pass; `envoy-process` 16 → 27; cordis 21 → 27). Every fix above ships
+with a hermetic regression test — none needs a network, a live LLM, a
+mesh, or a real kernel. Each hang, leak, and fail-closed guarantee was
+also checked for *sensitivity*: reverting the fix makes its test fail.
+
+**The flake was tracked down, and it was not what it looked like.** Stress-
+running the full suite 8 times reproduced it once (run 7), which named the
+test: `PersistedSession.setTitle > mutates metadata.title in place`,
+failing with
+
+```
+Error: ENOTEMPTY: directory not empty, rmdir '/tmp/envoy-persisted-test-XXXX'
+```
+
+**The test body never failed — the `afterEach` teardown threw.**
+`setTitle()` enqueues an *atomic* rewrite, which materialises a sibling
+`<file>.rewrite-<pid>.tmp`; a `rm -rf` that walks the directory in that
+window finds a new entry between its `readdir` and its `rmdir`, and
+Node's `fs.rm` retries `ENOTEMPTY` **zero** times by default. That is why
+it looked like "1 in 8 runs one of 2073 tests fails" and why an isolated
+re-run always passed.
+
+The window was reproduced deterministically — start the removal, then
+create the sibling entry mid-walk: **plain `rm` threw 2 of 5 times;
+`removeTempDir` threw 0 of 5.** Three fixes, at three levels:
+
+1. The test now `close()`s the session it created, so nothing is in
+   flight at teardown. That removes the race at its source for the exact
+   failure observed, independent of which async actor created the entry.
+2. `test/support/tmp-dir.ts` documents the mechanism and removes session
+   temp dirs with the retries Node requires; the 7 session test files use
+   it.
+3. Separately, 9 pre-existing sites asserted durable state after a fixed
+   `setTimeout(50)` against the writer's 25 ms batch delay. Those are now
+   real durability barriers (`await session.flush()` / `close()`), and the
+   three new order-sensitive tests poll to a deadline instead of sleeping.
+
+**Known, unfixed, and worth a follow-up:** a process that dies between
+`writeFile(tmp)` and `rename` leaves `<file>.rewrite-<pid>.tmp` in the
+session directory forever — nothing reaps them, so they accumulate across
+crashes. The session file itself is never at risk (the publish is atomic);
+this is litter, not data loss. A fix would reap stale siblings on
+`PersistedSession.create`/`open`, reusing `write-lease.ts`'s `pidAlive`
+check. Deliberately not done in this pass: it is a new destructive
+filesystem action, and it is a separate concern from the two asked for.
+
 ### Pre-existing items still open
 
-- **Cordis-compat container** — **planned** (committed build):
-  `docs/cordis-compat-plan.md`. C0 spike first (2–3 days), then container
-  core (C1), envoy service adapters (C2), whitelist expansion (C3), mesh
-  exposure (C4).
+- **Cordis-compat container** — ✅ **DONE**:
+  `@envoymesh/envoy-harness-cordis` hosts the audited DSH plugins on a
+  real Cordis runtime with envoy service adapters (27 tests). Pass 4
+  aligned it to `@deepseek-ai/dsh-*@0.1.6-alpha.2` +
+  `@deepseek-ai/cordis@4.0.2`, the version the reference tree is on. The
+  3-plugin whitelist and audit docs (`docs/audit-*.md`) are unchanged.
 - **Pre-existing multiformats TS errors** — ✅ **fixed**
   (2026-08-22): `packages/network` aligned to
   `multiformats@^14.0.0` (the rest of the graph already

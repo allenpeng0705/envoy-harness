@@ -114,7 +114,13 @@ export function createReplStdinProvider(
       if (req.multiline === true) {
         return await readMultiline(input, req, sentinel, output);
       }
-      return await readSingleLine(input, req.signal, output, req.options);
+      return await readSingleLine(
+        input,
+        req.signal,
+        output,
+        req.options,
+        req.multiple === true,
+      );
     },
   };
 }
@@ -143,7 +149,11 @@ function renderPromptHeader(
       lines.push(`  [${i + 1}] ${req.options[i]}${star}`);
     }
     lines.push("");
-    lines.push("(type a number, or free-form text)");
+    lines.push(
+      req.multiple === true
+        ? "(type numbers separated by commas)"
+        : "(type a number, or free-form text)",
+    );
   }
   if (req.multiline === true) {
     lines.push("");
@@ -152,6 +162,31 @@ function renderPromptHeader(
     );
   }
   return lines.join("\n");
+}
+
+/**
+ * 1-based numbers in `text`, as 0-based indexes. An
+ * out-of-range or non-numeric token rejects the whole
+ * line so a typo does not become a partial pick.
+ */
+function parseOptionIndexes(text: string, count: number): number[] {
+  const parts = text.split(/[,\s]+/).filter((part) => part !== "");
+  if (parts.length === 0) return [];
+  const indexes: number[] = [];
+  for (const part of parts) {
+    const asNumber = Number.parseInt(part, 10);
+    if (
+      !Number.isInteger(asNumber) ||
+      String(asNumber) !== part ||
+      asNumber < 1 ||
+      asNumber > count
+    ) {
+      return [];
+    }
+    const index = asNumber - 1;
+    if (!indexes.includes(index)) indexes.push(index);
+  }
+  return indexes;
 }
 
 /**
@@ -165,6 +200,7 @@ async function readSingleLine(
   signal: AbortSignal,
   output: Writable,
   options: ReadonlyArray<string> | undefined,
+  multiple = false,
 ): Promise<UserQuestionAnswer> {
   const line = await readLine(input, signal, output);
   if (line === null) {
@@ -176,7 +212,19 @@ async function readSingleLine(
   // Options-picker: try to interpret the input as a
   // 1-based index into `options`. Falls through to
   // free-form when the input doesn't parse as a
-  // number in range.
+  // number in range. `multiple` accepts several,
+  // separated by commas or spaces.
+  if (options !== undefined && options.length > 0 && multiple) {
+    const picked = parseOptionIndexes(trimmed, options.length);
+    if (picked.length > 0) {
+      return {
+        value: picked.map((index) => options[index]!).join(", "),
+        optionIndexes: picked,
+        ...(picked.length === 1 ? { optionIndex: picked[0] } : {}),
+        cancelled: false,
+      };
+    }
+  }
   if (options !== undefined && options.length > 0) {
     const asNumber = Number.parseInt(trimmed, 10);
     if (

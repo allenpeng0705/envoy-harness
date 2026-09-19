@@ -54,6 +54,7 @@ export const writeTool: Tool<
   }>
 > = {
   name: "write",
+  timeoutMs: 60_000,
   description:
     "Write `content` to the file at `path` (relative to cwd or absolute). " +
     "Overwrites if the file exists; creates if not. Use `createDirectories: true` " +

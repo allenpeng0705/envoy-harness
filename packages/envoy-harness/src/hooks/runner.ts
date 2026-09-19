@@ -62,7 +62,7 @@
 
 import { spawn } from "node:child_process";
 
-import { killProcessTree } from "../process/kill-tree.js";
+import { captureChildIdentity, reapChild } from "../process/reaper.js";
 import type { HookDecision, HookEventName } from "../types.js";
 
 /** Default timeout for shell handlers, in milliseconds. */
@@ -95,6 +95,10 @@ export async function runShellHandler(
   timeoutMs: number = DEFAULT_TIMEOUT_MS,
 ): Promise<HookDecision> {
   return new Promise((resolve) => {
+    // `detached` on POSIX so the hook leads its own process group: a hook
+    // that backgrounds work would otherwise leave a descendant holding
+    // our stdout pipe, and the `close` handler below would never fire.
+    const detached = process.platform !== "win32";
     const child = spawn("sh", ["-c", command], {
       env: {
         ...process.env,
@@ -103,16 +107,38 @@ export async function runShellHandler(
         TOOL_CALL: JSON.stringify(payload), // legacy alias
         RESULT_FILE: "", // populated by PostToolUse (not used in v0)
       },
+      detached,
       stdio: ["ignore", "pipe", "pipe"],
     });
+    const identity = captureChildIdentity(child);
 
     let stdout = "";
     let stderr = "";
     let timedOut = false;
+    let settled = false;
+
+    const settle = (decision: HookDecision): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(decision);
+    };
 
     const timer = setTimeout(() => {
       timedOut = true;
-      killProcessTree(child.pid);
+      // TERM → grace → KILL against the group, then a bounded wait. The
+      // `close` handler reports the timeout; `onForceClose` guarantees
+      // the hook cannot wedge the turn if a descendant escapes the group.
+      void reapChild(child, {
+        processGroup: detached,
+        ...(identity !== undefined ? { identity } : {}),
+        onForceClose: () => {
+          settle({
+            kind: "block",
+            reason: `hook timed out after ${timeoutMs}ms`,
+          });
+        },
+      });
     }, timeoutMs);
 
     if (child.stdout) {
@@ -127,10 +153,8 @@ export async function runShellHandler(
     }
 
     child.on("close", (code) => {
-      clearTimeout(timer);
-
       if (timedOut) {
-        resolve({
+        settle({
           kind: "block",
           reason: `hook timed out after ${timeoutMs}ms`,
         });
@@ -151,7 +175,7 @@ export async function runShellHandler(
         // gets surfaced to the model; a trailing newline
         // is noise). MAX_STDERR_REASON caps the length.
         const trimmed = stderr.trim().slice(0, MAX_STDERR_REASON);
-        resolve({
+        settle({
           kind: "block",
           reason: code === BLOCKING_EXIT_CODE
             ? trimmed || "blocked by hook"
@@ -165,22 +189,21 @@ export async function runShellHandler(
       const parsed = tryParseJson(stdout);
       if (parsed) {
         const decision = mapJsonToDecision(parsed, eventName);
-        resolve(decision);
+        settle(decision);
         return;
       }
 
       // Non-JSON stdout: treat as add-context (if non-empty).
       const trimmed = stdout.trim();
       if (trimmed.length > 0) {
-        resolve({ kind: "add-context", content: trimmed });
+        settle({ kind: "add-context", content: trimmed });
       } else {
-        resolve({ kind: "continue" });
+        settle({ kind: "continue" });
       }
     });
 
     child.on("error", (err) => {
-      clearTimeout(timer);
-      resolve({
+      settle({
         kind: "block",
         reason: `hook failed to start: ${err.message}`,
       });

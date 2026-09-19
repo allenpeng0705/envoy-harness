@@ -12,9 +12,10 @@ import {
   InMemorySession,
   SessionStore,
   ToolRegistry,
+  type Session,
 } from "../../src/index.js";
 import { HookRegistry } from "../../src/hooks/index.js";
-import { promises as fs } from "node:fs";
+import { existsSync, promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
@@ -73,7 +74,7 @@ describe("createAgentSessionBackend", () => {
     );
     try {
       const store = new SessionStore({ dir });
-      let receivedSession: unknown;
+      let receivedSession: Session | undefined;
       const backend = createAgentSessionBackend({
         defaultCwd: "/proj",
         sessionStore: store,
@@ -107,9 +108,9 @@ describe("createAgentSessionBackend", () => {
         signal: new AbortController().signal,
         requestPermission: async () => "allow",
       });
-      // Wait for the fire-and-forget JSONL flush, then verify the turn
-      // wrote through to the persisted transcript.
-      await new Promise((r) => setTimeout(r, 25));
+      // Durability barrier, not a sleep: `store.load` below must see the
+      // turn, and the agent's appends are batched.
+      await receivedSession!.flush();
       const persisted = await store.load(sessionId);
       expect(persisted.messages.length).toBeGreaterThan(0);
 
@@ -120,6 +121,159 @@ describe("createAgentSessionBackend", () => {
       await fs.rm(dir, { recursive: true, force: true });
     }
   });
+  it("does not leak the write lease when acquisition times out", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "acp-timeout-"));
+    const lockOf = (id: string): string => path.join(dir, `${id}.jsonl.lock`);
+    try {
+      const store = new SessionStore({ dir });
+      // Seed a real file so the lock path is meaningful, then release it.
+      const seed = await store.createWithId("slow", {
+        cwd: "/proj",
+        permissionMode: "workspace-write",
+        startedAt: new Date().toISOString(),
+      });
+      await seed.close();
+
+      // Make `load` take far longer than the bound, so the acquisition is
+      // genuinely IN FLIGHT when the deadline expires.
+      let releaseLoad!: () => void;
+      const loadGate = new Promise<void>((r) => {
+        releaseLoad = r;
+      });
+      const realLoad = store.load.bind(store);
+      store.load = async (id: string) => {
+        await loadGate;
+        return realLoad(id);
+      };
+
+      const backend = createAgentSessionBackend({
+        defaultCwd: "/proj",
+        sessionStore: store,
+        sessionAcquireTimeoutMs: 20,
+        createAgent: ({ cwd, session }) =>
+          new Agent({
+            model: new FakeModel([textResponse("ok")]),
+            tools: new ToolRegistry(),
+            hooks: new HookRegistry(),
+            session: session!,
+            cwd: cwd ?? "/proj",
+          }),
+      });
+
+      await expect(
+        backend.loadSession!({ sessionId: "slow" }),
+      ).rejects.toThrow(/timed out/);
+
+      // The abandoned acquisition is still running. Let it finish, then
+      // wait for the guard's fire-and-forget release. Poll instead of
+      // sleeping a fixed interval so parallel load cannot flake this.
+      releaseLoad();
+      const deadline = Date.now() + 5_000;
+      while (existsSync(lockOf("slow")) && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 5));
+      }
+
+      // The acquisition installed a lease; the guard must have released it.
+      expect(existsSync(lockOf("slow"))).toBe(false);
+    } finally {
+      // The guard's release is deliberately fire-and-forget, so it can
+      // still be unlinking/writing as we tear down. Retry the recursive
+      // remove rather than racing it (ENOTEMPTY/EBUSY).
+      await fs.rm(dir, {
+        recursive: true,
+        force: true,
+        maxRetries: 20,
+        retryDelay: 25,
+      });
+    }
+  });
+
+  it("releases the write lease of an evicted session", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "acp-evict-"));
+    const lockOf = (id: string): string => path.join(dir, `${id}.jsonl.lock`);
+    try {
+      const store = new SessionStore({ dir });
+      const backend = createAgentSessionBackend({
+        defaultCwd: "/proj",
+        sessionStore: store,
+        maxSessions: 2,
+        createAgent: ({ sessionId, cwd, session }) =>
+          new Agent({
+            model: new FakeModel([textResponse("ok")]),
+            tools: new ToolRegistry(),
+            hooks: new HookRegistry(),
+            session:
+              session ??
+              new InMemorySession(sessionId, {
+                cwd: cwd ?? "/proj",
+                permissionMode: "workspace-write",
+                startedAt: new Date().toISOString(),
+              }),
+            cwd: cwd ?? "/proj",
+          }),
+      });
+
+      const first = await backend.createSession({ cwd: "/proj" });
+      const second = await backend.createSession({ cwd: "/proj" });
+      // The third trips the size cap, which evicts `first`.
+      const third = await backend.createSession({ cwd: "/proj" });
+      // `close()` is fire-and-forget from the eviction path.
+      await new Promise((r) => setTimeout(r, 50));
+
+      // Evicting without closing would leave this lock on disk for the
+      // life of the ACP host, locking out every later `--resume`.
+      expect(existsSync(lockOf(first.sessionId))).toBe(false);
+      expect(existsSync(lockOf(second.sessionId))).toBe(true);
+      expect(existsSync(lockOf(third.sessionId))).toBe(true);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not leak a lease when loadSession replaces a live session", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "acp-replace-"));
+    const lockOf = (id: string): string => path.join(dir, `${id}.jsonl.lock`);
+    try {
+      const store = new SessionStore({ dir });
+      const backend = createAgentSessionBackend({
+        defaultCwd: "/proj",
+        sessionStore: store,
+        maxSessions: 2,
+        createAgent: ({ sessionId, cwd, session }) =>
+          new Agent({
+            model: new FakeModel([textResponse("ok")]),
+            tools: new ToolRegistry(),
+            hooks: new HookRegistry(),
+            session:
+              session ??
+              new InMemorySession(sessionId, {
+                cwd: cwd ?? "/proj",
+                permissionMode: "workspace-write",
+                startedAt: new Date().toISOString(),
+              }),
+            cwd: cwd ?? "/proj",
+          }),
+      });
+
+      const target = await backend.createSession({ cwd: "/proj" });
+      // Replace the live session with a freshly-loaded one. Both hold a
+      // reference to the SAME file; the replaced one must be released or
+      // the reference count never returns to zero.
+      await backend.loadSession!({ sessionId: target.sessionId });
+      const filler = await backend.createSession({ cwd: "/proj" });
+      const evictor = await backend.createSession({ cwd: "/proj" });
+      await new Promise((r) => setTimeout(r, 50));
+
+      // `target` is the oldest, so it is the one evicted here — and if the
+      // replace path leaked a reference, its lock would survive.
+      expect(existsSync(lockOf(target.sessionId))).toBe(false);
+      expect(existsSync(lockOf(filler.sessionId))).toBe(true);
+      expect(existsSync(lockOf(evictor.sessionId))).toBe(true);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("setPolicy autoRun 'off' auto-approves tools without invoking the ask handler", async () => {
     let askCalls = 0;
     const backend = createAgentSessionBackend({
@@ -519,6 +673,9 @@ describe("createAgentSessionBackend", () => {
             messages.length = 0;
             messages.push(...next);
           },
+          // The backend awaits durability after a compaction, so the
+          // fake must expose it like the real `Agent` does.
+          async flushSession() {},
           async run(prompt: string) {
             messages.push({ role: "user", content: prompt });
             messages.push({ role: "assistant", content: "ok" });

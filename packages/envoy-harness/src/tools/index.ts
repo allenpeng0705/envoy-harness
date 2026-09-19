@@ -26,4 +26,5 @@ export type {
   ToolCall,
   ToolContext,
   ToolResult,
+  ToolResultMeta,
 } from "./types.js";

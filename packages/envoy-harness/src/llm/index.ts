@@ -272,3 +272,20 @@ function requireEnv(env: NodeJS.ProcessEnv, name: string): string {
   }
   return value;
 }
+
+export {
+  DEFAULT_RETRY_POLICY,
+  DEFAULT_RETRYABLE_CLASSES,
+  backoffDelayMs,
+  cancellableDelay,
+  classifyFailure,
+  decideRetry,
+  isRetryable,
+  parseRetryAfterMs,
+  withRetry,
+  type ClassifiedFailure,
+  type RetryDecision,
+  type RetryPolicy,
+  type RetryRefusal,
+  type RetryableClass,
+} from "./retry.js";

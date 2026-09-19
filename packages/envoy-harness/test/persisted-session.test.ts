@@ -23,7 +23,8 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { removeTempDir } from "./support/tmp-dir.js";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
@@ -36,7 +37,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await rm(tmpDir, { recursive: true, force: true });
+  await removeTempDir(tmpDir);
 });
 
 function fileFor(id: string): string {
@@ -115,8 +116,9 @@ describe("PersistedSession.open", () => {
     });
     written.appendMessage("user", [{ type: "text", text: "hi" }]);
     written.appendMessage("assistant", [{ type: "text", text: "hello" }]);
-    // Wait for the fire-and-forget disk writes.
-    await new Promise((r) => setTimeout(r, 50));
+    // Durability barrier, not a sleep: `flush()` resolves only once the
+    // batched write has landed, so this cannot race under load.
+    await written.flush();
     // Re-open the same file and verify the format
     // round-trips.
     const reopened = await PersistedSession.open(fileFor(id));
@@ -193,9 +195,8 @@ describe("PersistedSession.appendMessage", () => {
     });
     session.appendMessage("user", [{ type: "text", text: "hi" }]);
     session.appendMessage("assistant", [{ type: "text", text: "hello" }]);
-    // The disk write is fire-and-forget. Give it a
-    // couple of microtask ticks to flush.
-    await new Promise((r) => setTimeout(r, 50));
+    // Durability barrier, not a sleep (see above).
+    await session.flush();
     const file = await readFile(fileFor(id), "utf-8");
     const lines = file.split("\n").filter((l) => l.length > 0);
     expect(lines).toHaveLength(3); // header + 2 messages
@@ -235,6 +236,11 @@ describe("PersistedSession.setTitle", () => {
     });
     session.setTitle("new title");
     expect(session.metadata.title).toBe("new title");
+    // Close it: `setTitle` enqueued an ATOMIC rewrite, whose temp file is
+    // what a `rm -rf` teardown can collide with (ENOTEMPTY). Closing is the
+    // product's own contract for an owned session, and it removes the race
+    // at its source rather than widening a sleep.
+    await session.close();
   });
 
   it("rewrites the header on disk so /resume sees the new title", async () => {
@@ -247,8 +253,8 @@ describe("PersistedSession.setTitle", () => {
     // Re-open and rename.
     const session = await PersistedSession.open(fileFor(id));
     session.setTitle("new title");
-    // Wait for the fire-and-forget rewrite.
-    await new Promise((r) => setTimeout(r, 50));
+    // Durability barrier, not a sleep: the header rewrite is queued.
+    await session.flush();
     const file = await readFile(fileFor(id), "utf-8");
     const lines = file.split("\n").filter((l) => l.length > 0);
     // The header is line 1; the rewrite preserves the
@@ -266,9 +272,9 @@ describe("PersistedSession.setTitle", () => {
       filePath: fileFor(id),
     });
     session.appendMessage("user", [{ type: "text", text: "hi" }]);
-    await new Promise((r) => setTimeout(r, 50));
+    await session.flush();
     session.setTitle("new title");
-    await new Promise((r) => setTimeout(r, 50));
+    await session.flush();
     const file = await readFile(fileFor(id), "utf-8");
     const lines = file.split("\n").filter((l) => l.length > 0);
     expect(lines).toHaveLength(2); // header + 1 message

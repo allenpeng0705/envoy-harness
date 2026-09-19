@@ -6,22 +6,27 @@
  * `spawn → pipe stdout/stderr → resolve on close` boilerplate.
  * This helper:
  *
- * 1. Spawns the child with `stdio: ["ignore", "pipe", "pipe"]`.
+ * 1. Spawns the child with `stdio: ["ignore", "pipe", "pipe"]` and, on
+ *    POSIX, `detached: true` so it leads its own process group.
  * 2. Streams stdout and stderr separately, each capped at
  *    `maxOutputBytes` (default 1 MiB per stream).
  * 3. Resolves on `close` with captured text + truncation flags,
- *    OR on `error` (spawn failure).
+ *    OR on `error` (spawn failure). A **signal** death also resolves —
+ *    `code` is `null` there, which is why the settle predicate is the
+ *    `close` event rather than the exit code.
  * 4. Honors `AbortSignal` via `spawn({ signal })` **and**
- *    {@link killProcessTree} (R6.2). Node's spawn signal alone
- *    kills only the direct child on Windows; nested `cmd.exe`
- *    grandchildren can survive without a tree kill.
+ *    {@link reapChild}: a TERM→KILL ladder against the whole
+ *    process group plus a PID-reuse fence and a bounded pipe teardown.
+ *    Node's spawn signal alone kills only the direct child, and a
+ *    backgrounded grandchild holding the stdout pipe would otherwise
+ *    keep this promise pending forever.
  *
  * Do NOT introduce another copy of this in a backend.
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
 
-import { killProcessTree } from "../../process/kill-tree.js";
+import { captureChildIdentity, reapChild } from "../../process/reaper.js";
 import type { SandboxResult } from "../types.js";
 
 const DEFAULT_MAX_OUTPUT_BYTES = 1024 * 1024; // 1 MiB per stream
@@ -46,10 +51,15 @@ export function spawnCapture(options: SpawnCaptureOptions): Promise<SpawnCapture
   const cap = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
   return new Promise((resolve) => {
     let child: ChildProcess;
+    // `detached` gives the child its own process group so the kill ladder
+    // can address the whole tree with `-pid`. Without it, `-pid` would
+    // name the AGENT's group and killing it would take down the harness.
+    const detached = process.platform !== "win32";
     try {
       child = spawn(options.file, [...options.args], {
         cwd: options.cwd,
         ...(options.signal !== undefined ? { signal: options.signal } : {}),
+        detached,
         stdio: ["ignore", "pipe", "pipe"],
       });
     } catch (err) {
@@ -63,17 +73,9 @@ export function spawnCapture(options: SpawnCaptureOptions): Promise<SpawnCapture
       });
       return;
     }
-
-    const onAbort = (): void => {
-      killProcessTree(child.pid);
-    };
-    if (options.signal !== undefined) {
-      if (options.signal.aborted) {
-        onAbort();
-      } else {
-        options.signal.addEventListener("abort", onAbort, { once: true });
-      }
-    }
+    // Captured while the child is definitely alive, so a later kill
+    // cannot hit a recycled pid.
+    const identity = captureChildIdentity(child);
 
     const outChunks: Buffer[] = [];
     const errChunks: Buffer[] = [];
@@ -84,32 +86,74 @@ export function spawnCapture(options: SpawnCaptureOptions): Promise<SpawnCapture
     let outClosed = false;
     let errClosed = false;
     let childExitCode: number | null = null;
+    let childSignal: string | null = null;
+    // `closed` — NOT `childExitCode !== null` — is the settle predicate.
+    // A signal-killed child reports `code === null`, so keying off the
+    // code left the promise permanently pending (`SIGSYS` under a seccomp
+    // sandbox, `SIGKILL` from our own ladder, an OOM kill).
+    let closed = false;
     let settled = false;
 
-    const cleanupAbort = (): void => {
+    function cleanupAbort(): void {
       options.signal?.removeEventListener("abort", onAbort);
-    };
+    }
 
-    const tryFinish = (): void => {
+    function settle(exitCode: number, signal: string | null): void {
       if (settled) return;
-      // Wait for the child to actually close (so `exitCode`
-      // is set) AND for both pipes to close (so we don't
-      // truncate trailing output).
-      if (childExitCode === null) return;
-      if (!outClosed || !errClosed) return;
       settled = true;
       cleanupAbort();
-      const stdout = Buffer.concat(outChunks).toString("utf8");
-      const stderr = Buffer.concat(errChunks).toString("utf8");
       resolve({
-        stdout,
-        stderr,
-        exitCode: childExitCode,
-        isError: childExitCode !== 0,
+        stdout: Buffer.concat(outChunks).toString("utf8"),
+        stderr: Buffer.concat(errChunks).toString("utf8"),
+        exitCode,
+        signal,
+        isError: exitCode !== 0 || signal !== null,
         stdoutTruncated: outTruncated,
         stderrTruncated: errTruncated,
       });
-    };
+    }
+
+    /**
+     * Last-resort settlement when the pipes had to be torn down.
+     *
+     * Deliberately NOT exit 125: that code means "the sandbox launcher
+     * failed, the command never ran", and {@link classifySandboxFailure}
+     * reports it as infrastructure. Here the command *did* run and a
+     * descendant outlived the kill ladder, so an unwitnessed death is
+     * reported the conventional way — 137, killed by SIGKILL.
+     */
+    function finishAfterForcedClose(): void {
+      const exitCode = childExitCode ?? 137;
+      settle(exitCode, childSignal ?? (childExitCode === null ? "SIGKILL" : null));
+    }
+
+    function tryFinish(): void {
+      if (settled) return;
+      // Wait for the child to actually close AND for both pipes to close
+      // (so we don't truncate trailing output).
+      if (!closed) return;
+      if (!outClosed || !errClosed) return;
+      settle(childExitCode ?? 1, childSignal);
+    }
+
+    function onAbort(): void {
+      void reapChild(child, {
+        processGroup: detached,
+        ...(identity !== undefined ? { identity } : {}),
+        onForceClose: () => {
+          finishAfterForcedClose();
+        },
+      });
+    }
+    // Registered after the settle helpers so a synchronously-aborted
+    // signal is safe to handle.
+    if (options.signal !== undefined) {
+      if (options.signal.aborted) {
+        onAbort();
+      } else {
+        options.signal.addEventListener("abort", onAbort, { once: true });
+      }
+    }
 
     child.stdout?.on("data", (chunk: Buffer) => {
       if (options.onStdout !== undefined && chunk.byteLength > 0) {
@@ -154,9 +198,13 @@ export function spawnCapture(options: SpawnCaptureOptions): Promise<SpawnCapture
       tryFinish();
     });
 
-    child.on("close", (code) => {
-      // Node sets `child.exitCode` synchronously here.
+    child.on("close", (code, signal) => {
+      // Node sets `child.exitCode` synchronously here. `code` is null when
+      // the child died from a signal — which is exactly why the settle
+      // predicate is `closed`, not `code !== null`.
       childExitCode = code;
+      childSignal = signal;
+      closed = true;
       tryFinish();
     });
     child.on("error", (err) => {
@@ -167,6 +215,7 @@ export function spawnCapture(options: SpawnCaptureOptions): Promise<SpawnCapture
         stdout: Buffer.concat(outChunks).toString("utf8"),
         stderr: err.message,
         exitCode: 1,
+        signal: null,
         isError: true,
         stdoutTruncated: outTruncated,
         stderrTruncated: errTruncated,
