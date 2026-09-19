@@ -29,6 +29,63 @@ import * as path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+/** Restore an env var to a captured previous value (or delete it). */
+function restoreEnv(name: string, previous: string | undefined): void {
+  if (previous === undefined) delete process.env[name];
+  else process.env[name] = previous;
+}
+
+/**
+ * A loopback Anthropic Messages stub.
+ *
+ * Loopback only — no external network — so the swap test exercises the
+ * real adapter and the real HTTP path without depending on
+ * api.anthropic.com being reachable or fast. `listen(0)` avoids port
+ * collisions between parallel workers.
+ */
+async function startAnthropicStub(
+  text: string,
+): Promise<{ baseUrl: string; requests: number; close: () => Promise<void> }> {
+  const http = await import("node:http");
+  const state = { requests: 0 };
+  const server = http.createServer((req, res) => {
+    state.requests += 1;
+    let body = "";
+    req.on("data", (c) => {
+      body += String(c);
+    });
+    req.on("end", () => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          id: "msg_stub",
+          type: "message",
+          role: "assistant",
+          model: "claude-stub",
+          stop_reason: "end_turn",
+          content: [{ type: "text", text }],
+          usage: { input_tokens: 1, output_tokens: 1 },
+        }),
+      );
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (address === null || typeof address === "string") {
+    throw new Error("stub server did not bind a port");
+  }
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    get requests() {
+      return state.requests;
+    },
+    close: () =>
+      new Promise<void>((resolve, reject) => {
+        server.close((err) => (err ? reject(err) : resolve()));
+      }),
+  };
+}
+
 import {
   BUILTIN_COMMANDS,
   BUILTIN_INFO_COMMANDS,
@@ -123,24 +180,27 @@ describe("e2e: session continuity", () => {
 
 describe("e2e: model swap via /provider", () => {
   it("subsequent turns use the new adapter", async () => {
-    // The first 2 calls go to the initial model. The next
-    // 2 calls go to the swapped model (after /provider
-    // openai replaces the adapter; but the env var must
-    // be set, which is tricky in tests).
+    // The first turn goes to the injected scripted model; `/provider
+    // anthropic` swaps in a REAL `AnthropicAdapter`, and the second turn
+    // must be served by it.
     //
-    // We test the wiring instead: after /provider (any
-    // outcome), the loop continues. The next non-slash
-    // turn uses whatever adapter is now set.
-    const model = scriptedModel([
-      { content: [textBlock("first")] },
-      { content: [textBlock("second")] },
-    ]);
+    // This test used to point that adapter at api.anthropic.com with a
+    // fake key. It passed only because the agent catches the 401 and
+    // continues, so the swap was never actually observed — while each run
+    // cost a live HTTPS round trip (measured 2.3s-5.4s) that a loaded
+    // machine pushed past the 5s test timeout. That is a non-hermetic test
+    // AND a weak one: it would have passed with the adapter doing nothing.
+    //
+    // A loopback stub fixes both: no external network, and the assertion
+    // can require the new adapter's own output.
+    const stub = await startAnthropicStub("served-by-anthropic-adapter");
+    const model = scriptedModel([{ content: [textBlock("first")] }]);
     const out = new StringWritable();
     const err = new StringWritable();
-    // Pre-set the env var so createProviderAdapter
-    // succeeds. (Anthropic is the cheapest for tests.)
     const prevKey = process.env["ANTHROPIC_API_KEY"];
+    const prevBase = process.env["ANTHROPIC_BASE_URL"];
     process.env["ANTHROPIC_API_KEY"] = "test-key-not-real";
+    process.env["ANTHROPIC_BASE_URL"] = stub.baseUrl;
     try {
       const result = await runRepl({
         model,
@@ -155,20 +215,18 @@ describe("e2e: model swap via /provider", () => {
         stderr: err,
         historyPath: "",
       });
-      // The new model is called for the second turn. The
-      // first turn uses the original `model` (which is
-      // the scripted one).
       expect(result.turns).toBe(2);
+      // Turn 1 came from the scripted model...
       expect(out.data).toContain("first");
-      // The /provider command succeeded (printed
-      // 'provider: anthropic').
+      // ...turn 2 came from the swapped adapter, over the stub. This is
+      // the assertion the old version could not make.
+      expect(out.data).toContain("served-by-anthropic-adapter");
+      expect(stub.requests).toBeGreaterThan(0);
       expect(err.data).toBe("");
     } finally {
-      if (prevKey === undefined) {
-        delete process.env["ANTHROPIC_API_KEY"];
-      } else {
-        process.env["ANTHROPIC_API_KEY"] = prevKey;
-      }
+      await stub.close();
+      restoreEnv("ANTHROPIC_API_KEY", prevKey);
+      restoreEnv("ANTHROPIC_BASE_URL", prevBase);
     }
   });
 });

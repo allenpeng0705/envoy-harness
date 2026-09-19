@@ -1070,7 +1070,9 @@ rather than being allowlisted); full monorepo suite **2553 passed /
 this pass; `envoy-process` 16 → 27; cordis 21 → 27). Every fix above ships
 with a hermetic regression test — none needs a network, a live LLM, a
 mesh, or a real kernel. Each hang, leak, and fail-closed guarantee was
-also checked for *sensitivity*: reverting the fix makes its test fail.
+also checked for *sensitivity*: reverting the fix makes its test fail. Both
+flakes are now verified gone under load — 8 of 8 core-suite runs clean with
+8 CPU spinners running, against 3 of 6 failing before.
 
 **The flake was tracked down, and it was not what it looked like.** Stress-
 running the full suite 8 times reproduced it once (run 7), which named the
@@ -1103,6 +1105,20 @@ create the sibling entry mid-walk: **plain `rm` threw 2 of 5 times;
    `setTimeout(50)` against the writer's 25 ms batch delay. Those are now
    real durability barriers (`await session.flush()` / `close()`), and the
    three new order-sensitive tests poll to a deadline instead of sleeping.
+
+**A second, independent flake was found after the first fix** — this one
+pre-existing and non-hermetic. `e2e: model swap via /provider` swapped a
+REAL `AnthropicAdapter` in and then ran a turn through it, so every run paid
+a live HTTPS round trip to `api.anthropic.com` with a fake key (measured
+2.3s-5.4s, against vitest's 5s default). It passed only because the agent
+catches the 401 and continues — which also means it never actually verified
+the swap: it would have passed with the adapter doing nothing. It failed 3 of
+6 loaded runs. Now served by a loopback stub (listen on 127.0.0.1, canned
+Messages response, no external network), and the assertion requires the new
+adapter's own output — dropping the swap makes it fail. That file went from
+2.3-5.4s to 65ms. The other provider-touching tests were already hermetic
+(`test/live/*` gated behind `RUN_LIVE_TESTS`, the rest behind
+`FakeHttpClient`).
 
 **Crash litter, swept.** A process that dies between `writeFile(tmp)` and
 `rename` leaves `<file>.rewrite-<pid>.tmp` in the session directory; with
