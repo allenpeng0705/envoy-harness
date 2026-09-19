@@ -172,6 +172,12 @@ export {
   withSessionInitGuard,
   repairLoadedTranscript,
   splitCompleteLines,
+  // Orphaned rewrite-temp cleanup (crash litter).
+  DEFAULT_REAP_MIN_AGE_MS,
+  REWRITE_TEMP_INFIX,
+  reapStaleRewriteTemps,
+  rewriteTempPath,
+  rewriteTempPid,
   TurnOutlineRegistry,
   buildTurnOutlineFromMessages,
   type DurableFileHandle,
@@ -189,6 +195,8 @@ export {
   type SessionQueryServiceOptions,
   type TurnOutline,
   type TurnOutlineEntry,
+  type ReapRewriteTempsOptions,
+  type ReapRewriteTempsResult,
 } from "./session/index.js";
 
 // Re-export the agent loop (§3.4 of the design doc)

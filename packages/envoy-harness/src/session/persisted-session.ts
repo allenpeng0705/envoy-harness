@@ -104,8 +104,26 @@ import {
   acquireSessionWriteLease,
   type SessionWriteLease,
 } from "./write-lease.js";
+import { reapStaleRewriteTemps } from "./rewrite-temps.js";
 
 export { PERSISTED_SESSION_FORMAT_VERSION } from "./format.js";
+
+/**
+ * Sweep orphaned rewrite temps for `filePath`, swallowing every failure.
+ *
+ * Litter cleanup must never be the reason a session fails to open: the
+ * caller already holds the lease and the transcript is intact, so a
+ * refused unlink is not actionable at this layer. `reapStaleRewriteTemps`
+ * itself never rejects and reports what it left behind, so a host that
+ * wants the detail (a `doctor` check, say) can call it directly.
+ */
+async function reapOrphanedRewriteTemps(filePath: string): Promise<void> {
+  try {
+    await reapStaleRewriteTemps(filePath);
+  } catch {
+    // Best-effort by contract.
+  }
+}
 
 /**
  * Options for `PersistedSession.create()` (a new
@@ -221,6 +239,11 @@ export class PersistedSession implements Session {
     }
     const lease = await acquireSessionWriteLease(options.filePath);
     try {
+      // A brand-new session file cannot have orphaned temps of its own,
+      // but a *reused* path can (`--fork` onto an existing name, a
+      // deleted-then-recreated session). Sweeping is free and keeps the
+      // directory tidy. Best-effort: never fail a create over litter.
+      await reapOrphanedRewriteTemps(options.filePath);
       const header = buildCreateHeader(options.id, options.metadata);
       await fs.writeFile(
         options.filePath,
@@ -357,6 +380,11 @@ export class PersistedSession implements Session {
 
     if (!options.readOnly) {
       session.lease = await acquireSessionWriteLease(filePath);
+      // We now hold the exclusive write lease, so any rewrite temp for
+      // this exact file belongs to a writer that is gone. Sweep them
+      // (best-effort) BEFORE the repair rewrite below, so a fresh temp is
+      // never confused with an orphan.
+      await reapOrphanedRewriteTemps(filePath);
       // Persist the repair so the transcript on disk matches what the
       // model will actually be sent (otherwise every resume re-repairs).
       if (torn !== undefined || closed.repaired > 0) {

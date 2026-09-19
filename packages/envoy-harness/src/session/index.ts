@@ -80,3 +80,13 @@ export {
   SessionInitGuard,
   withSessionInitGuard,
 } from "./lease-guard.js";
+
+export {
+  DEFAULT_REAP_MIN_AGE_MS,
+  REWRITE_TEMP_INFIX,
+  reapStaleRewriteTemps,
+  rewriteTempPath,
+  rewriteTempPid,
+  type ReapRewriteTempsOptions,
+  type ReapRewriteTempsResult,
+} from "./rewrite-temps.js";

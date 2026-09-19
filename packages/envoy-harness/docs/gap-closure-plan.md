@@ -1065,8 +1065,8 @@ buffered a whole file to answer a 4 KiB request, so it uses
 `pnpm run build` 10/10; module-size gate green (397 files, 0 over the
 800-line hard cap outside the allowlist — `tool-executor.ts` and
 `agent-backend.ts` were each split into a second module to stay under it
-rather than being allowlisted); full monorepo suite **2537 passed /
-5 skipped / 0 failed** across 10 packages (core alone: 2070 passed, +94 on
+rather than being allowlisted); full monorepo suite **2553 passed /
+5 skipped / 0 failed** across 10 packages (core alone: 2089 passed, +113 on
 this pass; `envoy-process` 16 → 27; cordis 21 → 27). Every fix above ships
 with a hermetic regression test — none needs a network, a live LLM, a
 mesh, or a real kernel. Each hang, leak, and fail-closed guarantee was
@@ -1104,14 +1104,38 @@ create the sibling entry mid-walk: **plain `rm` threw 2 of 5 times;
    real durability barriers (`await session.flush()` / `close()`), and the
    three new order-sensitive tests poll to a deadline instead of sleeping.
 
-**Known, unfixed, and worth a follow-up:** a process that dies between
-`writeFile(tmp)` and `rename` leaves `<file>.rewrite-<pid>.tmp` in the
-session directory forever — nothing reaps them, so they accumulate across
-crashes. The session file itself is never at risk (the publish is atomic);
-this is litter, not data loss. A fix would reap stale siblings on
-`PersistedSession.create`/`open`, reusing `write-lease.ts`'s `pidAlive`
-check. Deliberately not done in this pass: it is a new destructive
-filesystem action, and it is a separate concern from the two asked for.
+**Crash litter, swept.** A process that dies between `writeFile(tmp)` and
+`rename` leaves `<file>.rewrite-<pid>.tmp` in the session directory; with
+nothing reaping them they accumulate one per crash per session. The session
+file is never at risk (the publish is atomic) — litter, not data loss — but
+it is unbounded litter in a directory users are told to inspect.
+
+`session/rewrite-temps.ts` now sweeps them. The safety argument is narrower
+than "delete the temp files", which is why it got its own pass: reaping runs
+**only while the caller holds the session's exclusive write lease**, so any
+matching temp belongs to a writer that is gone or incorrect — the same
+staleness model the lease already relies on. On top of that, four guards
+each have a test that fails when the guard is removed:
+
+1. **Exact basename anchor.** The name must be exactly
+   `<session filename>.rewrite-<digits>.tmp`. A prefix-agnostic parse
+   (`includes(".rewrite-")` + numeric tail) misreads
+   `.rewrite-aaaaaaaa123.tmp` as pid `23` and deletes an unrelated file;
+   that case is pinned. `REWRITE_TEMP_INFIX` / `rewriteTempPath` /
+   `rewriteTempPid` are the single source of the name, so the writer and the
+   reaper cannot drift — and a test fails if they do.
+2. **Same directory**, derived from the session path — never a recursive
+   walk.
+3. **Liveness probe** on the embedded pid, so a live writer's temp stays.
+4. **Age floor** (60 s default). A live rewrite finishes in milliseconds, so
+   this is what protects a *shared* filesystem, where a foreign host's pid
+   merely looks dead because pids are not comparable across hosts.
+
+Best-effort by contract: `reapStaleRewriteTemps` never rejects, and a
+refused unlink or unreadable entry is reported as a skip rather than failing
+an `open`. 16 hermetic tests, of which the negatives (another session's
+temp, an unrelated file, a live pid, a fresh temp) carry the weight. The
+`doctor` command could surface the skip list; the API already returns it.
 
 ### Pre-existing items still open
 

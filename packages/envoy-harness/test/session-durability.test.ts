@@ -21,6 +21,7 @@ import {
   type DurableFileHandle,
   type DurableFileSystem,
 } from "../src/index.js";
+import { rewriteTempPath } from "../src/index.js";
 import type { Message } from "../src/index.js";
 
 /** An in-memory filesystem that records every operation and can fail. */
@@ -242,8 +243,12 @@ describe("DurableLineWriter — atomic rewrite", () => {
     expect(fake.read()).toBe("brand\nnew\n");
     const renames = fake.ops.filter((o) => o.startsWith("rename:"));
     expect(renames).toHaveLength(1);
-    // The temp file is gone; nothing left behind.
-    expect(fake.has("/s.jsonl.rewrite-0.tmp") || renames[0]?.includes(".tmp")).toBe(true);
+    // The temp name must come from `rewriteTempPath`, because
+    // `reapStaleRewriteTemps` recognises orphans by exactly that shape. If
+    // the two ever drift, reaping silently stops working — no error, just
+    // litter that never gets swept. Pin the contract, not "something .tmp".
+    const expected = rewriteTempPath("/s.jsonl", process.pid);
+    expect(renames[0]).toBe(`rename:${expected}->/s.jsonl`);
   });
 
   it("fsyncs the containing directory after the rename", async () => {

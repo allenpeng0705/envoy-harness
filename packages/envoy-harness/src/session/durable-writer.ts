@@ -31,6 +31,7 @@
 
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import { rewriteTempPath } from "./rewrite-temps.js";
 
 /** One open file handle, as much of it as the writer needs. */
 export interface DurableFileHandle {
@@ -188,7 +189,9 @@ export class DurableLineWriter {
       // leaves the previous transcript intact instead of a truncated
       // one. `writeFile` in place would truncate first — the exact
       // failure mode that could destroy a session during /plan.
-      const tmp = `${this.#filePath}.rewrite-${process.pid}.tmp`;
+      // Name comes from `rewrite-temps.ts` so the writer and the orphan
+      // reaper can never disagree about what a rewrite temp is called.
+      const tmp = rewriteTempPath(this.#filePath, process.pid);
       await this.#fs.writeFile(tmp, content);
       const handle = await this.#fs.open(tmp, "a");
       try {
