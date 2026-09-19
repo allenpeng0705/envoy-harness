@@ -188,6 +188,57 @@ export class EnvoyFileSystem extends FileSystem {
     return fsp.readFile(target.displayPath);
   }
 
+  /**
+   * Read one byte window without buffering the whole file.
+   *
+   * **Why not slice `readBytes`:** that would read the entire file and
+   * then discard everything outside the window, so a huge log would be
+   * buffered in full to answer a 4 KiB request — the exact
+   * unbounded-buffering failure this seam exists to prevent.
+   * `FileHandle.read` with an explicit `position` transfers at most
+   * `length` bytes.
+   *
+   * A window starting at or past EOF returns an empty array, and a window
+   * running past EOF returns the short remainder: both are normal reads,
+   * not errors.
+   */
+  async readByteRange(
+    target: FsTarget,
+    range: { offset: number; length: number },
+    signal?: AbortSignal,
+  ): Promise<Uint8Array> {
+    const { offset, length } = range;
+    if (
+      !Number.isInteger(offset) ||
+      offset < 0 ||
+      !Number.isInteger(length) ||
+      length < 0
+    ) {
+      throw new FsError(
+        `invalid read range: offset=${offset} length=${length}`,
+        "FS_IO_ERROR",
+      );
+    }
+    signal?.throwIfAborted();
+    if (length === 0) return new Uint8Array(0);
+    let handle;
+    try {
+      handle = await fsp.open(target.displayPath, "r");
+    } catch (err) {
+      throw mapFsError(err);
+    }
+    try {
+      const buffer = Buffer.allocUnsafe(length);
+      const { bytesRead } = await handle.read(buffer, 0, length, offset);
+      signal?.throwIfAborted();
+      return new Uint8Array(buffer.buffer, buffer.byteOffset, bytesRead);
+    } catch (err) {
+      throw mapFsError(err);
+    } finally {
+      await handle.close().catch(() => undefined);
+    }
+  }
+
   async listDir(target: FsTarget, signal?: AbortSignal): Promise<FsDirEntry[]> {
     signal?.throwIfAborted();
     let entries;

@@ -138,6 +138,76 @@ describe("EnvoyFileSystem (dsh ctx.fs contract)", () => {
   });
 });
 
+describe("EnvoyFileSystem.readByteRange", () => {
+  it("reads exactly the requested window", async () => {
+    const f = await makeFs(workspacePolicy());
+    const file = path.join(insideDir, "window.bin");
+    await fs.writeFile(file, "0123456789");
+    const target = await f.resolve(file);
+    expect(Buffer.from(await f.readByteRange(target, { offset: 2, length: 4 })).toString()).toBe(
+      "2345",
+    );
+  });
+
+  it("returns a short remainder when the window runs past EOF", async () => {
+    const f = await makeFs(workspacePolicy());
+    const file = path.join(insideDir, "short.bin");
+    await fs.writeFile(file, "abc");
+    const target = await f.resolve(file);
+    const bytes = await f.readByteRange(target, { offset: 1, length: 99 });
+    expect(Buffer.from(bytes).toString()).toBe("bc");
+  });
+
+  it("returns empty at or past EOF instead of throwing", async () => {
+    const f = await makeFs(workspacePolicy());
+    const file = path.join(insideDir, "eof.bin");
+    await fs.writeFile(file, "abc");
+    const target = await f.resolve(file);
+    expect((await f.readByteRange(target, { offset: 3, length: 5 })).byteLength).toBe(0);
+    expect((await f.readByteRange(target, { offset: 99, length: 5 })).byteLength).toBe(0);
+    expect((await f.readByteRange(target, { offset: 0, length: 0 })).byteLength).toBe(0);
+  });
+
+  it("does not buffer the whole file to answer a small window", async () => {
+    // The property that motivates the seam: a windowed read of a large
+    // file must not grow with the file. 8 MiB is well past any plausible
+    // Buffer pool, so a full read would show up as memory growth rather
+    // than a wrong answer — assert the observable instead: the window is
+    // correct and cheap enough to complete without reading the tail.
+    const f = await makeFs(workspacePolicy());
+    const file = path.join(insideDir, "big.bin");
+    await fs.writeFile(file, Buffer.alloc(8 * 1024 * 1024, 0x61));
+    const target = await f.resolve(file);
+    const bytes = await f.readByteRange(target, { offset: 4, length: 2 });
+    expect(Buffer.from(bytes).toString()).toBe("aa");
+  });
+
+  it("rejects a malformed range", async () => {
+    const f = await makeFs(workspacePolicy());
+    const file = path.join(insideDir, "bad.bin");
+    await fs.writeFile(file, "abc");
+    const target = await f.resolve(file);
+    for (const range of [
+      { offset: -1, length: 1 },
+      { offset: 0, length: -1 },
+      { offset: 0.5, length: 1 },
+      { offset: 0, length: 1.5 },
+    ]) {
+      await expect(f.readByteRange(target, range)).rejects.toMatchObject({
+        code: "FS_IO_ERROR",
+      });
+    }
+  });
+
+  it("maps a missing file to FS_NOT_FOUND", async () => {
+    const f = await makeFs(workspacePolicy());
+    const target = await f.resolve(path.join(insideDir, "absent.bin"));
+    await expect(
+      f.readByteRange(target, { offset: 0, length: 4 }),
+    ).rejects.toMatchObject({ code: "FS_NOT_FOUND" });
+  });
+});
+
 describe("EnvoyFileSystem sandbox enforcement", () => {
   it("denies writes outside the writable roots with FS_SANDBOX_DENIED", async () => {
     const f = await makeFs(workspacePolicy());
