@@ -1523,8 +1523,45 @@ the bare `@envoymesh/envoy-harness` specifier to `src` (tests should not depend 
 and CI builds before typecheck, because typecheck legitimately needs the dependencies' declarations.
 
 **Verified:** with every `packages/*/dist` removed, `pnpm run build` → `pnpm -r run typecheck` →
-`pnpm -r run test` completes with exit 0 at each step (2705 tests passing, 5 skipped, 0 failing) —
+`pnpm -r run test` completes with exit 0 at each step (2713 tests passing, 5 skipped, 0 failing) —
 no workaround, no pre-existing build output.
+
+### Pass 10 — review findings, and giving `agent-backend.ts` real headroom
+
+An adversarial review of the whole change set (self-review plus two delegated reviewers on the
+client/UI and infra/docs layers) produced eleven findings, all fixed:
+
+- **The workspace roots now bound what a client may *request*, not only what the picker may
+  register.** `session/new { cwd }` accepted any path the server process can reach, so
+  `ENVOY_WORKSPACE_ROOTS` looked like containment while covering half of it. `WorkspaceRegistry.allows()`
+  applies the same canonicalized check on create and on resume; the operator's `--cwd` and a resumed
+  session's persisted cwd stay exempt as non-client input. Root containment also folds case on
+  Windows, and the registry's temp file is per-write (`<file>.<pid>.<rand>.tmp`) so the WebUI and TUI
+  cannot rename each other's half-written JSON over the target.
+- **A settled child's state is frozen.** An interrupt settles a child immediately even while its
+  model call is streaming; the late deltas *and* the late commit used to keep writing. The regression
+  test caught the delta half, which the commit guard alone missed.
+- **`background_mode` without `run_in_background` is an error**, not a silent no-op; truncation of a
+  child's output is marked rather than silent; a turn with no authoritative text keeps what it
+  streamed.
+- **Documentation/code contradictions corrected:** the benchmark claimed every failing task isolates
+  one rule and that a two-rule task is "unreachable by construction" — `smoke-empty` is the
+  counterexample (no single removal flips it; it is reachable at 12/15 and the gate only rejects
+  `passedBy === 0`). Stale "six rules" counts in `verifier/types.ts` and design §12.4 updated after
+  the default set became four.
+- **The build graph is now `.tsx`-aware.** The scanner walked only `.ts`, so imports inside React
+  components were invisible: `web → ehui` was missing and the two packages were scheduled in the
+  same level, building in parallel and passing by luck. It also strips comments before scanning (a
+  doc comment quoting an import becomes a phantom edge, and a phantom cycle fails the build
+  misleadingly) and cross-checks each manifest against what the sources import — which is the check
+  that surfaced the `.tsx` gap.
+
+**Backend headroom (the deferred M2 follow-up).** The ACP/SDK control dispatch and the read-only
+introspection projections moved out first (`sdk-server.ts` 795 → 734), then the two heavy session
+operations moved to `session-prompt-ops.ts` (`runSessionPrompt`, `runSessionCompact`, plus the three
+helpers that had no other caller). `agent-backend.ts` went **787 → 544 lines**, so it is no longer
+one edit away from failing the module-size gate; the two largest files in the package are now
+`sdk-server.ts` (734) and `agent-backend.ts` (544).
 
 ### Pre-existing items still open
 
