@@ -37,10 +37,16 @@
 #    `fail`.
 # 5. No task in v1 is labelled `partial` or `disputed`: no default rule
 #    produces those verdicts, so such a label would be unreachable.
-# 6. Every failing task isolates ONE rule, so removing that rule alone
-#    flips the task to pass. A task that fails for two independent
-#    reasons is unreachable by construction (removing either rule leaves
-#    the other failing) and is rejected by the discrimination test.
+# 6. Each failing task is pinned so that ONE rule is *pivotal*: removing it
+#    alone flips the task to pass (true of 7 of the 8 failing tasks). The
+#    exception is `smoke-empty`, which needs BOTH `non-empty-content` and
+#    `output-matches-objective` dropped — it is the task that makes
+#    `non-empty-content` decisive in subsets that omit the overlap rule, so
+#    it cannot be narrowed to one. What the CI gate actually enforces is
+#    weaker and different: every task must be reachable (some legal subset
+#    passes it) and no rule may be inert. A task blocked by two rules is
+#    reachable by dropping both, so it is NOT rejected — do not read this
+#    as a guarantee that each label moves with exactly one rule.
 # 7. Boundary values are pinned here, not only in unit tests:
 #    cost === 1.00 passes, cost 1.50 fails; overlap === 0.50 passes.
 #
@@ -190,11 +196,12 @@ tasks:
         - type: text
           text: ""
 
-  # --- fail isolating non-empty-content -----------------------------------
+  # --- makes non-empty-content decisive (the rule-6 exception) ------------
   # Content is empty. Under DEFAULT_RULES this fails on both
   # non-empty-content and output-matches-objective; it is still reachable
   # because dropping BOTH flips it to pass, and it is the task that makes
-  # non-empty-content decisive in subsets that omit the overlap rule.
+  # non-empty-content decisive in subsets that omit the overlap rule. No
+  # single removal flips it, which is why it is the exception to rule 6.
   - id: smoke-empty
     objective: fix bug #7
     stubKind: empty

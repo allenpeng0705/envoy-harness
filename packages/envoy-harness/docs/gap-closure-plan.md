@@ -1507,6 +1507,17 @@ level at a time. Dynamic imports whose specifier is a *variable* are invisible t
 construction — which is exactly what keeps the optional companions out of the graph. `pnpm run
 build` and CI both go through it; `pnpm run build:graph` prints the derived order.
 
+**The scanner has since been hardened, and doing so caught a real bug.** It strips comments
+before scanning (a doc comment quoting a `from "@envoymesh/x"` pattern would otherwise become a
+phantom edge — and a phantom *cycle* fails the build with a misleading message), accepts both
+quote styles, and now walks `.tsx` as well as `.ts`. That last one mattered: the React packages
+import their siblings from components, so `web → ehui` was invisible and the two were scheduled
+in the same level — they built in parallel and it worked by luck. Adding the missing edge pushed
+`web` to a fifth level. `--graph` also cross-checks each manifest against what the sources
+import and reports both directions (an import with no declared dependency is a real problem; a
+declared dependency nothing imports is usually deliberate here, since cordis/peer/tui are loaded
+by name).
+
 Consequences that remain deliberately in place: the vitest configs for core/adapter/web still alias
 the bare `@envoymesh/envoy-harness` specifier to `src` (tests should not depend on build state),
 and CI builds before typecheck, because typecheck legitimately needs the dependencies' declarations.

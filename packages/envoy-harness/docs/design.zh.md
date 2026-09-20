@@ -2213,7 +2213,7 @@ LLM verifier 用 **比 worker 更便宜的 model**(比如 worker 用 `claude-opu
 ### 12.4 4-source 级联
 
 ```
-1. 永远跑全部 6 个 rule。组合。
+1. 永远跑 rule 集里的每一个 rule。组合。
 2. 如果组合 verdict 是 'pass':完成。记录 VerdictEntry。
 3. 如果 'fail':完成。记录。(orchestrator 可能回滚 cost reserve。)
 4. 如果 'partial' 或 'disputed':跑 LLM source。跟 rule verdicts 组合。
@@ -3268,7 +3268,7 @@ Runner 读 TOML,执行每个 test,任何 test 失败 CI 就挂。
 
 - **身份是规范化路径。** `add` 存 `fs.realpath`,所以同一目录经由两个名字只算一条 —— 更重要的是,位于允许根**内部**的符号链接无法借此注册根**之外**的目录,因为包含性检查跑在真实路径上。
 - **只接受绝对路径**,在 wire 层(`workspace/add` 拒绝相对路径 —— 否则它会按**服务器**的 cwd 解析,那不是客户端的意思)和 registry 里都强制。
-- **可选的允许根。** `FileWorkspaceRegistryOptions.allowedRoots`(来自 `ENVOY_WORKSPACE_ROOTS`,用 `path.delimiter` 分隔)限定可添加的范围;包含性比较带分隔符边界,因此 `/tmp/pro` 不会放行 `/tmp/project-other`。未设置 = 不限制 —— 这是一个人在自己机器上操作的正确默认值。
+- **可选的允许根。** `FileWorkspaceRegistryOptions.allowedRoots`(来自 `ENVOY_WORKSPACE_ROOTS`,用 `path.delimiter` 分隔)限定两件事:registry 允许**注册**什么,以及客户端可以为新 session **请求**什么工作目录(`session/new { cwd }`,以及 resume 时显式的 `cwd`,经 `WorkspaceRegistry.allows`)。没有第二项检查,这个根看起来像containment,实际却只覆盖了选择器。包含性比较带分隔符边界 —— 因此 `/tmp/pro` 不会放行 `/tmp/project-other` —— 并在 Windows 上折叠大小写(那里的路径不区分大小写)。operator 自己的 `--cwd` 默认值刻意豁免:那是 operator 的显式选择,不是客户端输入。未设置 = 不限制 —— 这是一个人在自己机器上操作的正确默认值。
 - **被删除的项目仍可遗忘。** 路径已不存在时,`remove`/`touch`/`has` 会规范化**存在的最深祖先**再把剩余部分接回去,所以目录已被删除的项目依然能被移除。
 - 绑定非 loopback 主机时,WebUI 会向 stderr 发出警告 —— 因为那正是上述一切都"不再只是本机"的时刻。
 

@@ -10,7 +10,9 @@
  * **Three layers of trust:**
  *
  * 1. **Local rules** (this module). Fast, deterministic, free.
- *    Six rules per design §12.1.
+ *    Four rules in `DEFAULT_RULES` per design §12.1 — see
+ *    `rules/index.ts` for which ones and why two more are exported but
+ *    deliberately not optimised.
  *
  * 2. **LLM source** (Phase 2). The verifier is a separate,
  *    cheaper LLM that reads the worker's output and judges it.
@@ -19,10 +21,10 @@
  * 3. **Human / cross-agent** (Phase 4). Owner-signed review,
  *    or a parallel run on a different model.
  *
- * **Why rules first?** The 6 rules catch 80% of the obvious
- * failures (empty output, sandbox violations, etc.) without an
- * LLM round-trip. LLM verification is the escalation path,
- * not the default.
+ * **Why rules first?** The rules catch the obvious failures
+ * (empty output, sandbox violations, off-topic output, overspend)
+ * without an LLM round-trip. LLM verification is the escalation
+ * path, not the default.
  *
  * **Stability:** `VerifierRule` and `runVerifierRules` are the
  * public API. Adding a rule is additive; removing one is a

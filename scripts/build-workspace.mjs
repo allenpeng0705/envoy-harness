@@ -60,9 +60,64 @@ function walk(dir) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) files.push(...walk(full));
-    else if (/\.ts$/.test(entry.name)) files.push(full);
+    // `.tsx` matters: the React packages (`-ehui`, `-web`) import their
+    // workspace siblings from components, so excluding it silently drops
+    // real build edges and lets a dependent build in parallel with its
+    // dependency.
+    else if (/\.(?:ts|tsx|mts|cts)$/.test(entry.name)) files.push(full);
   }
   return files;
+}
+
+/**
+ * Remove comments, respecting string literals.
+ *
+ * **Why this matters here.** The scanner looks for text like
+ * `from "@envoymesh/x"`, so a *doc comment* that quotes that pattern becomes
+ * a phantom dependency edge — and if the quoted package depends on this one,
+ * a phantom cycle that fails the build with a confusing message. (Two
+ * comments in this repo were reworded for exactly that reason.) A file URL
+ * like `https://…` must not be mistaken for a line comment either, hence the
+ * string-literal tracking rather than a regex.
+ */
+export function stripComments(text) {
+  let out = "";
+  let i = 0;
+  let quote = null;
+  while (i < text.length) {
+    const c = text[i];
+    const next = text[i + 1];
+    if (quote !== null) {
+      out += c;
+      if (c === "\\") {
+        out += next ?? "";
+        i += 2;
+        continue;
+      }
+      if (c === quote) quote = null;
+      i += 1;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === "`") {
+      quote = c;
+      out += c;
+      i += 1;
+      continue;
+    }
+    if (c === "/" && next === "/") {
+      while (i < text.length && text[i] !== "\n") i += 1;
+      continue;
+    }
+    if (c === "/" && next === "*") {
+      i += 2;
+      while (i < text.length && !(text[i] === "*" && text[i + 1] === "/")) i += 1;
+      i += 2;
+      continue;
+    }
+    out += c;
+    i += 1;
+  }
+  return out;
 }
 
 /** Build-time workspace references of one package (by package name). */
@@ -71,12 +126,18 @@ function referencesOf(pkg, known) {
   if (!pkg.hasSrc) return deps;
   // `@envoymesh/<name>` with an optional subpath (`.../envoy-harness-client/ehui`).
   // The captured group is the package name only; the subpath is ignored.
-  const staticFrom =
-    /from\s+"(@envoymesh\/[A-Za-z0-9._-]+)(?:\/[A-Za-z0-9._/-]+)?"/g;
-  const dynamicLiteral =
-    /import\(\s*"(@envoymesh\/[A-Za-z0-9._-]+)(?:\/[A-Za-z0-9._/-]+)?"\s*\)/g;
+  // Both quote styles are accepted; comments are stripped first.
+  const quote = "[\"']";
+  const staticFrom = new RegExp(
+    `from\\s+${quote}(@envoymesh/[A-Za-z0-9._-]+)(?:/[A-Za-z0-9._/-]+)?${quote}`,
+    "g",
+  );
+  const dynamicLiteral = new RegExp(
+    `import\\(\\s*${quote}(@envoymesh/[A-Za-z0-9._-]+)(?:/[A-Za-z0-9._/-]+)?${quote}\\s*\\)`,
+    "g",
+  );
   for (const file of walk(path.join(pkg.dir, "src"))) {
-    const text = fs.readFileSync(file, "utf8");
+    const text = stripComments(fs.readFileSync(file, "utf8"));
     for (const m of text.matchAll(staticFrom)) {
       if (known.has(m[1])) deps.add(m[1]);
     }
@@ -87,6 +148,64 @@ function referencesOf(pkg, known) {
     }
   }
   return deps;
+}
+
+/** Workspace deps a manifest declares (build-time relevance is separate). */
+function declaredWorkspaceDeps(pkg, known) {
+  const declared = new Set();
+  const manifest = readJson(pkg.manifest);
+  for (const field of [
+    "dependencies",
+    "devDependencies",
+    "optionalDependencies",
+    "peerDependencies",
+  ]) {
+    for (const [name, range] of Object.entries(manifest[field] ?? {})) {
+      if (!known.has(name)) continue;
+      if (/^(file:|link:|workspace:)/.test(String(range))) declared.add(name);
+    }
+  }
+  return declared;
+}
+
+/**
+ * Imports with no matching manifest declaration.
+ *
+ * This one is worth saying on every build: a workspace import the manifest
+ * does not declare is how a clean install under a different layout (or a
+ * published tarball) breaks. The reverse direction — a declared dependency
+ * nothing imports — is usually legitimate here (loaded by name, or test-only)
+ * so it is reported only under `--graph`.
+ */
+export function missingDeclarations(nodes, known) {
+  const warnings = [];
+  for (const node of nodes) {
+    const declared = declaredWorkspaceDeps(node, known);
+    for (const dep of node.deps) {
+      if (!declared.has(dep)) {
+        warnings.push(
+          `${node.name} imports ${dep} but does not declare it in package.json`,
+        );
+      }
+    }
+  }
+  return warnings;
+}
+
+/** Declared workspace deps that no source file imports (informational). */
+export function unusedDeclarations(nodes, known) {
+  const warnings = [];
+  for (const node of nodes) {
+    const declared = declaredWorkspaceDeps(node, known);
+    for (const dep of declared) {
+      if (!node.deps.has(dep)) {
+        warnings.push(
+          `${node.name} declares ${dep} but no src file imports it (build order unaffected)`,
+        );
+      }
+    }
+  }
+  return warnings;
 }
 
 /** Level-by-level order. Throws with the edge list when the graph cycles. */
@@ -139,7 +258,14 @@ function main() {
     process.stdout.write(
       `\norder:\n${levels.map((l, i) => `  ${i + 1}. ${l.join(", ")}`).join("\n")}\n`,
     );
+    for (const warning of unusedDeclarations(nodes, known)) {
+      process.stdout.write(`\n[graph] note: ${warning}`);
+    }
     return;
+  }
+
+  for (const warning of missingDeclarations(nodes, known)) {
+    process.stderr.write(`[build] warning: ${warning}\n`);
   }
 
   for (const [index, level] of levels.entries()) {

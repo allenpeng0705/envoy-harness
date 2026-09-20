@@ -298,8 +298,10 @@ any registered project instead of only the directory the server started in:
   and never deletes the directory. Paths are canonicalized (symlinks
   resolved) and must be absolute.
 - Only directories under `ENVOY_WORKSPACE_ROOTS` (`:`-separated) may be
-  added when that variable is set; unset means any directory, which is the
-  local-operator default. Set it when the host is reachable from elsewhere.
+  added **or requested as a session's working directory** when that variable
+  is set; the operator's own `--cwd` default is exempt. Unset means any
+  directory, which is the local-operator default. Set it when the host is
+  reachable from elsewhere.
 - `envoy web --cwd <path>` still picks the default project for the server;
   the UI picker opens others per session.
 - Sessions are grouped by project in the WebUI sidebar (`sessions/list`

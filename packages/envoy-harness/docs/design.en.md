@@ -2226,7 +2226,7 @@ The LLM verifier uses a **cheaper model than the worker** (e.g. worker uses `cla
 ### 12.4 The 4-source cascade
 
 ```
-1. ALWAYS run all 6 rules. Combine.
+1. ALWAYS run every rule in the set. Combine.
 2. If combined verdict is 'pass': done. Record VerdictEntry.
 3. If 'fail': done. Record. (orchestrator may roll back cost reserve.)
 4. If 'partial' or 'disputed': run LLM source. Combine with rule verdicts.
@@ -3301,7 +3301,7 @@ Three properties are deliberate:
 
 - **Identity is the canonical path.** `add` stores `fs.realpath`, so the same directory reached by two names is one entry — and, more importantly, a symlink *inside* an allowed root cannot register a directory *outside* it, because containment is checked on the real path.
 - **Absolute paths only**, enforced both at the wire (`workspace/add` rejects a relative path — it would otherwise resolve against the *server's* cwd, which is not what a client meant) and in the registry.
-- **Optional allowed roots.** `FileWorkspaceRegistryOptions.allowedRoots` (from `ENVOY_WORKSPACE_ROOTS`, `path.delimiter`-separated) bounds what may be added; containment is compared on a separator boundary, so `/tmp/pro` does not admit `/tmp/project-other`. Unset means unbounded — the right default for one operator on their own machine.
+- **Optional allowed roots.** `FileWorkspaceRegistryOptions.allowedRoots` (from `ENVOY_WORKSPACE_ROOTS`, `path.delimiter`-separated) bounds two things: what the registry will **register**, and the working directory a client may **request** for a new session (`session/new { cwd }`, and an explicit `cwd` on resume, via `WorkspaceRegistry.allows`). Without the second check the roots would look like containment while covering only the picker. Containment is compared on a separator boundary — so `/tmp/pro` does not admit `/tmp/project-other` — and folds case on Windows, where paths are case-insensitive. The operator's own `--cwd` default is deliberately exempt: that is an explicit operator choice, not client input. Unset means unbounded — the right default for one operator on their own machine.
 - **Forgetting a deleted project still works.** `remove`/`touch`/`has` canonicalize the deepest *existing* ancestor and re-append the remainder when the path is gone, so a project whose directory was deleted can still be removed.
 - The WebUI warns on stderr when it binds a non-loopback host, because that is when all of the above stops being local-only.
 
