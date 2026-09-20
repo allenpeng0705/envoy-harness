@@ -199,6 +199,43 @@ describe("ACP dispatch: workspace + agent control", () => {
 });
 
 describe("createAgentSessionBackend: workspaces", () => {
+  it("bounds a client-supplied session cwd by the allowed roots", async () => {
+    // The registry bounds what the *picker* registers; without this check a
+    // client could still start a session anywhere, so the roots would look
+    // like containment without being it.
+    const inside = path.join(tmpDir, "inside");
+    const outside = await mkdtemp(path.join(os.tmpdir(), "envoy-outside-"));
+    await fs.mkdir(inside, { recursive: true });
+    try {
+      const registry = createFileWorkspaceRegistry({
+        filePath: path.join(tmpDir, "workspaces.json"),
+        allowedRoots: [tmpDir],
+      });
+      const backend = createAgentSessionBackend({
+        createAgent: () => fakeAgent(),
+        workspaces: registry,
+      });
+      // Inside a root: fine.
+      await expect(
+        backend.createSession({ cwd: inside }),
+      ).resolves.toHaveProperty("sessionId");
+      // Outside every root: an explicit error, not a session elsewhere.
+      await expect(
+        backend.createSession({ cwd: outside }),
+      ).rejects.toMatchObject({ code: "OUTSIDE_ROOTS" });
+      // The operator's own default is not client input, so it is exempt.
+      const unscoped = createAgentSessionBackend({
+        createAgent: () => fakeAgent(),
+        defaultCwd: outside,
+      });
+      await expect(unscoped.createSession()).resolves.toHaveProperty(
+        "sessionId",
+      );
+    } finally {
+      await removeTempDir(outside);
+    }
+  });
+
   it("serves the registry and refuses when none is wired", async () => {
     const projectDir = path.join(tmpDir, "proj");
     await fs.mkdir(projectDir, { recursive: true });

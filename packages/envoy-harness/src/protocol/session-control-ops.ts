@@ -15,6 +15,7 @@ import type {
   MeshSubmitter,
 } from "../subagent/index.js";
 import type { WorkspaceEntry, WorkspaceRegistry } from "../workspace/index.js";
+import { WorkspaceError } from "../workspace/index.js";
 import { formatSubagentRecords, subagentRecordsToWire } from "./session-ops.js";
 
 /**
@@ -150,4 +151,40 @@ export async function removeWorkspaceOp(
     throw new Error("workspace registry not wired");
   }
   return { removed: await registry.remove(params.path) };
+}
+
+/**
+ * Resolve a session's working directory, enforcing the workspace roots on
+ * **client-supplied** input.
+ *
+ * `workspace/add` was bounded, but `session/new { cwd }` was not: any client
+ * could start a session in any directory the server process can reach, so
+ * `ENVOY_WORKSPACE_ROOTS` looked like containment while covering only the
+ * picker. The operator's own default (`--cwd`) is deliberately **not**
+ * checked — that is an explicit operator choice, not client input — and a
+ * resumed session's *persisted* cwd is trusted, because it was accepted when
+ * the session was created (and may predate the roots being configured).
+ *
+ * Throws {@link WorkspaceError} so the failure reaches the client as a clear
+ * error rather than a session that quietly runs somewhere unexpected.
+ */
+export async function resolveSessionCwd(input: {
+  requested: string | undefined;
+  persisted: string | undefined;
+  fallback: string | undefined;
+  registry: WorkspaceRegistry | undefined;
+}): Promise<string> {
+  if (input.requested === undefined) {
+    return input.persisted ?? input.fallback ?? process.cwd();
+  }
+  if (
+    input.registry !== undefined &&
+    !(await input.registry.allows(input.requested))
+  ) {
+    throw new WorkspaceError(
+      `working directory is outside the allowed workspace roots: ${input.requested}`,
+      "OUTSIDE_ROOTS",
+    );
+  }
+  return input.requested;
 }

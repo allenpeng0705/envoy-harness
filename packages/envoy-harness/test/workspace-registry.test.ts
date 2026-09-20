@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   createFileWorkspaceRegistry,
+  isWithinRoots,
   WorkspaceError,
   workspaceRootsFromEnv,
   type WorkspaceRegistry,
@@ -239,6 +240,35 @@ describe("workspace registry: allowed roots", () => {
     await fs.rm(projectB, { recursive: true, force: true });
     expect(await registry.remove(projectB)).toBe(true);
     expect(await registry.list()).toEqual([]);
+  });
+
+  it("allows() reports containment, and is permissive when no roots are set", async () => {
+    const scoped = rooted([projectA]);
+    expect(await scoped.allows(projectA)).toBe(true);
+    expect(await scoped.allows(projectB)).toBe(false);
+    // A relative path has no meaningful containment answer.
+    expect(await scoped.allows("relative/proj")).toBe(false);
+    // No roots configured = unbounded, the local-operator default.
+    expect(await registry.allows(projectB)).toBe(true);
+  });
+});
+
+describe("isWithinRoots", () => {
+  it("compares on a separator boundary", () => {
+    expect(isWithinRoots("/tmp/pro/x", ["/tmp/pro"], false)).toBe(true);
+    expect(isWithinRoots("/tmp/pro", ["/tmp/pro"], false)).toBe(true);
+    // A shared prefix without a boundary must not count as contained.
+    expect(isWithinRoots("/tmp/project-other", ["/tmp/pro"], false)).toBe(false);
+  });
+
+  it("folds case only when asked (Windows semantics)", () => {
+    expect(isWithinRoots("/A/B", ["/a"], false)).toBe(false);
+    expect(isWithinRoots("/A/B", ["/a"], true)).toBe(true);
+    expect(isWithinRoots("/a/b", ["/a"], false)).toBe(true);
+  });
+
+  it("tolerates a trailing separator on the root", () => {
+    expect(isWithinRoots("/tmp/pro/x", ["/tmp/pro/"], false)).toBe(true);
   });
 });
 

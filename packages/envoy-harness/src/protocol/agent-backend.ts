@@ -29,13 +29,19 @@ import {
   listSessionAgentsOp,
   listWorkspacesOp,
   removeWorkspaceOp,
+  resolveSessionCwd,
   sendAgentMessageOp,
 } from "./session-control-ops.js";
+import {
+  mergeLabeledConfig,
+  sessionContextOp,
+  turnOutlineOp,
+  type SessionConfigLabels,
+} from "./session-introspection-ops.js";
 import {
   matchPermissionPreset,
   resolvePermissionPreset,
 } from "../permissions/presets.js";
-import { buildTurnOutlineFromMessages } from "../session/turn-outline.js";
 import type { Session } from "../session.js";
 import { SessionStore } from "../session/session-store.js";
 import { messagesToUiTranscript } from "./transcript-ui.js";
@@ -222,7 +228,12 @@ export function createAgentSessionBackend(
   return {
     async createSession(params) {
       pruneIfNeeded();
-      const cwd = params?.cwd ?? options.defaultCwd ?? process.cwd();
+      const cwd = await resolveSessionCwd({
+        requested: params?.cwd,
+        persisted: undefined,
+        fallback: options.defaultCwd ?? process.cwd(),
+        registry: options.workspaces,
+      });
       let sessionId: string;
       let persisted:
         | import("../session/persisted-session.js").PersistedSession
@@ -270,10 +281,12 @@ export function createAgentSessionBackend(
         acquireTimeoutMs,
       );
       const sessionId = persisted.id;
-      const cwd =
-        params.cwd ??
-        persisted.metadata.cwd ??
-        options.defaultCwd;
+      const cwd = await resolveSessionCwd({
+        requested: params.cwd,
+        persisted: persisted.metadata.cwd,
+        fallback: options.defaultCwd,
+        registry: options.workspaces,
+      });
       const doomed = sessions.get(sessionId);
       if (doomed !== undefined) {
         retireLiveSession(doomed, "session replaced");
@@ -629,22 +642,11 @@ export function createAgentSessionBackend(
     },
 
     async getSessionContext(params) {
-      const live = requireLive(sessions, params.sessionId);
-      const cost = live.agent.getCost();
-      return {
-        messageCount: live.agent.getMessageCount(),
-        inputTokens: cost.inputTokens,
-        outputTokens: cost.outputTokens,
-        costUsd: cost.costUsd,
-      };
+      return sessionContextOp(requireLive(sessions, params.sessionId).agent);
     },
 
     async getTurnOutline(params) {
-      const live = requireLive(sessions, params.sessionId);
-      return buildTurnOutlineFromMessages(
-        live.agent.session.id,
-        live.agent.session.messages,
-      );
+      return turnOutlineOp(requireLive(sessions, params.sessionId).agent.session);
     },
 
     async listSessionHooks(params) {
@@ -754,24 +756,19 @@ export function createAgentSessionBackend(
 
     getConfig() {
       const base = options.getConfig?.() ?? { version: "0.0.0" };
+      const labels: SessionConfigLabels[] = [];
       for (const live of sessions.values()) {
-        if (live.modelLabel !== undefined) {
-          const out: Record<string, unknown> = {
-            ...base,
-            model: live.modelLabel,
-            ...(live.providerLabel !== undefined
-              ? { provider: live.providerLabel }
-              : {}),
-          };
-          if (live.baseUrlLabel === null) {
-            delete out["baseUrl"];
-          } else if (live.baseUrlLabel !== undefined) {
-            out["baseUrl"] = live.baseUrlLabel;
-          }
-          return out;
-        }
+        labels.push({
+          ...(live.modelLabel !== undefined ? { model: live.modelLabel } : {}),
+          ...(live.providerLabel !== undefined
+            ? { provider: live.providerLabel }
+            : {}),
+          ...(live.baseUrlLabel !== undefined
+            ? { baseUrl: live.baseUrlLabel }
+            : {}),
+        });
       }
-      return base;
+      return mergeLabeledConfig(base, labels);
     },
     ...(options.listPeers !== undefined
       ? { listPeers: options.listPeers }

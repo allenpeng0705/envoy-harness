@@ -488,6 +488,7 @@ export {
   WorkspaceFileSchema,
   createFileWorkspaceRegistry,
   defaultWorkspacesFilePath,
+  isWithinRoots,
   normalizeWorkspacePath,
   workspaceRootsFromEnv,
   type FileWorkspaceRegistryOptions,

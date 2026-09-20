@@ -72,11 +72,44 @@ export interface WorkspaceRegistry {
   /** Mark `dir` as used now (called when a session starts there). */
   touch(dir: string): Promise<WorkspaceEntry | null>;
   has(dir: string): Promise<boolean>;
+  /**
+   * Would `dir` be accepted? True whenever no roots are configured.
+   *
+   * Hosts use this to apply the same bound to a client-supplied working
+   * directory (`session/new { cwd }`), so `allowedRoots` is a real
+   * containment limit rather than one that only covers the picker.
+   */
+  allows(dir: string): Promise<boolean>;
 }
 
 /** Resolve to an absolute, normalized path; `/` and `\` are equivalent here. */
 export function normalizeWorkspacePath(dir: string): string {
   return path.resolve(dir);
+}
+
+/**
+ * Is `real` equal to, or under, one of `roots`?
+ *
+ * Comparison is on a **separator boundary** (`/tmp/pro` must not admit
+ * `/tmp/project-other`) and, on Windows, case-insensitively — drive letters
+ * and path segments there are case-preserving but case-insensitive, so a
+ * `C:\Users` root must admit `c:\users\proj`.
+ *
+ * Pure and exported so both modes are unit-testable on any platform.
+ */
+export function isWithinRoots(
+  real: string,
+  roots: ReadonlyArray<string>,
+  caseInsensitive = false,
+): boolean {
+  const fold = (s: string): string => (caseInsensitive ? s.toLowerCase() : s);
+  const target = fold(real);
+  return roots.some((root) => {
+    const folded = fold(root);
+    if (target === folded) return true;
+    const withSep = folded.endsWith(path.sep) ? folded : folded + path.sep;
+    return target.startsWith(withSep);
+  });
 }
 
 export interface FileWorkspaceRegistryOptions {
@@ -154,7 +187,13 @@ export function createFileWorkspaceRegistry(
       formatVersion: WORKSPACE_FILE_FORMAT_VERSION,
       workspaces: entries,
     };
-    const tmp = `${options.filePath}.tmp`;
+    // Unique per write, not a fixed `<file>.tmp`: the WebUI and the TUI can
+    // each own a registry instance over the same file, and a shared temp
+    // path lets one process rename the other's half-written JSON over the
+    // target. The in-process lock cannot see across processes.
+    const tmp = `${options.filePath}.${process.pid}.${Math.random()
+      .toString(36)
+      .slice(2)}.tmp`;
     await fs.writeFile(tmp, JSON.stringify(payload, null, 2), "utf8");
     await fs.rename(tmp, options.filePath);
   }
@@ -219,15 +258,26 @@ export function createFileWorkspaceRegistry(
   }
 
   function withinRoots(real: string, roots: ReadonlyArray<string>): boolean {
-    return roots.some((root) => {
-      if (real === root) return true;
-      const withSep = root.endsWith(path.sep) ? root : root + path.sep;
-      return real.startsWith(withSep);
-    });
+    return isWithinRoots(real, roots, process.platform === "win32");
   }
 
   return {
     list: () => withLock(read),
+
+    /**
+     * Is `dir` inside the configured roots? Always true when none are set.
+     *
+     * Exposed so a host can apply the same bound to a *client-supplied*
+     * working directory, not only to what the picker registers — otherwise
+     * `ENVOY_WORKSPACE_ROOTS` looks like containment while `session/new`
+     * still accepts any path.
+     */
+    async allows(dir) {
+      if (!path.isAbsolute(dir)) return false;
+      const roots = await canonicalRoots();
+      if (roots.length === 0) return true;
+      return withinRoots(await canonicalize(dir), roots);
+    },
 
     async add(dir, addOptions) {
       return withLock(async () => {

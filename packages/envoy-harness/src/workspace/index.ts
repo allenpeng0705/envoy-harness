@@ -15,6 +15,7 @@ export {
   WorkspaceError,
   WorkspaceFileSchema,
   createFileWorkspaceRegistry,
+  isWithinRoots,
   normalizeWorkspacePath,
   type FileWorkspaceRegistryOptions,
   type WorkspaceEntry,
