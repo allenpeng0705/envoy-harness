@@ -65,6 +65,19 @@ export const outputMatchesObjectiveRule: VerifierRule = {
       text.toLowerCase().includes(kw.toLowerCase()),
     );
     const ratio = matched.length / keywords.length;
+    if (ratio === 0) {
+      // NO overlap at all is drift, not a partial success: the output does
+      // not address the objective in any respect. The rule's own docstring
+      // calls this "a strong signal of drift", but the code used to return
+      // `partial`, which meant a wholly off-topic answer was graded as
+      // partially acceptable — and, for the benchmark, made a labelled
+      // `expectedVerdict: fail` task unreachable by any rule subset.
+      return {
+        kind: "fail",
+        reason: `output matches 0/${keywords.length} objective keywords`,
+        rollback: false,
+      };
+    }
     if (ratio < 0.5) {
       return {
         kind: "partial",
@@ -186,10 +199,15 @@ export const sandboxRespectedRule: VerifierRule = {
       }
     }
     if (violations.length > 0) {
+      // A tool result reporting a permission error while `isError: false`
+      // means the command SUCCEEDED outside the policy. The docstring calls
+      // that "a fail"; the code returned `partial`, which understated a
+      // policy bypass as a partially-acceptable result. `rollback: true`
+      // because a bypass is not something to keep paying for.
       return {
-        kind: "partial",
-        score: 0.5,
-        reason: `sandbox signal: ${violations[0]}`,
+        kind: "fail",
+        reason: `sandbox violation (successful out-of-policy operation): ${violations[0]}`,
+        rollback: true,
       };
     }
     return { kind: "pass", score: 1.0, confidence: "low" };
@@ -228,11 +246,14 @@ export const approvalRespectedRule: VerifierRule = {
 // ---------------------------------------------------------------------------
 
 /**
- * Check that `result.content` is a valid `ContentBlock[]` per
- * the schema. v0: the type system already enforces this; the
- * rule returns pass unconditionally. It's here as a place to
- * add mesh-specific shape checks (e.g. "every block has a
- * non-empty text field") without changing the rule engine.
+ * Check that `result.content` carries at least one block.
+ *
+ * **The comment here used to claim this "returns pass unconditionally",
+ * which was false** — the code below fails on empty content. The rule is
+ * not a no-op and was nearly deleted on the strength of that stale
+ * comment. It overlaps `non-empty-content` on the common case but is not
+ * redundant: a result whose only block is a `tool_call` has non-zero
+ * `content.length` and no text, so the two rules disagree there.
  */
 export const meshTaskShapeRule: VerifierRule = {
   name: "mesh-task-shape",
@@ -305,11 +326,26 @@ const DEFAULT_COST_BUDGET_USD = 1.0;
 // The default rule set (the 6 rules in design §12.1 order)
 // ---------------------------------------------------------------------------
 
+/**
+ * The default rule set.
+ *
+ * **`approvalRespectedRule` is deliberately absent.** It ignores its
+ * argument and returns a constant `pass` (see its own comment: "for v0,
+ * defer to sandbox-respected"). A rule that always passes is not a check:
+ * it adds a dimension the self-evolution loop can toggle with **zero**
+ * effect on `passRate`, while contributing `score: 1.0` to `meanScore`
+ * and pushing the verdict count toward the `>= 3` "high confidence"
+ * threshold. Measured on the frozen benchmark, dropping it changes
+ * nothing except that inflation.
+ *
+ * The rule is still exported for hosts that want the slot; it is simply
+ * not part of the set the loop optimises. Removing it entirely would be a
+ * breaking change to a public export for no additional benefit.
+ */
 export const DEFAULT_RULES: ReadonlyArray<VerifierRule> = [
   nonEmptyContentRule,
   outputMatchesObjectiveRule,
   sandboxRespectedRule,
-  approvalRespectedRule,
   meshTaskShapeRule,
   costReasonableForWorkRule,
 ];

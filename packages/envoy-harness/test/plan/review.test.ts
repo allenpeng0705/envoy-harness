@@ -63,12 +63,16 @@ describe("runReview", () => {
     expect(r.summary).toMatch(/^pass/);
   });
 
-  it("returns a partial verdict when the result contains 'EACCES'", async () => {
+  it("returns a fail verdict when the result shares nothing with the plan", async () => {
     const plan = await makeApprovedPlan("step 1: do X");
     const r = await runReview(plan, "Error: EACCES opening file");
-    // The sandbox-respected rule returns partial
-    // when it sees EACCES.
-    expect(r.verdict.kind).toBe("partial");
+    // CORRECTION: this test used to assert `partial` and attribute it to
+    // `sandbox-respected` "seeing EACCES". That attribution was wrong —
+    // `runReview` builds only `system` and `user` messages, so the sandbox
+    // rule has no tool result to inspect and cannot fire here at all. The
+    // `partial` came from `output-matches-objective` scoring zero keyword
+    // overlap, which is now correctly a `fail`.
+    expect(r.verdict.kind).toBe("fail");
   });
 
   it("honors a custom ruleset (a passing fake rule)", async () => {

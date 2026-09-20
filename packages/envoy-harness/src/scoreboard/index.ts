@@ -51,6 +51,8 @@ export {
 
 export {
   DefaultBenchmarkRunner,
+  matchesGold,
+  normalizeForGold,
   ModelHypothesisProvider,
   SelfEvolve,
   buildHypothesisPrompt,

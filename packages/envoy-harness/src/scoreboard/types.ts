@@ -221,5 +221,10 @@ export interface BenchmarkResult {
   meanScore: number;
   nRuns: number;
   /** Per-task pass/fail, for diagnostics. */
-  tasks: ReadonlyArray<{ id: string; pass: boolean }>;
+  tasks: ReadonlyArray<{
+    id: string;
+    pass: boolean;
+    /** Present only when the task declared a `goldOutput`. */
+    gold?: "match" | "mismatch";
+  }>;
 }

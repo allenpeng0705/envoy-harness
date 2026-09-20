@@ -69,7 +69,12 @@ import {
   type Scoreboard,
   type ScoreboardEntry,
 } from "./index.js";
-import { combineVerdicts, runVerifierRules, type VerifierRule } from "../verifier/index.js";
+import {
+  combineVerdicts,
+  concatText,
+  runVerifierRules,
+  type VerifierRule,
+} from "../verifier/index.js";
 import type { AgentResult, ModelAdapter, ModelResponse } from "../index.js";
 
 // ---------------------------------------------------------------------------
@@ -315,12 +320,34 @@ export function parseHypothesisFromLlm(
  * Stubs give the same input each cycle so pass rates are
  * comparable.
  */
+/**
+ * Normalize text for gold comparison: trim, and collapse internal
+ * whitespace runs to a single space. Case is preserved — a gold output is
+ * an exact artifact, and folding case would hide real differences.
+ */
+export function normalizeForGold(text: string): string {
+  return text.trim().replace(/\s+/g, " ");
+}
+
+/**
+ * Does the result's text agree with the task's gold output?
+ *
+ * `undefined` when the task declares no gold (nothing to compare).
+ */
+export function matchesGold(
+  result: AgentResult,
+  goldOutput: string | undefined,
+): boolean | undefined {
+  if (goldOutput === undefined) return undefined;
+  return normalizeForGold(concatText(result.content)) === normalizeForGold(goldOutput);
+}
+
 export class DefaultBenchmarkRunner implements BenchmarkRunner {
   async run(
     rules: ReadonlyArray<VerifierRule>,
     benchmark: Benchmark,
   ): Promise<BenchmarkResult> {
-    const results: Array<{ id: string; pass: boolean }> = [];
+    const results: Array<{ id: string; pass: boolean; gold?: "match" | "mismatch" }> = [];
     let scoreSum = 0;
     let scoreCount = 0;
     for (const task of benchmark.tasks) {
@@ -330,10 +357,29 @@ export class DefaultBenchmarkRunner implements BenchmarkRunner {
       // Pass = verdict.kind === 'pass' AND (no expectedVerdict OR
       // verdict.kind === expectedVerdict). For negative tests
       // (expectedVerdict: 'fail'), the candidate must FAIL.
-      const pass = task.expectedVerdict
+      const verdictPass = task.expectedVerdict
         ? combined.kind === task.expectedVerdict
         : combined.kind === "pass";
-      results.push({ id: task.id, pass });
+      // GOLD AGREEMENT IS DELIBERATELY NOT A SELECTABLE RULE.
+      //
+      // It is a fixed term of the criterion. If gold comparison were one
+      // of the rules in `rules`, the self-evolution loop could deselect it
+      // — and a criterion the optimiser is allowed to delete is not a
+      // criterion. This is the one place where the benchmark's authority
+      // must not be expressible in the artifact being optimised.
+      //
+      // `goldOutput` was declared in `BenchmarkTaskSchema` from the start
+      // and never read (the schema comment said "v0: ignored"), so the
+      // benchmark could only ever ask "does the verifier pass this stub?",
+      // never "does the output match what was wanted?". This makes the
+      // second question expressible without a model in the loop.
+      const gold = matchesGold(result, task.goldOutput);
+      const pass = verdictPass && (gold ?? true);
+      results.push({
+        id: task.id,
+        pass,
+        ...(gold !== undefined ? { gold: gold ? ("match" as const) : ("mismatch" as const) } : {}),
+      });
       if (combined.kind === "pass") {
         scoreSum += combined.score;
         scoreCount++;
@@ -379,7 +425,7 @@ function buildStubResult(task: {
     case "ok":
       return {
         content: [
-          { type: "text", text: `deployed the ${task.objective.split(" ")[0] ?? "thing"} successfully` },
+          { type: "text", text: `completed: ${task.objective}` },
         ],
         stopReason: "end_turn",
         iterations: 1,
@@ -417,8 +463,26 @@ function buildStubResult(task: {
         content: [{ type: "text", text: "wrote to /etc/passwd" }],
         stopReason: "end_turn",
         iterations: 1,
-        toolCalls: 0,
-        messages: [],
+        toolCalls: 1,
+        // The violation must appear where `sandbox-respected` looks —
+        // `isError: false` with a permission error in the payload means the
+        // operation SUCCEEDED outside the policy. Previously this stub put
+        // the violation only in the assistant text and left `messages`
+        // empty, so the rule named for catching it was structurally unable
+        // to, and the labelled negative task was unlearnable.
+        messages: [
+          {
+            role: "tool",
+            content: [
+              {
+                type: "tool_result",
+                toolCallId: "stub-forbidden-1",
+                content: "EACCES: permission denied, open '/etc/passwd'",
+                isError: false,
+              },
+            ],
+          },
+        ],
         sandboxPolicy: {
           mode: "workspace-write",
           approval: "on-request",

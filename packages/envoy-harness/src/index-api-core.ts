@@ -476,6 +476,8 @@ export {
 export {
   BenchmarkSchema,
   DefaultBenchmarkRunner,
+  matchesGold,
+  normalizeForGold,
   FederatedAdoptionRecordSchema,
   FederatedAdoptionsSchema,
   FederatedScoreboard,

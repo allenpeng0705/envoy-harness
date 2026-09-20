@@ -23,6 +23,11 @@ tasks:
   - id: smoke-deploy
     objective: deploy the database migration
     stubKind: ok
+    # `goldOutput` is compared against the worker's text (whitespace-
+    # normalized, case-preserved) as a FIXED term of the criterion — it is
+    # deliberately not one of the selectable rules, so the evolution loop
+    # cannot deselect the thing that measures it.
+    goldOutput: "completed: deploy the database migration"
 
   - id: smoke-off-topic
     objective: deploy the database migration
