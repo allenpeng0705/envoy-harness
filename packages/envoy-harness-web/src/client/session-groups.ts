@@ -35,7 +35,11 @@ export function groupSessionsByProject(
 ): ProjectGroup[] {
   const byCwd = new Map<string, SessionSummary[]>();
   for (const s of sessions) {
-    const key = (s.cwd ?? "").trim();
+    // Normalize for *grouping* only: `.. /p/one` and `/p/one/` are the same
+    // project, and splitting them would show two sections with one label.
+    // The first-seen raw path is kept on the group so "open" uses what the
+    // session actually recorded.
+    const key = (s.cwd ?? "").trim().replace(/[\\/]+$/, "");
     const bucket = byCwd.get(key);
     if (bucket === undefined) byCwd.set(key, [s]);
     else bucket.push(s);
@@ -43,11 +47,12 @@ export function groupSessionsByProject(
 
   const named: ProjectGroup[] = [];
   let other: ProjectGroup | undefined;
-  for (const [cwd, list] of byCwd) {
-    if (cwd === "") {
-      other = { cwd, label: OTHER_PROJECT_LABEL, sessions: list };
+  for (const [key, list] of byCwd) {
+    if (key === "") {
+      other = { cwd: "", label: OTHER_PROJECT_LABEL, sessions: list };
       continue;
     }
+    const cwd = (list[0]?.cwd ?? key).trim();
     // Same basename under different parents is possible; the rail shows
     // the full path as the row title so they stay distinguishable.
     named.push({ cwd, label: projectLabel(cwd), sessions: list });

@@ -194,6 +194,12 @@ export function MeshRail(props: MeshRailProps): JSX.Element {
           LocalMeshSubmitter.
         </p>
       )}
+      {agents !== undefined && agents.length === 0 ? (
+        // A modern host reports `agents: []` when there are none; without
+        // this the section is simply blank, which reads as "still loading"
+        // rather than "nothing spawned yet".
+        <p className="muted compact">no sub-agents spawned in this session</p>
+      ) : null}
       {agents !== undefined && agents.length > 0 ? (
         <ul className="agent-list" aria-label="Local sub-agents">
           {agents.map((agent) => {

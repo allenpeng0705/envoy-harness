@@ -203,6 +203,18 @@ describe("groupSessionsByProject", () => {
     expect(projectLabel("")).toBe("Other");
     expect(projectLabel("/")).toBe("Other");
   });
+
+  it("treats a trailing separator as the same project", () => {
+    // Otherwise one project shows up as two sections sharing a label.
+    const groups = groupSessionsByProject([
+      summary("a", "/work/alpha"),
+      summary("b", "/work/alpha/"),
+    ]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.sessions.map((s) => s.id)).toEqual(["a", "b"]);
+    // The group keeps the path a session actually recorded.
+    expect(groups[0]?.cwd).toBe("/work/alpha");
+  });
 });
 
 describe("parseMeshAgents", () => {
