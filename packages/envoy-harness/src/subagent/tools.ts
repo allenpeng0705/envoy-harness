@@ -108,12 +108,13 @@ export const TaskInputSchema = z.object({
     .enum(["one-shot", "continuable"])
     .optional()
     .describe(
-      "Only meaningful with run_in_background. 'one-shot' (default) runs " +
-        "the objective and finishes. 'continuable' keeps the child alive " +
-        "after its first turn so you can send follow-up messages to it; " +
-        "you must eventually stop it with job_kill. A continuable child is " +
-        "still bounded by deadline_ms — measured from when it started, not " +
-        "per message — so size that budget for the whole conversation.",
+      "Only meaningful with run_in_background, and REJECTED without it. " +
+        "'one-shot' (default) runs the objective and finishes. " +
+        "'continuable' keeps the child alive after its first turn so you " +
+        "can send follow-up messages to it; you must eventually stop it " +
+        "with job_kill. A continuable child is still bounded by " +
+        "deadline_ms — measured from when it started, not per message — so " +
+        "size that budget for the whole conversation.",
     ),
 });
 export type TaskInput = z.infer<typeof TaskInputSchema>;
@@ -314,6 +315,15 @@ export function makeTaskTool(
       // Refuse loudly rather than silently blocking: a model that asked
       // for background work and got a synchronous result would be misled
       // about what happened.
+      if (args.background_mode !== undefined && args.run_in_background !== true) {
+        // Accepting a parameter and ignoring it is how a model learns the
+        // wrong lesson about what its call did.
+        return {
+          content:
+            "background_mode has no effect without run_in_background: true. Set run_in_background, or drop background_mode.",
+          isError: true,
+        };
+      }
       if (args.run_in_background === true) {
         if (backgroundJobs === undefined) {
           return {

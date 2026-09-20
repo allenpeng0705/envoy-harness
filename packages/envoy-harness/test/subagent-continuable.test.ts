@@ -172,4 +172,52 @@ describe("LocalMeshSubmitter.submitContinuable", () => {
     // A caller that already holds the handle can still read its output.
     expect(handle.output()).toContain("finished");
   });
+
+  it("ignores a turn that finishes after the child was interrupted", async () => {
+    // An interrupt settles the child immediately (even while a model call is
+    // still hanging). When that call later resolves, the turn must not touch
+    // the record, the output buffer, or `onTurn` — the job has already
+    // reported a terminal status, and a late write would contradict it.
+    let started!: () => void;
+    const startedP = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const model: ModelAdapter = {
+      async complete(params) {
+        started();
+        await gate;
+        params.onTextDelta?.("late text");
+        return {
+          content: [text("late text")],
+          stopReason: "end_turn",
+        };
+      },
+    };
+    const turns: string[] = [];
+    const submitter = new LocalMeshSubmitter({
+      workerPeerId: "local",
+      buildSubagent: defaultBuildSubagentFactory({ model }),
+    });
+    const handle = submitter.submitContinuable(baseInput, {
+      autoSettleAfterIdle: false,
+      onTurn: () => {
+        turns.push("turn");
+      },
+    });
+    await startedP;
+    handle.interrupt("stop");
+    await handle.waitSettle({ timeoutMs: 5_000 });
+    // Let the hung model call resolve and the loop observe it.
+    release();
+    await new Promise((r) => setTimeout(r, 25));
+
+    expect(turns).toHaveLength(0);
+    expect(handle.output()).not.toContain("late text");
+    // The interrupt message is the child's output instead.
+    expect(handle.output()).toContain("interrupted");
+  });
 });

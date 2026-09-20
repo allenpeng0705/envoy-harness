@@ -130,25 +130,34 @@ interface RunningSubagent {
 const MAX_LIVE_CHARS = 16_384;
 /** Cap on the retained completed-turn text. */
 const MAX_TURN_CHARS = 65_536;
+/** Marks a gap where the bounded tail dropped earlier output. */
+const TRUNCATION_MARKER = "…[earlier output truncated]\n";
 
 function appendLive(running: RunningSubagent, delta: string): void {
   running.liveText += delta;
   // Trim lazily (only once it has doubled) so a long turn is amortized
-  // O(1) per delta rather than a copy per delta.
+  // O(1) per delta rather than a copy per delta. The marker matters: a
+  // silent gap in a child's output is worse than a visible one.
   if (running.liveText.length > MAX_LIVE_CHARS * 2) {
-    running.liveText = running.liveText.slice(-MAX_LIVE_CHARS);
+    running.liveText =
+      TRUNCATION_MARKER + running.liveText.slice(-MAX_LIVE_CHARS);
   }
 }
 
 /**
- * Commit a finished turn's authoritative text and drop the streamed
- * version of it, so a turn is never present twice.
+ * Commit a finished turn's authoritative text and drop the streamed version
+ * of it, so a turn is never present twice. When the authoritative text is
+ * empty but the turn streamed something (a truncated or tool-only turn), the
+ * streamed text is kept — discarding it would throw away the only record of
+ * what the child said.
  */
 function commitTurn(running: RunningSubagent, text: string): void {
+  const authoritative = text.trim();
+  const streamed = running.liveText.trim();
   running.liveText = "";
-  const trimmed = text.trim();
-  if (trimmed.length === 0) return;
-  running.turnSegments.push(trimmed);
+  const committed = authoritative.length > 0 ? authoritative : streamed;
+  if (committed.length === 0) return;
+  running.turnSegments.push(committed);
   let total = running.turnSegments.reduce((n, s) => n + s.length + 2, 0);
   while (total > MAX_TURN_CHARS && running.turnSegments.length > 1) {
     total -= (running.turnSegments.shift() ?? "").length + 2;
@@ -302,6 +311,11 @@ export class ContinuableSubagentRegistry {
     // factory that installed its own sink keeps working.
     const priorSink = agent.assistantStreamSink;
     agent.assistantStreamSink = (delta: string): void => {
+      // A settled child is done: an interrupt (or deadline, or parent abort)
+      // can settle it while the model call is still streaming, and a delta
+      // arriving after that would rewrite output the job already reported.
+      // Dropped for the host sink too — the turn it belongs to was cancelled.
+      if (running.settled) return;
       if (priorSink !== undefined) {
         try {
           priorSink(delta);
@@ -441,6 +455,13 @@ export class ContinuableSubagentRegistry {
         }
         try {
           const agentResult = await running.agent.run(next);
+          // The child may have settled *while this turn was running* (an
+          // interrupt, a deadline, a parent abort). Everything below mutates
+          // the record, the output buffer and fires `onTurn`, so doing it
+          // after settlement would change state behind a job that already
+          // reported a terminal status — and the late result is discarded
+          // anyway. Stop here.
+          if (running.settled) return;
           last = synthesizeFromAgentResult(
             agentResult,
             this.opts.workerPeerId,

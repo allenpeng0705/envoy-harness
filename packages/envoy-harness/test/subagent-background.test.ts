@@ -168,6 +168,21 @@ describe("task { run_in_background: true }", () => {
     await jobs.dispose();
   });
 
+  it("rejects background_mode when it would be ignored", async () => {
+    // Accepting a parameter and silently doing nothing teaches the model
+    // the wrong thing about what its call did.
+    const jobs = createLocalJobRegistry();
+    const submitter = localSubmitter([{ content: [text("x")] }]);
+    const tool = makeTaskTool({ submitter, jobs });
+    const res = await tool.execute(
+      { ...BASE_ARGS, background_mode: "continuable" },
+      makeCtx(),
+    );
+    expect(res.isError).toBe(true);
+    expect(String(res.content)).toContain("run_in_background");
+    await jobs.dispose();
+  });
+
   it("refuses to combine background with a fan-out capability tag", async () => {
     const jobs = createLocalJobRegistry();
     const fanOut = new FanOutRegistry();
