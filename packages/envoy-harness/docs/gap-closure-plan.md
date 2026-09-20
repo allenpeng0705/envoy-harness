@@ -1277,6 +1277,61 @@ for this whenever the sibling repo is rebuilt: the symptom is a *reduced test
 count*, not a failure, so a "tests passed" grep will not catch it — check
 `Test Files N failed` too.
 
+### Pass 6 — the verifier criterion measured and repaired
+
+Pass 5 recorded what the source paper implies for envoy. This pass asked a
+narrower, empirical question: **does envoy's existing self-evolution
+criterion actually measure anything?** It was measured rather than argued,
+by enumerating every rule subset against the only benchmark in the repo.
+
+**Before.** All 64 subsets of the six rules run against
+`test/fixtures/frozen-benchmark.yaml` yielded just **three** distinct
+`passRate` values (`0`, `0.25`, `0.5`). `DEFAULT_RULES` scored **0.25** on
+its own benchmark — 1 of 4 tasks graded as intended — and the maximum `0.5`
+was reachable by 24 subsets including a single rule. The best available move
+was to **delete** a rule. The effective criterion was "is the output empty?",
+a two-class test wearing a six-rule verifier.
+
+**Cause: three code/docstring contradictions**, each of which made a labelled
+benchmark task unreachable by any subset:
+
+- `output-matches-objective` documented zero overlap as "a strong signal of
+  drift" but returned `partial`.
+- `sandbox-respected` documented a successful out-of-policy command as "a
+  fail" but returned `partial` — **and that path had no test at all**, which
+  is how it survived.
+- `mesh-task-shape` claimed in its comment to "return pass unconditionally";
+  it does not (it fails on empty content). It was nearly deleted on the
+  strength of that stale comment before the body was read.
+
+Plus two structural defects: `approval-respected` is a true no-op (ignores its
+input, constant `pass`), and the `forbidden-path` stub placed its violation
+only in assistant *text* while leaving `messages` empty — so
+`sandbox-respected`, which scans tool results, could not fire on the stub
+built to exercise it.
+
+**After.** `DEFAULT_RULES` scores **1.0** (4 of 4), the landscape spans
+`{0, 0.25, 0.5, 0.75, 1}`, and `goldOutput` — declared in
+`BenchmarkTaskSchema` since the beginning and documented "v0: ignored" — is
+now read as a **fixed term of the criterion, deliberately not a selectable
+rule**, because a criterion the optimiser may deselect is not a criterion.
+
+Each of the four changes is sensitivity-checked: reverting any one fails a
+specific test. The `approval-respected` export is kept (removing a public
+export would be a breaking change for no benefit); it is simply no longer in
+the set the loop optimises, and a test pins that.
+
+**The new binding constraint.** With a correct baseline, this fixture has **no
+headroom** — every hypothesis is correctly reverted — so it is a regression
+gate, not an improvement driver. And 16 of 32 subsets still reach the
+maximum, because four tasks cannot discriminate among rule sets. The problem
+is no longer "the criterion is broken" but "**there is no production
+benchmark, and the only one in-repo is too small to drive the loop**": the
+CLI defaults to `<cwd>/.envoymesh/frozen-benchmark.yaml` and `readBenchmark`
+throws when it is absent, so `envoy self-evolve` cannot run out of the box.
+
+Design and staging: [`self-evolution-design.md`](./self-evolution-design.md).
+
 ### Pre-existing items still open
 
 - **Cordis-compat container** — ✅ **DONE**:

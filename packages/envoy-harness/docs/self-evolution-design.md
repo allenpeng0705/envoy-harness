@@ -27,7 +27,68 @@ summary of intentions — it is what the code shows:
 | **penguin** | 0 LOC of loop. A 132-line `SKILL.md` prose procedure; its CI "tests" are `toContain(...)` assertions on that markdown | prose. No held-out set, no benchmark version. Snapshot is *instructed*, not wired (`SnapshotService` has no caller outside its own file) |
 | **codex** | Real: ~15.7k Rust LOC, ~111 tests, production-wired. A consolidation sub-agent rewrites `MEMORY.md`, `memory_summary.md`, `skills/*`, and that summary is injected as a **`PromptFragment::developer_policy`** on every thread start — the agent edits its own future system prompt | **structural only.** `validate_consolidation_artifacts_for_version` checks existence, a `"v1"` first line, headings, <10k bytes, no symlinks. No task-outcome label exists anywhere (`threads` has no outcome column). The only behavioural signal is `usage_count`/`last_usage` — *retrieval*, not effect. No eval harness in-repo |
 | **deepseek-harness** | Self-*modification* plumbing ships: `plugin_manager` mutates profile bundles; skills/`AGENTS.md` are live-watched. But it is request-driven and approval-gated, never outcome-driven | **explicitly deferred.** `.agents/notes/.../2026-07-16-harness-level-loop.md:121`: *"A separate evaluator, evaluator-driven feedback round, completion certificate, deterministic checker, adversarial verifier, and criteria/executor/isolation contract remain deferred."* |
-| **envoy** | Thin: rule **selection** only. Rule *bodies* stay code, so invented names are rejected | Real and task-derived (`passRate` over verifier rules) — but the **same benchmark scores `before` and `after`**, and `BenchmarkSchema = { name, tasks }` carries no revision |
+| **envoy** | Thin: rule **selection** only. Rule *bodies* stay code, so invented names are rejected | The only **executable, deterministic** criterion of the four — but see §1.0: it measured as a two-class discriminator, the same benchmark scores `before` and `after`, and `BenchmarkSchema = { name, tasks }` carries no revision |
+
+### 1.0 What envoy's criterion actually was (measured, then fixed)
+
+An earlier draft of this section called envoy's criterion "real and
+task-derived". That was too generous, and the difference matters.
+
+**Measured before any change**, by enumerating all 64 subsets of the six
+rules against the only benchmark in the repo
+(`test/fixtures/frozen-benchmark.yaml`, a four-task *test* fixture):
+
+- `DEFAULT_RULES` scored **`passRate = 0.25`** on its own benchmark — 1 of 4
+  tasks graded as intended.
+- Only **three** distinct `passRate` values existed across all 64 subsets:
+  `0`, `0.25`, `0.5`. The maximum was **0.5**, reachable by 24 subsets
+  *including a single rule*. The best available move was to **delete**
+  `output-matches-objective` (0.25 → 0.5).
+- The effective discriminative capacity was therefore **"is the output
+  empty?"** — a two-class test wearing a six-rule verifier.
+
+The cause was not one bug but three **code/docstring contradictions**, each of
+which made a labelled benchmark task unreachable by any rule subset:
+
+| rule | docstring said | code did |
+|---|---|---|
+| `output-matches-objective` | "A fail here is a strong signal of drift" | returned `partial` on **zero** keyword overlap |
+| `sandbox-respected` | "a SUCCESSFUL out-of-policy command is a fail" | returned `partial` |
+| `mesh-task-shape` | "the rule returns pass unconditionally" | actually **fails on empty content** (the rule is fine; the comment was stale, and it was nearly deleted on the strength of it) |
+
+Plus two structural defects: `approval-respected` ignores its input and returns
+a constant `pass` (a genuine no-op, and an inert dimension for the loop), and
+the `forbidden-path` stub put its violation only in assistant *text* while
+`messages` stayed empty — so `sandbox-respected`, which scans tool results, was
+structurally unable to fire on the stub built to exercise it.
+
+**Fixed in this pass** (all four changes sensitivity-checked — reverting any one
+fails a specific test):
+
+1. `goldOutput` is now read. It is a **fixed term of the criterion, not a
+   selectable rule** — a criterion the optimiser may deselect is not a
+   criterion. `BenchmarkTaskSchema` declared it from the start and never read
+   it.
+2. `output-matches-objective` → **`fail` on zero overlap**; the `partial` band
+   now means "some overlap, under half" (0 < ratio < 0.5).
+3. `sandbox-respected` → **`fail` with `rollback: true`** on a successful
+   out-of-policy operation. (This path had **no test at all**, which is how the
+   contradiction survived.)
+4. `approval-respected` removed from `DEFAULT_RULES` (kept as an exported
+   opt-in; removing the export would be a breaking change for no benefit), and
+   `mesh-task-shape`'s stale docstring corrected.
+
+**Measured after:** `DEFAULT_RULES` scores **`passRate = 1.0`** on the fixture,
+4 of 4 tasks correct, and the landscape now spans the full range —
+`{0, 0.25, 0.5, 0.75, 1}` instead of three plateaus.
+
+**The honest consequence, and the new headline:** the fixture now has **no
+headroom** — a correct baseline means every hypothesis is correctly reverted, so
+this fixture is a *regression gate*, not an improvement driver. And 16 of the 32
+rule subsets still reach 1.0, because four tasks cannot discriminate among rule
+sets. So the remaining problem is no longer "the criterion is broken" but
+"**there is no production benchmark and the only one in-repo is too small to
+drive the loop**". See Stage 0 below.
 
 ### 1.1 The convergence worth noticing
 
@@ -109,11 +170,24 @@ No artifact changes at all. Pure measurement. Four deliverables:
    multiple-comparisons setup: a lucky reorder passes. Require a minimum delta
    (e.g. `after − before ≥ ε`, with `ε` a config field) **and** a confirm-set pass before
    adoption.
+5. **A benchmark big enough to discriminate, and a production one at all.** There
+   is no production benchmark: the only one in-repo is the four-task test
+   fixture, and the CLI's default path
+   (`<cwd>/.envoymesh/frozen-benchmark.yaml`) **throws if absent**, so
+   `envoy self-evolve` cannot run out of the box. Even after the fixes above, 16
+   of 32 rule subsets reach the maximum on four tasks — too few to drive a
+   search. This is now the binding constraint, ahead of the held-out split.
 
 **Where the criterion should come from (options, in the order I would try them):**
 
-- **(a) `VerifierSource: "cross"` on held-out tasks.** Cheapest, already typed, and
-  independent of the proposer's model — this is the adversarial-verifier slot.
+- **(a) A cross-adapter verifier (`VerifierSource: "cross"`).** Independent of the
+  proposer's model. **Correction:** an earlier draft called this "cheapest,
+  already typed". It is typed and *not implemented* — and more than that, **no
+  verification source is recorded at all**: `VerifierSourceSchema` and
+  `issuedBy` appear only in the public export list, and nothing in the rule
+  engine or scoreboard produces them. The whole provenance layer (`source`,
+  `issuedBy`, `issuedAt`, `signature`) is declared and unwired. This is a
+  build, not a wiring job.
 - **(b) Verifier-rule pass rate on held-out tasks** — envoy's current mechanism, with the
   split and the effect-size gate added.
 - **(c) EnvoyMesh reputation / chain graph.** The right long-horizon criterion, but it lives
