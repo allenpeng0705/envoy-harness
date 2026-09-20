@@ -1219,6 +1219,31 @@ any change to the mesh, verifier or self-evolution architectures. The paper
 explicitly permits a verifier as an implementation safeguard while denying it
 is the source of autonomy — envoy keeps its verifier and labels what it is.
 
+**Where the clock lives (clarified after review).** "No heartbeat" is not a
+harness-level decision to *have* scheduling; it is the placement of
+scheduling one layer up. The harness has no timer that re-enters cognition —
+every `setInterval` in it is terminal/PTY polling and every `setTimeout` is an
+I/O timeout (bash kill, HTTP, JSON-RPC, writer batching) — and all five turn
+entry points are push-driven: an ACP request, a REPL line, a one-shot prompt,
+the team runner, a subagent submit. `src/team/types.ts` already states the
+contract in prose: *"the schedule is just a cron string: we don't ship a cron
+parser. The host (system cron, k8s CronJob, a Node `setInterval`) reads the
+string and decides when to invoke `runOnce()`."* EnvoyMesh's app layer owns
+the timers (watchdogs, relay keepalive, prune/refresh sweeps), and its coding
+tab / EnvoyDev scheduler is where re-entry is decided. The paper's §9.6
+("the intelligence need not own the clock") reaches the same conclusion from
+a different direction, which is the strongest confirmation available here.
+
+One consequence worth remembering: because the app owns the clock, the app
+must also supply the *dormancy context* — what changed while the agent was
+silent. The harness gives it little to derive that from: `Message` is
+`{ role, content }` with no timestamps, and session metadata carries
+`startedAt` but no `lastTurnAt`. So a scheduler-driven re-entry cannot compute
+the gap from the session itself. A `lastTurnAt` in the session header (no
+per-message token cost) would let a host say "this transcript is three days
+old; here is what changed" — worth adding only if an app-layer scheduler
+actually consumes it, which today none does.
+
 **Calibration, recorded so the section is not over-read:** the paper is
 exploratory and says so. Its evidence is a *manual* six-session simulation
 (six LLM chats, two human operators carrying messages), one mundane scenario,
