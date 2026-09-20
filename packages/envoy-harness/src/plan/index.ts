@@ -16,6 +16,7 @@ export {
   PLAN_FRAGMENT_PRIORITY,
   buildPlanFragment,
   renderPlanText,
+  PLAN_CONTINGENCY_CLAUSE,
 } from "./inject.js";
 
 export { runReview, type ReviewVerdict, type RunReviewOptions } from "./review.js";

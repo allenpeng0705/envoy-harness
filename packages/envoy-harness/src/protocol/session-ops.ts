@@ -24,8 +24,38 @@ import type { SubagentRecord } from "../subagent/types.js";
 import type { Session } from "../session.js";
 import { runGitDiff } from "./git-runner.js";
 
-const SUMMARIZE_SYSTEM =
-  "You are a session summarizer. Summarize the dropped conversation below into 2-4 sentences, preserving decisions, file paths, and unresolved questions. Output ONLY the summary.";
+/**
+ * The instruction every compaction summarizer uses.
+ *
+ * **This is the single source of truth.** It was previously duplicated: a
+ * copy lived here and another inline in the REPL's `/compact --summarize`.
+ * Two copies of a prompt drift, and the drift is invisible — the REPL and
+ * the ACP host would silently summarize with different priorities.
+ *
+ * **Why it asks for causal content, not a fact list.** Compaction is
+ * exactly where a session loses *how the present follows from the past*.
+ * The dropped messages are the only record of why a decision was made,
+ * what it depended on, and what it invalidated; a summary that keeps only
+ * "what is true" preserves facts while severing the trajectory that gives
+ * them meaning. A later reader (or the model itself after a resume) then
+ * cannot tell a settled decision from a coincidence, or a superseded
+ * approach from a live one.
+ *
+ * So the ordering below is deliberate: decisions and their reasons first,
+ * facts third. Six sentences/bullets keeps the injected summary from
+ * growing the very context compaction exists to shrink.
+ */
+export const SUMMARIZE_SYSTEM =
+  "You are a session summarizer. Condense the dropped conversation below so " +
+  "that a later reader can continue this work without it. Preserve, in this " +
+  "order of importance: (1) decisions that were made and the reason for each " +
+  "— what it depended on or responded to; (2) what those decisions " +
+  "superseded, invalidated, or ruled out; (3) facts, file paths, and " +
+  "constraints that remain true; (4) questions still open. Prefer causal " +
+  "phrasing (\"chose X because Y failed\") over a flat list of facts: a " +
+  "summary that says what is true but not how it came to be true is not " +
+  "sufficient. Be concise — at most 6 sentences or 6 bullets. Output ONLY " +
+  "the summary, with no preamble.";
 
 const INIT_SYSTEM_PROMPT = `You are an AGENTS.md generator.
 Examine the current working directory and write a concise AGENTS.md (max 200 lines) that captures:

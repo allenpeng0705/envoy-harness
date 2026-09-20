@@ -185,6 +185,52 @@ Month 5+:   envoy-harness and EnvoyMesh iterate independently
 
 ---
 
+### 1.4 Ontology is not engineering: the causal circuit and the scaffolding
+
+envoy-harness is a **product**, and a product legitimately fuses mechanisms that belong to different explanatory levels: things that support the model's cognition, things that support the *human's* cognition, things that mediate collaboration, things that compensate for a poor representation of the situation, and things that exist for usability or safety. Mixing them is good engineering. Treating the mixture as one thing is poor ontology, and it leads to a specific failure: adding a subsystem because a cognitive *verb* exists (plan! reflect! remember!) rather than because an implementation reason demands it.
+
+This section fixes the levels so the rest of the document can be read against them.
+
+**What envoy does and does not claim.** envoy does not make a language model autonomous. It maintains a **causal circuit**:
+
+```
+Cₜ → I → oₜ → Cₜ₊₁        where oₜ participates in the causes of Cₜ₊₁,
+                          and Cₜ₊₁ conditions later cognition
+```
+
+Context is projected to an intelligence, the intelligence emits an output (or is silent), and that output becomes part of the context under which it will next think and act. Everything envoy ships is either part of that circuit, or scaffolding around it. The distinction matters because *only the circuit is load-bearing for autonomy* — the scaffolding can be replaced, removed, or made optional without touching the claim.
+
+**The levels.**
+
+| Level | What it is | In envoy-harness |
+|-------|-----------|------------------|
+| **Causal circuit** | context → intelligence → output → context | the agent loop; turn-context assembly (system prompt sections, AGENTS.md, skills, plan, memory index); the session transcript + turn outlines; **tool results** (the causal return of an action); retained context |
+| **Governance** | who may do what. Neither memory nor intelligence | `PermissionMode` / `AskForApproval`; the six bash validators; sandbox policy, failure classification and escalation; project-local trust; approval hooks |
+| **Human support** | the *human's* cognition, not the model's | REPL / TUI / web surfaces; streaming; `/help`, `/cost`, `/status`, `/diff`; `doctor`; transcript rendering |
+| **Collaboration** | distributing work across nodes and people | `MeshSubmitter` (local / peer / remote); ACP + SDK servers; teams and peer jobs |
+| **Evaluation** | judging a trajectory against a criterion | the verifier (a **prediction**); scoreboard; self-evolution; the feedback loop |
+
+The five semantic projections used in the source paper (Context, Persistence, Continuity, Agency, Feedback) live *inside* the circuit row, not as separate subsystems: turn context is Context, the transcript plus retained facts is Persistence, turn outlines and the transcript's ordering are Continuity, the permission-scoped tool surface is Agency, and tool results are Feedback.
+
+**Do not reify a cognitive verb into a service.** The following are **implementations, not primitives**: a planner (envoy has plan mode), a critic (envoy has a verifier), a memory manager (envoy has memory stores), a tool selector (envoy has a registry), a scheduler or heartbeat (envoy has a job registry), a multi-agent graph (envoy has fan-out), external reality, constraint, and improvement. Each exists here for an implementation reason — cost, latency, determinism, safety, auditability — and each is optional. None is the thing that makes the system work, and none should be added merely because the corresponding cognitive act has a name.
+
+Two consequences worth stating explicitly, because both have been gotten wrong elsewhere:
+
+- **A verifier is not feedback.** A verdict is a *prediction about* the work; feedback is what the work actually caused. When those two are conflated, a "pass" verdict ends up standing in for an unrun test, and the system reports success for a failure. envoy labels the distinction in the tool text the model reads (`VERDICT_IS_PREDICTION`) and keeps the causal evidence — command output, test results, diffs — authoritative.
+- **An unrecorded outcome is not an outcome.** A tool call interrupted before its result was written has an *unknown* effect. envoy says so, marks the result as an error, and refuses to let the model retry blindly (`UNKNOWN_OUTCOME_NOTICE`).
+
+**Three rules this repo holds to.**
+
+1. **No subsystem without an implementation reason.** "The cognitive act exists" is not a reason. Cost, latency, determinism, safety, auditability, or a concrete failure are.
+2. **Use procedures where meaning is known; use intelligence where meaning must be inferred — and keep both behind the same semantic role.** The sandbox path is the canonical example: `classifySandboxFailure` and `widenSandboxPolicy` are deterministic code handling the cases whose meaning is known (exit codes, errno text, the widening ladder), while deciding what to *do* about a denial is the model's job. Determinism is not a lesser form of cognition; it is the correct implementation for meaning that is already settled.
+3. **Separate human support from machine autonomy conceptually, even when they are integrated in a product.** A feature that helps a person re-enter a long task after an interruption is *not*, for that reason, part of the model's causal circuit. Both can live in one binary; they should not live in one sentence.
+
+Corollaries already implemented, and where to find them: compaction asks for causal content rather than a fact list (`SUMMARIZE_SYSTEM`), so Persistence does not outlive Continuity; an approved plan is injected as contingent on the conditions that justified it (`PLAN_CONTINGENCY_CLAUSE`), so a procedure whose purpose was satisfied — including while the session was dormant — is discharged rather than executed.
+
+> **Source and calibration.** The framing above follows *Autonomy Is Causality: Toward a Minimal Ontology of Autonomous Intelligence* (Working Paper Draft 0.3, September 2026), §2.2 (one product, several problems), §5 (the five provisional projections), §9.7 (goal-sensitive over procedure-sensitive), §11 (what is not fundamental) and §15 (implications). That paper is deliberately exploratory — its evidence is a manual six-session simulation with human message transport, one scenario, one model family — and it claims no performance result. It is used here as a **vocabulary and a discipline**, not as evidence for any particular architecture; nothing in this document's design follows from it that was not also justified independently.
+
+---
+
 ## 2. End-to-end example
 
 Before any design detail, here is one user story that exercises the whole system. Use it to anchor everything that follows.
@@ -970,6 +1016,8 @@ export type VerdictEntry = z.infer<typeof VerdictEntrySchema>
 ```
 
 envoy-harness implements `VerifierSource: 'rule'` for cheap checks; `'llm'` for the verifier LLM (an owner-configured cheaper model than the worker); `'cross'` for cross-adapter agreement. `'human'` is reserved for when the user is escalated to.
+
+**A verdict is a prediction, not an observation.** It is a judgment *about* a result, formed without knowing what that result actually caused. The causal evidence is the result itself — command output, test results, the diff, the files. Keep the two apart in the model's context, or a `pass` verdict ends up standing in for an unrun test and the system reports success for a failure. `VERDICT_IS_PREDICTION` carries the framing into the `task` tool description so the parent model reads it on every call; see §1.4.
 
 ### 5.7 Sub-agent (mesh-native)
 

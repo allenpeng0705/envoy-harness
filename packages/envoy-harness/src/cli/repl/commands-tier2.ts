@@ -25,6 +25,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
 import type { ContentBlock, Message } from "../../index.js";
+import { SUMMARIZE_SYSTEM } from "../../protocol/session-ops.js";
 import type { ReplCommand } from "./types.js";
 
 /**
@@ -222,20 +223,15 @@ const compactCommand: ReplCommand = {
           const text = dropped
             .map((m) => `${m.role}: ${JSON.stringify(m.content)}`)
             .join("\n");
+          // The instruction is shared with the ACP `compact` path. It used
+          // to be duplicated inline here, which meant the two compaction
+          // entry points could silently summarize with different
+          // priorities.
           const result = await ctx.agent.getModel().complete({
             messages: [
               {
                 role: "system",
-                content: [
-                  {
-                    type: "text",
-                    text:
-                      "You are a session summarizer. Summarize the dropped " +
-                      "conversation below into 2-4 sentences, preserving " +
-                      "decisions, file paths, and unresolved questions. " +
-                      "Output ONLY the summary.",
-                  },
-                ],
+                content: [{ type: "text", text: SUMMARIZE_SYSTEM }],
               },
               { role: "user", content: [{ type: "text", text }] },
             ],

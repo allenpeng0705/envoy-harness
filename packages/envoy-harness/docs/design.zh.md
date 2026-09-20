@@ -178,6 +178,52 @@ Month 5+:   envoy-harness 和 EnvoyMesh 各自独立迭代
 
 ---
 
+### 1.4 本体论不等于工程:因果回路与外围脚手架
+
+envoy-harness 是一个**产品**,而产品合理地融合了属于不同解释层次的机制:支撑模型认知的、支撑**人**的认知的、协调协作的、补偿对处境表征不足的,以及纯粹为了可用性或安全而存在的。把它们放在一起是好的工程;把它们当成"同一个东西"则是糟糕的本体论——并且会导致一种具体的失败:仅仅因为某个认知**动词**存在(规划!反思!记忆!)就新增一个子系统,而不是因为某个实现理由要求它存在。
+
+本节固定这些层次,后续章节都可以对照它们来读。
+
+**envoy 主张什么、不主张什么。** envoy 并不让语言模型变得自主。它维护的是一个**因果回路**:
+
+```
+Cₜ → I → oₜ → Cₜ₊₁        oₜ 参与构成 Cₜ₊₁ 的成因,
+                          而 Cₜ₊₁ 又约束随后的认知
+```
+
+上下文被投影给一个智能体,智能体产生输出(或保持沉默),该输出成为它下一次思考与行动所处上下文的一部分。envoy 交付的一切,要么属于这个回路,要么是围绕它的脚手架。这个区分之所以重要,是因为**只有回路对自主性是承重的**——脚手架可以被替换、移除或变成可选,而不会动摇这个主张。
+
+**各层次。**
+
+| 层次 | 是什么 | envoy-harness 中的对应物 |
+|------|--------|--------------------------|
+| **因果回路** | 上下文 → 智能体 → 输出 → 上下文 | agent loop;turn-context 装配(system prompt 各段、AGENTS.md、skills、plan、memory index);session 记录 + turn outline;**工具结果**(一次行动的因果回返);retained context |
+| **治理** | 谁可以做什么。既不是记忆也不是智能 | `PermissionMode` / `AskForApproval`;六个 bash validator;sandbox policy、失败分类与升级;project-local trust;approval hooks |
+| **人的支撑** | **人**的认知,而非模型的认知 | REPL / TUI / web 界面;流式输出;`/help`、`/cost`、`/status`、`/diff`;`doctor`;记录渲染 |
+| **协作** | 把工作分布到多个节点与人 | `MeshSubmitter`(local / peer / remote);ACP 与 SDK server;team 与 peer jobs |
+| **评估** | 依据某个准则评判一条轨迹 | verifier(**预测**);scoreboard;self-evolution;feedback loop |
+
+源论文使用的五个语义投影(Context、Persistence、Continuity、Agency、Feedback)位于回路这一行**内部**,而不是各自独立的子系统:turn context 是 Context,记录加 retained facts 是 Persistence,turn outline 与记录的顺序是 Continuity,受权限约束的工具面是 Agency,工具结果是 Feedback。
+
+**不要把认知动词实体化为服务。** 以下都是**实现,不是原语**:planner(envoy 有 plan mode)、critic(envoy 有 verifier)、memory manager(envoy 有 memory store)、tool selector(envoy 有 registry)、scheduler/heartbeat(envoy 有 job registry)、multi-agent graph(envoy 有 fan-out)、外部现实、约束、以及"改进"。它们在这里各自都有实现理由——成本、延迟、确定性、安全、可审计——而且都是可选的。没有一个本身让系统得以工作,也不应仅仅因为对应的认知动作有个名字就被加进来。
+
+有两点值得明确写出,因为别处都搞错过:
+
+- **verifier 不是 feedback。** verdict 是关于工作的*预测*;feedback 是工作实际造成的结果。二者一旦混淆,一个 "pass" verdict 就会顶替一次根本没跑的测试,系统便会对失败汇报成功。envoy 在模型读到的工具文本里明确标出这一区分(`VERDICT_IS_PREDICTION`),并让因果证据——命令输出、测试结果、diff——保持权威地位。
+- **没有记录的结果不等于结果。** 工具调用在结果写入前被中断,其效果是*未知*的。envoy 如实说明、把结果标为错误,并拒绝让模型盲目重试(`UNKNOWN_OUTCOME_NOTICE`)。
+
+**本仓库遵守的三条规则。**
+
+1. **没有实现理由就不加子系统。** "这个认知动作存在"不是理由。成本、延迟、确定性、安全、可审计性,或者一个具体的失败,才是理由。
+2. **含义已知之处用过程式代码,含义需要推断之处用智能——并让两者处于同一个语义角色之下。** sandbox 路径是典型例子:`classifySandboxFailure` 与 `widenSandboxPolicy` 是确定性代码,处理含义已知的情形(退出码、errno 文本、放宽阶梯),而"如何处理一次拒绝"由模型决定。确定性不是低一等的认知;对于已经确定的含义,它就是正确的实现。
+3. **在概念上把"人的支撑"与"机器自主"分开,即使它们在产品里是集成的。** 一个帮助人在中断后重新进入长任务的功能,并不因此就属于模型的因果回路。二者可以住在同一个二进制里,但不应住在同一句话里。
+
+已经落地的推论及其位置:压缩摘要要求因果内容而非事实清单(`SUMMARIZE_SYSTEM`),因此 Persistence 不会比 Continuity 活得更久;已批准的计划在注入时被声明为"以其成立条件为前提"(`PLAN_CONTINGENCY_CLAUSE`),因此一个目的已被满足的步骤——包括在会话休眠期间被满足——会被解除而不是被机械执行。
+
+> **出处与校准。** 以上框架来自 *Autonomy Is Causality: Toward a Minimal Ontology of Autonomous Intelligence*(Working Paper Draft 0.3,2026 年 9 月)§2.2(一个产品、若干不同问题)、§5(五个暂定投影)、§9.7(目标敏感优于过程敏感)、§11(什么不是原语)与 §15(推论)。该论文刻意保持探索性——其证据是一次人工的六会话模拟、由人搬运消息、单一场景、单一模型家族——并未给出任何性能结论。此处仅把它当作**词汇与纪律**,而不是任何特定架构的证据;本文档的设计中没有任何部分仅由它推出而未获独立论证。
+
+---
+
 ## 2. 端到端例子
 
 在进入任何设计细节之前,这里有一个 user story 跑通整个系统。用它来锚定后面所有内容。
@@ -962,6 +1008,8 @@ export type VerdictEntry = z.infer<typeof VerdictEntrySchema>
 ```
 
 envoy-harness 实现 `VerifierSource: 'rule'` 做便宜检查;`'llm'` 用 verifier LLM(owner 配置的、便宜 model);`'cross'` 做跨 adapter 一致性。`'human'` 保留给用户升级时用。
+
+**verdict 是预测,不是观测。** 它是*关于*某个结果的判断,作出时并不知道该结果实际造成了什么。因果证据是结果本身——命令输出、测试结果、diff、文件。必须在模型的上下文里把二者分开,否则一个 `pass` verdict 就会顶替一次根本没跑的测试,系统便会对失败汇报成功。`VERDICT_IS_PREDICTION` 把这层框架带进 `task` 工具描述,使父模型每次调用都能读到;见 §1.4。
 
 ### 5.7 Sub-agent(mesh-native)
 

@@ -82,6 +82,7 @@ export {
   filterToolNamesForMode,
   modeForcesReadOnly,
   renderPlanText,
+  PLAN_CONTINGENCY_CLAUSE,
   runReview,
   type CollaborationModeState,
   type ModeKind,
@@ -376,6 +377,11 @@ export {
   type StartTeamJobInput,
   type ToolPermissionAskHookOptions,
 } from "./protocol/index.js";
+
+// The compaction-summary instruction. Shared by the REPL and the ACP host so
+// the two entry points cannot summarize with different priorities; exported
+// because a host implementing its own compaction should use the same one.
+export { SUMMARIZE_SYSTEM } from "./protocol/session-ops.js";
 
 // Distributed mesh — static peer endpoint parsing + optional cluster wiring
 export {

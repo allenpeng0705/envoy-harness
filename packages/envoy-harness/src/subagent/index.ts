@@ -54,6 +54,7 @@ export {
 export {
   TaskInputSchema,
   makeTaskTool,
+  VERDICT_IS_PREDICTION,
   type MakeTaskToolOptions,
   type TaskInput,
   type TaskResult,

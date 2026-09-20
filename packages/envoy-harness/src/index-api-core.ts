@@ -434,6 +434,7 @@ export {
   TaskInputSchema,
   defaultBuildSubagentFactory,
   makeTaskTool,
+  VERDICT_IS_PREDICTION,
   FanOutRegistry,
   aggregateFanOutResults,
   parallel,

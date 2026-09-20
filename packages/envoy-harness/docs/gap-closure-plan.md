@@ -1065,7 +1065,7 @@ buffered a whole file to answer a 4 KiB request, so it uses
 `pnpm run build` 10/10; module-size gate green (397 files, 0 over the
 800-line hard cap outside the allowlist — `tool-executor.ts` and
 `agent-backend.ts` were each split into a second module to stay under it
-rather than being allowlisted); full monorepo suite **2553 passed /
+rather than being allowlisted); full monorepo suite **2568 passed /
 5 skipped / 0 failed** across 10 packages (core alone: 2089 passed, +113 on
 this pass; `envoy-process` 16 → 27; cordis 21 → 27). Every fix above ships
 with a hermetic regression test — none needs a network, a live LLM, a
@@ -1152,6 +1152,105 @@ refused unlink or unreadable entry is reported as a skip rather than failing
 an `open`. 16 hermetic tests, of which the negatives (another session's
 temp, an unrelated file, a live pid, a fresh temp) carry the weight. The
 `doctor` command could surface the skip list; the API already returns it.
+
+### Pass 5 — ontology review (`Autonomy Is Causality`, Draft 0.3)
+
+Not a bug pass. A 30-page working paper ("Autonomy Is Causality: Toward a
+Minimal Ontology of Autonomous Intelligence", Draft 0.3, Sept 2026) was read
+against the codebase, asking: does envoy's self-description survive contact
+with a causal account of autonomy, and does anything here need restructuring?
+
+**Verdict: no structural refactor, and the tempting version of one would be
+the paper's central error.** The paper's thesis is that autonomy is *causal
+recurrence* — an intelligence is autonomous when its own outputs become
+causes of the context under which it later thinks and acts — and that
+planners, critics, memory managers, tool selectors, heartbeats, multi-agent
+graphs, "constraint", "reality" and "improvement" are **implementations, not
+primitives**. Turning its five provisional projections into five modules or
+services would be exactly the reification it argues against (its own research
+program includes *collapsing* them). envoy already has all five roles,
+fused, which the paper permits. Its closing direction is **subtractive**.
+
+Four changes landed, all additive, none architectural:
+
+- **§1.4 in the design doc (en + zh) — a level taxonomy.** Every subsystem is
+  now assigned to its real level: causal circuit, governance, human support,
+  collaboration, or evaluation. Plus the three rules the repo holds to: no
+  subsystem without an implementation reason; procedures where meaning is
+  known and intelligence where it must be inferred; separate human support
+  from machine autonomy *conceptually* even when integrated in a product.
+  This is §2.2 + §15 of the paper applied to a product that legitimately
+  fuses all five levels.
+- **Continuity-preserving compaction.** `SUMMARIZE_SYSTEM` asked for
+  "decisions, file paths, and unresolved questions" — a fact inventory — so
+  compaction preserved Persistence and severed Continuity, exactly where
+  Continuity is destroyed. It now requires *why*: decisions and their
+  reasons, what those decisions superseded, then facts, then open questions,
+  with causal phrasing demanded explicitly. It was also **duplicated** (a
+  second inline copy in the REPL's `/compact --summarize`), so the two
+  compaction entry points could drift; there is now one definition, pinned by
+  a test that drives `runRepl` and asserts the shared constant is what the
+  summarizer receives.
+- **A verdict is a prediction, not causal return.** `SubagentResult.verdict`
+  reached the parent model as a bare `{kind: "pass", score: 0.9}` with no
+  framing, inviting the parent to treat a self-assessment as an established
+  fact. `VERDICT_IS_PREDICTION` now travels in the `task` tool description
+  (in the model's context on every call) and names the causal evidence —
+  command output, test results, diffs — as authoritative. §5.6 of the design
+  doc says the same thing at the type level.
+- **A plan is contingent, not a script.** `renderPlanText` injected
+  `ACTIVE PLAN (approved at …)` with no framing, so on re-entry after
+  dormancy a step whose purpose had already been satisfied still read as a
+  procedure to execute (§9.7's 18:48 timer released at 18:43).
+  `PLAN_CONTINGENCY_CLAUSE` states the relationship the plan actually has.
+
+Two of the paper's cheap experiments are now tests
+(`test/causal-continuity.test.ts`): **§14.10 dormancy/re-entry** (a session
+closed with an approved plan, reopened, and run — the plan is still present
+*and* marked contingent, with no invented outcome for the silent interval)
+and **§14.11 promoted-consequence** (a repaired dangling tool call is
+surfaced as an error carrying `UNKNOWN_OUTCOME_NOTICE`, and the notice is
+guarded against ever being reworded into an assertion of what happened —
+the "failure that reports success").
+
+**What was deliberately not done:** five projection modules; a
+Planner/Critic/Referee service; a heartbeat/continuous-execution requirement;
+any change to the mesh, verifier or self-evolution architectures. The paper
+explicitly permits a verifier as an implementation safeguard while denying it
+is the source of autonomy — envoy keeps its verifier and labels what it is.
+
+**Calibration, recorded so the section is not over-read:** the paper is
+exploratory and says so. Its evidence is a *manual* six-session simulation
+(six LLM chats, two human operators carrying messages), one mundane scenario,
+one model family, prompts derived from the theory (author-acknowledged
+confirmation risk), no baseline, and no measurement of cost, latency,
+reliability or safety. It is used above as a **vocabulary and a discipline**,
+not as evidence for an architecture. Nothing landed because the paper said
+so that was not also justified on its own terms.
+
+**Verification:** 15 new tests across `test/compaction-continuity.test.ts`
+(7) and `test/causal-continuity.test.ts` (8). Each new guard was
+sensitivity-checked: reverting `PLAN_CONTINGENCY_CLAUSE`, dropping
+`VERDICT_IS_PREDICTION` from the tool description, and restoring the REPL's
+private summarizer copy each make a specific test fail.
+
+**Operational trap found while verifying (worth knowing).** Nine
+`envoy-harness-adapter` suites failed to *collect* with
+
+```
+Cannot find module '.../@envoymesh/protocol/dist/src/frame-wire.js'
+```
+
+The sibling `EnvoyMesh` checkout had a **newer `dist/` than the copy pnpm
+had snapshotted into `node_modules/.pnpm`** for the `@envoymesh/protocol`
+`file:` dependency. Nothing in envoy-harness changed; the gate was simply
+unverifiable. `pnpm install` and `pnpm install --force` both no-op'd, because
+`node_modules/.modules.yaml` still recorded the dep as installed. A clean
+reinstall (`rm -rf node_modules packages/*/node_modules && pnpm install
+--frozen-lockfile`) fixed it and left `pnpm-lock.yaml` byte-identical. Watch
+for this whenever the sibling repo is rebuilt: the symptom is a *reduced test
+count*, not a failure, so a "tests passed" grep will not catch it — check
+`Test Files N failed` too.
 
 ### Pre-existing items still open
 

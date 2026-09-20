@@ -74,7 +74,38 @@ export function buildPlanFragment(
   ];
 }
 
+/**
+ * The contingency clause appended to every injected plan.
+ *
+ * **Why the plan is not injected as a bare script.** A plan records
+ * *intended transitions*: each step was written because some condition made
+ * it the right move. An approved plan is re-injected on every turn and can
+ * outlive the conditions that justified it — most visibly after the session
+ * has been dormant (a `--resume` days later, or a background job that
+ * finished while the agent was idle). Injected bare, the plan reads as a
+ * procedure to execute, and a step whose purpose has already been satisfied
+ * gets performed mechanically: a timer waits until 18:48 because that is
+ * what the plan said, even though the thing it was waiting for happened at
+ * 18:43.
+ *
+ * So the clause states the relationship the plan actually has: contingent
+ * on the conditions that justified it, to be discharged rather than
+ * executed when those conditions no longer hold. This keeps the plan's
+ * continuity value (the model still knows what was intended and why the
+ * present follows from it) without letting it override current context.
+ */
+export const PLAN_CONTINGENCY_CLAUSE =
+  "This plan records intended transitions, not a script. Each step is " +
+  "contingent on the conditions that justified it. If the situation has " +
+  "already satisfied a step's purpose, or made it moot, treat that step as " +
+  "discharged and say what changed rather than carrying it out mechanically. " +
+  "Conditions that changed since the plan was written — including while you " +
+  "were not running — take precedence over its original wording.";
+
 /** The rendered plan fragment text. Stable + parseable. */
 export function renderPlanText(state: PlanState): string {
-  return `ACTIVE PLAN (approved at ${state.updatedAt}):\n\n${state.planText}`;
+  return (
+    `ACTIVE PLAN (approved at ${state.updatedAt}):\n\n${state.planText}\n\n` +
+    PLAN_CONTINGENCY_CLAUSE
+  );
 }

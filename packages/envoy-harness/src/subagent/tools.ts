@@ -186,6 +186,32 @@ export interface MakeTaskToolOptions {
  * 4. Honors the parent's `abortSignal` (any
  *    sub-agent abort propagates to all in-flight).
  */
+/**
+ * Framing that must accompany a `task` result's `verdict`.
+ *
+ * **A verdict is a prediction, not an observation.** It is a judgment
+ * *about* the work — synthesized from the sub-agent's stop reason and the
+ * shape of its output, or from verifier rules — formed without knowing what
+ * the work actually caused. The causal evidence is the work itself: command
+ * output, test results, the diff, the files.
+ *
+ * The parent model reads a bare `verdict: {kind: "pass", score: 0.9}`
+ * alongside the result and has every reason to treat it as an established
+ * fact about the world. Conflating the two is how a system starts trusting
+ * its own self-assessment over what happened: a "pass" verdict standing in
+ * for an unrun test is a failure that reports success. Naming the
+ * distinction in the tool description is the cheapest place to prevent it,
+ * because that text is in the model's context on every call.
+ */
+export const VERDICT_IS_PREDICTION =
+  "Treat the returned `verdict` as a PREDICTION about the work's quality " +
+  "(synthesized from how the sub-agent stopped and what it produced), not as " +
+  "evidence that the work succeeded. It is a fallible judgment, not an " +
+  "observation of consequence. The causal evidence is the work's own output: " +
+  "command output, test results, diffs, files. If the verdict and the " +
+  "evidence disagree, believe the evidence, and verify external state " +
+  "yourself before relying on the result.";
+
 export function makeTaskTool(
   submitterOrOptions: MeshSubmitter | MakeTaskToolOptions,
 ): Tool {
@@ -218,7 +244,8 @@ export function makeTaskTool(
       "text + verdict + cost. Use this when a sub-problem deserves " +
       "a fresh session with its own permission state — e.g. a " +
       "research sub-agent that should run read-only while you " +
-      "continue to edit files.",
+      "continue to edit files. " +
+      VERDICT_IS_PREDICTION,
     parameters: TaskInputSchema,
     async execute(args, ctx) {
       const baseInput: SubagentInput = {
