@@ -28,6 +28,11 @@
 import { z } from "zod";
 
 import type { VerifierRule } from "../verifier/index.js";
+import {
+  AskForApprovalSchema,
+  PermissionModeSchema,
+  SandboxBackendSchema,
+} from "../types.js";
 
 // ---------------------------------------------------------------------------
 // ScoreboardEntry — the audit-trail record
@@ -154,15 +159,115 @@ export interface VerifierRuleset {
 // ---------------------------------------------------------------------------
 
 /**
+ * A benchmark task's worker result, as data.
+ *
+ * **Why this exists.** The first benchmark could only feed four canned
+ * shapes (`stubKind`), which cannot express the cases that actually
+ * separate one ruleset from another: a partial keyword overlap, a
+ * tool call with no prose, a *blocked* write (`isError: true`) versus a
+ * write that bypassed the sandbox (`isError: false`). A task that cannot
+ * state its input cannot carry a label the loop can learn from.
+ *
+ * The boilerplate fields (`stopReason`, `iterations`, `toolCalls`,
+ * `messages`, `sandboxPolicy`, `metrics`) have defaults so a YAML task
+ * can state just the part that matters — usually `content`, and
+ * optionally `messages` / `metrics.costUsd`.
+ *
+ * **Not a security boundary:** a fixture is authored data, not a live
+ * worker. It is validated so a typo fails at load time instead of
+ * producing a silently-different result.
+ */
+/**
+ * A JSON-shaped payload for the opaque `args` / tool-result `content`
+ * fields.
+ *
+ * **Why not `z.unknown()`:** zod treats an `unknown` key as optional, so
+ * the parsed type has `args?: unknown`, which is not assignable to the
+ * harness's `ContentBlock` (`args: unknown`) under
+ * `exactOptionalPropertyTypes`. Spelling out the JSON value types keeps
+ * the key required and the value assignable.
+ */
+const BenchmarkJsonValueSchema = z.union([
+  z.string(),
+  z.number(),
+  z.boolean(),
+  z.null(),
+  z.array(z.unknown()),
+  z.record(z.unknown()),
+]);
+
+export const BenchmarkContentBlockSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("text"), text: z.string() }),
+  z.object({
+    type: z.literal("image"),
+    mimeType: z.string(),
+    data: z.string(),
+  }),
+  z.object({
+    type: z.literal("tool_call"),
+    id: z.string(),
+    name: z.string(),
+    args: BenchmarkJsonValueSchema,
+  }),
+  z.object({
+    type: z.literal("tool_result"),
+    toolCallId: z.string(),
+    content: BenchmarkJsonValueSchema,
+    isError: z.boolean(),
+  }),
+]);
+
+export const BenchmarkMessageSchema = z.object({
+  role: z.enum(["system", "user", "assistant", "tool"]),
+  content: z.array(BenchmarkContentBlockSchema),
+});
+
+export const BenchmarkSandboxPolicySchema = z.object({
+  mode: PermissionModeSchema,
+  approval: AskForApprovalSchema,
+  backend: SandboxBackendSchema,
+  writableRoots: z.array(z.string()),
+  networkAccess: z.boolean(),
+  slashTmpWritable: z.boolean(),
+});
+
+export const BenchmarkAgentResultSchema = z.object({
+  content: z.array(BenchmarkContentBlockSchema),
+  stopReason: z
+    .enum([
+      "end_turn",
+      "tool_use",
+      "max_tokens",
+      "stop_sequence",
+      "max_iterations",
+      "aborted",
+    ])
+    .default("end_turn"),
+  iterations: z.number().int().nonnegative().default(1),
+  toolCalls: z.number().int().nonnegative().default(0),
+  messages: z.array(BenchmarkMessageSchema).default([]),
+  sandboxPolicy: BenchmarkSandboxPolicySchema.default({
+    mode: "workspace-write",
+    approval: "on-request",
+    backend: "linux-landlock",
+    writableRoots: ["/tmp"],
+    networkAccess: false,
+    slashTmpWritable: true,
+  }),
+  metrics: z
+    .object({
+      inputTokens: z.number().nonnegative().default(0),
+      outputTokens: z.number().nonnegative().default(0),
+      costUsd: z.number().nonnegative().default(0),
+    })
+    .default({ inputTokens: 0, outputTokens: 0, costUsd: 0 }),
+});
+
+/**
  * One task in the frozen benchmark. The benchmark is the
  * evaluation set the self-evolution protocol runs against;
  * it must be FROZEN (no edits during a cycle) so the pass
  * rate is comparable across cycles.
- *
- * **Why the `goldOutput` is optional:** in v0 the benchmark
- * checks whether the verifier returns `kind: 'pass'`, not
- * whether the output matches gold. Gold comparison is a
- * Phase 4 concern.
  */
 export const BenchmarkTaskSchema = z.object({
   /** Stable task id. */
@@ -170,14 +275,23 @@ export const BenchmarkTaskSchema = z.object({
   /** The user objective (what the worker was asked to do). */
   objective: z.string().min(1),
   /**
-   * Optional gold output. When present, the benchmark
-   * compares the worker's `content` against this. v0: ignored.
+   * Optional gold output. When present, the benchmark compares the
+   * worker's text against it (whitespace-normalized, case-preserved)
+   * as a **fixed term** of the criterion — never as a selectable rule,
+   * so the optimiser cannot deselect the thing that measures it. See
+   * `DefaultBenchmarkRunner`.
    */
   goldOutput: z.string().optional(),
   /**
-   * Optional expected verdict. When present, the benchmark
-   * requires `verdict.kind === expectedVerdict`. Useful for
-   * negative tests (e.g. "this should be a fail").
+   * The verdict the verifier ought to return for this result. The task
+   * passes iff `combined.kind === expectedVerdict` (and, when
+   * `goldOutput` is present, the output also matches gold).
+   *
+   * **Every task in the v1 benchmark sets this.** It is optional in the
+   * schema only so pre-existing fixtures still load; a missing value is
+   * treated as `"pass"` (see the runner), which is easy to do by
+   * accident, so `test/benchmark-discrimination.test.ts` rejects a
+   * canonical task that omits it.
    *
    * **Why an enum, not a `z.literal` union?** The discriminated
    * union's `kind` field doesn't have a `shape` (zod limitation).
@@ -185,9 +299,15 @@ export const BenchmarkTaskSchema = z.object({
    */
   expectedVerdict: z.enum(["pass", "partial", "fail", "disputed"]).optional(),
   /**
-   * Pre-built `AgentResult` to feed the verifier. If absent,
-   * the benchmark runner constructs one from a stub. v0:
-   * `stub` is the only supported value.
+   * Pre-built `AgentResult` to feed the verifier, for cases the four
+   * canned shapes cannot express (partial overlap, a blocked versus a
+   * bypassed write, exact cost boundaries). **Takes precedence over
+   * `stubKind`** when both are present.
+   */
+  agentResult: BenchmarkAgentResultSchema.optional(),
+  /**
+   * A canned result shape. Use `agentResult` when a task needs precise
+   * control; this is shorthand for the common clean/unclean cases.
    */
   stubKind: z.enum(["empty", "ok", "off-topic", "forbidden-path"]).default("ok"),
 });
@@ -206,10 +326,13 @@ export type Benchmark = z.infer<typeof BenchmarkSchema>;
 // ---------------------------------------------------------------------------
 
 /**
- * What the benchmark runner returns. `passRate` is the ratio
- * of `verdict.kind === 'pass'` across all tasks; `meanScore`
- * is the mean of `verdict.score` for `pass` verdicts (or 0
- * for non-pass).
+ * What the benchmark runner returns.
+ *
+ * A task **passes** iff the combined verdict's `kind` equals the task's
+ * `expectedVerdict` (or is `pass` when none is declared) **and** — when
+ * the task declares `goldOutput` — the worker's text matches gold.
+ * `passRate` is the fraction of tasks that pass; `meanScore` is the mean
+ * of `verdict.score` over `pass` verdicts (0 when none).
  *
  * **Why both?** `passRate` is what we optimize on (the cycle
  * keeps the change iff `after.passRate > before.passRate`).

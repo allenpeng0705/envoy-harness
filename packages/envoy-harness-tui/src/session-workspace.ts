@@ -5,15 +5,54 @@
 import type { EnvoyHarnessClient } from "@envoymesh/envoy-harness-client";
 
 import type { SessionSink, SessionWorkspaceCtx } from "./session-context.js";
+import { renderAgentsView } from "./views.js";
+
+/**
+ * The project most recently opened with `/project open`, per client, so a
+ * following `/new` continues in that project instead of snapping back to
+ * the process cwd. Kept here (not on `TuiSession`) because `session.ts` is
+ * at the module-size cap; keyed by client to avoid a process-wide value.
+ */
+const activeProject = new WeakMap<EnvoyHarnessClient, string>();
+
+/** Remember the project a `/project open` selected. */
+export function setActiveProject(
+  client: EnvoyHarnessClient,
+  path: string,
+): void {
+  activeProject.set(client, path);
+}
+
+/** Forget the active project (e.g. when it is removed from the registry). */
+export function clearActiveProject(client: EnvoyHarnessClient): void {
+  activeProject.delete(client);
+}
 
 export async function newSessionImpl(s: SessionWorkspaceCtx): Promise<void> {
+  // Prefer the project the user just opened over the process cwd.
+  await createSessionImpl(
+    s,
+    activeProject.get(s.client) ?? s.cwd,
+    "new session",
+  );
+}
+
+/**
+ * Create a session, optionally in an explicit `cwd` (a registered project),
+ * and reset the transcript state the TUI shows.
+ */
+export async function createSessionImpl(
+  s: SessionWorkspaceCtx,
+  cwd: string | undefined,
+  label: string,
+): Promise<void> {
   if (s.busy) {
     s.push("status", "busy — /cancel first, then /new");
     return;
   }
   try {
     const created = await s.client.acpNewSession(
-      s.cwd !== undefined ? { cwd: s.cwd } : undefined,
+      cwd !== undefined ? { cwd } : undefined,
     );
     s.sessionId = created.sessionId;
     if (s.initialAutoRun !== undefined) {
@@ -29,7 +68,7 @@ export async function newSessionImpl(s: SessionWorkspaceCtx): Promise<void> {
     s.turnSeen.clear();
     s.lastTurnCostUsd = undefined;
     s.onTranscript?.(s.lines);
-    s.push("system", `new session ${created.sessionId}`);
+    s.push("system", `${label} ${created.sessionId}`);
   } catch (err) {
     s.push("status", `new session failed: ${(err as Error).message}`);
   }
@@ -109,13 +148,70 @@ export async function showMcpImpl(s: SessionSink): Promise<void> {
 }
 
 export async function showAgentsImpl(s: SessionSink): Promise<void> {
+  return runAgentsImpl(s, "list");
+}
+
+/**
+ * `/agents [list] | send <id> <message> | interrupt <id> [reason]`.
+ *
+ * A host that predates the structured payload has no usable child ids
+ * (`output` truncates them), so the list falls back to text and steering
+ * is reported as unavailable. Control calls answer with a structured
+ * `error` instead of throwing; that is a normal miss, not a failure.
+ */
+export async function runAgentsImpl(
+  s: SessionSink,
+  action: "list" | "send" | "interrupt",
+  id?: string,
+  message?: string,
+  reason?: string,
+): Promise<void> {
   if (s.sessionId === undefined) {
     s.push("status", "no active session");
     return;
   }
   try {
-    const out = await s.client.listSessionAgents(s.sessionId);
-    s.push("status", out);
+    if (action === "send") {
+      if (id === undefined || message === undefined) {
+        s.push("status", "usage: /agents send <id> <message>");
+        return;
+      }
+      const res = await s.client.sendAgentMessage(s.sessionId, id, message);
+      if (res.error !== undefined) {
+        s.push("status", `agent send: ${res.error}`);
+        return;
+      }
+      s.push(
+        "status",
+        `agent ${id}: ${res.queued ? "queued" : "not queued"} (${res.status})`,
+      );
+      return;
+    }
+    if (action === "interrupt") {
+      if (id === undefined) {
+        s.push("status", "usage: /agents interrupt <id> [reason]");
+        return;
+      }
+      const res = await s.client.interruptAgent(s.sessionId, id, reason);
+      if (res.error !== undefined) {
+        s.push("status", `agent interrupt: ${res.error}`);
+        return;
+      }
+      s.push(
+        "status",
+        `agent ${id}: ${res.interrupted ? "interrupted" : "not interrupted"} (${res.status})`,
+      );
+      return;
+    }
+    const result = await s.client.sessionAgents(s.sessionId);
+    if (result.agents === undefined) {
+      s.push(
+        "status",
+        `${result.output}\nsteering unavailable: this host reports no structured agents`,
+      );
+      return;
+    }
+    s.push("status", renderAgentsView(result.agents).join("\n"));
   } catch (err) {
     s.push("status", `agents failed: ${(err as Error).message}`);
   }

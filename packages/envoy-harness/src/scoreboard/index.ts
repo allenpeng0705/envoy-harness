@@ -21,6 +21,10 @@
  */
 
 export {
+  BenchmarkAgentResultSchema,
+  BenchmarkContentBlockSchema,
+  BenchmarkMessageSchema,
+  BenchmarkSandboxPolicySchema,
   BenchmarkSchema,
   FederatedAdoptionRecordSchema,
   FederatedAdoptionsSchema,
@@ -76,3 +80,12 @@ export {
   type PullOptions,
   type PullResult,
 } from "./federated.js";
+
+export {
+  analyzeBenchmark,
+  type BenchmarkDiscrimination,
+  type RuleDiscrimination,
+  type TaskDiscrimination,
+} from "./discrimination.js";
+
+export { sharedBenchmarkPath } from "./shared-benchmark.js";

@@ -56,6 +56,13 @@ import type { ReplCommand } from "./types.js";
  * longer. Long objectives are common (sub-agents
  * are spawned with detailed instructions).
  */
+/** Last non-empty line of a live output tail, capped for one row. */
+function lastNonEmptyLine(text: string): string {
+  const lines = text.split("\n").filter((l) => l.trim().length > 0);
+  const last = lines.at(-1)?.trim() ?? "";
+  return last.length > 100 ? `…${last.slice(-100)}` : last;
+}
+
 function formatRecordLine(
   record: import("../../subagent/types.js").SubagentRecord,
 ): string {
@@ -94,8 +101,9 @@ function formatRecordLine(
 
 const agentsCommand: ReplCommand = {
   name: "/agents",
-  description: "list sub-agents spawned in this session",
-  handler(_args, ctx) {
+  description:
+    "list sub-agents; `send <id> <message>` steers a continuable child; `interrupt <id>` stops its turn",
+  async handler(args, ctx) {
     const registry = ctx.subagentRegistry;
     if (!registry) {
       ctx.stdout.write(
@@ -103,6 +111,34 @@ const agentsCommand: ReplCommand = {
       );
       return;
     }
+
+    const [sub, id, ...rest] = args;
+    if (sub === "send") {
+      if (registry.send === undefined) {
+        throw new Error(
+          "this submitter cannot run continuable children (start one with task { run_in_background: true, background_mode: \"continuable\" })",
+        );
+      }
+      if (id === undefined || rest.length === 0) {
+        throw new Error("usage: /agents send <agent-id> <message>");
+      }
+      await registry.send(id, rest.join(" "));
+      ctx.stdout.write(`sent to ${id}\n`);
+      return;
+    }
+    if (sub === "interrupt") {
+      if (registry.interrupt === undefined) {
+        throw new Error("this submitter cannot run continuable children");
+      }
+      if (id === undefined) {
+        throw new Error("usage: /agents interrupt <agent-id> [reason]");
+      }
+      const reason = rest.length > 0 ? rest.join(" ") : undefined;
+      registry.interrupt(id, reason);
+      ctx.stdout.write(`interrupted ${id}\n`);
+      return;
+    }
+
     const records = registry.list();
     if (records.length === 0) {
       ctx.stdout.write("no sub-agents spawned in this session\n");
@@ -114,6 +150,17 @@ const agentsCommand: ReplCommand = {
     );
     for (const r of records) {
       lines.push(`  ${formatRecordLine(r)}`);
+      // A running child's live output, so `/agents` shows progress within a
+      // turn rather than only a status.
+      if (r.status === "running" && registry.output !== undefined) {
+        const live = lastNonEmptyLine(registry.output(r.sessionId));
+        if (live !== "") lines.push(`      ${live}`);
+      }
+    }
+    if (registry.send !== undefined) {
+      lines.push(
+        "  steer a continuable child with `/agents send <id> <message>` or `/agents interrupt <id>`",
+      );
     }
     ctx.stdout.write(lines.join("\n") + "\n");
   },

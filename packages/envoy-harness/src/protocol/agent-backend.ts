@@ -9,13 +9,13 @@ import { createProviderAdapter } from "../llm/index.js";
 import { newSessionId } from "../session.js";
 import type { AskHandler } from "../types.js";
 import type { Tracer } from "../trace/types.js";
+import type { WorkspaceRegistry } from "../workspace/index.js";
 import { traceEventToActivity } from "./activity-format.js";
 import { stripThinking } from "../util/strip-thinking.js";
 import { formatGitOutput, runGitDiff, runGitStatus } from "./git-runner.js";
 import { traceEventToCommittedMessage } from "./message-format.js";
 import {
   ensurePlanDocumentActive,
-  formatSubagentRecords,
   runMemoryOp,
   runPlanAction,
   runSessionInit,
@@ -23,6 +23,14 @@ import {
   summarizeDroppedMessages,
   type PlanAction,
 } from "./session-ops.js";
+import {
+  addWorkspaceOp,
+  interruptAgentOp,
+  listSessionAgentsOp,
+  listWorkspacesOp,
+  removeWorkspaceOp,
+  sendAgentMessageOp,
+} from "./session-control-ops.js";
 import {
   matchPermissionPreset,
   resolvePermissionPreset,
@@ -107,6 +115,14 @@ export interface AgentSessionBackendOptions {
   listTools?: () => ProtocolToolInfo[];
   /** Optional memory store for `session/memory` (REPL parity). */
   memoryStore?: MemoryStore;
+  /**
+   * Optional workspace (project) registry. When set, the backend serves
+   * `workspace/list|add|remove`, which is what lets a host open a project
+   * other than the one it started in. When absent, `list` reports an empty
+   * list and the mutators explain that no registry is wired — an empty
+   * list is the honest answer for "no projects yet" either way.
+   */
+  workspaces?: WorkspaceRegistry;
 }
 
 function messageText(content: unknown): string {
@@ -237,6 +253,10 @@ export function createAgentSessionBackend(
       });
       installLivePermissionHook(live, options.shouldAskTool);
       sessions.set(sessionId, live);
+      // Keep the project's "last used" fresh for the UI. Best-effort: a
+      // registry failure must never prevent a session from starting, and
+      // an unregistered directory is simply not tracked.
+      void options.workspaces?.touch(cwd).catch(() => undefined);
       return { sessionId };
     },
 
@@ -643,13 +663,29 @@ export function createAgentSessionBackend(
 
     async listSessionAgents(params) {
       const live = requireLive(sessions, params.sessionId);
-      const submitter = live.agent.getMeshSubmitter();
-      const records =
-        submitter !== undefined &&
-        typeof submitter.listSubagents === "function"
-          ? submitter.listSubagents()
-          : [];
-      return { output: formatSubagentRecords(records) };
+      return listSessionAgentsOp(live.agent.getMeshSubmitter());
+    },
+
+    async sendAgentMessage(params) {
+      const live = requireLive(sessions, params.sessionId);
+      return sendAgentMessageOp(live.agent.getMeshSubmitter(), params);
+    },
+
+    async interruptAgent(params) {
+      const live = requireLive(sessions, params.sessionId);
+      return interruptAgentOp(live.agent.getMeshSubmitter(), params);
+    },
+
+    async listWorkspaces() {
+      return listWorkspacesOp(options.workspaces);
+    },
+
+    async addWorkspace(params) {
+      return addWorkspaceOp(options.workspaces, params);
+    },
+
+    async removeWorkspace(params) {
+      return removeWorkspaceOp(options.workspaces, params);
     },
 
     async sessionPlan(params) {

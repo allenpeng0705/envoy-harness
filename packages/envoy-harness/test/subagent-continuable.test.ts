@@ -148,4 +148,28 @@ describe("LocalMeshSubmitter.submitContinuable", () => {
     handle.interrupt("again");
     expect(handle.status().status).toBe("completed");
   });
+
+  it("releases the live handle on settle but keeps the record", async () => {
+    // The handle holds the child's Agent, transcript and output buffer, so
+    // keeping every settled child alive for the process lifetime is a leak —
+    // and it would make a dead child look steerable. The *record* is what a
+    // UI reads for history, and that stays.
+    const model = scriptedModel([{ content: [text("finished")] }]);
+    const submitter = new LocalMeshSubmitter({
+      workerPeerId: "local",
+      buildSubagent: defaultBuildSubagentFactory({ model }),
+    });
+    const handle = submitter.submitContinuable(baseInput, {
+      autoSettleAfterIdle: true,
+    });
+    expect(submitter.getHandle(handle.id)).toBeDefined();
+    await handle.waitSettle({ timeoutMs: 5_000 });
+
+    expect(submitter.getHandle(handle.id)).toBeUndefined();
+    expect(submitter.listSubagents().map((r) => r.sessionId)).toContain(
+      handle.id,
+    );
+    // A caller that already holds the handle can still read its output.
+    expect(handle.output()).toContain("finished");
+  });
 });

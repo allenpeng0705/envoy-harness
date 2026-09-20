@@ -14,9 +14,21 @@ import {
 } from "./acp-notifications.js";
 import {
   type AcpHostState,
+  type AgentInterruptResult,
+  type AgentMessageResult,
   type ChatRole,
   type SessionSummary,
+  type WorkspaceEntry,
 } from "./host-types.js";
+import {
+  requestAddWorkspace,
+  requestAgentInterrupt,
+  requestAgentMessage,
+  requestRemoveWorkspace,
+  requestWorkspaces,
+  sessionNewParams,
+} from "./host-control.js";
+import { bootstrapAcpSession } from "./host-bootstrap.js";
 import { fetchMeshSnapshot } from "./mesh-snapshot.js";
 import {
   connectAcpWs,
@@ -25,13 +37,18 @@ import {
 
 export type {
   AcpHostState,
+  AgentInterruptResult,
+  AgentMessageResult,
   ChatMessage,
   ChatRole,
   ConnectionState,
+  MeshAgent,
+  MeshAgentStatus,
   MeshSnapshot,
   PermissionPrompt,
   SessionSummary,
   UserQuestionPrompt,
+  WorkspaceEntry,
 } from "./host-types.js";
 
 type Listener = () => void;
@@ -414,62 +431,8 @@ export class AcpHost {
   }
 
   async #bootstrapSession(client: WsJsonRpcClient): Promise<void> {
-    const init = (await client.request("initialize", {})) as {
-      protocolVersion: number;
-    };
-    const session = (await client.request("session/new", {})) as {
-      sessionId: string;
-    };
-
-    // Best-effort discovery subscription (Trace panel + mesh rail).
-    try {
-      await client.request("discovery/subscribe", {});
-    } catch {
-      // host may not support discovery
-    }
-
-    let config: Record<string, unknown> = {};
-    try {
-      config = (await client.request("config/get", {})) as Record<
-        string,
-        unknown
-      >;
-    } catch {
-      // optional
-    }
-
-    let policy = {
-      sandbox: "read-only",
-      approval: "on-request",
-      autoRun: "always-confirm",
-    };
-    try {
-      const res = (await client.request("session/get_policy", {
-        sessionId: session.sessionId,
-      })) as {
-        result?: { sandbox?: string; approval?: string; autoRun?: string };
-      };
-      policy = {
-        sandbox: res.result?.sandbox ?? policy.sandbox,
-        approval: res.result?.approval ?? policy.approval,
-        autoRun: res.result?.autoRun ?? policy.autoRun,
-      };
-    } catch {
-      // optional
-    }
-
-    this.#patch({
-      sessionId: session.sessionId,
-      protocolVersion: init.protocolVersion,
-      provider: String(config["provider"] ?? ""),
-      model: String(config["model"] ?? ""),
-      baseUrl: String(config["baseUrl"] ?? ""),
-      sandbox: policy.sandbox,
-      approval: policy.approval,
-      autoRun: policy.autoRun,
-      cwd: String(config["cwd"] ?? ""),
-      messages: [],
-    });
+    const boot = await bootstrapAcpSession(client);
+    this.#patch({ ...boot, messages: [] });
   }
 
   #appendAssistantChunk(text: string): void {
@@ -636,6 +599,47 @@ export class AcpHost {
     return res.sessions ?? [];
   }
 
+  /** Project registry: `[]` when not connected. */
+  async listWorkspaces(): Promise<WorkspaceEntry[]> {
+    return await requestWorkspaces(this.#client);
+  }
+
+  /** Register a project directory (server rejects non-directories). */
+  async addWorkspace(path: string, name?: string): Promise<WorkspaceEntry> {
+    return await requestAddWorkspace(this.#client, path, name);
+  }
+
+  /** Forget a project; this never deletes the directory. */
+  async removeWorkspace(path: string): Promise<boolean> {
+    return await requestRemoveWorkspace(this.#client, path);
+  }
+
+  /** Steer a background child. A settled child returns a structured miss. */
+  async sendAgentMessage(
+    agentId: string,
+    message: string,
+  ): Promise<AgentMessageResult> {
+    return await requestAgentMessage(
+      this.#client,
+      this.#state.sessionId,
+      agentId,
+      message,
+    );
+  }
+
+  /** Interrupt a background child's current turn (it stays alive). */
+  async interruptAgent(
+    agentId: string,
+    reason?: string,
+  ): Promise<AgentInterruptResult> {
+    return await requestAgentInterrupt(
+      this.#client,
+      this.#state.sessionId,
+      agentId,
+      reason,
+    );
+  }
+
   async resumeSession(sessionId: string): Promise<void> {
     const client = this.#client;
     if (!client) throw new Error("not connected");
@@ -702,8 +706,12 @@ export class AcpHost {
     void this.refreshMesh();
   }
 
-  /** Start a fresh ACP session (clears the local transcript). */
-  async newSession(): Promise<void> {
+  /**
+   * Start a fresh ACP session (clears the local transcript). When `cwd` is
+   * a non-empty path the session is created there; otherwise the server
+   * default working directory is used.
+   */
+  async newSession(cwd?: string): Promise<void> {
     const client = this.#client;
     if (!client || client.closed) throw new Error("not connected");
 
@@ -718,11 +726,15 @@ export class AcpHost {
     }
     this.#clearPendingHostRequests("new session");
 
-    const session = (await client.request("session/new", {})) as {
+    const params = sessionNewParams(cwd);
+    const session = (await client.request("session/new", params)) as {
       sessionId: string;
     };
     this.#patch({
       sessionId: session.sessionId,
+      // `session/new` does not echo the cwd; the requested project is the
+      // best available value until the next bootstrap/config refresh.
+      ...(params.cwd !== undefined ? { cwd: params.cwd } : {}),
       messages: [],
       error: null,
       busy: false,

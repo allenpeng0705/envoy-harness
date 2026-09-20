@@ -1,17 +1,27 @@
 /**
- * The 6 verifier rules (§12.1 of the design).
+ * The verifier rules (§12.1 of the design).
  *
  * Each rule is a `VerifierRule` (async, returns `Verdict | null`).
  * The set is the v0 default; the 5-step self-evolution protocol
  * (design §13) edits this list as it learns what passes / fails
  * the user's specific work.
  *
- * **Adding a 7th rule:** append to `DEFAULT_RULES`. The runner
+ * **Adding a rule:** append to `DEFAULT_RULES`. The runner
  * picks it up automatically. The order is not significant (rules
- * are independent); the 6 here are listed in the design's order.
+ * are independent); the current rules are listed in the design's
+ * order.
  *
  * **Removing a rule:** edit `DEFAULT_RULES`. This is a major
  * version bump per the design's stability rules.
+ *
+ * **What `DEFAULT_RULES` is FOR.** It is the action space of the
+ * self-evolution loop: the loop may subset or reorder these rules,
+ * nothing else. A rule that cannot change a benchmark outcome —
+ * because it always passes, or because another rule already fails
+ * every case it fails — adds a dimension the loop can toggle with
+ * zero effect. Two such rules have already been dropped from the
+ * default set (see the `DEFAULT_RULES` comment); both remain
+ * exported for hosts that want the slot.
  */
 
 import { concatText, type VerifierRule } from "../types.js";
@@ -44,6 +54,18 @@ export const nonEmptyContentRule: VerifierRule = {
  * objective's keywords? Keyword = a word ≥ 4 chars, lowercase,
  * not a stop word.
  *
+ * **Below 50% is a `fail`, not a `partial`.** Calling it `partial`
+ * conflated two different ideas: `partial`'s documented meaning is
+ * "acceptable for some blocks; the rest are unusable" (a claim about
+ * multi-block content, which a lexical ratio never establishes), and
+ * the combiner then reported the result to a human as "verifier
+ * disagreement" — the wrong explanation for an off-topic answer.
+ * Measured consequence: with the old body, a labelled
+ * `expectedVerdict: fail` task for 1-in-3 overlap was unreachable by
+ * *any* subset of the rules (with this rule selected it was partial,
+ * with it dropped the other rules passed), so the label could not be
+ * learned at all.
+ *
  * **This is a heuristic.** A pass here is necessary but not
  * sufficient — the LLM source (§12.3) is the higher-trust check.
  * A fail here is a strong signal of drift; a pass is weak.
@@ -65,24 +87,19 @@ export const outputMatchesObjectiveRule: VerifierRule = {
       text.toLowerCase().includes(kw.toLowerCase()),
     );
     const ratio = matched.length / keywords.length;
-    if (ratio === 0) {
-      // NO overlap at all is drift, not a partial success: the output does
-      // not address the objective in any respect. The rule's own docstring
-      // calls this "a strong signal of drift", but the code used to return
-      // `partial`, which meant a wholly off-topic answer was graded as
-      // partially acceptable — and, for the benchmark, made a labelled
-      // `expectedVerdict: fail` task unreachable by any rule subset.
+    if (ratio < 0.5) {
+      // Below half the objective's key terms the output has not been
+      // shown to address the objective. This includes zero overlap
+      // (total drift), which the rule's own docstring has always
+      // called "a strong signal of drift".
+      //
+      // The boundary is deliberately `ratio < 0.5`: exactly 0.5 is a
+      // pass. Pinned by test/verifier.test.ts so a later edit cannot
+      // silently move the threshold to `<=`.
       return {
         kind: "fail",
-        reason: `output matches 0/${keywords.length} objective keywords`,
+        reason: `output matches ${matched.length}/${keywords.length} objective keywords (below 50%)`,
         rollback: false,
-      };
-    }
-    if (ratio < 0.5) {
-      return {
-        kind: "partial",
-        score: ratio,
-        reason: `output matches ${matched.length}/${keywords.length} keywords`,
       };
     }
     return {
@@ -248,12 +265,29 @@ export const approvalRespectedRule: VerifierRule = {
 /**
  * Check that `result.content` carries at least one block.
  *
- * **The comment here used to claim this "returns pass unconditionally",
- * which was false** — the code below fails on empty content. The rule is
- * not a no-op and was nearly deleted on the strength of that stale
- * comment. It overlaps `non-empty-content` on the common case but is not
- * redundant: a result whose only block is a `tool_call` has non-zero
- * `content.length` and no text, so the two rules disagree there.
+ * **Not in `DEFAULT_RULES`.** This rule is byte-for-byte the same
+ * *decision* as `non-empty-content`: both fail iff
+ * `content.length === 0`, and `output-matches-objective` also fails
+ * that case ("empty output"). Because `combineVerdicts` returns the
+ * first `fail`, toggling this rule can never change a task's
+ * pass/fail — it is an inert dimension of the self-evolution loop's
+ * action space. It is kept as an exported opt-in for hosts that want
+ * the slot (e.g. to supply a stricter body), exactly like
+ * `approval-respected`.
+ *
+ * **The design's intent for this rule** (§12.1: "`result.content` is
+ * a valid `ContentBlock[]` per the schema") is a *runtime shape*
+ * check, which the TypeScript type already enforces for in-process
+ * results and which a benchmark fixture cannot violate without being
+ * rejected when the fixture is parsed. It therefore has no reachable
+ * failing input at v0.
+ *
+ * **A stale comment here used to claim** the rule was not redundant
+ * because "a result whose only block is a `tool_call` has non-zero
+ * `content.length` and no text, so the two rules disagree there" —
+ * that is false: `non-empty-content` also passes such a result, so
+ * they agree. The rule was nearly *kept* on the strength of the same
+ * kind of unverified comment that nearly got it deleted.
  */
 export const meshTaskShapeRule: VerifierRule = {
   name: "mesh-task-shape",
@@ -323,11 +357,11 @@ export const costReasonableForWorkRule: VerifierRule = {
 const DEFAULT_COST_BUDGET_USD = 1.0;
 
 // ---------------------------------------------------------------------------
-// The default rule set (the 6 rules in design §12.1 order)
+// The default rule set
 // ---------------------------------------------------------------------------
 
 /**
- * The default rule set.
+ * The default rule set — the action space of the self-evolution loop.
  *
  * **`approvalRespectedRule` is deliberately absent.** It ignores its
  * argument and returns a constant `pass` (see its own comment: "for v0,
@@ -338,14 +372,30 @@ const DEFAULT_COST_BUDGET_USD = 1.0;
  * threshold. Measured on the frozen benchmark, dropping it changes
  * nothing except that inflation.
  *
- * The rule is still exported for hosts that want the slot; it is simply
- * not part of the set the loop optimises. Removing it entirely would be a
- * breaking change to a public export for no additional benefit.
+ * **`meshTaskShapeRule` is deliberately absent.** It makes the same
+ * decision as `non-empty-content` (fail iff `content.length === 0`), and
+ * `output-matches-objective` fails that case too. With fail-dominance in
+ * `combineVerdicts`, selecting or dropping it can never change a
+ * pass/fail — a second inert dimension. Because a subset may *reorder*
+ * rules, keeping it was not merely useless: putting it ahead of
+ * `non-empty-content` would downgrade the combined `rollback` flag from
+ * `true` to `false` for an empty result, i.e. the loop could weaken a
+ * release decision for free.
+ *
+ * Both rules remain exported for hosts that want the slot; they are
+ * simply not part of the set the loop optimises. Removing them entirely
+ * would be a breaking change to a public export for no additional
+ * benefit.
+ *
+ * **Every rule that remains can change an outcome.** The frozen
+ * benchmark (`benchmarks/verifier-frozen.yaml`) is required by
+ * `test/benchmark-discrimination.test.ts` to give each of these four a
+ * task it alone fails; a rule with no such task is an inert dimension
+ * and must not be added here.
  */
 export const DEFAULT_RULES: ReadonlyArray<VerifierRule> = [
   nonEmptyContentRule,
   outputMatchesObjectiveRule,
   sandboxRespectedRule,
-  meshTaskShapeRule,
   costReasonableForWorkRule,
 ];

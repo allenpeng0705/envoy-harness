@@ -68,4 +68,59 @@ describe("SDK server", () => {
     expect(backend.userAnswers[0]?.value).toBe("y");
     pair.close();
   });
+
+  it("serves workspace + agent control, and says so when unwired", async () => {
+    // The SDK dialect must expose the same surface as ACP: a client that
+    // speaks SDK should not be a second-class citizen for projects or for
+    // steering background children.
+    const calls: unknown[] = [];
+    const wired = {
+      createSession: async () => ({ sessionId: "s1" }),
+      prompt: async () => ({ stopReason: "end_turn" as const }),
+      cancel: () => undefined,
+      listWorkspaces: async () => ({
+        workspaces: [{ path: "/p", name: "p", addedAt: "2026-01-01T00:00:00.000Z" }],
+      }),
+      sendAgentMessage: async (p: unknown) => {
+        calls.push(p);
+        return { queued: true, status: "running" };
+      },
+      interruptAgent: async (p: unknown) => {
+        calls.push(p);
+        return { interrupted: true, status: "failed" };
+      },
+    } as unknown as Parameters<typeof attachSdkServer>[0]["backend"];
+
+    const pair = createInProcessJsonRpcPair();
+    attachSdkServer({ connection: pair.server, backend: wired });
+    const listed = (await pair.client.request("workspace/list", {})) as {
+      workspaces: Array<{ name: string }>;
+    };
+    expect(listed.workspaces[0]?.name).toBe("p");
+    const sent = (await pair.client.request("session/agent_message", {
+      sessionId: "s1",
+      agentId: "child-1",
+      message: "go",
+    })) as { queued: boolean };
+    expect(sent.queued).toBe(true);
+    expect(calls.at(-1)).toEqual({
+      sessionId: "s1",
+      agentId: "child-1",
+      message: "go",
+    });
+    pair.close();
+
+    const unwired = createInProcessJsonRpcPair();
+    attachSdkServer({
+      connection: unwired.server,
+      backend: createFakeSessionBackend(),
+    });
+    await expect(
+      unwired.client.request("session/agent_interrupt", {
+        sessionId: "s1",
+        agentId: "a",
+      }),
+    ).rejects.toThrow(/not supported/);
+    unwired.close();
+  });
 });

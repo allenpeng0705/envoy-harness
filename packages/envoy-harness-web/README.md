@@ -55,9 +55,9 @@ Three-column shell (inspired by deepseek-harness, Envoy branding):
 
 | Area | Purpose |
 |---|---|
-| **Left · Sessions** | New session, resume list, connection pill, Settings |
+| **Left · Sessions** | Sessions grouped by project, per-project "+", **Open project…**, resume list, connection pill, Settings |
 | **Center · Chat** | Empty hero, markdown streaming, foldable activity, Stop/Send |
-| **Right · Details** | **Mesh** tab (peers/jobs) · **Tools** tab (Plan/Diff/Memory/…) |
+| **Right · Details** | **Mesh** tab (peers/jobs/sub-agents) · **Tools** tab (Plan/Diff/Memory/…) |
 | **Permissions** | Summary of command/path; expandable raw args |
 | **Settings** | Provider, model, base URL, policy, light/dark theme |
 | **Connection** | Connecting / connected / disconnected; Reconnect |
@@ -67,8 +67,21 @@ if the ACP child dies (auto-backoff + manual button). Resume hydrates the
 transcript from `session/load`. While the agent is busy, **Enter** / **Queue**
 enqueues the next message. Fonts use system stacks (no CDN — works offline).
 
+**Projects.** The server's `--cwd` is only the *default* project. **Open
+project…** adds any directory to a durable list
+(`~/.config/envoy-harness/workspaces.json`, override with
+`ENVOY_WORKSPACES_FILE`) and starts a session there; the sidebar groups
+sessions by project. Removing a project forgets it and never deletes the
+directory. An added path must exist and be a directory.
+
 **Parallel sub-agents:** on by default. Ask the model to use `task`; watch
 the Mesh tab. Opt out with `--no-subagents`.
+
+**Background sub-agents:** ask the model for `task { run_in_background: true }`
+(optionally `background_mode: "continuable"` to keep the child alive). The
+Mesh tab lists each child with its status, and — when the child is still
+steerable — an inline message box and an **Interrupt** button. Ids shown there
+are the full handle ids the control calls need.
 
 ---
 

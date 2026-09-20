@@ -2,6 +2,8 @@
  * ACP JSON-RPC param parsers (extracted from acp-server for module size).
  */
 
+import { isAbsolute } from "node:path";
+
 import { JsonRpcError, JsonRpcErrorCode } from "./types.js";
 
 export function parseRouteInput(params: unknown): {
@@ -349,6 +351,90 @@ export function parseSessionPlanParams(params: unknown): {
   };
 }
 
+/** `session/agent_message` — steer a continuable child. */
+export function parseSessionAgentMessageParams(params: unknown): {
+  sessionId: string;
+  agentId: string;
+  message: string;
+} {
+  if (params === null || typeof params !== "object") {
+    throw new JsonRpcError("invalid params", JsonRpcErrorCode.INVALID_PARAMS);
+  }
+  const obj = params as { agentId?: unknown; message?: unknown };
+  const sessionId = readSessionId(params);
+  if (typeof obj.agentId !== "string" || obj.agentId.length === 0) {
+    throw new JsonRpcError("agentId required", JsonRpcErrorCode.INVALID_PARAMS);
+  }
+  if (typeof obj.message !== "string" || obj.message.length === 0) {
+    throw new JsonRpcError("message required", JsonRpcErrorCode.INVALID_PARAMS);
+  }
+  return { sessionId, agentId: obj.agentId, message: obj.message };
+}
+
+/** `session/agent_interrupt` — stop a child's current turn. */
+export function parseSessionAgentInterruptParams(params: unknown): {
+  sessionId: string;
+  agentId: string;
+  reason?: string;
+} {
+  if (params === null || typeof params !== "object") {
+    throw new JsonRpcError("invalid params", JsonRpcErrorCode.INVALID_PARAMS);
+  }
+  const obj = params as { agentId?: unknown; reason?: unknown };
+  const sessionId = readSessionId(params);
+  if (typeof obj.agentId !== "string" || obj.agentId.length === 0) {
+    throw new JsonRpcError("agentId required", JsonRpcErrorCode.INVALID_PARAMS);
+  }
+  const reason =
+    typeof obj.reason === "string" && obj.reason.length > 0
+      ? obj.reason
+      : undefined;
+  return {
+    sessionId,
+    agentId: obj.agentId,
+    ...(reason !== undefined ? { reason } : {}),
+  };
+}
+
+/** `workspace/add` — remember a project directory. */
+export function parseWorkspaceAddParams(params: unknown): {
+  path: string;
+  name?: string;
+} {
+  if (params === null || typeof params !== "object") {
+    throw new JsonRpcError("invalid params", JsonRpcErrorCode.INVALID_PARAMS);
+  }
+  const obj = params as { path?: unknown; name?: unknown };
+  if (typeof obj.path !== "string" || obj.path.length === 0) {
+    throw new JsonRpcError("path required", JsonRpcErrorCode.INVALID_PARAMS);
+  }
+  // A relative path would resolve against the *server's* cwd, which is not
+  // what a remote client means by it. Requiring an absolute path turns a
+  // silent surprise into a clear error.
+  if (!isAbsolute(obj.path)) {
+    throw new JsonRpcError(
+      "path must be absolute",
+      JsonRpcErrorCode.INVALID_PARAMS,
+    );
+  }
+  const name =
+    typeof obj.name === "string" && obj.name.trim().length > 0
+      ? obj.name
+      : undefined;
+  return { path: obj.path, ...(name !== undefined ? { name } : {}) };
+}
+
+/** `workspace/remove` — forget a project directory. */
+export function parseWorkspaceRemoveParams(params: unknown): { path: string } {
+  if (params === null || typeof params !== "object") {
+    throw new JsonRpcError("invalid params", JsonRpcErrorCode.INVALID_PARAMS);
+  }
+  const obj = params as { path?: unknown };
+  if (typeof obj.path !== "string" || obj.path.length === 0) {
+    throw new JsonRpcError("path required", JsonRpcErrorCode.INVALID_PARAMS);
+  }
+  return { path: obj.path };
+}
 export function parseSessionSetModeParams(params: unknown): {
   sessionId: string;
   mode?: "default" | "plan" | "review";

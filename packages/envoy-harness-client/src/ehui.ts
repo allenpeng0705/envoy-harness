@@ -67,6 +67,42 @@ export interface ClientDiscoveryEvent {
   at: string;
 }
 
+/** One sub-agent spawned by a session (`session/agents`). */
+export interface ClientSubagentSummary {
+  /**
+   * The **full** child id — the handle `sendAgentMessage` /
+   * `interruptAgent` require. The text rendering truncates it, so never
+   * recover it from `output`.
+   */
+  id: string;
+  capabilityTag: string;
+  objective: string;
+  status: "running" | "completed" | "failed" | "partial";
+  startedAt: string;
+  completedAt?: string;
+  costUsd?: number;
+  durationMs?: number;
+  /** True when a control call for this id would currently reach a handle. */
+  steerable: boolean;
+  /** Tail of a running child's live output (updated within a turn). */
+  outputPreview?: string;
+}
+
+/** `session/agents` — the human rendering plus the structured records. */
+export interface ClientSessionAgents {
+  output: string;
+  /** Absent on hosts that predate the structured payload. */
+  agents?: ClientSubagentSummary[];
+}
+
+/** One project in the workspace (project) registry. */
+export interface ClientWorkspaceEntry {
+  path: string;
+  name: string;
+  addedAt: string;
+  lastUsedAt?: string;
+}
+
 export const EHUI_PANELS = [
   { id: "chat", label: "Chat", kind: "session" as const },
   { id: "plan", label: "Plan", method: "session/plan" as const },

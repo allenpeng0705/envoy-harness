@@ -64,6 +64,7 @@ import type {
 import type { SubagentResultSigner } from "./signer.js";
 import {
   ContinuableSubagentRegistry,
+  type ContinuableSubmitter,
   type ContinuableSubagentHandle,
   type SubmitContinuableOptions,
 } from "./continuable.js";
@@ -173,7 +174,9 @@ export interface LocalMeshSubmitterOptions {
  *   can `Promise.all` over multiple `submit()`
  *   calls if it wants parallel sub-agents.
  */
-export class LocalMeshSubmitter implements MeshSubmitter {
+export class LocalMeshSubmitter
+  implements MeshSubmitter, ContinuableSubmitter
+{
   private readonly buildSubagent: (input: SubagentInput) => Agent;
   private readonly workerPeerId: string;
   private readonly signer: SubagentResultSigner | undefined;

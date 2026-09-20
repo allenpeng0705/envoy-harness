@@ -1,7 +1,14 @@
 /**
- * Optional peer-cluster wiring for ACP/SDK hosts via dynamic import of
- * `@envoymesh/envoy-harness-peer` (keeps the core package free of a hard
- * dependency cycle with the peer package).
+ * Optional peer-cluster wiring for ACP/SDK hosts.
+ *
+ * **Why the peer package is named, not imported by a literal specifier.**
+ * Both a type query (`typeof import(...)`) and a literal dynamic import are
+ * resolved by `tsc`, so core needed the peer package's declarations to
+ * build — while the peer package depends on core. Nothing could build from
+ * a clean checkout. The surface core uses is declared locally as
+ * {@link PeerCompatModule}, and the module is loaded through a `string`
+ * variable so the build stays independent. Runtime behaviour is unchanged:
+ * still optional, still loaded on demand.
  */
 
 import type { ProtocolSessionBackend } from "../protocol/session-backend.js";
@@ -17,6 +24,49 @@ export type ClusterSeams = Pick<
   | "subscribeDiscovery"
   | "connectPeer"
 >;
+
+/** A configured peer, as the discovery sources consume it. */
+interface PeerEndpointConfig {
+  id: string;
+  endpoint: string;
+  model?: string;
+  capabilities?: ReadonlyArray<string>;
+}
+
+/** The managed cluster the harness drives. */
+interface ManagedPeerClusterLike {
+  connectPeer(params: {
+    id: string;
+    endpoint: string;
+    model?: string;
+    capabilities?: ReadonlyArray<string>;
+  }): Promise<unknown>;
+  createUiBackend(): {
+    backend: ClusterSeams;
+    close(): void;
+  };
+  closeAll(): void;
+}
+
+/** The subset of `@envoymesh/envoy-harness-peer` the harness calls. */
+interface PeerCompatModule {
+  ManagedPeerCluster: new (options: {
+    connectTimeoutMs?: number;
+    onFailure?: (id: string, err: Error) => void;
+  }) => ManagedPeerClusterLike;
+  StaticDiscoverySource: new (
+    peers: ReadonlyArray<PeerEndpointConfig>,
+  ) => unknown;
+  MdnsDiscoverySource: new (options: {
+    onError: (err: Error) => void;
+  }) => unknown;
+  createDiscoveryRail(options: {
+    cluster: ManagedPeerClusterLike;
+    sources: ReadonlyArray<unknown>;
+  }): { start(): Promise<void>; stop(): void };
+}
+
+const PEER_PACKAGE: string = "@envoymesh/envoy-harness-peer";
 
 /** R5.3 — how configured `--peers` enter the managed cluster. */
 export type PeerDiscoveryMode = "static" | "mdns" | "none";
@@ -89,10 +139,9 @@ export async function wirePeerCluster(
     return undefined;
   }
 
-  type PeerModule = typeof import("@envoymesh/envoy-harness-peer");
-  let peerMod: PeerModule;
+  let peerMod: PeerCompatModule;
   try {
-    peerMod = await import("@envoymesh/envoy-harness-peer");
+    peerMod = (await import(PEER_PACKAGE)) as PeerCompatModule;
   } catch {
     throw new Error(
       "peer cluster requires @envoymesh/envoy-harness-peer (install the peer package)",
@@ -144,7 +193,11 @@ export async function wirePeerCluster(
 
   const peerUi = managed.createUiBackend();
 
-  const connectPeer: ClusterSeams["connectPeer"] = async (params) => {
+  const connectPeer = async (
+    params: Parameters<NonNullable<ProtocolSessionBackend["connectPeer"]>>[0],
+  ): Promise<
+    Awaited<ReturnType<NonNullable<ProtocolSessionBackend["connectPeer"]>>>
+  > => {
     return managed.connectPeer({
       id: params.id,
       endpoint: params.endpoint,
@@ -152,7 +205,9 @@ export async function wirePeerCluster(
       ...(params.capabilities !== undefined
         ? { capabilities: [...params.capabilities] }
         : {}),
-    });
+    }) as Promise<
+      Awaited<ReturnType<NonNullable<ProtocolSessionBackend["connectPeer"]>>>
+    >;
   };
 
   const seams: ClusterSeams = {

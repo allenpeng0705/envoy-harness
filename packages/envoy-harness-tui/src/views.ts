@@ -9,10 +9,24 @@ import type {
   ClientDiscoveryEvent,
   ClientPeerInfo,
   ClientScoreboardEntry,
+  ClientSubagentSummary,
   ClientTeamJob,
+  ClientWorkspaceEntry,
 } from "@envoymesh/envoy-harness-client";
 
 import { color, SGR } from "./theme.js";
+
+/** Basename for a host path, tolerant of POSIX and Windows separators. */
+function basename(p: string): string {
+  const parts = p.replace(/[\\/]+$/, "").split(/[\\/]/);
+  return parts[parts.length - 1] ?? p;
+}
+
+/** Collapse whitespace to one line and truncate to `max` characters. */
+function oneLine(text: string, max = 120): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+}
 
 function peerLabel(p: ClientPeerInfo): string {
   const model = p.model !== undefined ? ` ${p.model}` : "";
@@ -167,6 +181,40 @@ export function renderScoreboardView(
   ];
 }
 
+/** `/agents` — structured child records: full id, status, tag, cost, preview. */
+export function renderAgentsView(
+  agents: readonly ClientSubagentSummary[],
+): string[] {
+  if (agents.length === 0) return ["Agents (0) — no sub-agents"];
+  const lines: string[] = [`Agents (${agents.length})`];
+  for (const a of agents) {
+    const cost = a.costUsd !== undefined ? ` cost=$${a.costUsd}` : "";
+    const dur = a.durationMs !== undefined ? ` ${a.durationMs}ms` : "";
+    const steer = a.steerable ? " steerable" : "";
+    lines.push(`  ${a.id} ${a.status} [${a.capabilityTag}]${cost}${dur}${steer}`);
+    lines.push(`    ${oneLine(a.objective)}`);
+    if (a.status === "running" && a.outputPreview !== undefined) {
+      lines.push(`    ↳ ${oneLine(a.outputPreview)}`);
+    }
+  }
+  return lines;
+}
+
+/** `/project` — registered projects (index, name, full path, last use). */
+export function renderProjectsView(
+  projects: readonly ClientWorkspaceEntry[],
+): string[] {
+  if (projects.length === 0) {
+    return ["Projects (0) — /project add <absolute-path> [name]"];
+  }
+  const lines = [`Projects (${projects.length})`];
+  projects.forEach((p, i) => {
+    const used = p.lastUsedAt !== undefined ? `  last used ${p.lastUsedAt}` : "";
+    lines.push(`  ${String(i + 1).padStart(2)}  ${p.name}  ${p.path}${used}`);
+  });
+  return lines;
+}
+
 /** The discovery ticker (last events, newest first), shown above the input. */
 export function renderDiscoveryTicker(
   events: readonly ClientDiscoveryEvent[],
@@ -317,12 +365,19 @@ export function renderResumeView(
       useColor ? color("  no persisted sessions — use --persist", SGR.dim) : "  no persisted sessions — use --persist",
     ];
   }
-  const lines = [header, "  #   id          messages  title / cwd"];
+  const lines = [header, "  #   id          messages  title / project"];
   sessions.forEach((s, i) => {
-    const title = s.title ?? s.cwd ?? "—";
+    const project =
+      s.cwd !== undefined && s.cwd.length > 0 ? basename(s.cwd) : undefined;
+    const title =
+      s.title !== undefined && s.title.length > 0 ? s.title : undefined;
+    const label =
+      title !== undefined && project !== undefined
+        ? `${title} · ${project}`
+        : (title ?? project ?? "—");
     const shortId = s.id.length > 12 ? `${s.id.slice(0, 10)}…` : s.id;
     lines.push(
-      `  ${String(i + 1).padStart(2)}  ${shortId.padEnd(12)} ${String(s.messageCount).padStart(3)}     ${title}`,
+      `  ${String(i + 1).padStart(2)}  ${shortId.padEnd(12)} ${String(s.messageCount).padStart(3)}     ${label}`,
     );
   });
   lines.push(

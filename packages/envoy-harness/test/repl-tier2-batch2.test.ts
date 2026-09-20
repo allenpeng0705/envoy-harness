@@ -192,6 +192,102 @@ describe("/agents", () => {
     // The "— " placeholder for the running record (no cost yet).
     expect(out.data).toContain("—");
   });
+
+  it("shows a running child's live output line", async () => {
+    const model = scriptedModel([{ content: [textBlock("ok")] }]);
+    const out = new StringWritable();
+    const records: ReadonlyArray<SubagentRecord> = [
+      {
+        sessionId: "33333333-3333-3333-3333-333333333333",
+        capabilityTag: "research",
+        objective: "find the runbook",
+        startedAt: "2026-08-19T10:00:00.000Z",
+        status: "running",
+      },
+    ];
+    await runRepl({
+      model,
+      args: makeArgs(),
+      lineReader: fakeLineReader(["/agents", "/quit"]),
+      stdout: out,
+      stderr: new StringWritable(),
+      historyPath: "",
+      subagentRegistry: {
+        list: () => records,
+        send: async () => undefined,
+        interrupt: () => undefined,
+        output: () => "step one\nstill working on it",
+      },
+    });
+    expect(out.data).toContain("still working on it");
+  });
+
+  it("steers a continuable child with `/agents send <id> <message>`", async () => {
+    const model = scriptedModel([{ content: [textBlock("ok")] }]);
+    const out = new StringWritable();
+    const sent: Array<[string, string]> = [];
+    const registry: SubagentRegistry = {
+      list: () => [],
+      send: async (id, message) => {
+        sent.push([id, message]);
+      },
+      interrupt: () => undefined,
+    };
+    await runRepl({
+      model,
+      args: makeArgs(),
+      lineReader: fakeLineReader(["/agents send child-1 keep going", "/quit"]),
+      stdout: out,
+      stderr: new StringWritable(),
+      historyPath: "",
+      subagentRegistry: registry,
+    });
+    expect(sent).toEqual([["child-1", "keep going"]]);
+    expect(out.data).toContain("sent to child-1");
+  });
+
+  it("interrupts a child with `/agents interrupt <id>`", async () => {
+    const model = scriptedModel([{ content: [textBlock("ok")] }]);
+    const out = new StringWritable();
+    const interrupted: Array<[string, string | undefined]> = [];
+    const registry: SubagentRegistry = {
+      list: () => [],
+      send: async () => undefined,
+      interrupt: (id, reason) => {
+        interrupted.push([id, reason]);
+      },
+    };
+    await runRepl({
+      model,
+      args: makeArgs(),
+      lineReader: fakeLineReader([
+        "/agents interrupt child-1 wrong way",
+        "/quit",
+      ]),
+      stdout: out,
+      stderr: new StringWritable(),
+      historyPath: "",
+      subagentRegistry: registry,
+    });
+    expect(interrupted).toEqual([["child-1", "wrong way"]]);
+    expect(out.data).toContain("interrupted child-1");
+  });
+
+  it("reports (not crashes) when steering is unsupported", async () => {
+    const model = scriptedModel([{ content: [textBlock("ok")] }]);
+    const out = new StringWritable();
+    const err = new StringWritable();
+    await runRepl({
+      model,
+      args: makeArgs(),
+      lineReader: fakeLineReader(["/agents send child-1 hi", "/quit"]),
+      stdout: out,
+      stderr: err,
+      historyPath: "",
+      subagentRegistry: makeRegistry([]),
+    });
+    expect(err.data).toContain("continuable");
+  });
 });
 
 // ---------------------------------------------------------------------------

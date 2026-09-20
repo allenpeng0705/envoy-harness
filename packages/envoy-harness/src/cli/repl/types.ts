@@ -308,6 +308,22 @@ export interface SubagentRegistry {
    * caller MUST NOT mutate it).
    */
   list(): ReadonlyArray<SubagentRecord>;
+  /**
+   * Steer a *continuable* child (one started with
+   * `run_in_background` in continuable mode). Optional: a submitter
+   * that cannot run continuable children simply omits both of these,
+   * and `/agents` reports that steering is unavailable rather than
+   * pretending to queue a message nobody will read.
+   */
+  send?(agentId: string, message: string): Promise<void>;
+  /** Interrupt a child's current turn (it stays alive for follow-ups). */
+  interrupt?(agentId: string, reason?: string): void;
+  /**
+   * The child's output so far, including the in-flight turn's streamed
+   * text. Optional like the two above: a submitter without a handle
+   * registry cannot report it.
+   */
+  output?(agentId: string): string;
 }
 
 /**

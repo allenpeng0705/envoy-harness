@@ -452,13 +452,13 @@ describe("loadRulesetFromFile", () => {
     const file = path.join(tmpDir, "ruleset.json");
     await fs.writeFile(
       file,
-      JSON.stringify([{ name: "non-empty-content" }, { name: "mesh-task-shape" }]),
+      JSON.stringify([{ name: "non-empty-content" }, { name: "sandbox-respected" }]),
       "utf8",
     );
     const loaded = await loadRulesetFromFile(file, DEFAULT_RULES);
     expect(loaded?.map((r) => r.name)).toEqual([
       "non-empty-content",
-      "mesh-task-shape",
+      "sandbox-respected",
     ]);
     // The check functions are the real ones, not placeholders.
     expect(await loaded?.[0]?.check({ content: [] } as never, "")).toMatchObject({
@@ -493,14 +493,14 @@ describe("loadRulesetFromFile", () => {
       file,
       JSON.stringify({
         formatVersion: 1,
-        rules: [{ name: "non-empty-content" }, { name: "mesh-task-shape" }],
+        rules: [{ name: "non-empty-content" }, { name: "sandbox-respected" }],
       }),
       "utf8",
     );
     const loaded = await loadRulesetFromFile(file, DEFAULT_RULES);
     expect(loaded?.map((r) => r.name)).toEqual([
       "non-empty-content",
-      "mesh-task-shape",
+      "sandbox-respected",
     ]);
   });
 
@@ -556,7 +556,7 @@ describe("loadRulesetFromFile", () => {
       rulesetFile,
       JSON.stringify({
         formatVersion: 1,
-        rules: [{ name: "non-empty-content" }, { name: "mesh-task-shape" }],
+        rules: [{ name: "non-empty-content" }, { name: "sandbox-respected" }],
       }),
       "utf8",
     );
@@ -722,6 +722,39 @@ describe("DefaultBenchmarkRunner", () => {
     // 'ok' stub → combined verdict is 'pass', not 'fail' → pass=false.
     const result = await runner.run(SAMPLE_RULES, bench);
     expect(result.passRate).toBe(0.0);
+  });
+
+  it("prefers an inline agentResult over stubKind", async () => {
+    const bench = makeBenchmark([
+      {
+        id: "t1",
+        objective: "deploy the database migration",
+        // The stub alone would PASS this objective...
+        stubKind: "ok",
+        // ...but the inline result is an empty (failing) result, which is
+        // what the label expects. Precedence is part of the schema's
+        // contract, so it is pinned here rather than assumed.
+        expectedVerdict: "fail",
+        agentResult: {
+          content: [],
+          stopReason: "end_turn",
+          iterations: 1,
+          toolCalls: 0,
+          messages: [],
+          sandboxPolicy: {
+            mode: "workspace-write",
+            approval: "on-request",
+            backend: "linux-landlock",
+            writableRoots: ["/tmp"],
+            networkAccess: false,
+            slashTmpWritable: true,
+          },
+          metrics: { inputTokens: 0, outputTokens: 0, costUsd: 0 },
+        },
+      },
+    ]);
+    const result = await runner.run(DEFAULT_RULES, bench);
+    expect(result.passRate).toBe(1.0);
   });
 });
 

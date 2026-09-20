@@ -298,6 +298,23 @@ export class PeerMeshSubmitter implements MeshSubmitter {
           throw err;
         }
       },
+      /**
+       * Peer tasks do not stream partial output over the wire — the remote
+       * side reports lifecycle plus a settled result — so this is empty
+       * until the task settles. Documented rather than faked: an empty
+       * string is the honest answer to "what has it produced so far?".
+       */
+      output: () => {
+        const result = settledResult;
+        if (result === undefined) return "";
+        return result.content
+          .filter(
+            (b): b is Extract<typeof b, { type: "text" }> =>
+              b.type === "text",
+          )
+          .map((b) => b.text)
+          .join("\n");
+      },
       status: () => ({ ...record }),
     };
 

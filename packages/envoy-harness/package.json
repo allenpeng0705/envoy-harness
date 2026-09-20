@@ -15,6 +15,7 @@
     }
   },
   "files": [
+    "benchmarks",
     "dist",
     "README.md",
     "LICENSE",

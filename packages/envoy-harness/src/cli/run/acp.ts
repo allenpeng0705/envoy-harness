@@ -16,6 +16,9 @@ import {
   buildAgentSystemPrompt,
   createAgentSessionBackend,
   createFakeSessionBackend,
+  createFileWorkspaceRegistry,
+  defaultWorkspacesFilePath,
+  workspaceRootsFromEnv,
   HookRegistry,
   InMemorySession,
   JsonRpcConnection,
@@ -217,6 +220,16 @@ async function resolveAcpBackend(
         createAgentSessionBackend({
           defaultCwd,
           memoryStore,
+          // Project registry: lets an ACP host (the web UI) open a project
+          // other than `defaultCwd` and group sessions by project. Lazy —
+          // constructing it does no I/O until a client asks.
+          // `ENVOY_WORKSPACE_ROOTS` bounds which directories may be added;
+          // unset = unbounded, the local-operator default.
+          workspaces: createFileWorkspaceRegistry({
+            filePath:
+              process.env["ENVOY_WORKSPACES_FILE"] ?? defaultWorkspacesFilePath(),
+            allowedRoots: workspaceRootsFromEnv(),
+          }),
           // U2 — the status bar reads the model label from config/get.
           getConfig: () => ({
             version: "0.0.0",

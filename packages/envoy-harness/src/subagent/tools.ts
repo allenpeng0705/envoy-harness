@@ -49,6 +49,10 @@ import { z } from "zod";
 
 import type { ContentBlock, Tool } from "../tools/types.js";
 import { aggregateFanOutResults, type FanOutRegistry } from "./fan-out.js";
+import {
+  spawnBackgroundSubagent,
+  supportsContinuable,
+} from "./background.js";
 import type { MeshSubmitter, SubagentInput, SubagentResult } from "./types.js";
 
 /** The tool's input schema (zod). */
@@ -89,6 +93,27 @@ export const TaskInputSchema = z.object({
     .describe(
       "Optional: prefer a specific runtime. v0's LocalMeshSubmitter " +
         "ignores this.",
+    ),
+  run_in_background: z
+    .boolean()
+    .optional()
+    .describe(
+      "When true, start the sub-agent in the background and return a job " +
+        "id immediately instead of waiting for it to finish, so you can " +
+        "keep working. Watch it with job_status / job_output / job_wait, " +
+        "cancel it with job_kill, and — when the host runs continuable " +
+        "children — steer it with send_message.",
+    ),
+  background_mode: z
+    .enum(["one-shot", "continuable"])
+    .optional()
+    .describe(
+      "Only meaningful with run_in_background. 'one-shot' (default) runs " +
+        "the objective and finishes. 'continuable' keeps the child alive " +
+        "after its first turn so you can send follow-up messages to it; " +
+        "you must eventually stop it with job_kill. A continuable child is " +
+        "still bounded by deadline_ms — measured from when it started, not " +
+        "per message — so size that budget for the whole conversation.",
     ),
 });
 export type TaskInput = z.infer<typeof TaskInputSchema>;
@@ -163,6 +188,21 @@ export interface MakeTaskToolOptions {
    * expanded unconditionally, bypassing the cap.
    */
   maxSubagents?: number;
+  /**
+   * The parent's background-job registry. When set, `task` accepts
+   * `run_in_background: true`: the child starts without blocking the
+   * parent's turn and is registered as a `subagent` job, so the existing
+   * `job_*` tools observe and cancel it. Without a registry the option is
+   * refused with a clear error rather than silently blocking.
+   */
+  jobs?: import("../jobs/types.js").JobRegistry;
+  /**
+   * What a background child does after its first turn.
+   *
+   * - `"one-shot"` (default): run the objective, then settle.
+   * - `"continuable"`: stay alive so `send_message` can steer it.
+   */
+  backgroundMode?: import("./background.js").SubagentBackgroundMode;
 }
 
 /**
@@ -234,6 +274,12 @@ export function makeTaskTool(
     "submit" in submitterOrOptions
       ? undefined
       : submitterOrOptions.maxSubagents;
+  const backgroundJobs =
+    "submit" in submitterOrOptions ? undefined : submitterOrOptions.jobs;
+  const backgroundMode =
+    "submit" in submitterOrOptions
+      ? undefined
+      : submitterOrOptions.backgroundMode;
 
   return {
     name: "task",
@@ -245,6 +291,9 @@ export function makeTaskTool(
       "a fresh session with its own permission state — e.g. a " +
       "research sub-agent that should run read-only while you " +
       "continue to edit files. " +
+      "Set `run_in_background: true` to start it without waiting and " +
+      "keep working: you get a job id you can watch with job_output / " +
+      "job_wait and cancel with job_kill. " +
       VERDICT_IS_PREDICTION,
     parameters: TaskInputSchema,
     async execute(args, ctx) {
@@ -260,6 +309,62 @@ export function makeTaskTool(
           ? { preferredRuntime: args.preferred_runtime as never }
           : {}),
       };
+
+      // ---- background path -------------------------------------------
+      // Refuse loudly rather than silently blocking: a model that asked
+      // for background work and got a synchronous result would be misled
+      // about what happened.
+      if (args.run_in_background === true) {
+        if (backgroundJobs === undefined) {
+          return {
+            content:
+              "run_in_background is unavailable: this host did not wire a background job registry.",
+            isError: true,
+          };
+        }
+        if (!supportsContinuable(submitter)) {
+          return {
+            content:
+              "run_in_background is unavailable: the configured sub-agent submitter cannot run continuable children.",
+            isError: true,
+          };
+        }
+        if (fanOutRegistry?.lookup(baseInput.capabilityTag) !== undefined) {
+          return {
+            content:
+              "run_in_background cannot be combined with a fan-out capability tag: fan-out aggregates N children into one result, which a background job id cannot represent. Run it in the foreground, or use a tag without a fan-out spec.",
+            isError: true,
+          };
+        }
+        try {
+          const mode = args.background_mode ?? backgroundMode ?? "one-shot";
+          const started = spawnBackgroundSubagent({
+            submitter,
+            jobs: backgroundJobs,
+            input: baseInput,
+            owner: ctx.session.id,
+            mode,
+            ...(onSubagentComplete !== undefined
+              ? { onResult: onSubagentComplete }
+              : {}),
+          });
+          return {
+            content: JSON.stringify({
+              job_id: started.jobId,
+              agent_id: started.agentId,
+              status: started.status,
+              mode,
+              hint: "job_status / job_output / job_wait observe it; job_kill cancels it; list_agents finds it later.",
+            }),
+          };
+        } catch (err) {
+          return {
+            content: `failed to start background sub-agent: ${err instanceof Error ? err.message : String(err)}`,
+            isError: true,
+          };
+        }
+      }
+      // ---- end background path ---------------------------------------
 
       // F10.4.1: fan-out expansion. Check the
       // registry first; if a spec matches, expand

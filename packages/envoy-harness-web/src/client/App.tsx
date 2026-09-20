@@ -7,11 +7,12 @@ import {
   useSyncExternalStore,
   type JSX,
 } from "react";
-import { AcpHost, type SessionSummary } from "./acp/host.js";
+import { AcpHost, type SessionSummary, type WorkspaceEntry } from "./acp/host.js";
 import { createBrowserEhuiDataSource } from "./acp/ehui-source.js";
 import { DetailsRail } from "./DetailsRail.js";
 import { EmptyHero } from "./EmptyHero.js";
 import { PermissionModal } from "./PermissionModal.js";
+import { ProjectPickerModal } from "./ProjectPickerModal.js";
 import { SessionRail } from "./SessionRail.js";
 import { SettingsModal, type ThemeMode } from "./SettingsModal.js";
 import { Transcript } from "./Transcript.js";
@@ -47,7 +48,9 @@ export function App(): JSX.Element {
   const state = useAcpHost(host);
   const [draft, setDraft] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [projectsOpen, setProjectsOpen] = useState(false);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  const [workspaces, setWorkspaces] = useState<WorkspaceEntry[]>([]);
   const [providerDraft, setProviderDraft] = useState("");
   const [modelDraft, setModelDraft] = useState("");
   const [baseUrlDraft, setBaseUrlDraft] = useState("");
@@ -99,6 +102,37 @@ export function App(): JSX.Element {
   useEffect(() => {
     refreshSessions();
   }, [refreshSessions, state.sessionId]);
+
+  const refreshWorkspaces = useCallback(() => {
+    if (!state.ready) {
+      setWorkspaces([]);
+      return;
+    }
+    void host
+      .listWorkspaces()
+      .then(setWorkspaces)
+      .catch(() => setWorkspaces([]));
+  }, [host, state.ready]);
+
+  useEffect(() => {
+    refreshWorkspaces();
+  }, [refreshWorkspaces, state.sessionId]);
+
+  const startSessionIn = useCallback(
+    (cwd: string): void => {
+      promptQueueRef.current = [];
+      setQueueLen(0);
+      void host
+        .newSession(cwd)
+        .then(() => {
+          setEhuiRefresh((n) => n + 1);
+          refreshSessions();
+          refreshWorkspaces();
+        })
+        .catch(() => undefined);
+    },
+    [host, refreshSessions, refreshWorkspaces],
+  );
 
   const ehuiSource = useMemo(() => {
     if (!state.sessionId || !state.ready) return null;
@@ -240,6 +274,8 @@ export function App(): JSX.Element {
               refreshSessions();
             });
           }}
+          onNewSessionIn={startSessionIn}
+          onOpenProjects={() => setProjectsOpen(true)}
           onResume={onResume}
           onOpenSettings={() => setSettingsOpen(true)}
           collapsed={sidebarCollapsed}
@@ -305,6 +341,7 @@ export function App(): JSX.Element {
                 ready={state.ready}
                 sessionId={state.sessionId}
                 cwd={state.cwd}
+                onOpenProject={() => setProjectsOpen(true)}
               />
             }
           />
@@ -379,6 +416,10 @@ export function App(): JSX.Element {
         <DetailsRail
           mesh={state.mesh}
           onRefreshMesh={() => void host.refreshMesh()}
+          onSendAgentMessage={(agentId, message) =>
+            host.sendAgentMessage(agentId, message)
+          }
+          onInterruptAgent={(agentId) => host.interruptAgent(agentId)}
           ehuiSource={ehuiSource}
           ehuiRefresh={ehuiRefresh}
           onResumeSession={(id) => {
@@ -415,6 +456,25 @@ export function App(): JSX.Element {
         }
         theme={theme}
         onTheme={setTheme}
+      />
+
+      <ProjectPickerModal
+        open={projectsOpen}
+        onClose={() => setProjectsOpen(false)}
+        workspaces={workspaces}
+        activeCwd={state.cwd}
+        onAdd={async (path, name) => {
+          await host.addWorkspace(path, name === "" ? undefined : name);
+          refreshWorkspaces();
+        }}
+        onRemove={async (path) => {
+          await host.removeWorkspace(path);
+          refreshWorkspaces();
+        }}
+        onOpen={(path) => {
+          startSessionIn(path);
+          setProjectsOpen(false);
+        }}
       />
 
       <PermissionModal

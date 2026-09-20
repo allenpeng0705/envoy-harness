@@ -11,6 +11,7 @@ import { WebSocketServer } from "ws";
 import { createServer as createViteServer, type ViteDevServer } from "vite";
 
 import { attachAcpWsBridge } from "./acp-ws-bridge.js";
+import { isLoopbackHost } from "./host.js";
 import { resolveHarnessAcpCommand } from "./spawn.js";
 
 export interface StartWebServerOptions {
@@ -176,6 +177,15 @@ export async function startWebServer(
 
   const url = `http://${host}:${port}/`;
   stderr.write(`envoy-harness-web: listening on ${url}\n`);
+
+  if (!isLoopbackHost(host)) {
+    // The project API can add directories to the registry. That is fine for
+    // the operator at this machine and needs a bound once anyone else can
+    // reach the port, so say so loudly rather than silently widening it.
+    stderr.write(
+      `envoy-harness-web: warning: bound to ${host}, not loopback. Anyone who can reach this port can drive the agent; the project registry accepts any absolute directory unless ENVOY_WORKSPACE_ROOTS is set.\n`,
+    );
+  }
 
   if (options.openBrowser) {
     const opener =

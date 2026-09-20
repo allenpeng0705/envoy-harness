@@ -331,11 +331,25 @@ Design notes: [`packages/envoy-harness/docs/distributed-collaboration.md`](./pac
 
 ```sh
 pnpm install
+pnpm run build      # FIRST on a fresh clone — builds workspace packages in dependency order
 pnpm run typecheck
 pnpm run test
-pnpm run build
 pnpm run envoy -- --help
 
+# …or all three, in the order CI uses:
+pnpm run verify
+
+# Diagnose the derived build order (or a cycle) without building:
+pnpm run build:graph
+```
+
+**Why `pnpm run build` and not `pnpm -r run build`:** packages resolve each other's
+type declarations through `exports` → `dist/index.d.ts`, and pnpm does not wait for a
+package's dependencies when running a recursive script, so a plain recursive build starts
+dependents too early on a clean checkout. The root script derives the order from what the
+sources import and builds one level at a time.
+
+```sh
 pnpm --filter @envoymesh/envoy-harness-web start
 pnpm --filter @envoymesh/envoy-harness-web test
 ```

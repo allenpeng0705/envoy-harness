@@ -288,7 +288,34 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
       const submitter = agent.getMeshSubmitter();
       if (submitter && typeof submitter.listSubagents === "function") {
         const list = submitter.listSubagents.bind(submitter);
-        subagentRegistry = { list };
+        // Continuable children can also be steered. Detected structurally:
+        // a submitter without a handle registry lists only.
+        const candidate = submitter as Partial<
+          import("../../subagent/continuable.js").ContinuableSubmitter
+        >;
+        const getHandle =
+          typeof candidate.getHandle === "function"
+            ? candidate.getHandle.bind(submitter)
+            : undefined;
+        subagentRegistry =
+          getHandle === undefined
+            ? { list }
+            : {
+                list,
+                send: async (agentId, message) => {
+                  const handle = getHandle(agentId);
+                  if (handle === undefined) {
+                    throw new Error(
+                      `no continuable child '${agentId}' (it may have settled)`,
+                    );
+                  }
+                  await handle.send(message);
+                },
+                interrupt: (agentId, reason) => {
+                  getHandle(agentId)?.interrupt(reason);
+                },
+                output: (agentId) => getHandle(agentId)?.output() ?? "",
+              };
       }
     }
 

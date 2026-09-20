@@ -275,6 +275,88 @@ describe("EnvoyHarnessClient", () => {
     expect(result.messages.at(-1)).toMatchObject({ text: "echo:acp" });
     pair.close();
   });
+
+  it("drives the project registry + background-child surface (ACP)", async () => {
+    const pair = pairedClientAndServer();
+    const calls: unknown[] = [];
+    const backend = {
+      createSession: async () => ({ sessionId: "s1" }),
+      prompt: async () => ({ stopReason: "end_turn" }),
+      cancel: () => undefined,
+      listWorkspaces: async () => ({
+        workspaces: [
+          {
+            path: "/p",
+            name: "P",
+            addedAt: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+      }),
+      addWorkspace: async (p: { path: string; name?: string }) => {
+        calls.push(["add", p]);
+        return {
+          workspace: {
+            path: p.path,
+            name: p.name ?? "p",
+            addedAt: "2026-01-01T00:00:00.000Z",
+          },
+        };
+      },
+      removeWorkspace: async (p: { path: string }) => ({
+        removed: p.path === "/p",
+      }),
+      listSessionAgents: async () => ({
+        output: "sub-agents: 1 (1 running)",
+        agents: [
+          {
+            id: "11111111-2222-3333-4444-555555555555",
+            capabilityTag: "review",
+            objective: "check the diff",
+            status: "running",
+            startedAt: "2026-01-01T00:00:00.000Z",
+            steerable: true,
+            outputPreview: "half way through",
+          },
+        ],
+      }),
+      sendAgentMessage: async (p: unknown) => {
+        calls.push(["send", p]);
+        return { queued: true, status: "running" };
+      },
+      interruptAgent: async (p: unknown) => {
+        calls.push(["interrupt", p]);
+        return { interrupted: true, status: "failed" };
+      },
+    } as unknown as Parameters<typeof attachAcpServer>[0]["backend"];
+    attachAcpServer({ connection: pair.server, backend });
+    await pair.client.initialize();
+
+    expect((await pair.client.listWorkspaces())[0]?.name).toBe("P");
+    await pair.client.addWorkspace("/q", "Q");
+    expect(calls.at(-1)).toEqual(["add", { path: "/q", name: "Q" }]);
+    expect(await pair.client.removeWorkspace("/p")).toBe(true);
+    expect(await pair.client.removeWorkspace("/nope")).toBe(false);
+
+    const agents = await pair.client.sessionAgents("s1");
+    expect(agents.output).toContain("sub-agents: 1");
+    // The full handle id and the live preview — never parsed out of `output`.
+    expect(agents.agents?.[0]?.id).toBe(
+      "11111111-2222-3333-4444-555555555555",
+    );
+    expect(agents.agents?.[0]?.outputPreview).toBe("half way through");
+    // The legacy text accessor still works.
+    expect(await pair.client.listSessionAgents("s1")).toContain("sub-agents: 1");
+
+    expect(await pair.client.sendAgentMessage("s1", "a1", "go")).toEqual({
+      queued: true,
+      status: "running",
+    });
+    expect(await pair.client.interruptAgent("s1", "a1", "stop")).toEqual({
+      interrupted: true,
+      status: "failed",
+    });
+    pair.close();
+  });
 });
 
 describe("EHUI client hooks", () => {

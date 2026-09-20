@@ -27,7 +27,7 @@ summary of intentions — it is what the code shows:
 | **penguin** | 0 LOC of loop. A 132-line `SKILL.md` prose procedure; its CI "tests" are `toContain(...)` assertions on that markdown | prose. No held-out set, no benchmark version. Snapshot is *instructed*, not wired (`SnapshotService` has no caller outside its own file) |
 | **codex** | Real: ~15.7k Rust LOC, ~111 tests, production-wired. A consolidation sub-agent rewrites `MEMORY.md`, `memory_summary.md`, `skills/*`, and that summary is injected as a **`PromptFragment::developer_policy`** on every thread start — the agent edits its own future system prompt | **structural only.** `validate_consolidation_artifacts_for_version` checks existence, a `"v1"` first line, headings, <10k bytes, no symlinks. No task-outcome label exists anywhere (`threads` has no outcome column). The only behavioural signal is `usage_count`/`last_usage` — *retrieval*, not effect. No eval harness in-repo |
 | **deepseek-harness** | Self-*modification* plumbing ships: `plugin_manager` mutates profile bundles; skills/`AGENTS.md` are live-watched. But it is request-driven and approval-gated, never outcome-driven | **explicitly deferred.** `.agents/notes/.../2026-07-16-harness-level-loop.md:121`: *"A separate evaluator, evaluator-driven feedback round, completion certificate, deterministic checker, adversarial verifier, and criteria/executor/isolation contract remain deferred."* |
-| **envoy** | Thin: rule **selection** only. Rule *bodies* stay code, so invented names are rejected | The only **executable, deterministic** criterion of the four — but see §1.0: it measured as a two-class discriminator, the same benchmark scores `before` and `after`, and `BenchmarkSchema = { name, tasks }` carries no revision |
+| **envoy** | Thin: rule **selection** only. Rule *bodies* stay code, so invented names are rejected | The only **executable, deterministic** criterion of the four. §1.0 records how it was measured and repaired: the 4-rule default set is now decisive on a 15-task shared benchmark, with a CI gate against inert rules and unreachable labels. Still missing: a benchmark **revision hash** and task-wise held-out split, and headroom above the (perfect) default |
 
 ### 1.0 What envoy's criterion actually was (measured, then fixed)
 
@@ -36,7 +36,8 @@ task-derived". That was too generous, and the difference matters.
 
 **Measured before any change**, by enumerating all 64 subsets of the six
 rules against the only benchmark in the repo
-(`test/fixtures/frozen-benchmark.yaml`, a four-task *test* fixture):
+(`test/fixtures/frozen-benchmark.yaml`, a four-task *test* fixture, now deleted
+in favour of the shared benchmark):
 
 - `DEFAULT_RULES` scored **`passRate = 0.25`** on its own benchmark — 1 of 4
   tasks graded as intended.
@@ -62,33 +63,64 @@ the `forbidden-path` stub put its violation only in assistant *text* while
 `messages` stayed empty — so `sandbox-respected`, which scans tool results, was
 structurally unable to fire on the stub built to exercise it.
 
-**Fixed in this pass** (all four changes sensitivity-checked — reverting any one
-fails a specific test):
+**Fixed in the first pass** (all sensitivity-checked — reverting any one fails a
+specific test):
 
 1. `goldOutput` is now read. It is a **fixed term of the criterion, not a
    selectable rule** — a criterion the optimiser may deselect is not a
    criterion. `BenchmarkTaskSchema` declared it from the start and never read
    it.
-2. `output-matches-objective` → **`fail` on zero overlap**; the `partial` band
-   now means "some overlap, under half" (0 < ratio < 0.5).
+2. `output-matches-objective` → **`fail` on zero overlap** (a later pass removed
+   the `partial` band entirely; see below).
 3. `sandbox-respected` → **`fail` with `rollback: true`** on a successful
    out-of-policy operation. (This path had **no test at all**, which is how the
    contradiction survived.)
 4. `approval-respected` removed from `DEFAULT_RULES` (kept as an exported
-   opt-in; removing the export would be a breaking change for no benefit), and
-   `mesh-task-shape`'s stale docstring corrected.
+   opt-in; removing the export would be a breaking change for no benefit).
 
-**Measured after:** `DEFAULT_RULES` scores **`passRate = 1.0`** on the fixture,
-4 of 4 tasks correct, and the landscape now spans the full range —
-`{0, 0.25, 0.5, 0.75, 1}` instead of three plateaus.
+**Second pass — the benchmark itself.** The first pass left the criterion
+measuring something but the *yardstick* still degenerate. The verifier-benchmark
+decisions (recorded in `docs/verifier-benchmark-decision-brief.md` §0) settled
+it:
 
-**The honest consequence, and the new headline:** the fixture now has **no
-headroom** — a correct baseline means every hypothesis is correctly reverted, so
-this fixture is a *regression gate*, not an improvement driver. And 16 of the 32
-rule subsets still reach 1.0, because four tasks cannot discriminate among rule
-sets. So the remaining problem is no longer "the criterion is broken" but
-"**there is no production benchmark and the only one in-repo is too small to
-drive the loop**". See Stage 0 below.
+1. `output-matches-objective` → **`fail` for every overlap below 50%**, not just
+   zero; exactly 50% passes. `partial` is gone from the rule, so **no default
+   rule emits `partial`** and a `partial` label would be unreachable.
+2. `mesh-task-shape` removed from `DEFAULT_RULES`. An earlier note in this very
+   file claimed the rule was "real"; that was **wrong**. Its code is the same
+   decision as `non-empty-content` (fail iff `content.length === 0`), so
+   toggling it can never change a `passRate`, and because a subset may reorder
+   rules, putting it first would silently downgrade the combined `rollback` from
+   `true` to `false`. `DEFAULT_RULES` is now **4 rules, each decisive** on the
+   benchmark.
+3. `BenchmarkTaskSchema` gained an inline **`agentResult`**. The four `stubKind`
+   shapes cannot express a 1-of-3 overlap, a blocked versus bypassed write, or an
+   exact cost boundary; a task that cannot state its input cannot carry a
+   learnable label.
+4. The shared benchmark is now **`benchmarks/verifier-frozen.yaml`** (15 tasks,
+   in-repo, every task labelled `pass`/`fail`, every failing task isolating
+   exactly one rule). The CLI reads it by default; the old four-task test
+   fixture is deleted.
+5. `analyzeBenchmark` + `test/benchmark-discrimination.test.ts` are the CI gate:
+   they reject an unreachable label, an inert rule, and a collapsed score
+   landscape.
+
+**Measured after (v1 benchmark, 4 rules, 15 legal subsets):** `DEFAULT_RULES`
+scores **`passRate = 1.000`**, with **7 distinct pass rates** and **12 distinct
+outcome vectors**; no inert rule and no unreachable label. For contrast, the old
+fixture produced 3 distinct pass rates over its lattice.
+
+**The honest consequence, and the headline that remains:** v1 is a *regression
+gate*, not an improvement driver. A correct baseline means every hypothesis is
+correctly reverted, and no subset beats 1.000. The best alternative *ties* it at
+1.000 by dropping `non-empty-content` (which is dominated by the overlap rule
+whenever the overlap rule is present). So the remaining problem is no longer "the
+criterion is broken" or "the benchmark is too small to discriminate"; it is
+"**the benchmark contains no task on which the default is wrong, so there is
+nothing to improve toward**". Creating headroom means adding a labelled task the
+lexical overlap rule wrongly fails (a correct paraphrase) — which is the
+non-selectable check the Q1 decision deliberately deferred, *not* a relabelling
+exercise. See Stage 0 below.
 
 ### 1.1 The convergence worth noticing
 
@@ -170,13 +202,16 @@ No artifact changes at all. Pure measurement. Four deliverables:
    multiple-comparisons setup: a lucky reorder passes. Require a minimum delta
    (e.g. `after − before ≥ ε`, with `ε` a config field) **and** a confirm-set pass before
    adoption.
-5. **A benchmark big enough to discriminate, and a production one at all.** There
-   is no production benchmark: the only one in-repo is the four-task test
-   fixture, and the CLI's default path
-   (`<cwd>/.envoymesh/frozen-benchmark.yaml`) **throws if absent**, so
-   `envoy self-evolve` cannot run out of the box. Even after the fixes above, 16
-   of 32 rule subsets reach the maximum on four tasks — too few to drive a
-   search. This is now the binding constraint, ahead of the held-out split.
+5. **A benchmark with headroom.** *Partly done.* The shared benchmark now exists
+   (`benchmarks/verifier-frozen.yaml`, 15 labelled tasks, read by default), the
+   old four-task fixture is deleted, and the CI gate rejects inert rules and
+   unreachable labels. What remains is the harder half: the default scores
+   **1.000**, so there is no task it gets wrong and nothing for the loop to
+   improve toward. Adding tasks the lexical rule wrongly fails (correct
+   paraphrases) requires the **non-selectable** paraphrase check that the Q1
+   decision deferred; relabelling existing tasks would not create headroom,
+   only an inconsistent criterion. A held-out split and a revision hash are
+   still absent.
 
 **Where the criterion should come from (options, in the order I would try them):**
 

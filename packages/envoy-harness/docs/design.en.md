@@ -183,6 +183,23 @@ Month 5+:   envoy-harness and EnvoyMesh iterate independently
 
 **Key advantage**: by Month 2, envoy-harness is in users' hands. The mesh integration is a *progressive enhancement*, not a *prerequisite*.
 
+#### 1.3.6 Optional companions must not be build dependencies
+
+Core has optional companion packages: `envoy-harness-cordis` (the audited DSH plugin container), `envoy-harness-peer` (the standalone peer cluster), `envoy-harness-tui`, `envoy-sandbox-win`. Each of them depends on core. Core also **uses** the first two — the CLI wires a Cordis container and a peer cluster when the operator asks for them.
+
+That is a cycle in the package graph, and it broke the build: `tsc` resolves a *literal* specifier in a dynamic import, and a `typeof import("…")` type query outright, through the target's `exports` → `dist/index.d.ts`. So core needed Cordis and peer **declarations** to compile, while Cordis and peer needed core's — nothing could build from a clean checkout, and the dependency was invisible because the runtime imports were already dynamic.
+
+**The rule: an optional companion is loaded by name, and its surface is declared structurally in the caller.**
+
+```ts
+const CORDIS_PACKAGE: string = "@envoymesh/envoy-harness-cordis";
+const cordis = (await import(CORDIS_PACKAGE)) as CordisCompatModule;
+```
+
+The `string`-typed specifier is invisible to `tsc` and to bundlers, so the compiler never resolves the package; `CordisCompatModule` / `PeerCompatModule` (in core) and `TuiCompatModule` (in the peer package) declare the handful of members actually called. The runtime behaviour is unchanged — still optional, still loaded on demand, still caught when absent — but the build-time edge is gone, so the build graph is acyclic and can be ordered (see `scripts/build-workspace.mjs`, which derives the order from what the sources import and fails loudly on a real cycle).
+
+The same discipline applies between companions: the peer CLI launches the TUI, so the edge `peer → tui` is real and one-directional; the TUI's *test* dependency on peer is a `devDependency`, never a production one.
+
 ---
 
 ### 1.4 Ontology is not engineering: the causal circuit and the scaffolding
@@ -1872,6 +1889,47 @@ export class LocalMeshSubmitter implements MeshSubmitter {
 
 The sub-agent's permission is **its own node's** policy, not the requester's. A requester in `read-only` can spawn a sub-agent in `workspace-write`; the cost is paid by the requester (per `chain-budget-ledger`), but the actions are taken on the worker's node with the worker's policy.
 
+### 10.4 Background and continuable sub-agents
+
+> **Where the code lives:** `src/subagent/background.ts` (the bridge + the control tools), `src/subagent/continuable.ts` (the handle runtime), `src/jobs/` (the registry the bridge registers into).
+
+`task` was originally always blocking: `execute` awaited `submitter.submit(...)`, so a long research child stopped the parent's turn. The continuable runtime (`submitContinuable` → a handle with `send` / `interrupt` / `close` / `waitSettle`) already existed, but nothing called it, so the capability was unreachable from the model.
+
+**`task` now takes `run_in_background`.**
+
+```yaml
+task:
+  objective: find every caller of the deprecated API
+  capability_tag: code-search
+  cost_ceiling_usd: 0.5
+  deadline_ms: 120000
+  run_in_background: true          # returns a job id immediately
+  background_mode: continuable     # or "one-shot" (default)
+```
+
+- `one-shot` — the child runs the objective and settles; the job completes with its output.
+- `continuable` — the child stays alive after its first turn, so `send_message` can steer it. The job stays `running` until the child settles or is killed.
+- A host-level default (`AgentOptions.subagentBackgroundMode`) sets the policy; a per-call `background_mode` overrides it.
+- `deadline_ms` bounds a continuable child's **total** lifetime, measured from spawn, not per message. The runtime's deadline timer is what guarantees a steered child cannot live forever.
+
+**Why the job registry, not a new id space.** `spawnBackgroundSubagent` registers the child with `jobs.start({ kind: "subagent", … })`, so the existing `job_status` / `job_output` / `job_wait` / `job_kill` / `job_list` tools observe and cancel sub-agent jobs with no change — the registry's own type comment already reserved `subagent-N` ids. The bridge maps `cancel → handle.interrupt`, `done → handle.waitSettle()`, and `readOutput → handle.output()`.
+
+The child is created **inside** `jobs.start`'s `run()` hook so the registry's per-owner cap is enforced *before* a child exists; creating it first and registering second would leak a running child on every rejected job.
+
+**Control tools** (`list_agents`, `send_message`, `interrupt_agent`) are registered only when the submitter implements the `ContinuableSubmitter` capability (`submitContinuable` + `getHandle`). Advertising `send_message` against a submitter with no handle registry would promise something that always errors.
+
+**Refusals are explicit.** Without a job registry, or with a non-continuable submitter, or when the `capability_tag` matches a fan-out spec (one model call → N children cannot be represented by one job id), `run_in_background` returns an `isError: true` tool result rather than silently blocking. A model that asked for background work and got a synchronous answer would be misled about what happened.
+
+**Steering surfaces.** The parent model steers with the control tools; a human steers from the REPL (`/agents send <id> <message>`, `/agents interrupt <id>`), from the TUI (the same commands over the shared client), and from the WebUI (`session/agent_message`, `session/agent_interrupt` over ACP). All of them go through the same handle registry.
+
+**"Steerable" means a control call would reach a live handle.** A child is steerable while it is still running — including a `one-shot` child mid-turn, where a queued message simply becomes its next turn. Once it has settled, the call comes back as a structured `error` (a normal miss, not a JSON-RPC failure), and the UI disables the controls.
+
+**`session/agents` returns data, not just prose.** It carries an `agents[]` array with the **full** id, the status, and a `steerable` flag alongside the human-readable `output`. The text rendering shortens ids to 8 characters for a terminal, so a UI that parsed it could never recover the handle and every steering call would miss — an identifier a control call needs must be delivered as a field, never inferred from a formatted string.
+
+**Streaming is token-level, not turn-level.** The continuable runtime maintains a bounded output buffer per child: completed turns (authoritative text) plus the **in-flight turn's assistant deltas**, which it captures by chaining the child's `assistantStreamSink`. `handle.output()` therefore advances *while a turn runs*, and `job_output` / `session/agents[].outputPreview` show progress without waiting for the turn to end. When a turn commits, the streamed copy is discarded and the authoritative text kept, so a turn is never present twice; the buffer is a tail (16 KiB per turn, 64 KiB of completed turns), not a transcript. A host factory that installed its own sink keeps working — the runtime chains rather than replaces.
+
+`job_output` is a **consuming** cursor for sub-agent jobs, as its description promises and as bash jobs already behave: each read returns only what is new since the last read (re-emitting from the start if the bounded tail has since dropped it). `session/agents[].outputPreview` is the cumulative tail instead, because a UI wants the latest state, not a delta.
+
 ---
 
 ## 11. The reference MAP adapter
@@ -2048,37 +2106,50 @@ export class LocalRunner {
 
 The verifier checks whether a result actually answers the objective. The local rule engine is fast and free; the LLM verifier is the escalation path.
 
-### 12.1 The 6 rule-based checks
+### 12.1 The rule-based checks
 
 ```ts
-// src/verifier/rules/output-matches-objective.ts
-export const outputMatchesObjective: VerifierRule = {
+// src/verifier/rules/index.ts
+export const outputMatchesObjectiveRule: VerifierRule = {
   name: 'output-matches-objective',
   async check(result: AgentResult, objective: string): Promise<Verdict | null> {
     const text = concatText(result.content)
     if (text.length === 0) {
       return { kind: 'fail', reason: 'empty output' }
     }
-    // A cheap heuristic: does the text contain at least one keyword from the objective?
+    // A cheap heuristic: does the text contain at least half of the objective's keywords?
     const keywords = extractKeywords(objective)
+    if (keywords.length === 0) return null // nothing to compare; abstain
     const matched = keywords.filter(kw => text.toLowerCase().includes(kw.toLowerCase()))
     if (matched.length < keywords.length * 0.5) {
-      return { kind: 'partial', reason: `output matches ${matched.length}/${keywords.length} keywords` }
+      // Below half is a fail, not a partial: `partial`'s documented meaning
+      // ("acceptable for some blocks") is a claim about multi-block content,
+      // which a lexical ratio cannot establish. Exactly 0.5 passes.
+      return { kind: 'fail', reason: `output matches ${matched.length}/${keywords.length} keywords` }
     }
     return { kind: 'pass', score: matched.length / keywords.length, confidence: 'low' }
   },
 }
 ```
 
-The other 5 rules follow the same shape:
+The other rules follow the same shape:
 
 - `non-empty-content` — at least one text/structured block.
 - `sandbox-respected` — no content includes paths outside the worker's policy.
-- `approval-respected` — no content suggests the worker did something the mandate forbade.
-- `mesh-task-shape` — `result.content` is a valid `ContentBlock[]` per the schema.
 - `cost-reasonable-for-work` — `metrics.costUsd` is within a reasonable range for the skill.
 
-**The rule set is shipped as a single JSON file** at `$ENVOY_HOME/agent-state/<peer>/verifier-rules.json`. The 5-step protocol edits this file (see §13).
+Two further rules are **exported but not in `DEFAULT_RULES`**, because each is an inert
+dimension of the self-evolution loop's action space (toggling it cannot change a score):
+
+- `approval-respected` — v0 defers to `sandbox-respected` and returns a constant `pass`.
+- `mesh-task-shape` — v0 makes the same decision as `non-empty-content` (the design's
+  "`result.content` is a valid `ContentBlock[]` per the schema" is a runtime shape check that
+  the type system already provides for in-process results).
+
+**The 5-step protocol's action space is therefore the 4 rules above.** Every one of them must be
+decisive on the frozen benchmark; `test/benchmark-discrimination.test.ts` enforces that.
+
+**The rule set is shipped as a single JSON file** at `$ENVOY_HOME/agent-state/<peer>/verifier-rules.json`. The 5-step protocol edits this file (see §13). The **benchmark** it is scored on is shared and in-repo (`benchmarks/verifier-frozen.yaml`), not per-deployment: see §13.4.
 
 ### 12.2 The composite verifier
 
@@ -2345,6 +2416,51 @@ export class FederatedScoreboard {
 ```
 
 **Pull is opt-in, never push.** A peer never receives rules automatically; the operator must opt in, and the local 5-step protocol is the final gate.
+
+### 13.4 The shared benchmark
+
+Every cycle scores the current and candidate rulesets against a **frozen benchmark**: a list of
+tasks, each an objective + one worker result + the verdict the verifier ought to return. The
+candidate is kept iff `after.passRate > before.passRate` (strict; a tie reverts).
+
+**The benchmark is shared and in-repo** (`benchmarks/verifier-frozen.yaml`), not per-deployment.
+The loop keeps a candidate only on a score improvement, and §13.3 adopts a peer's candidate only
+on the strength of the *local* score; if each deployment graded against its own labels, neither
+comparison would mean anything. `--benchmark <path>` overrides for an experiment; operators
+extend the shared file rather than forking it.
+
+```yaml
+# benchmarks/verifier-frozen.yaml (shape)
+name: envoy-harness-verifier
+tasks:
+  - id: smoke-deploy
+    objective: deploy the database migration
+    stubKind: ok
+    expectedVerdict: pass
+    goldOutput: "completed: deploy the database migration"
+  - id: low-overlap            # 1 of 3 keywords -> fail (below 50%)
+    objective: deploy the database migration
+    expectedVerdict: fail
+    agentResult:               # inline result for cases the stubs cannot express
+      content:
+        - type: text
+          text: "deploying nothing else here"
+```
+
+**Why tasks carry an inline `AgentResult`.** The four `stubKind` shapes cannot express the cases
+that actually separate rulesets — a partial keyword overlap, a tool call with no prose, a
+*blocked* write (`isError: true`) versus one that bypassed the sandbox (`isError: false`), an
+exact cost boundary. A task that cannot state its input cannot carry a label the loop can learn
+from.
+
+**Why gold is not a rule.** `goldOutput`, when present, is a fixed term of the criterion, ANDed
+with the verdict match. If it were one of the selectable rules the loop could deselect it — and a
+criterion the optimiser is allowed to delete is not a criterion.
+
+**The benchmark must be able to drive the search.** `analyzeBenchmark` (and the CI gate
+`test/benchmark-discrimination.test.ts`) rejects three degeneracies: a task no legal subset
+passes (an always-wrong label), a rule no subset can distinguish (an inert dimension), and a pass
+rate that collapses to a single value across subsets.
 
 ---
 
@@ -3162,3 +3278,44 @@ The "real workable" sub-agent path. The `task` tool is the parent's escape hatch
 - **Codex CLI** for the 3-mode sandbox, 4-mode approval, AGENTS.md discovery, hook event names
 - **Claude Code / claw-code** for plan mode, permission UX, MCP integration, sub-agents, 9-lane parity harness
 - **EnvoyMesh's own MAP design** for the wire protocol envoy-harness speaks natively
+
+---
+
+## 26. Workspaces (multi-project hosts)
+
+> **Where the code lives:** `src/workspace/` (the registry), `src/protocol/{acp,sdk}-server.ts` + `src/protocol/agent-backend.ts` (the wire surface), `packages/envoy-harness-web` (the UI).
+
+**The problem.** A session already records the directory it ran in (`PersistedSession.metadata.cwd`), and the ACP layer already accepts a per-session `cwd` (`session/new { cwd }`). But every host passed only the process working directory, so a WebUI was pinned to whatever directory the server was started in — changing projects meant restarting the server.
+
+**The registry.** `createFileWorkspaceRegistry` keeps an ordered, persistent list of project directories in one JSON file (`defaultWorkspacesFilePath()`, overridable with `ENVOY_WORKSPACES_FILE`). Operations: `list`, `add` (idempotent; re-adding moves the project last and refreshes its name), `remove`, `touch`, `has`.
+
+Three properties are deliberate:
+
+1. **It never touches the directories it names.** `remove` forgets a project; it does not delete a folder. That is why the whole thing can be a single JSON file, and it is the property the tests pin hardest.
+2. **Writes are atomic and serialized.** Temp-file + rename, and a promise-chain lock so two concurrent `add()` calls cannot clobber each other.
+3. **A malformed file is an error, not an empty list.** Silently starting over would present "you have no projects" when the truth is "your project list is corrupt".
+
+**Why a registry at all, when sessions already carry `cwd`.** A session's `cwd` is enough to *resume* it, but not to *offer* a project: an empty directory has no sessions yet, and a directory whose sessions were pruned would disappear from the picker. The registry is the durable, user-owned list; sessions are matched to it by resolved path for grouping.
+
+**Path safety.** The registry can be reached by a host UI, so naming a directory is an operation with a boundary:
+
+- **Identity is the canonical path.** `add` stores `fs.realpath`, so the same directory reached by two names is one entry — and, more importantly, a symlink *inside* an allowed root cannot register a directory *outside* it, because containment is checked on the real path.
+- **Absolute paths only**, enforced both at the wire (`workspace/add` rejects a relative path — it would otherwise resolve against the *server's* cwd, which is not what a client meant) and in the registry.
+- **Optional allowed roots.** `FileWorkspaceRegistryOptions.allowedRoots` (from `ENVOY_WORKSPACE_ROOTS`, `path.delimiter`-separated) bounds what may be added; containment is compared on a separator boundary, so `/tmp/pro` does not admit `/tmp/project-other`. Unset means unbounded — the right default for one operator on their own machine.
+- **Forgetting a deleted project still works.** `remove`/`touch`/`has` canonicalize the deepest *existing* ancestor and re-append the remainder when the path is gone, so a project whose directory was deleted can still be removed.
+- The WebUI warns on stderr when it binds a non-loopback host, because that is when all of the above stops being local-only.
+
+**The wire surface** (identical in the ACP and SDK dialects):
+
+| method | params | result |
+|---|---|---|
+| `workspace/list` | `{}` | `{ workspaces: WorkspaceEntry[] }` |
+| `workspace/add` | `{ path, name? }` | `{ workspace: WorkspaceEntry }` |
+| `workspace/remove` | `{ path }` | `{ removed: boolean }` |
+| `session/new` | `{ cwd? }` | `{ sessionId }` |
+
+`WorkspaceEntry = { path, name, addedAt, lastUsedAt? }`. `session/new` records `lastUsedAt` through `touch` on a best-effort basis — a registry failure must never prevent a session from starting. A host that wires no registry still answers `workspace/list` with an empty list (the honest answer for "no projects yet" either way) while the mutators explain that nothing is wired.
+
+**Grouping.** `sessions/list` already returns `cwd` per session, so the UI groups by resolved path client-side; sessions whose directory is not registered fall under "Other". Nothing about the project list is model-visible — it adds no prompt or request-context cost.
+
+**Surfaces.** The WebUI has the picker and the grouped sidebar; the TUI has `/project list|add|remove|open`, and the project it opens stays the active one for a following `/new`. Both go through the same client methods and the same registry.

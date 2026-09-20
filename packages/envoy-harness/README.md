@@ -35,7 +35,7 @@ Production-grade agent harness with four design targets:
 | Team + cron (TOML config, sequential, `${input}` substitution) | ✅ shipped | `src/team/`, `src/cron/` |
 | `--json` trace + `AgentOptions.tracer` | ✅ shipped | `src/trace/` |
 | Cross-agent verification (`CrossVerifyFn` + `defaultCrossVerify`) | ✅ shipped | `src/verifier/cross.ts`, `src/agent.ts` |
-| **Mesh-native sub-agents** (Phase 5: `MeshSubmitter` seam, `LocalMeshSubmitter`, `task` tool, parallel fan-out + `maxSubagents=8`, `SubagentResultSigner`, `FanOutSpec` + capability-driven fan-out, cost aggregation, progress streaming, `subagentOf` trace annotation) | ✅ shipped | `src/subagent/` |
+| **Mesh-native sub-agents** (Phase 5: `MeshSubmitter` seam, `LocalMeshSubmitter`, `task` tool, parallel fan-out + `maxSubagents=8`, background/`continuable` children via `run_in_background` + the job registry, `list_agents` / `send_message` / `interrupt_agent`, `SubagentResultSigner`, `FanOutSpec` + capability-driven fan-out, cost aggregation, progress streaming, `subagentOf` trace annotation) | ✅ shipped | `src/subagent/`, `src/jobs/` |
 | `RemoteMeshSubmitter` (Package 3, thin wrapper over `RemoteSubmitterTransport`) | ✅ shipped | `packages/envoy-harness-adapter/src/remote-mesh-submitter.ts` |
 
 ### Interactive REPL (Phase 6) — `envoy-harness --repl`
@@ -211,7 +211,9 @@ Delegates to `@envoymesh/envoy-harness-web`. Typical flags: `--port`,
 
 ### Real features — batch 2 (2, F17.6)
 
-`/agents` — list spawned sub-agents from the session's `task` tool calls.
+`/agents` — list spawned sub-agents from the session's `task` tool calls;
+`/agents send <id> <message>` steers a continuable child and
+`/agents interrupt <id>` stops its current turn.
 `/diff` — `git diff` vs HEAD (no diff → "no changes"; non-git dir → error to stderr).
 
 ### Real features — batch 3 (2, F14.1, Phase 7)
@@ -264,6 +266,44 @@ LocalMeshSubmitter  →  PeerMeshSubmitter  →  RemoteMeshSubmitter
 CLI one-shot, REPL, and `--acp` (WebUI/TUI) inject `LocalMeshSubmitter`
 unless `--no-subagents`. The model’s `task` tool runs child agents in
 parallel under a concurrency cap.
+
+### Background (asynchronous) sub-agents
+
+`task { run_in_background: true }` starts a child **without blocking the
+turn** and returns a job id, so the parent keeps working:
+
+- `background_mode: "one-shot"` (default) — the child runs its objective
+  and settles. Watch it with `job_status` / `job_output` / `job_wait`,
+  cancel it with `job_kill`.
+- `background_mode: "continuable"` — the child stays alive after its first
+  turn; steer it with `send_message`, stop a turn with `interrupt_agent`,
+  and find ids with `list_agents`. Cancel the whole child with `job_kill`.
+
+Sub-agent jobs share the background-job registry, so the existing `job_*`
+tools work on them unchanged, and `job_list` shows both shell and sub-agent
+jobs. `job_output` and `session/agents[].outputPreview` stream **within** a
+turn, not only between turns. From a human surface: `/agents send <id> <message>`
+and `/agents interrupt <id>` in the REPL, or the per-agent controls in the WebUI.
+Background starts are refused with a clear error when the host wired no job
+registry, the submitter cannot run continuable children, or the capability
+tag matches a fan-out spec.
+
+### Multi-project hosts (workspaces)
+
+A session runs in the directory it was created in, and the WebUI can open
+any registered project instead of only the directory the server started in:
+
+- The project list is durable — `~/.config/envoy-harness/workspaces.json`
+  (override with `ENVOY_WORKSPACES_FILE`). Removing a project forgets it
+  and never deletes the directory. Paths are canonicalized (symlinks
+  resolved) and must be absolute.
+- Only directories under `ENVOY_WORKSPACE_ROOTS` (`:`-separated) may be
+  added when that variable is set; unset means any directory, which is the
+  local-operator default. Set it when the host is reachable from elsewhere.
+- `envoy web --cwd <path>` still picks the default project for the server;
+  the UI picker opens others per session.
+- Sessions are grouped by project in the WebUI sidebar (`sessions/list`
+  already returns each session's `cwd`).
 
 ### Standalone peers (LAN / WAN, no EnvoyMesh)
 

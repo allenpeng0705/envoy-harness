@@ -68,6 +68,11 @@ import { NullTracer } from "./trace/null-tracer.js";
 import type { Tracer } from "./trace/index.js";
 import type { MeshSubmitter, SubagentResult } from "./subagent/index.js";
 import { makeTaskTool } from "./subagent/tools.js";
+import {
+  makeSubagentControlTools,
+  supportsContinuable,
+  type SubagentBackgroundMode,
+} from "./subagent/background.js";
 import type { FanOutRegistry } from "./subagent/fan-out.js";
 import { ToolExecutor, type ToolExecutorContext } from "./agent/tool-executor.js";
 import type { RetryPolicy } from "./llm/retry.js";
@@ -217,6 +222,16 @@ export interface AgentOptions {
    * `RemoteMeshSubmitter`.
    */
   meshSubmitter?: MeshSubmitter;
+  /**
+   * What a background sub-agent does after its first turn:
+   * `"one-shot"` (default) runs the objective and settles;
+   * `"continuable"` keeps the child alive so `send_message` can steer it.
+   *
+   * A per-call `background_mode` on the `task` tool overrides this.
+   * Only consulted when a `meshSubmitter` and a `jobRegistry` are both
+   * wired; otherwise `run_in_background` is refused with a clear error.
+   */
+  subagentBackgroundMode?: SubagentBackgroundMode;
   /**
    * F10.2: max sub-agents per turn. Hard cap
    * on the number of `task` calls the model
@@ -518,6 +533,8 @@ export class Agent {
   /** @internal F10.1: mesh submitter. When set, the `task` tool
    *  is auto-registered in the constructor. */
   meshSubmitter: MeshSubmitter | undefined;
+  /** @internal Background sub-agent mode (host policy; `task` may override). */
+  subagentBackgroundMode: SubagentBackgroundMode;
   /** @internal F10.4.1: fan-out registry. When set, the `task`
    *  tool consults it on every call. */
   fanOutRegistry: FanOutRegistry | undefined;
@@ -653,6 +670,7 @@ export class Agent {
     this.lspManager = options.lspManager;
     this.tracer = options.tracer ?? new NullTracer();
     this.meshSubmitter = options.meshSubmitter;
+    this.subagentBackgroundMode = options.subagentBackgroundMode ?? "one-shot";
     this.fanOutRegistry = options.fanOutRegistry;
     this.mcpClients = options.mcpClients;
     this.jobRegistry = options.jobRegistry;
@@ -744,8 +762,19 @@ export class Agent {
           ...(this.fanOutRegistry ? { fanOutRegistry: this.fanOutRegistry } : {}),
           onSubagentComplete,
           maxSubagents: this.maxSubagents,
+          backgroundMode: this.subagentBackgroundMode,
+          ...(this.jobRegistry ? { jobs: this.jobRegistry } : {}),
         }),
       );
+      // Background/steerable children: the control tools exist only when
+      // the submitter can actually run them. Registering `send_message`
+      // against a submitter with no handle registry would advertise a
+      // capability that always errors.
+      if (supportsContinuable(this.meshSubmitter)) {
+        for (const tool of makeSubagentControlTools(this.meshSubmitter)) {
+          this.tools.register(tool);
+        }
+      }
     }
     if (options.abortSignal) {
       // Wrap caller-provided signal so we can also fire on

@@ -454,7 +454,7 @@ export class TuiSession {
       return dispatchSlashImpl(
         (role, text) => this.#push(role, text),
         this,
-        slash,
+        slash, this.#workspaceCtx(),
       );
     }
 

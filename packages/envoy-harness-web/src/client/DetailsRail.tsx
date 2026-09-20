@@ -1,7 +1,11 @@
 import { useState, type JSX } from "react";
 import { EhuiShell } from "@envoymesh/envoy-harness-ehui";
 import type { EhuiDataSource, EhuiPanelId } from "@envoymesh/envoy-harness-client/ehui";
-import type { MeshSnapshot } from "./acp/host.js";
+import type {
+  AgentInterruptResult,
+  AgentMessageResult,
+  MeshSnapshot,
+} from "./acp/host.js";
 import { MeshRail } from "./MeshRail.js";
 
 /** Mesh lives in MeshRail; EHUI keeps workspace/ops panels. */
@@ -21,6 +25,13 @@ export type DetailsTab = "mesh" | "tools";
 export interface DetailsRailProps {
   mesh: MeshSnapshot | null;
   onRefreshMesh: () => void;
+  onSendAgentMessage?: (
+    agentId: string,
+    message: string,
+  ) => Promise<AgentMessageResult>;
+  onInterruptAgent?: (
+    agentId: string,
+  ) => Promise<AgentInterruptResult>;
   ehuiSource: EhuiDataSource | null;
   ehuiRefresh: number;
   onResumeSession: (id: string) => void;
@@ -72,7 +83,16 @@ export function DetailsRail(props: DetailsRailProps): JSX.Element {
       {!props.collapsed ? (
         <div className="details-body">
           {tab === "mesh" ? (
-            <MeshRail mesh={props.mesh} onRefresh={props.onRefreshMesh} />
+            <MeshRail
+              mesh={props.mesh}
+              onRefresh={props.onRefreshMesh}
+              {...(props.onSendAgentMessage !== undefined
+                ? { onSendAgentMessage: props.onSendAgentMessage }
+                : {})}
+              {...(props.onInterruptAgent !== undefined
+                ? { onInterruptAgent: props.onInterruptAgent }
+                : {})}
+            />
           ) : props.ehuiSource ? (
             <div className="ehui-dock">
               <EhuiShell

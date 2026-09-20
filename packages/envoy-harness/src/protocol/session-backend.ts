@@ -6,6 +6,7 @@ import type {
   HostUserQuestionAnswer,
   HostUserQuestionRequest,
 } from "../interaction/providers/host-bridge.js";
+import type { WorkspaceEntry } from "../workspace/index.js";
 
 export interface ProtocolPermissionRequest {
   sessionId: string;
@@ -328,9 +329,51 @@ export interface ProtocolSessionBackend {
   /** MCP server names (`/mcp`). */
   listSessionMcp?(params: { sessionId: string }): Promise<{ servers: string[] }>;
   /** Sub-agents spawned this session (`/agents`). */
-  listSessionAgents?(params: {
+  listSessionAgents?(params: { sessionId: string }): Promise<{
+    /** Human-readable rendering (terminal clients). */
+    output: string;
+    /**
+     * The same records as data, with the **full** agent id — the handle
+     * the control methods below require. `output` truncates ids for
+     * display, so a client must not parse it to find one.
+     */
+    agents?: ReadonlyArray<{
+      id: string;
+      capabilityTag: string;
+      objective: string;
+      status: "running" | "completed" | "failed" | "partial";
+      startedAt: string;
+      completedAt?: string;
+      costUsd?: number;
+      durationMs?: number;
+      steerable: boolean;
+      /** Tail of a running child's live output (streams within a turn). */
+      outputPreview?: string;
+    }>;
+  }>;
+  /**
+   * Steer a continuable child (web UI / control surface). Returns a
+   * structured `error` for a child that has already settled rather than
+   * throwing: losing that race is normal, not exceptional.
+   */
+  sendAgentMessage?(params: {
     sessionId: string;
-  }): Promise<{ output: string }>;
+    agentId: string;
+    message: string;
+  }): Promise<{ queued: boolean; status: string; error?: string }>;
+  /** Interrupt a child's current turn (it stays alive for follow-ups). */
+  interruptAgent?(params: {
+    sessionId: string;
+    agentId: string;
+    reason?: string;
+  }): Promise<{ interrupted: boolean; status: string; error?: string }>;
+  /** The project registry, for a project picker / grouped session list. */
+  listWorkspaces?(): Promise<{ workspaces: ReadonlyArray<WorkspaceEntry> }>;
+  addWorkspace?(params: {
+    path: string;
+    name?: string;
+  }): Promise<{ workspace: WorkspaceEntry }>;
+  removeWorkspace?(params: { path: string }): Promise<{ removed: boolean }>;
   /** Plan lifecycle (`/plan`). */
   sessionPlan?(params: {
     sessionId: string;

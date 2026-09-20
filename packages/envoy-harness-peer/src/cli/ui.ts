@@ -31,6 +31,26 @@ import {
 } from "../status.js";
 import { TeamJobRegistry } from "../team-jobs.js";
 
+/**
+ * The subset of `@envoymesh/envoy-harness-tui` this command drives.
+ *
+ * **Why named, not a literal specifier.** A literal dynamic import is
+ * resolved by `tsc`, so the peer package needed the TUI's declarations to
+ * build — and the TUI's own tests import this package, which made the two
+ * unable to build in either order from a clean checkout. Loading through a
+ * `string` keeps the runtime dependency (declared in package.json, used by
+ * `envoy-peer ui`) while removing the build-time one.
+ */
+interface TuiCompatModule {
+  createInProcessTui(options: { backend: ProtocolSessionBackend }): {
+    session: unknown;
+    close(): void;
+  };
+  runInteractive(options: { session: unknown }): Promise<void>;
+}
+
+const TUI_PACKAGE: string = "@envoymesh/envoy-harness-tui";
+
 export interface PeerUiPeerArg {
   id: string;
   endpoint: string;
@@ -445,8 +465,8 @@ export async function runPeerUiCli(
     return 1;
   }
 
-  const { createInProcessTui } = await import("@envoymesh/envoy-harness-tui");
-  const { runInteractive } = await import("@envoymesh/envoy-harness-tui");
+  const tuiMod = (await import(TUI_PACKAGE)) as TuiCompatModule;
+  const { createInProcessTui, runInteractive } = tuiMod;
   const { backend, close } = createPeerUiBackend({
     registry: connect.registry,
     connected: connect.connected,

@@ -29,6 +29,7 @@ import {
   SelfEvolve,
   createProviderAdapter,
   DEFAULT_RULES,
+  sharedBenchmarkPath,
   type SelfEvolvePaths,
   type VerifierRule,
 } from "../../index.js";
@@ -65,14 +66,19 @@ export async function runSelfEvolve(
         }
       })();
 
-  // 2. Build paths. Each path has a sensible default under
-  //    $ENVOY_HOME; for v0, we use `<cwd>/.envoymesh/...`.
+  // 2. Build paths. The scoreboard, snapshots, ruleset and AGENTS.md
+  //    are peer-local (under `<cwd>/.envoymesh/...`). The BENCHMARK is
+  //    not: it is the shared yardstick the loop is scored on, so the
+  //    default is the frozen file shipped with the harness. A per-
+  //    deployment yardstick would make federated score comparison
+  //    meaningless. `--benchmark <path>` overrides for an experiment;
+  //    operators extend the shared file rather than forking it.
   const cwd = options.cwd ?? process.cwd();
   const root = path.join(cwd, ".envoymesh");
   const paths: SelfEvolvePaths = {
     scoreboard: parsed.scoreboard ?? path.join(root, "verifier-scoreboard.yaml"),
     snapshotDir: parsed.snapshotDir ?? path.join(root, "snapshots"),
-    benchmark: parsed.benchmark ?? path.join(root, "frozen-benchmark.yaml"),
+    benchmark: parsed.benchmark ?? sharedBenchmarkPath(),
     ruleset: parsed.ruleset ?? path.join(root, "verifier-rules.json"),
     agentsMd: parsed.agentsMd ?? path.join(root, "AGENTS.md"),
   };

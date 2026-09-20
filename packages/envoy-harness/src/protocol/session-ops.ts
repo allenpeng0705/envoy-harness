@@ -344,6 +344,52 @@ export function formatSubagentRecords(
   return lines.join("\n");
 }
 
+/**
+ * Wire-friendly projection of the sub-agent records.
+ *
+ * **Why this exists alongside the formatted text.** `formatSubagentRecords`
+ * shortens the id (`abcd1234…`) because it is meant for a human reading a
+ * terminal. But the id is the handle the control methods
+ * (`session/agent_message` / `session/agent_interrupt`) require, so a UI
+ * that only had the text could never recover it and every steering call
+ * would miss. This returns the full id — plus the fields a UI needs to
+ * render and enable/disable controls — so no client has to parse prose to
+ * find an identifier.
+ */
+export function subagentRecordsToWire(
+  records: ReadonlyArray<SubagentRecord>,
+  resolve: (id: string) => { steerable: boolean; outputPreview?: string },
+): Array<{
+  id: string;
+  capabilityTag: string;
+  objective: string;
+  status: SubagentRecord["status"];
+  startedAt: string;
+  completedAt?: string;
+  costUsd?: number;
+  durationMs?: number;
+  /** True when a control call for this id would currently reach a handle. */
+  steerable: boolean;
+  /** Tail of the child's live output, when it is still running and has any. */
+  outputPreview?: string;
+}> {
+  return records.map((r) => {
+    const { steerable, outputPreview } = resolve(r.sessionId);
+    return {
+      id: r.sessionId,
+      capabilityTag: r.capabilityTag,
+      objective: r.objective,
+      status: r.status,
+      startedAt: r.startedAt,
+      ...(r.completedAt !== undefined ? { completedAt: r.completedAt } : {}),
+      ...(r.costUsd !== undefined ? { costUsd: r.costUsd } : {}),
+      ...(r.durationMs !== undefined ? { durationMs: r.durationMs } : {}),
+      steerable,
+      ...(outputPreview !== undefined ? { outputPreview } : {}),
+    };
+  });
+}
+
 export async function runMemoryOp(
   store: MemoryStore,
   op: "list" | "read" | "add",

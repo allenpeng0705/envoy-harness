@@ -197,4 +197,14 @@ describe("renderResumeView", () => {
     expect(lines.join("\n")).toContain("sess-abc");
     expect(lines.join("\n")).toContain("fix bug");
   });
+
+  it("labels each session with its project (basename of cwd)", () => {
+    const lines = renderResumeView([
+      { id: "sess-1", mtimeMs: 1, title: "fix bug", cwd: "/work/alpha", messageCount: 1 },
+      { id: "sess-2", mtimeMs: 2, cwd: "/work/beta", messageCount: 2 },
+    ]).join("\n");
+    expect(lines).toContain("fix bug · alpha");
+    expect(lines).toContain("beta");
+    expect(lines).not.toContain("/work/alpha");
+  });
 });

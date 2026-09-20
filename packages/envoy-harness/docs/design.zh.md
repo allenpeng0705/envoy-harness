@@ -176,6 +176,23 @@ Month 5+:   envoy-harness 和 EnvoyMesh 各自独立迭代
 
 **关键优势**:到 Month 2,envoy-harness 已经在用户手里了。Mesh 集成是 *progressive enhancement*,不是 *prerequisite*。
 
+#### 1.3.6 可选伴随包不能成为构建期依赖
+
+core 有几个可选的伴随包:`envoy-harness-cordis`(受审计的 DSH 插件容器)、`envoy-harness-peer`(独立 peer 集群)、`envoy-harness-tui`、`envoy-sandbox-win`。它们都依赖 core;而 core 也**使用**前两个 —— operator 要求时,CLI 会接上 Cordis 容器与 peer 集群。
+
+这在包图上就是一个环,并且真的把构建弄坏了:`tsc` 会解析动态 import 里的**字面量** specifier,以及 `typeof import("…")` 类型查询,经由目标的 `exports` → `dist/index.d.ts` 去找类型。于是 core 需要 Cordis/peer 的**声明**才能编译,而 Cordis/peer 又需要 core 的 —— 干净 checkout 谁也别想构建。之所以一直没被发现,是因为运行时的 import 本来就是动态的。
+
+**规则:可选伴随包按名字加载,它的表面在调用方以结构化类型声明。**
+
+```ts
+const CORDIS_PACKAGE: string = "@envoymesh/envoy-harness-cordis";
+const cordis = (await import(CORDIS_PACKAGE)) as CordisCompatModule;
+```
+
+`string` 类型的 specifier 对 `tsc` 和打包器都不可见,因此编译器永远不去解析这个包;core 里的 `CordisCompatModule` / `PeerCompatModule`,以及 peer 包里的 `TuiCompatModule`,声明了实际调用的那几个成员。运行时行为不变 —— 依然可选、依然按需加载、缺失时依然被 catch —— 但构建期的边消失了,构建图因此无环、可排序(见 `scripts/build-workspace.mjs`:它按源码实际 import 的内容推导顺序,遇到真环就带边报错)。
+
+同样的纪律也适用于伴随包之间:peer CLI 要启动 TUI,所以 `peer → tui` 是真实且单向的;TUI 对 peer 的**测试**依赖是 `devDependency`,绝不是生产依赖。
+
 ---
 
 ### 1.4 本体论不等于工程:因果回路与外围脚手架
@@ -1863,6 +1880,42 @@ export class LocalMeshSubmitter implements MeshSubmitter {
 
 Sub-agent 的 permission 是 **它自己节点**的 policy,不是请求者的。请求者在 `read-only` 可以 spawn 一个 `workspace-write` 的 sub-agent;cost 是请求者付(per `chain-budget-ledger`),但动作是在 worker 节点上、用 worker 的 policy 执行的。
 
+### 10.4 后台与 continuable sub-agent
+
+> **代码位置:** `src/subagent/background.ts`(桥接 + control 工具)、`src/subagent/continuable.ts`(handle 运行时)、`src/jobs/`(桥接注册进的 registry)。
+
+`task` 原本永远阻塞:`execute` await `submitter.submit(...)`,所以一个长时间的研究型 child 会卡住 parent 的 turn。continuable 运行时(`submitContinuable` → 带 `send` / `interrupt` / `close` / `waitSettle` 的 handle)早就存在,但没人调用它,所以模型根本触达不到这个能力。
+
+**`task` 现在接受 `run_in_background`。**
+
+```yaml
+task:
+  objective: find every caller of the deprecated API
+  capability_tag: code-search
+  cost_ceiling_usd: 0.5
+  deadline_ms: 120000
+  run_in_background: true          # 立刻返回 job id
+  background_mode: continuable     # 或 "one-shot"(默认)
+```
+
+- `one-shot` —— child 跑完 objective 后 settle;job 带着输出完成。
+- `continuable` —— child 在第一轮之后保持存活,`send_message` 可以继续指挥它。job 在 child settle 或被 kill 前一直是 `running`。
+- host 级默认值(`AgentOptions.subagentBackgroundMode`)设定策略;每次调用的 `background_mode` 覆盖它。
+
+**为什么复用 job registry,而不是新开 id 空间。** `spawnBackgroundSubagent` 用 `jobs.start({ kind: "subagent", … })` 注册 child,于是现有的 `job_status` / `job_output` / `job_wait` / `job_kill` / `job_list` 工具无需改动就能观察和取消 sub-agent job —— registry 自己的类型注释早就预留了 `subagent-N` id。桥接把 `cancel → handle.interrupt`、`done → handle.waitSettle()`、`readOutput → handle.output()`。
+
+child 是在 `jobs.start` 的 `run()` 钩子**内部**创建的,这样 registry 的 per-owner 上限在 child 存在**之前**就被执行;先创建再注册会让每个被拒绝的 job 泄漏一个运行中的 child。
+
+**Control 工具**(`list_agents`、`send_message`、`interrupt_agent`)只在 submitter 实现 `ContinuableSubmitter` 能力(`submitContinuable` + `getHandle`)时才注册。对一个没有 handle registry 的 submitter 宣传 `send_message`,等于承诺一件永远报错的事。
+
+**拒绝是显式的。** 没有 job registry、submitter 不支持 continuable、或 `capability_tag` 命中 fan-out spec(一次模型调用 → N 个 child,一个 job id 表示不了)时,`run_in_background` 返回 `isError: true` 的 tool result,而不是静默阻塞。一个请求后台工作却拿到同步结果的模型,会对发生了什么产生错误认知。
+
+**指挥面。** parent 模型用 control 工具;人从 REPL(`/agents send <id> <message>`、`/agents interrupt <id>`)和 WebUI(ACP 的 `session/agent_message`、`session/agent_interrupt`)指挥。三者走同一个 handle registry。
+
+**流式是逐 token 的,不是逐轮的。** continuable 运行时为每个 child 维护一个有界输出缓冲:已完成轮次的权威文本,加上**当前轮正在流式输出的 assistant delta** —— 通过链式接管 child 的 `assistantStreamSink` 捕获。因此 `handle.output()` 在 turn 运行**期间**就会增长,`job_output` / `session/agents[].outputPreview` 无需等 turn 结束就能显示进展。turn 提交时丢弃流式副本、保留权威文本,所以一轮不会出现两次;缓冲是尾部(单轮 16 KiB,已完成轮次 64 KiB),不是完整 transcript。host 工厂若自己装了 sink 也照常工作 —— 运行时是链式叠加,不是替换。
+
+`job_output` 对 sub-agent job 是**消费式**游标 —— 与它的描述一致,也与 bash job 的行为一致:每次读取只返回自上次读取以来的新增内容(若内容已被有界尾部丢弃,则从头重发)。`session/agents[].outputPreview` 则是累积尾部,因为 UI 要的是最新状态,而不是增量。
+
 ---
 
 ## 11. Reference MAP adapter
@@ -2040,37 +2093,50 @@ export class LocalRunner {
 
 Verifier 检查 result 是否真的回答了 objective。本地 rule engine 快且免费;LLM verifier 是升级路径。
 
-### 12.1 6 个 rule-based 检查
+### 12.1 rule-based 检查
 
 ```ts
-// src/verifier/rules/output-matches-objective.ts
-export const outputMatchesObjective: VerifierRule = {
+// src/verifier/rules/index.ts
+export const outputMatchesObjectiveRule: VerifierRule = {
   name: 'output-matches-objective',
   async check(result: AgentResult, objective: string): Promise<Verdict | null> {
     const text = concatText(result.content)
     if (text.length === 0) {
       return { kind: 'fail', reason: 'empty output' }
     }
-    // 一个便宜的启发式:text 里包含 objective 的至少一个 keyword 吗?
+    // 一个便宜的启发式: text 里包含 objective 的至少一半 keyword 吗?
     const keywords = extractKeywords(objective)
+    if (keywords.length === 0) return null // 无从比较;弃权
     const matched = keywords.filter(kw => text.toLowerCase().includes(kw.toLowerCase()))
     if (matched.length < keywords.length * 0.5) {
-      return { kind: 'partial', reason: `output matches ${matched.length}/${keywords.length} keywords` }
+      // 低于一半是 fail,不是 partial:partial 的文档含义
+      // ("部分 block 可接受") 是关于多 block 内容的断言,
+      // 词面重叠率无法确立它。恰好 0.5 通过。
+      return { kind: 'fail', reason: `output matches ${matched.length}/${keywords.length} keywords` }
     }
     return { kind: 'pass', score: matched.length / keywords.length, confidence: 'low' }
   },
 }
 ```
 
-其他 5 个 rule 同形:
+其他 rule 同形:
 
 - `non-empty-content` —— 至少一个 text/structured block。
 - `sandbox-respected` —— content 不包含 worker policy 之外的路径。
-- `approval-respected` —— content 不暗示 worker 做了 mandate 禁止的事。
-- `task-shape` —— `result.content` 是 valid `ContentBlock[]` per schema。
 - `cost-reasonable-for-work` —— `metrics.costUsd` 在这个 skill 的合理范围内。
 
-**Rule 集作为一个 JSON 文件发出来**在 `$ENVOY_HOME/agent-state/<peer>/verifier-rules.json`。5 步协议编辑这个文件(见 §13)。
+另外两个 rule **导出但不在 `DEFAULT_RULES` 中**,因为它们在 self-evolution loop 的动作空间里
+是惰性维度(切换它无法改变任何分数):
+
+- `approval-respected` —— v0 让位于 `sandbox-respected`,恒返回 `pass`。
+- `mesh-task-shape` —— v0 与 `non-empty-content` 做出相同判定(设计里的
+  "`result.content` 是 valid `ContentBlock[]` per schema" 是运行期形状检查,
+  对进程内结果类型系统已保证)。
+
+**因此 5 步协议的动作空间就是上面 4 个 rule。** 每个都必须在 frozen benchmark 上是决定性的;
+`test/benchmark-discrimination.test.ts` 强制执行这一点。
+
+**Rule 集作为一个 JSON 文件发出来**在 `$ENVOY_HOME/agent-state/<peer>/verifier-rules.json`。5 步协议编辑这个文件(见 §13)。它被评分所依据的 **benchmark** 是共享的、在仓库内的(`benchmarks/verifier-frozen.yaml`),而非按部署划分:见 §13.4。
 
 ### 12.2 Composite verifier
 
@@ -2337,6 +2403,47 @@ export class FederatedScoreboard {
 ```
 
 **Pull 是 opt-in,绝不是 push。** Peer 永远不会自动收到 rules;operator 必须 opt-in,并且本地 5 步协议是最后的关。
+
+### 13.4 共享 benchmark
+
+每个 cycle 都用一份 **frozen benchmark** 给当前与 candidate ruleset 打分:一串 task,每个是
+一个 objective + 一个 worker result + verifier 应当返回的 verdict。当且仅当
+`after.passRate > before.passRate`(严格大于;平局回退)时保留 candidate。
+
+**Benchmark 是共享的、在仓库内的**(`benchmarks/verifier-frozen.yaml`),不是按部署划分的。
+loop 只在分数提升时保留 candidate,而 §13.3 只在*本地*分数的支撑下采纳 peer 的 candidate;
+如果每个部署各按自己的标签评分,这两种比较都毫无意义。实验时用 `--benchmark <path>` 覆盖;
+operator 扩展共享文件,而不是 fork 它。
+
+```yaml
+# benchmarks/verifier-frozen.yaml(形状)
+name: envoy-harness-verifier
+tasks:
+  - id: smoke-deploy
+    objective: deploy the database migration
+    stubKind: ok
+    expectedVerdict: pass
+    goldOutput: "completed: deploy the database migration"
+  - id: low-overlap            # 3 个 keyword 命中 1 个 -> fail(低于 50%)
+    objective: deploy the database migration
+    expectedVerdict: fail
+    agentResult:               # stub 表达不了的场景用内联 result
+      content:
+        - type: text
+          text: "deploying nothing else here"
+```
+
+**为什么 task 要携带内联 `AgentResult`。** 四种 `stubKind` 形状无法表达真正区分 ruleset 的场景
+—— 部分关键词重叠、只有 tool call 没有 prose、被**拦截**的写入(`isError: true`)对比绕过
+sandbox 的写入(`isError: false`)、精确的成本边界。一个说不出自己输入的 task,承载不了 loop
+能学习的标签。
+
+**为什么 gold 不是 rule。** `goldOutput` 存在时是准则的固定项,与 verdict 匹配做 AND。
+如果它是可选 rule 之一,loop 就能取消选择它 —— 而优化器有权删除的准则不是准则。
+
+**Benchmark 必须能驱动搜索。** `analyzeBenchmark`(以及 CI 关卡
+`test/benchmark-discrimination.test.ts`)拒绝三种退化:没有任何合法子集能通过的 task
+(永远错的标签)、没有任何子集能区分的 rule(惰性维度)、以及跨子集塌缩成单一值的 pass rate。
 
 ---
 
@@ -3138,3 +3245,42 @@ Runner 读 TOML,执行每个 test,任何 test 失败 CI 就挂。
 - **Codex CLI**:3-mode sandbox、4-mode approval、AGENTS.md discovery、hook event 名
 - **Claude Code / claw-code**:plan 模式、permission UX、MCP 集成、sub-agent、9-lane parity harness
 - **EnvoyMesh 自己的 MAP 设计**:envoy-harness 原生说的 wire 协议
+
+---
+
+## 26. Workspaces(多项目 host)
+
+> **代码位置:** `src/workspace/`(registry)、`src/protocol/{acp,sdk}-server.ts` + `src/protocol/agent-backend.ts`(wire 面)、`packages/envoy-harness-web`(UI)。
+
+**问题。** session 早就记录了它运行的目录(`PersistedSession.metadata.cwd`),ACP 层也早就接受 per-session 的 `cwd`(`session/new { cwd }`)。但每个 host 都只传进程工作目录,于是 WebUI 被钉死在服务器启动时的目录上 —— 换项目要重启服务器。
+
+**Registry。** `createFileWorkspaceRegistry` 在一个 JSON 文件里维护一份有序、持久化的项目目录列表(`defaultWorkspacesFilePath()`,可用 `ENVOY_WORKSPACES_FILE` 覆盖)。操作:`list`、`add`(幂等;重新 add 会把项目移到最后并刷新名字)、`remove`、`touch`、`has`。
+
+三个刻意的性质:
+
+1. **它绝不碰它命名的目录。** `remove` 只是忘记一个项目,不删除文件夹。整个东西能是一个 JSON 文件正是因为这个,也是测试钉得最死的性质。
+2. **写入是原子的且串行的。** temp 文件 + rename,外加 promise 链锁,使并发的 `add()` 不会互相覆盖。
+3. **文件损坏是错误,不是空列表。** 静默重来会在真相是"你的项目列表坏了"时显示"你没有项目"。
+
+**既然 session 已经带 `cwd`,为什么还要 registry。** session 的 `cwd` 足以**恢复**它,但不足以**提供**一个项目:空目录还没有 session,而被清理过 session 的目录会从选择器里消失。registry 是持久、用户拥有的列表;分组时 session 按解析后的路径与它匹配。
+
+**路径安全。** registry 可以被 host UI 触达,所以"命名一个目录"是一个有边界的操作:
+
+- **身份是规范化路径。** `add` 存 `fs.realpath`,所以同一目录经由两个名字只算一条 —— 更重要的是,位于允许根**内部**的符号链接无法借此注册根**之外**的目录,因为包含性检查跑在真实路径上。
+- **只接受绝对路径**,在 wire 层(`workspace/add` 拒绝相对路径 —— 否则它会按**服务器**的 cwd 解析,那不是客户端的意思)和 registry 里都强制。
+- **可选的允许根。** `FileWorkspaceRegistryOptions.allowedRoots`(来自 `ENVOY_WORKSPACE_ROOTS`,用 `path.delimiter` 分隔)限定可添加的范围;包含性比较带分隔符边界,因此 `/tmp/pro` 不会放行 `/tmp/project-other`。未设置 = 不限制 —— 这是一个人在自己机器上操作的正确默认值。
+- **被删除的项目仍可遗忘。** 路径已不存在时,`remove`/`touch`/`has` 会规范化**存在的最深祖先**再把剩余部分接回去,所以目录已被删除的项目依然能被移除。
+- 绑定非 loopback 主机时,WebUI 会向 stderr 发出警告 —— 因为那正是上述一切都"不再只是本机"的时刻。
+
+**Wire 面**(ACP 与 SDK 方言完全一致):
+
+| 方法 | 参数 | 结果 |
+|---|---|---|
+| `workspace/list` | `{}` | `{ workspaces: WorkspaceEntry[] }` |
+| `workspace/add` | `{ path, name? }` | `{ workspace: WorkspaceEntry }` |
+| `workspace/remove` | `{ path }` | `{ removed: boolean }` |
+| `session/new` | `{ cwd? }` | `{ sessionId }` |
+
+`WorkspaceEntry = { path, name, addedAt, lastUsedAt? }`。`session/new` 通过 `touch` 尽力记录 `lastUsedAt` —— registry 的失败绝不能让 session 起不来。没有接 registry 的 host 仍然对 `workspace/list` 返回空列表(两种情况里这都是"还没有项目"的诚实答案),而 mutator 会说明什么都没接。
+
+**分组。** `sessions/list` 本来就按 session 返回 `cwd`,所以 UI 在客户端按解析路径分组;目录未被注册的 session 归入 "Other"。项目列表的任何部分都对模型不可见 —— 不增加 prompt 或 request-context 成本。

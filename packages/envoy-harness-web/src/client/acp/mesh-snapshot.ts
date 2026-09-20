@@ -2,8 +2,74 @@
  * Mesh / cluster snapshot for the WebUI Mesh rail.
  */
 
-import type { MeshSnapshot } from "./host-types.js";
+import type {
+  MeshAgent,
+  MeshAgentStatus,
+  MeshSnapshot,
+} from "./host-types.js";
 import type { WsJsonRpcClient } from "./ws-jsonrpc.js";
+
+const AGENT_STATUSES: readonly MeshAgentStatus[] = [
+  "running",
+  "completed",
+  "failed",
+  "partial",
+  "unknown",
+];
+
+function normalizeStatus(raw: unknown): MeshAgentStatus {
+  return typeof raw === "string" &&
+    (AGENT_STATUSES as readonly string[]).includes(raw)
+    ? (raw as MeshAgentStatus)
+    : "unknown";
+}
+
+function optionalString(raw: unknown): string | undefined {
+  return typeof raw === "string" ? raw : undefined;
+}
+
+function optionalNumber(raw: unknown): number | undefined {
+  return typeof raw === "number" && Number.isFinite(raw) ? raw : undefined;
+}
+
+/**
+ * Defensive parse of the structured `agents` array from `session/agents`.
+ *
+ * Returns `undefined` when the host did not send an array at all (older
+ * backend that only supports the preformatted `output`), which is
+ * different from `[]` ("no children"). Callers use the distinction to
+ * decide whether steering can be offered.
+ */
+export function parseMeshAgents(raw: unknown): MeshAgent[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const agents: MeshAgent[] = [];
+  for (const item of raw) {
+    if (typeof item !== "object" || item === null) continue;
+    const r = item as Record<string, unknown>;
+    const id = optionalString(r["id"]);
+    if (id === undefined || id === "") continue;
+    const startedAt = optionalString(r["startedAt"]);
+    const completedAt = optionalString(r["completedAt"]);
+    const costUsd = optionalNumber(r["costUsd"]);
+    const durationMs = optionalNumber(r["durationMs"]);
+    const outputPreview = optionalString(r["outputPreview"]);
+    agents.push({
+      id,
+      capabilityTag: optionalString(r["capabilityTag"]) ?? "",
+      objective: optionalString(r["objective"]) ?? "",
+      status: normalizeStatus(r["status"]),
+      startedAt: startedAt ?? "",
+      ...(completedAt !== undefined ? { completedAt } : {}),
+      ...(costUsd !== undefined ? { costUsd } : {}),
+      ...(durationMs !== undefined ? { durationMs } : {}),
+      steerable: r["steerable"] === true,
+      ...(outputPreview !== undefined && outputPreview !== ""
+        ? { outputPreview }
+        : {}),
+    });
+  }
+  return agents;
+}
 
 /**
  * Poll cluster + team + session agents into a MeshSnapshot.
@@ -81,13 +147,16 @@ export async function fetchMeshSnapshot(
   }
 
   let agentsSummary = "";
+  let agents: MeshAgent[] | undefined;
   try {
     const res = (await client.request("session/agents", {
       sessionId,
-    })) as { output?: string };
+    })) as { output?: string; agents?: unknown };
     agentsSummary = (res.output ?? "").trim();
+    agents = parseMeshAgents(res.agents);
   } catch {
     agentsSummary = "";
+    agents = undefined;
   }
 
   // If both cluster and peers/list failed, preserve prior peer rows.
@@ -98,6 +167,7 @@ export async function fetchMeshSnapshot(
         teamJobsRunning,
         teamJobsTotal,
         agentsSummary,
+        ...(agents !== undefined ? { agents } : {}),
       },
       peerCount: previous.connected,
     };
@@ -111,6 +181,7 @@ export async function fetchMeshSnapshot(
     teamJobsRunning,
     teamJobsTotal,
     agentsSummary,
+    ...(agents !== undefined ? { agents } : {}),
     ...(previous?.lastDiscovery !== undefined
       ? { lastDiscovery: previous.lastDiscovery }
       : {}),

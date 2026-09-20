@@ -434,6 +434,9 @@ export {
   TaskInputSchema,
   defaultBuildSubagentFactory,
   makeTaskTool,
+  makeSubagentControlTools,
+  spawnBackgroundSubagent,
+  supportsContinuable,
   VERDICT_IS_PREDICTION,
   FanOutRegistry,
   aggregateFanOutResults,
@@ -452,6 +455,11 @@ export {
   type MeshSubmitter,
   type RoutingHint,
   type ContinuableSubagentHandle,
+  type ContinuableSubmitter,
+  type SpawnBackgroundOptions,
+  type SpawnBackgroundResult,
+  type SteerableSubmitter,
+  type SubagentBackgroundMode,
   type SubagentHandleId,
   type SubmitContinuableOptions,
   type SubagentInput,
@@ -472,12 +480,34 @@ export {
   type WorkflowTask,
 } from "./subagent/index.js";
 
+// Workspace (project) registry — the durable list behind "open a project"
+export {
+  WORKSPACE_FILE_FORMAT_VERSION,
+  WorkspaceEntrySchema,
+  WorkspaceError,
+  WorkspaceFileSchema,
+  createFileWorkspaceRegistry,
+  defaultWorkspacesFilePath,
+  normalizeWorkspacePath,
+  workspaceRootsFromEnv,
+  type FileWorkspaceRegistryOptions,
+  type WorkspaceEntry,
+  type WorkspaceFile,
+  type WorkspaceRegistry,
+} from "./workspace/index.js";
+
 // Re-export the scoreboard (§13 of the design doc)
 export {
+  BenchmarkAgentResultSchema,
+  BenchmarkContentBlockSchema,
+  BenchmarkMessageSchema,
+  BenchmarkSandboxPolicySchema,
   BenchmarkSchema,
   DefaultBenchmarkRunner,
+  analyzeBenchmark,
   matchesGold,
   normalizeForGold,
+  sharedBenchmarkPath,
   FederatedAdoptionRecordSchema,
   FederatedAdoptionsSchema,
   FederatedScoreboard,
@@ -502,6 +532,7 @@ export {
   type AdoptedCandidate,
   type AdoptResult,
   type Benchmark,
+  type BenchmarkDiscrimination,
   type BenchmarkResult,
   type BenchmarkRunner,
   type BenchmarkTask,
@@ -513,11 +544,13 @@ export {
   type PeerSource,
   type PullOptions,
   type PullResult,
+  type RuleDiscrimination,
   type RunOneCycleResult,
   type Scoreboard,
   type ScoreboardEntry,
   type SelfEvolveOptions,
   type SelfEvolvePaths,
+  type TaskDiscrimination,
   type VerifierRuleset,
 } from "./scoreboard/index.js";
 

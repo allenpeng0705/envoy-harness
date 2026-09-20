@@ -5,6 +5,15 @@ dist/
 coverage/
 .nyc_output/
 
+# npm lockfiles. This is a pnpm workspace: `pnpm-lock.yaml` at the root is the
+# authoritative lockfile. A per-package `package-lock.json` is not used by
+# anything here, is never published (`files` lists only dist/README/LICENSE),
+# and is actively harmful — running `npm ci` off one creates a nested,
+# npm-managed `node_modules` that shadows the pnpm workspace links, which is
+# how "cannot find module @envoymesh/..." resolution failures start.
+# (Four of these had been committed accidentally; removed in the same change.)
+package-lock.json
+
 # tsx-compiled bin outputs (bin/*.ts is the source; tsc should not emit to bin/)
 packages/*/bin/*.js
 packages/*/bin/*.js.map

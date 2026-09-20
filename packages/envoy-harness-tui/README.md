@@ -21,6 +21,20 @@ Tauri (**12b**) will reuse the same ACP/SDK client later.
 **Session / agent:**
 
 - `/help` — list commands
+- `/agents` — list spawned sub-agents (full id, status, capability, cost, and a
+  live output line for a running one)
+- `/agents send <id> <message>` — steer a **continuable** background child (kept
+  alive with `task { run_in_background: true, background_mode: "continuable" }`)
+- `/agents interrupt <id> [reason]` — stop a child's current turn
+- `/project` — list registered projects
+- `/project add <absolute-path> [name]` — register a project directory
+- `/project remove <path>` — forget a project (never deletes the directory)
+- `/project open <index|path>` — start a session in that project; it stays the
+  active project for a later `/new`
+
+Projects live in `~/.config/envoy-harness/workspaces.json` (override with
+`ENVOY_WORKSPACES_FILE`); `ENVOY_WORKSPACE_ROOTS` bounds which directories the
+host will accept.
 
 ## Screen mode (U2)
 

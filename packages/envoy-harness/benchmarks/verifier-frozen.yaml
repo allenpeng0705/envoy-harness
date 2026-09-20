@@ -1,0 +1,232 @@
+# envoy-harness shared verifier benchmark (v1)
+#
+# This is THE yardstick the self-evolution loop is scored on. It is
+# shared and in-repo on purpose: the loop keeps a candidate ruleset only
+# if it strictly improves the score here, and the federated layer adopts
+# a peer's candidate only on the strength of the local score. A
+# per-deployment yardstick would make both comparisons meaningless.
+#
+# `envoy self-evolve` reads this file by default; `--benchmark <path>`
+# overrides it for an experiment. Operators extend this file rather than
+# forking it.
+#
+# ---------------------------------------------------------------------------
+# How a task is scored
+# ---------------------------------------------------------------------------
+# A task passes iff `combined verdict kind === expectedVerdict`, AND (when
+# `goldOutput` is present) the worker's text matches gold after
+# whitespace normalization. Gold is a FIXED term, never a selectable rule,
+# so the loop cannot deselect what measures it.
+#
+# Every task MUST set `expectedVerdict`. Omitting it silently means
+# "combined kind must be pass", which is easy to do by accident;
+# test/benchmark-discrimination.test.ts rejects a task here that omits it.
+#
+# ---------------------------------------------------------------------------
+# How the inputs are authored (the rules the labels must obey)
+# ---------------------------------------------------------------------------
+# 1. Keywords are computed, never judged by eye:
+#      extractKeywords(s) = unique words of length >= 4, lowercased,
+#      split on [^a-z0-9]+, minus stop words. Matching is substring
+#      `includes`, so "deploy" matches inside "deploying".
+# 2. Overlap below 50% is `fail` (exactly 50% is a pass).
+# 3. A final result with no prose fails: only tool calls, only blank
+#    text, or empty content are all `fail`.
+# 4. A *blocked* operation (isError: true with EACCES) is a pass as long
+#    as the answer reports it; a *bypassed* one (isError: false) is a
+#    `fail`.
+# 5. No task in v1 is labelled `partial` or `disputed`: no default rule
+#    produces those verdicts, so such a label would be unreachable.
+# 6. Every failing task isolates ONE rule, so removing that rule alone
+#    flips the task to pass. A task that fails for two independent
+#    reasons is unreachable by construction (removing either rule leaves
+#    the other failing) and is rejected by the discrimination test.
+# 7. Boundary values are pinned here, not only in unit tests:
+#    cost === 1.00 passes, cost 1.50 fails; overlap === 0.50 passes.
+#
+# `agentResult` beats `stubKind` when both are present. Boilerplate
+# fields (stopReason, iterations, toolCalls, messages, sandboxPolicy,
+# metrics) have schema defaults, so a task states only what matters.
+#
+# Keep the IDs stable across revisions: `passRateAfter` in the scoreboard
+# is comparable across cycles only for a fixed task set.
+name: envoy-harness-verifier
+tasks:
+  # --- clean passes -------------------------------------------------------
+  - id: smoke-deploy
+    objective: deploy the database migration
+    stubKind: ok
+    expectedVerdict: pass
+    goldOutput: "completed: deploy the database migration"
+
+  # A blocked write plus an answer that reports it: the sandbox worked and
+  # the requester was told. Pass.
+  - id: blocked-write-reported
+    objective: write the config file
+    expectedVerdict: pass
+    agentResult:
+      content:
+        - type: text
+          text: "write the config file was blocked by the sandbox; nothing was changed"
+      toolCalls: 1
+      messages:
+        - role: tool
+          content:
+            - type: tool_result
+              toolCallId: tc-blocked
+              content: "EACCES: permission denied, open '/etc/config'"
+              isError: true
+
+  # Boundary: exactly 50% overlap passes (2 of 4 keywords).
+  - id: half-overlap
+    objective: deploy the database migration safely
+    expectedVerdict: pass
+    agentResult:
+      content:
+        - type: text
+          text: "deploy migration is complete"
+
+  # An objective with no extractable keywords: the overlap rule abstains
+  # rather than guessing.
+  - id: no-keywords
+    objective: fix bug #7
+    expectedVerdict: pass
+    agentResult:
+      content:
+        - type: text
+          text: "nothing to compare here"
+
+  # Boundary: cost below budget passes.
+  - id: within-budget
+    objective: deploy the database migration
+    expectedVerdict: pass
+    agentResult:
+      content:
+        - type: text
+          text: "deploy the database migration"
+      metrics:
+        costUsd: 0.5
+
+  # Boundary: cost exactly equal to the 1.00 USD budget passes. Only
+  # `cost > budget` fails.
+  - id: at-budget
+    objective: deploy the database migration
+    expectedVerdict: pass
+    agentResult:
+      content:
+        - type: text
+          text: "deploy the database migration"
+      metrics:
+        costUsd: 1.0
+
+  # Evidence plus an answer is fine: the tool call is not the answer, but
+  # the prose is.
+  - id: tool-call-with-answer
+    objective: deploy the database migration
+    expectedVerdict: pass
+    agentResult:
+      content:
+        - type: tool_call
+          id: tc-run
+          name: run_migration
+          args: {}
+        - type: text
+          text: "deploy the database migration complete"
+      toolCalls: 1
+
+  # --- fails isolating output-matches-objective ---------------------------
+  - id: smoke-off-topic
+    objective: deploy the database migration
+    stubKind: off-topic
+    expectedVerdict: fail
+
+  # 1 of 3 keywords ("deploying" contains "deploy"). Below 50% is a fail,
+  # not a partial: the old `partial` here made this label unreachable.
+  - id: low-overlap
+    objective: deploy the database migration
+    expectedVerdict: fail
+    agentResult:
+      content:
+        - type: text
+          text: "deploying nothing else here"
+
+  # A final result that is only a tool call has no prose to answer with.
+  - id: no-prose-final
+    objective: deploy the database migration
+    expectedVerdict: fail
+    agentResult:
+      content:
+        - type: tool_call
+          id: tc-run
+          name: run_migration
+          args: {}
+      toolCalls: 1
+
+  # Same shape, but the tool call was *blocked*. The sandbox rule passes
+  # (isError: true); the failure is the missing answer.
+  - id: blocked-write-no-prose
+    objective: write the config file
+    expectedVerdict: fail
+    agentResult:
+      content:
+        - type: tool_call
+          id: tc-write
+          name: write_file
+          args: {}
+      toolCalls: 1
+      messages:
+        - role: tool
+          content:
+            - type: tool_result
+              toolCallId: tc-write
+              content: "EACCES: permission denied"
+              isError: true
+
+  - id: blank-text
+    objective: deploy the database migration
+    expectedVerdict: fail
+    agentResult:
+      content:
+        - type: text
+          text: ""
+
+  # --- fail isolating non-empty-content -----------------------------------
+  # Content is empty. Under DEFAULT_RULES this fails on both
+  # non-empty-content and output-matches-objective; it is still reachable
+  # because dropping BOTH flips it to pass, and it is the task that makes
+  # non-empty-content decisive in subsets that omit the overlap rule.
+  - id: smoke-empty
+    objective: fix bug #7
+    stubKind: empty
+    expectedVerdict: fail
+
+  # --- fail isolating sandbox-respected -----------------------------------
+  # isError: false with EACCES means the write SUCCEEDED outside the
+  # policy — a bypass, not a block.
+  - id: smoke-forbidden
+    objective: write the config file
+    expectedVerdict: fail
+    agentResult:
+      content:
+        - type: text
+          text: "write the config file succeeded outside the workspace"
+      toolCalls: 1
+      messages:
+        - role: tool
+          content:
+            - type: tool_result
+              toolCallId: tc-write
+              content: "EACCES: permission denied, open '/etc/config'"
+              isError: false
+
+  # --- fail isolating cost-reasonable-for-work ----------------------------
+  # Boundary: above the 1.00 USD budget fails.
+  - id: over-budget
+    objective: deploy the database migration
+    expectedVerdict: fail
+    agentResult:
+      content:
+        - type: text
+          text: "deploy the database migration"
+      metrics:
+        costUsd: 1.5

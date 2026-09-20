@@ -16,12 +16,16 @@ import {
   parsePromptParams,
   parseRouteInput,
   parseSessionCompactParams,
+  parseSessionAgentInterruptParams,
+  parseSessionAgentMessageParams,
   parseSessionMemoryParams,
   parseSessionPlanParams,
   parseSessionReviewParams,
   parseSessionSetModeParams,
   parseSetModelParams,
   parseSetPolicyParams,
+  parseWorkspaceAddParams,
+  parseWorkspaceRemoveParams,
   readOptionalCwd,
   readSessionId,
 } from "./acp-params.js";
@@ -424,6 +428,71 @@ export function attachAcpServer(options: AcpServerOptions): () => void {
         return await backend.listSessionAgents({
           sessionId: readSessionId(params),
         });
+      }
+
+      // Steering a background child from the host UI. Answers carry a
+      // structured `error` for a child that has settled in the meantime,
+      // so a lost race is a normal reply, not a JSON-RPC failure.
+      case "session/agent_message": {
+        assertInitialized(initialized);
+        if (backend.sendAgentMessage === undefined) {
+          throw new JsonRpcError(
+            "session/agent_message not supported",
+            JsonRpcErrorCode.METHOD_NOT_FOUND,
+          );
+        }
+        return await backend.sendAgentMessage(
+          parseSessionAgentMessageParams(params),
+        );
+      }
+
+      case "session/agent_interrupt": {
+        assertInitialized(initialized);
+        if (backend.interruptAgent === undefined) {
+          throw new JsonRpcError(
+            "session/agent_interrupt not supported",
+            JsonRpcErrorCode.METHOD_NOT_FOUND,
+          );
+        }
+        return await backend.interruptAgent(
+          parseSessionAgentInterruptParams(params),
+        );
+      }
+
+      // The project registry. Hosts that did not wire one report
+      // METHOD_NOT_FOUND rather than an empty list that looks like
+      // "you have no projects".
+      case "workspace/list": {
+        assertInitialized(initialized);
+        if (backend.listWorkspaces === undefined) {
+          throw new JsonRpcError(
+            "workspace/list not supported",
+            JsonRpcErrorCode.METHOD_NOT_FOUND,
+          );
+        }
+        return await backend.listWorkspaces();
+      }
+
+      case "workspace/add": {
+        assertInitialized(initialized);
+        if (backend.addWorkspace === undefined) {
+          throw new JsonRpcError(
+            "workspace/add not supported",
+            JsonRpcErrorCode.METHOD_NOT_FOUND,
+          );
+        }
+        return await backend.addWorkspace(parseWorkspaceAddParams(params));
+      }
+
+      case "workspace/remove": {
+        assertInitialized(initialized);
+        if (backend.removeWorkspace === undefined) {
+          throw new JsonRpcError(
+            "workspace/remove not supported",
+            JsonRpcErrorCode.METHOD_NOT_FOUND,
+          );
+        }
+        return await backend.removeWorkspace(parseWorkspaceRemoveParams(params));
       }
 
       case "session/plan": {

@@ -1332,6 +1332,189 @@ throws when it is absent, so `envoy self-evolve` cannot run out of the box.
 
 Design and staging: [`self-evolution-design.md`](./self-evolution-design.md).
 
+### Pass 7 — the benchmark built, and the decisions settled
+
+Pass 6 made the criterion measure something. This pass fixed the **yardstick**.
+A seven-question decision brief (Q1–Q7) went to a domain owner; the calls are
+recorded in [`verifier-benchmark-decision-brief.md`](./verifier-benchmark-decision-brief.md) §0.
+
+**Rule changes.**
+
+- `output-matches-objective` now returns **`fail` for every overlap below 50%**,
+  not only zero overlap; exactly 50% passes. The `partial` band is gone, so **no
+  default rule emits `partial`** and a `partial` label would be unreachable.
+- `mesh-task-shape` was removed from `DEFAULT_RULES`. A previous pass in this
+  plan recorded that the rule's *comment* was stale; reading the body showed the
+  defect was worse — it computes the same decision as `non-empty-content`
+  (`fail` iff `content.length === 0`), so toggling it can never change a
+  `passRate`, and a reordering that puts it first would downgrade the combined
+  `rollback` from `true` to `false`. It stays exported as an opt-in.
+  `DEFAULT_RULES` is now **4 rules, and each one is decisive** on the benchmark.
+
+**Benchmark.** `BenchmarkTaskSchema` gained an inline **`agentResult`**: the four
+`stubKind` shapes cannot express a partial overlap, a blocked versus bypassed
+write, or an exact cost boundary. The shared benchmark now lives at
+`benchmarks/verifier-frozen.yaml` — **15 tasks, every one labelled `pass`/`fail`,
+every failing task isolating exactly one rule** — and the CLI reads it by
+default, so `envoy self-evolve` runs out of the box. The old four-task test
+fixture is deleted. `analyzeBenchmark` plus
+`test/benchmark-discrimination.test.ts` add the CI gate: an unreachable label, an
+inert rule, or a collapsed score landscape now fails the suite.
+
+**Measured (4 rules, 15 tasks, 15 legal subsets):** 7 distinct pass rates, 12
+distinct outcome vectors (the old fixture gave 3), no inert rule, no unreachable
+label. `DEFAULT_RULES` scores **1.000**.
+
+**The constraint that remains.** v1 is a regression gate, not an improvement
+driver: the default is at the maximum (one alternative ties it by dropping the
+dominated `non-empty-content`), so every hypothesis is correctly reverted.
+Creating headroom needs a labelled task the lexical overlap rule wrongly fails —
+a correct paraphrase — which is the **non-selectable** check the Q1 decision
+deliberately deferred. Not yet built: a benchmark **revision hash** and a
+task-wise held-out propose/confirm split.
+
+### Pass 8 — asynchronous sub-agents and multi-project hosts
+
+Two capabilities existed in fragments and were unreachable from a user. Both are now wired end to end.
+
+**Asynchronous sub-agents.** `task` was always blocking: `execute` awaited
+`submitter.submit(...)`. The continuable runtime (`submitContinuable` → handle with
+`send` / `interrupt` / `close` / `waitSettle`) existed but **nothing called it**, and the job
+registry's own type comment already reserved `subagent-N` ids while `job_start` could only
+start shell jobs. Now:
+
+- `task { run_in_background: true }` returns a job id immediately, with
+  `background_mode: "one-shot"` (default) or `"continuable"` (stays alive for steering).
+- `src/subagent/background.ts` bridges a handle into `JobRegistry`, so the existing
+  `job_status` / `job_output` / `job_wait` / `job_kill` / `job_list` tools work on sub-agent
+  jobs unchanged. The child is created *inside* `jobs.start`'s `run()` hook so the per-owner
+  cap is enforced before a child exists (no leaked child on a rejected job).
+- The continuable runtime gained an `onTurn` hook, making a live child's output observable
+  between turns.
+- Control tools: `list_agents`, `send_message`, `interrupt_agent` — registered only when the
+  submitter implements `ContinuableSubmitter`.
+- Refusals are explicit (`isError: true`) when no job registry is wired, the submitter cannot
+  run continuable children, or the capability tag matches a fan-out spec. A model that asked
+  for background work never silently gets a blocking answer.
+- Steering surfaces: the model (tools), the REPL (`/agents send|interrupt`), and the WebUI
+  (`session/agent_message` / `session/agent_interrupt`).
+
+**Multi-project hosts.** The ACP layer already accepted a per-session `cwd`, but every host
+passed only the process working directory, so the WebUI was pinned to where the server
+started. Now:
+
+- `src/workspace/` adds a persistent, ordered project registry (JSON, atomic + serialized
+  writes). Removing a project forgets it and never deletes the directory; a malformed file is
+  an error rather than a silent empty list.
+- ACP **and** SDK dialects serve `workspace/list|add|remove`; `session/new { cwd }` records
+  `lastUsedAt` on a best-effort basis.
+- `sessions/list` already returns `cwd`, so a client groups sessions by project without a new
+  method.
+
+Design: [`design.en.md`](./design.en.md) §10.4 (background sub-agents) and §26 (workspaces).
+`bounded` note: sub-agent job output is turn-granular, not token-granular — streaming mid-turn
+would require plumbing the child's tracer, which is a deliberate non-goal.
+
+**Verification defect found while running the suite.** `pnpm -r run test` ran before
+`pnpm build`, but several packages' tests imported `@envoymesh/envoy-harness` **by name**,
+which Node self-references through `exports` → `dist/index.js`. On a machine with a `dist/`
+left over from an earlier build the suite was green; on a clean checkout **17 core test files,
+the adapter suites, and the web `acp-ws-bridge` suite failed to collect** — roughly 200 tests
+that only ever ran because a build happened to exist. Fixed by pointing the bare specifier at
+`src/index.ts` in the core, adapter, and web `vitest.config.ts` (the other sibling packages
+already did this). With `dist/` removed, the full monorepo suite now runs and passes. Tests must
+not depend on build state (design target #4).
+
+### Pass 9 — the deferred three: TUI parity, token streaming, path safety
+
+**TUI parity** (`packages/envoy-harness-tui`). `/project list|add|remove|open` and
+`/agents [list|send|interrupt]`, over the same ACP surface the WebUI uses; `/project open`
+starts a session in that project and it **stays the active project for a later `/new`** (a
+`WeakMap` per client kept in `session-workspace.ts`, because `session.ts` is at the 800-line
+cap). Resume rows are labelled with the project. `renderAgentsView` renders the **full** child
+id — an id recovered from prose is unusable as a handle. Tests: TUI 82 → 118.
+
+**Token-level streaming.** The continuable runtime now keeps a bounded per-child output buffer
+(completed turns + the in-flight turn's assistant deltas, captured by *chaining* the child's
+`assistantStreamSink`), exposed as `handle.output()`. `job_output` reads it as a **consuming**
+cursor — the behaviour its description already promised and bash jobs already had — and
+`session/agents[].outputPreview` carries the cumulative tail for the WebUI rail, the REPL
+`/agents` line, and the TUI. When a turn commits, the streamed copy is discarded in favour of
+the authoritative text, so a turn is never present twice.
+
+**Workspace path safety.** Identity is now `fs.realpath`, so a symlink inside an allowed root
+cannot register a directory outside it and one directory cannot become two entries; `add`
+requires an absolute path at the wire **and** in the registry (a relative path resolved against
+the *server's* cwd is not what a client meant); `FileWorkspaceRegistryOptions.allowedRoots`
+(from `ENVOY_WORKSPACE_ROOTS`) bounds what may be added, compared on a separator boundary; and
+`remove`/`touch`/`has` resolve the deepest **existing** ancestor, so a project whose directory
+was deleted can still be forgotten. The WebUI warns on stderr when it binds a non-loopback host.
+
+**Two defects found in my own earlier pass, and fixed.**
+
+- `steerable` was computed from "a handle exists". The registry never removed settled handles,
+  so a *completed* child still advertised live steering controls — and every settled child's
+  Agent, transcript and output buffer stayed reachable for the life of the process. `settle`
+  now drops the live entry (the `record` — what a UI reads for history — is kept), and
+  `steerable` also checks the status so a custom submitter cannot lie about it.
+- Adding `output()` to `ContinuableSubagentHandle` broke the **peer** package's build, because
+  its handle object is typed against that interface. Peer tasks do not stream partial output
+  over the wire, so its `output()` returns the settled result's text and is documented as empty
+  until settle rather than faked.
+
+**Found and fixed: the monorepo could not build from a clean checkout.** Pre-existing, and it
+invalidated any "CI is green" claim. There were two package dependency cycles:
+
+- `envoy-harness/src/cordis/wire-from-config.ts` imported `@envoymesh/envoy-harness-cordis`, and
+  `src/peers/wire-cluster.ts` imported `@envoymesh/envoy-harness-peer` — while **both of those
+  packages depend on `envoy-harness`**.
+- `envoy-harness-tui` depended on `envoy-harness-peer`, which depends on `envoy-harness-tui`.
+
+**The mechanism was not the runtime imports** — those were already *dynamic* (`await import(…)`),
+precisely so the companions stay optional. The problem is that `tsc` **resolves a literal
+specifier in a dynamic import, and `typeof import("…")` outright**, through the target's
+`exports` → `dist/index.d.ts`. So core could not *compile* until cordis/peer had been built, and
+they could not be built until core had. Measured with all `packages/*/dist` removed: `pnpm -r run
+build` exited 2 and aborted; typecheck failed for every dependent package; the client's tests
+failed to collect. It only ever worked because some earlier `dist/` happened to exist.
+
+**The fix — a locally-declared structural seam plus an opaque specifier.** The surface core uses
+from each companion is now declared *in core* (`CordisCompatModule`, `PeerCompatModule`; the peer
+package declares `TuiCompatModule` for the TUI), and the specifier is held in a `string`-typed
+constant so the import is a runtime concern only:
+
+```ts
+const CORDIS_PACKAGE: string = "@envoymesh/envoy-harness-cordis";
+const cordis = (await import(CORDIS_PACKAGE)) as CordisCompatModule;
+```
+
+Runtime behaviour is unchanged: the packages stay optional, a missing one is still caught and the
+harness runs without it, and the peer package still declares its runtime dependency on the TUI for
+`envoy-peer ui`. What goes away is the *build-time* edge. The `tui → peer` edge was also
+downgraded to a `devDependency` (only `test/cluster-rail.test.ts` uses it; `src` never did), so
+the production graph is now one-directional: `peer → tui`, and both → core.
+
+**A second, independent cause of the same failure: pnpm does not wait for dependencies.**
+Breaking the cycles was necessary but not sufficient — `client → core` is a legitimate edge, and
+its build still raced core's. Measured on the same clean tree: `pnpm -r run build` starts
+dependents and dependencies concurrently; `--workspace-concurrency=1` orders them but *not*
+topologically (TUI before client); `--sort` changes nothing; and declaring the deps with the
+`workspace:` protocol instead of `file:` changes nothing either. So the order is now computed by
+`scripts/build-workspace.mjs`: it scans each package's `src` for **build-time** references
+(static `from "@envoymesh/…"` including subpaths, and literal dynamic imports / type queries),
+topologically sorts them, **fails loudly on a real cycle with the offending edges**, and builds one
+level at a time. Dynamic imports whose specifier is a *variable* are invisible to it by
+construction — which is exactly what keeps the optional companions out of the graph. `pnpm run
+build` and CI both go through it; `pnpm run build:graph` prints the derived order.
+
+Consequences that remain deliberately in place: the vitest configs for core/adapter/web still alias
+the bare `@envoymesh/envoy-harness` specifier to `src` (tests should not depend on build state),
+and CI builds before typecheck, because typecheck legitimately needs the dependencies' declarations.
+
+**Verified:** with every `packages/*/dist` removed, `pnpm run build` → `pnpm -r run typecheck` →
+`pnpm -r run test` completes with exit 0 at each step (2705 tests passing, 5 skipped, 0 failing) —
+no workaround, no pre-existing build output.
+
 ### Pre-existing items still open
 
 - **Cordis-compat container** — ✅ **DONE**:

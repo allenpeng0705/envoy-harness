@@ -66,6 +66,7 @@ import {
   signEntry,
   type Benchmark,
   type BenchmarkResult,
+  type BenchmarkTask,
   type Scoreboard,
   type ScoreboardEntry,
 } from "./index.js";
@@ -309,16 +310,17 @@ export function parseHypothesisFromLlm(
 }
 
 /**
- * The default benchmark runner. Loads each task's `stubKind`
- * and constructs an `AgentResult` from the corresponding
- * stub. v0: stubs are inline; Phase 2 can run real worker
+ * The default benchmark runner. Builds each task's `AgentResult` from
+ * its inline `agentResult` when present, otherwise from its
+ * `stubKind`. v0: both are inline data; Phase 2 can run real worker
  * loops for the benchmark.
  *
- * **Why stubs, not real workers?** A benchmark is supposed
+ * **Why inline results, not real workers?** A benchmark is supposed
  * to be FAST and DETERMINISTIC. A real worker is slow and
- * non-deterministic (model temperature, network, etc.).
- * Stubs give the same input each cycle so pass rates are
- * comparable.
+ * non-deterministic (model temperature, network, etc.). Inline
+ * results give the same input each cycle so pass rates are
+ * comparable, and they can express boundary cases a real run rarely
+ * produces.
  */
 /**
  * Normalize text for gold comparison: trim, and collapse internal
@@ -351,7 +353,7 @@ export class DefaultBenchmarkRunner implements BenchmarkRunner {
     let scoreSum = 0;
     let scoreCount = 0;
     for (const task of benchmark.tasks) {
-      const result = buildStubResult(task);
+      const result = buildTaskResult(task);
       const verdicts = await runVerifierRules(result, task.objective, rules);
       const combined = combineVerdicts(verdicts);
       // Pass = verdict.kind === 'pass' AND (no expectedVerdict OR
@@ -395,12 +397,15 @@ export class DefaultBenchmarkRunner implements BenchmarkRunner {
   }
 }
 
-/** Build an `AgentResult` from a `BenchmarkTask.stubKind`. */
-function buildStubResult(task: {
-  id: string;
-  objective: string;
-  stubKind: "empty" | "ok" | "off-topic" | "forbidden-path";
-}): AgentResult {
+/** Build an `AgentResult` from a benchmark task. */
+function buildTaskResult(task: BenchmarkTask): AgentResult {
+  // An inline `agentResult` takes precedence. It is the only way a task
+  // can express the cases that separate rulesets: partial keyword
+  // overlap, a tool call with no prose, a *blocked* write versus one
+  // that bypassed the sandbox, and exact cost boundaries.
+  if (task.agentResult !== undefined) {
+    return task.agentResult;
+  }
   // The metrics field is required (F7.1) but stubs have no
   // cost data — 0 across the board is the safe default.
   const baseMetrics = { inputTokens: 0, outputTokens: 0, costUsd: 0 };

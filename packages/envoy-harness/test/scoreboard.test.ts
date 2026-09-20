@@ -190,6 +190,58 @@ describe("benchmark file I/O", () => {
       }),
     ).rejects.toThrow();
   });
+
+  it("parses an inline agentResult, applying defaults to the boilerplate", async () => {
+    // The four canned stub shapes cannot express the boundary cases the
+    // benchmark needs (partial overlap, a blocked vs bypassed write, an
+    // exact cost). A task may therefore carry its worker result inline;
+    // only the fields that matter are required in YAML.
+    const file = path.join(tmpDir, "benchmark.yaml");
+    await fs.writeFile(
+      file,
+      `name: inline
+tasks:
+  - id: t1
+    objective: deploy the database migration
+    expectedVerdict: fail
+    agentResult:
+      content:
+        - type: text
+          text: ""
+      metrics:
+        costUsd: 1.5
+`,
+      "utf8",
+    );
+    const bench = await readBenchmark(file);
+    const result = bench.tasks[0]?.agentResult;
+    expect(result?.content).toEqual([{ type: "text", text: "" }]);
+    expect(result?.metrics).toEqual({
+      inputTokens: 0,
+      outputTokens: 0,
+      costUsd: 1.5,
+    });
+    expect(result?.stopReason).toBe("end_turn");
+    expect(result?.messages).toEqual([]);
+    expect(result?.sandboxPolicy.mode).toBe("workspace-write");
+  });
+
+  it("rejects an inline agentResult with no content", async () => {
+    const file = path.join(tmpDir, "benchmark.yaml");
+    await fs.writeFile(
+      file,
+      `name: bad-inline
+tasks:
+  - id: t1
+    objective: x
+    agentResult:
+      metrics:
+        costUsd: 0
+`,
+      "utf8",
+    );
+    await expect(readBenchmark(file)).rejects.toThrow();
+  });
 });
 
 // ---------------------------------------------------------------------------

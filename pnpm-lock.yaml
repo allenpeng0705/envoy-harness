@@ -248,10 +248,10 @@ importers:
       '@envoymesh/envoy-harness-client':
         specifier: file:../envoy-harness-client
         version: link:../envoy-harness-client
+    devDependencies:
       '@envoymesh/envoy-harness-peer':
         specifier: file:../envoy-harness-peer
         version: link:../envoy-harness-peer
-    devDependencies:
       '@types/node':
         specifier: ^22.10.0
         version: 22.20.1

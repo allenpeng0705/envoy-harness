@@ -47,9 +47,20 @@ export {
 export {
   ContinuableSubagentRegistry,
   type ContinuableSubagentHandle,
+  type ContinuableSubmitter,
   type SubagentHandleId,
   type SubmitContinuableOptions,
 } from "./continuable.js";
+
+export {
+  makeSubagentControlTools,
+  spawnBackgroundSubagent,
+  supportsContinuable,
+  type SpawnBackgroundOptions,
+  type SpawnBackgroundResult,
+  type SteerableSubmitter,
+  type SubagentBackgroundMode,
+} from "./background.js";
 
 export {
   TaskInputSchema,

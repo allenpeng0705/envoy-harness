@@ -8,7 +8,7 @@ on:
 
 jobs:
   build:
-    name: typecheck + test + build
+    name: build + typecheck + test
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
@@ -31,11 +31,18 @@ jobs:
       - name: Module-size lint (Codex LOC rule)
         run: node scripts/check-module-size.mjs packages/envoy-harness/src packages/envoy-harness-adapter/src packages/envoy-harness-tui/src packages/envoy-harness-client/src packages/envoy-harness-cordis/src packages/envoy-harness-peer/src packages/envoy-process/src packages/envoy-harness-web/src
 
+      # Build BEFORE typecheck, and through the root script rather than
+      # `pnpm -r run build`. Two reasons, both measured on a clean checkout:
+      # (1) packages resolve each other's declarations via `dist`, so
+      # typecheck cannot pass before a build; (2) pnpm does not wait for a
+      # package's dependencies when running a recursive script, so
+      # `pnpm -r run build` starts dependents too early and fails. The root
+      # script derives the order from the sources and builds level by level.
+      - name: Build
+        run: pnpm run build
+
       - name: Typecheck
         run: pnpm -r run typecheck
 
       - name: Test
         run: pnpm -r run test
-
-      - name: Build
-        run: pnpm -r run build

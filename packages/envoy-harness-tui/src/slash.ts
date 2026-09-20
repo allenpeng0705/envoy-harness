@@ -31,7 +31,19 @@ export type SlashResult =
   | { kind: "git-status" }
   | { kind: "hooks" }
   | { kind: "mcp" }
-  | { kind: "agents" }
+  | {
+      kind: "agents";
+      action?: "list" | "send" | "interrupt";
+      id?: string;
+      message?: string;
+      reason?: string;
+    }
+  | {
+      kind: "project";
+      action: "list" | "add" | "remove" | "open";
+      target?: string;
+      name?: string;
+    }
   | { kind: "memory"; op: "list" | "read" | "add"; name?: string; body?: string }
   | { kind: "plan"; action: string; text?: string; reason?: string }
   | { kind: "mode"; mode?: "default" | "plan" | "review" }
@@ -65,7 +77,8 @@ export const SLASH_COMMANDS: ReadonlyArray<{ name: string; description: string }
   { name: "compact", description: "compact session (keep, --budget, --summarize)" },
   { name: "hooks", description: "list registered hooks" },
   { name: "mcp", description: "list MCP servers" },
-  { name: "agents", description: "list spawned sub-agents" },
+  { name: "agents", description: "sub-agents: list | send <id> <msg> | interrupt <id> [reason]" },
+  { name: "project", description: "projects: list | add <path> [name] | remove <path> | open <index|path>" },
   { name: "memory", description: "memory: list | read <name> | add <name> <body>" },
   { name: "plan", description: "plan document: enter | show | edit | propose | approve | reject | exit" },
   { name: "mode", description: "collaboration mode: default | plan | review" },
@@ -280,8 +293,67 @@ export function parseSlash(line: string): SlashResult | null {
       return { kind: "hooks" };
     case "mcp":
       return { kind: "mcp" };
-    case "agents":
-      return { kind: "agents" };
+    case "agents": {
+      const sub = parts[1]?.toLowerCase() ?? "list";
+      if (sub === "list") return { kind: "agents", action: "list" };
+      if (sub === "send") {
+        const id = parts[2];
+        const message = parts.slice(3).join(" ").trim();
+        if (id === undefined || id.length === 0 || message.length === 0) {
+          return { kind: "unknown", command: "agents send <id> <message>" };
+        }
+        return { kind: "agents", action: "send", id, message };
+      }
+      if (sub === "interrupt") {
+        const id = parts[2];
+        if (id === undefined || id.length === 0) {
+          return { kind: "unknown", command: "agents interrupt <id> [reason]" };
+        }
+        const reason = parts.slice(3).join(" ").trim();
+        return {
+          kind: "agents",
+          action: "interrupt",
+          id,
+          ...(reason.length > 0 ? { reason } : {}),
+        };
+      }
+      return { kind: "unknown", command: `agents ${sub}` };
+    }
+    case "project": {
+      const sub = parts[1]?.toLowerCase() ?? "list";
+      if (sub === "list") return { kind: "project", action: "list" };
+      if (sub === "add") {
+        const target = parts[2];
+        const name = parts.slice(3).join(" ").trim();
+        if (target === undefined || target.length === 0) {
+          return {
+            kind: "unknown",
+            command: "project add <absolute-path> [name]",
+          };
+        }
+        return {
+          kind: "project",
+          action: "add",
+          target,
+          ...(name.length > 0 ? { name } : {}),
+        };
+      }
+      if (sub === "remove") {
+        const target = parts[2];
+        if (target === undefined || target.length === 0) {
+          return { kind: "unknown", command: "project remove <path>" };
+        }
+        return { kind: "project", action: "remove", target };
+      }
+      if (sub === "open") {
+        const target = parts[2];
+        if (target === undefined || target.length === 0) {
+          return { kind: "unknown", command: "project open <index|path>" };
+        }
+        return { kind: "project", action: "open", target };
+      }
+      return { kind: "unknown", command: `project ${sub}` };
+    }
     case "memory": {
       const sub = parts[1]?.toLowerCase() ?? "list";
       if (sub === "list") return { kind: "memory", op: "list" };

@@ -30,6 +30,14 @@ export interface ContinuableSubagentHandle {
    * drains. Idempotent.
    */
   close(): void;
+  /**
+   * The child's output so far: completed turns, plus the **in-flight
+   * turn's text as it streams**. Updated on every assistant delta, so a
+   * poller sees progress within a turn rather than only after it.
+   *
+   * Bounded — it keeps a tail, not the whole history.
+   */
+  output(): string;
   /** Await the final {@link SubagentResult}. */
   waitSettle(options?: {
     signal?: AbortSignal;
@@ -45,11 +53,34 @@ export interface SubmitContinuableOptions {
   /** Fired once when the handle settles. */
   onSettle?: (result: SubagentResult, record: SubagentRecord) => void;
   /**
+   * Fired after every completed turn of a continuable child — i.e. once
+   * per `send()`ed message, not just once at settle. This is what makes a
+   * background child's output observable while it is still alive (a
+   * one-shot foreground `submit()` never needs it).
+   *
+   * Exceptions are swallowed: a host callback must not break the child.
+   */
+  onTurn?: (result: SubagentResult, record: SubagentRecord) => void;
+  /**
    * When true (default for blocking `submit()`), settle as soon as
    * the inbox is empty after a run. When false, stay open until
    * `close()` / `interrupt()` / deadline.
    */
   autoSettleAfterIdle?: boolean;
+}
+
+/**
+ * The capability a {@link MeshSubmitter} exposes when it can run
+ * **continuable** (background, steerable) children rather than only
+ * blocking ones. Detected structurally — a submitter that does not
+ * implement it simply cannot serve `task { run_in_background: true }`.
+ */
+export interface ContinuableSubmitter {
+  submitContinuable(
+    input: SubagentInput,
+    options?: SubmitContinuableOptions,
+  ): ContinuableSubagentHandle;
+  getHandle(id: SubagentHandleId): ContinuableSubagentHandle | undefined;
 }
 
 export interface ContinuableRuntimeOptions {
@@ -81,6 +112,7 @@ interface RunningSubagent {
   settled: boolean;
   result: SubagentResult | undefined;
   onSettle: ((result: SubagentResult, record: SubagentRecord) => void) | undefined;
+  onTurn: ((result: SubagentResult, record: SubagentRecord) => void) | undefined;
   autoSettleAfterIdle: boolean;
   closed: boolean;
   startedAt: number;
@@ -88,6 +120,55 @@ interface RunningSubagent {
   parentAbortListener: (() => void) | undefined;
   parentSignal: AbortSignal | undefined;
   runChain: Promise<void>;
+  /** Authoritative text of each completed turn (bounded tail). */
+  turnSegments: string[];
+  /** The in-flight turn's streamed text. Cleared when the turn commits. */
+  liveText: string;
+}
+
+/** Cap on one turn's streamed tail. */
+const MAX_LIVE_CHARS = 16_384;
+/** Cap on the retained completed-turn text. */
+const MAX_TURN_CHARS = 65_536;
+
+function appendLive(running: RunningSubagent, delta: string): void {
+  running.liveText += delta;
+  // Trim lazily (only once it has doubled) so a long turn is amortized
+  // O(1) per delta rather than a copy per delta.
+  if (running.liveText.length > MAX_LIVE_CHARS * 2) {
+    running.liveText = running.liveText.slice(-MAX_LIVE_CHARS);
+  }
+}
+
+/**
+ * Commit a finished turn's authoritative text and drop the streamed
+ * version of it, so a turn is never present twice.
+ */
+function commitTurn(running: RunningSubagent, text: string): void {
+  running.liveText = "";
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return;
+  running.turnSegments.push(trimmed);
+  let total = running.turnSegments.reduce((n, s) => n + s.length + 2, 0);
+  while (total > MAX_TURN_CHARS && running.turnSegments.length > 1) {
+    total -= (running.turnSegments.shift() ?? "").length + 2;
+  }
+}
+
+function outputOf(running: RunningSubagent): string {
+  const parts = [...running.turnSegments];
+  if (running.liveText.length > 0) parts.push(running.liveText);
+  return parts.join("\n\n");
+}
+
+/** Concatenate a result's text blocks. */
+function textOf(result: SubagentResult): string {
+  return result.content
+    .filter(
+      (b): b is Extract<typeof b, { type: "text" }> => b.type === "text",
+    )
+    .map((b) => b.text)
+    .join("\n");
 }
 
 function synthesizeVerdict(
@@ -203,6 +284,7 @@ export class ContinuableSubagentRegistry {
       settled: false,
       result: undefined,
       onSettle: options.onSettle,
+      onTurn: options.onTurn,
       autoSettleAfterIdle: options.autoSettleAfterIdle !== false,
       closed: false,
       startedAt: Date.now(),
@@ -210,6 +292,24 @@ export class ContinuableSubagentRegistry {
       parentAbortListener: undefined,
       parentSignal: options.parentSignal,
       runChain: Promise.resolve(),
+      turnSegments: [],
+      liveText: "",
+    };
+
+    // Stream the child's assistant deltas into its output buffer so a
+    // poller (`handle.output()` / `job_output`) sees progress *within* a
+    // turn, not only once the turn ends. Chained, not replaced: a host
+    // factory that installed its own sink keeps working.
+    const priorSink = agent.assistantStreamSink;
+    agent.assistantStreamSink = (delta: string): void => {
+      if (priorSink !== undefined) {
+        try {
+          priorSink(delta);
+        } catch {
+          // A host sink must not break the child.
+        }
+      }
+      appendLive(running, delta);
     };
 
     running.deadlineTimer = setTimeout(() => {
@@ -267,6 +367,7 @@ export class ContinuableSubagentRegistry {
         running.closed = true;
         this.wake(running);
       },
+      output: () => outputOf(running),
       waitSettle: (opts) => this.waitSettle(running, opts),
       status: () => ({ ...running.record }),
     };
@@ -346,6 +447,16 @@ export class ContinuableSubagentRegistry {
             running.startedAt,
             this.opts.signer,
           );
+          running.record.costUsd = last.costUsd;
+          running.record.durationMs = last.durationMs;
+          // The turn is over: keep its authoritative text and discard the
+          // streamed copy, so the turn is not present twice.
+          commitTurn(running, textOf(last));
+          try {
+            running.onTurn?.(last, running.record);
+          } catch {
+            // Host callbacks must not break the child.
+          }
           if (agentResult.stopReason === "aborted") {
             this.settle(running, last);
             return;
@@ -373,6 +484,19 @@ export class ContinuableSubagentRegistry {
     if (running.settled) return;
     running.settled = true;
     running.result = result;
+    // Drop the live entry. The `record` (in the submitter's list) is what a
+    // UI reads for history; the handle is only useful while the child can be
+    // steered, and keeping every settled child here retained its Agent,
+    // transcript and output buffer for the life of the process. A caller
+    // that already holds a handle keeps working — the closures reference
+    // `running` directly — but `getHandle(id)` now reports "gone", which is
+    // also what makes the `steerable` flag honest.
+    this.handles.delete(running.id);
+    // Interrupted before any turn produced text: keep the failure message as
+    // the child's output so a poller is not left looking at an empty string.
+    if (running.turnSegments.length === 0 && running.liveText.length === 0) {
+      commitTurn(running, textOf(result));
+    }
     running.record.status = result.status;
     running.record.costUsd = result.costUsd;
     running.record.durationMs = result.durationMs;

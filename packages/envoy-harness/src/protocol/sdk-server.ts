@@ -9,6 +9,12 @@ import {
   requestHostPermission,
   requestHostUserQuestion,
 } from "./host-request.js";
+import {
+  parseSessionAgentInterruptParams,
+  parseSessionAgentMessageParams,
+  parseWorkspaceAddParams,
+  parseWorkspaceRemoveParams,
+} from "./acp-params.js";
 
 export interface SdkServerOptions {
   connection: JsonRpcConnection;
@@ -229,6 +235,60 @@ export function attachSdkServer(options: SdkServerOptions): () => void {
         return await backend.listSessionAgents({
           sessionId: readSessionId(params),
         });
+      }
+
+      case "session/agent_message": {
+        if (backend.sendAgentMessage === undefined) {
+          throw new JsonRpcError(
+            "session/agent_message not supported",
+            JsonRpcErrorCode.METHOD_NOT_FOUND,
+          );
+        }
+        return await backend.sendAgentMessage(
+          parseSessionAgentMessageParams(params),
+        );
+      }
+
+      case "session/agent_interrupt": {
+        if (backend.interruptAgent === undefined) {
+          throw new JsonRpcError(
+            "session/agent_interrupt not supported",
+            JsonRpcErrorCode.METHOD_NOT_FOUND,
+          );
+        }
+        return await backend.interruptAgent(
+          parseSessionAgentInterruptParams(params),
+        );
+      }
+
+      case "workspace/list": {
+        if (backend.listWorkspaces === undefined) {
+          throw new JsonRpcError(
+            "workspace/list not supported",
+            JsonRpcErrorCode.METHOD_NOT_FOUND,
+          );
+        }
+        return await backend.listWorkspaces();
+      }
+
+      case "workspace/add": {
+        if (backend.addWorkspace === undefined) {
+          throw new JsonRpcError(
+            "workspace/add not supported",
+            JsonRpcErrorCode.METHOD_NOT_FOUND,
+          );
+        }
+        return await backend.addWorkspace(parseWorkspaceAddParams(params));
+      }
+
+      case "workspace/remove": {
+        if (backend.removeWorkspace === undefined) {
+          throw new JsonRpcError(
+            "workspace/remove not supported",
+            JsonRpcErrorCode.METHOD_NOT_FOUND,
+          );
+        }
+        return await backend.removeWorkspace(parseWorkspaceRemoveParams(params));
       }
 
       case "session/plan": {

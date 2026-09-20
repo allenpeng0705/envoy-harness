@@ -13,7 +13,6 @@
 import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -21,6 +20,7 @@ import {
   buildHypothesisPrompt,
   readScoreboard,
   SelfEvolve,
+  sharedBenchmarkPath,
   writeBenchmark,
   type Hypothesis,
   type HypothesisProvider,
@@ -28,8 +28,7 @@ import {
   type VerifierRule,
 } from "../src/index.js";
 
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const FROZEN_BENCHMARK = path.join(HERE, "fixtures", "frozen-benchmark.yaml");
+const FROZEN_BENCHMARK = sharedBenchmarkPath();
 
 let tmpDir: string;
 
@@ -75,12 +74,12 @@ const SAMPLE_RULES: VerifierRule[] = [
 ];
 
 // ---------------------------------------------------------------------------
-// 5c: frozen benchmark fixture
+// 5c: shared frozen benchmark
 // ---------------------------------------------------------------------------
 
-describe("frozen benchmark fixture", () => {
-  it("loads and round-trips through SelfEvolve", async () => {
-    // Copy the fixture into the test's tmpDir so the cycle
+describe("shared frozen benchmark", () => {
+  it("loads the in-repo yardstick and every task carries a label", async () => {
+    // Copy the benchmark into the test's tmpDir so the cycle
     // can read it as if it were a real benchmark.
     const paths = makePaths();
     const fixtureContent = await fs.readFile(FROZEN_BENCHMARK, "utf8");
@@ -88,13 +87,16 @@ describe("frozen benchmark fixture", () => {
     // Verify the shape.
     const { readBenchmark } = await import("../src/index.js");
     const bench = await readBenchmark(paths.benchmark);
-    expect(bench.name).toBe("envoy-harness-smoke");
-    expect(bench.tasks.length).toBeGreaterThanOrEqual(4);
+    expect(bench.name).toBe("envoy-harness-verifier");
+    expect(bench.tasks.length).toBeGreaterThanOrEqual(15);
     const ids = bench.tasks.map((t) => t.id);
     expect(ids).toContain("smoke-deploy");
     expect(ids).toContain("smoke-off-topic");
     expect(ids).toContain("smoke-empty");
     expect(ids).toContain("smoke-forbidden");
+    for (const task of bench.tasks) {
+      expect(task.expectedVerdict).toBeDefined();
+    }
   });
 });
 

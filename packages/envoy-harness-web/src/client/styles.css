@@ -903,3 +903,232 @@ button.primary {
   font-family: var(--display);
   font-size: 1.5rem;
 }
+
+/* --- Project picker + grouped session rail --- */
+
+.new-session-secondary {
+  margin: 0 0.85rem 0.35rem;
+}
+
+.icon-btn.tiny {
+  width: 1.4rem;
+  height: 1.4rem;
+  font-size: 0.85rem;
+  border-radius: 6px;
+}
+
+.project-group {
+  list-style: none;
+}
+
+.project-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem;
+  padding: 0.35rem 0.1rem 0.1rem;
+}
+
+.project-name {
+  font-size: 0.74rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-path {
+  margin: 0 0 0.25rem;
+  font-size: 0.68rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-sessions {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.hero-action {
+  width: fit-content;
+  margin-bottom: 0.75rem;
+}
+
+.project-picker-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  max-height: min(90vh, 42rem);
+  overflow: auto;
+}
+
+.project-add {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.project-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.project-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  border: 0.5px solid var(--line);
+  border-radius: 10px;
+  padding: 0.5rem 0.6rem;
+  background: var(--panel);
+}
+
+.project-list li.active {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+}
+
+.project-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.project-info .project-name {
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--ink);
+  font-size: 0.9rem;
+}
+
+.project-info .project-path {
+  margin: 0;
+  font-size: 0.72rem;
+}
+
+.project-actions {
+  display: flex;
+  gap: 0.35rem;
+  flex-shrink: 0;
+}
+
+/* --- Mesh: local sub-agent rows + steering controls --- */
+
+.agent-list {
+  list-style: none;
+  margin: 0.35rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.agent-row {
+  border: 0.5px solid var(--line);
+  border-radius: 8px;
+  padding: 0.45rem 0.55rem;
+  background: var(--panel-elevated);
+}
+
+.agent-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  font-size: 0.8rem;
+}
+
+.agent-glyph {
+  color: var(--muted);
+}
+
+.agent-row.running .agent-glyph,
+.agent-row.running .agent-status {
+  color: var(--accent);
+}
+
+.agent-row.failed .agent-glyph,
+.agent-row.failed .agent-status {
+  color: var(--danger);
+}
+
+.agent-id {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-status {
+  margin-left: auto;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.agent-objective {
+  margin: 0.3rem 0 0;
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.agent-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.agent-controls form {
+  display: flex;
+  gap: 0.3rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.agent-controls input {
+  flex: 1;
+  min-width: 0;
+  border: 0.5px solid var(--line);
+  border-radius: 6px;
+  padding: 0.28rem 0.4rem;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 0.78rem;
+}
+
+.agent-controls button {
+  font-size: 0.75rem;
+  padding: 0.28rem 0.55rem;
+}
+
+.agent-reason {
+  font-size: 0.7rem;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.agent-notice {
+  margin: 0.3rem 0 0;
+  font-size: 0.75rem;
+  color: var(--accent);
+}
+
+.agent-notice.error {
+  color: var(--danger);
+}

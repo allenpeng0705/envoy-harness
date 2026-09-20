@@ -16,8 +16,11 @@ import type {
   ClientDiscoveryEvent,
   ClientPeerInfo,
   ClientScoreboardEntry,
+  ClientSessionAgents,
   ClientSessionSummary,
+  ClientSubagentSummary,
   ClientTeamJob,
+  ClientWorkspaceEntry,
   EhuiDataSource,
 } from "./ehui.js";
 
@@ -26,8 +29,11 @@ export type {
   ClientDiscoveryEvent,
   ClientPeerInfo,
   ClientScoreboardEntry,
+  ClientSessionAgents,
   ClientSessionSummary,
+  ClientSubagentSummary,
   ClientTeamJob,
+  ClientWorkspaceEntry,
   EhuiDataSource,
   EhuiPanelId,
 } from "./ehui.js";
@@ -477,10 +483,74 @@ export class EnvoyHarnessClient {
   }
 
   async listSessionAgents(sessionId: string): Promise<string> {
+    return (await this.sessionAgents(sessionId)).output;
+  }
+
+  /**
+   * The same data as `listSessionAgents`, plus the structured records: the
+   * **full** child id (the handle control calls need — the text form
+   * truncates it), a `steerable` flag, and a tail of a running child's
+   * live output.
+   */
+  async sessionAgents(sessionId: string): Promise<ClientSessionAgents> {
     const res = (await this.#conn.request("session/agents", {
       sessionId,
-    })) as { output: string };
-    return res.output;
+    })) as { output?: string; agents?: ClientSubagentSummary[] };
+    return {
+      output: res.output ?? "",
+      ...(Array.isArray(res.agents) ? { agents: res.agents } : {}),
+    };
+  }
+
+  /** Steer a continuable child. A settled child comes back as `error`. */
+  async sendAgentMessage(
+    sessionId: string,
+    agentId: string,
+    message: string,
+  ): Promise<{ queued: boolean; status: string; error?: string }> {
+    return (await this.#conn.request("session/agent_message", {
+      sessionId,
+      agentId,
+      message,
+    })) as { queued: boolean; status: string; error?: string };
+  }
+
+  /** Stop a child's current turn (the child stays alive for follow-ups). */
+  async interruptAgent(
+    sessionId: string,
+    agentId: string,
+    reason?: string,
+  ): Promise<{ interrupted: boolean; status: string; error?: string }> {
+    return (await this.#conn.request("session/agent_interrupt", {
+      sessionId,
+      agentId,
+      ...(reason !== undefined ? { reason } : {}),
+    })) as { interrupted: boolean; status: string; error?: string };
+  }
+
+  async listWorkspaces(): Promise<ClientWorkspaceEntry[]> {
+    const res = (await this.#conn.request("workspace/list", {})) as {
+      workspaces?: ClientWorkspaceEntry[];
+    };
+    return res.workspaces ?? [];
+  }
+
+  async addWorkspace(
+    path: string,
+    name?: string,
+  ): Promise<ClientWorkspaceEntry> {
+    const res = (await this.#conn.request("workspace/add", {
+      path,
+      ...(name !== undefined ? { name } : {}),
+    })) as { workspace: ClientWorkspaceEntry };
+    return res.workspace;
+  }
+
+  async removeWorkspace(path: string): Promise<boolean> {
+    const res = (await this.#conn.request("workspace/remove", {
+      path,
+    })) as { removed?: boolean };
+    return res.removed === true;
   }
 
   async sessionPlan(

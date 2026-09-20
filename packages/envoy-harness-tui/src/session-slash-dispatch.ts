@@ -3,7 +3,9 @@
  */
 
 import type { SlashResult } from "./slash.js";
-import type { PushFn } from "./session-context.js";
+import type { PushFn, SessionWorkspaceCtx } from "./session-context.js";
+import { runProjectImpl } from "./session-projects.js";
+import { runAgentsImpl } from "./session-workspace.js";
 
 /** Public TuiSession surface needed for slash routing. */
 export interface SlashSessionHost {
@@ -36,7 +38,6 @@ export interface SlashSessionHost {
   showGitStatus(): Promise<void>;
   showHooks(): Promise<void>;
   showMcp(): Promise<void>;
-  showAgents(): Promise<void>;
   runMemory(
     op: "list" | "read" | "add",
     name?: string,
@@ -53,6 +54,7 @@ export async function dispatchSlashImpl(
   push: PushFn,
   session: SlashSessionHost,
   slash: SlashResult,
+  workspace: SessionWorkspaceCtx,
 ): Promise<"ok" | "quit"> {
   switch (slash.kind) {
     case "help":
@@ -142,7 +144,16 @@ export async function dispatchSlashImpl(
       await session.showMcp();
       return "ok";
     case "agents":
-      await session.showAgents();
+      await runAgentsImpl(
+        workspace,
+        slash.action ?? "list",
+        slash.id,
+        slash.message,
+        slash.reason,
+      );
+      return "ok";
+    case "project":
+      await runProjectImpl(workspace, slash.action, slash.target, slash.name);
       return "ok";
     case "memory":
       await session.runMemory(slash.op, slash.name, slash.body);

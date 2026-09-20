@@ -4,6 +4,8 @@ export interface EmptyHeroProps {
   ready: boolean;
   sessionId: string | null;
   cwd: string;
+  /** Opens the project picker; omitted in read-only/embedded hosts. */
+  onOpenProject?: () => void;
 }
 
 export function EmptyHero(props: EmptyHeroProps): JSX.Element {
@@ -28,6 +30,11 @@ export function EmptyHero(props: EmptyHeroProps): JSX.Element {
           <li className="mono">session · {props.sessionId.slice(0, 8)}…</li>
         ) : null}
       </ul>
+      {props.onOpenProject !== undefined ? (
+        <button type="button" className="hero-action" onClick={props.onOpenProject}>
+          Open a project…
+        </button>
+      ) : null}
       <p className="hero-hint">Ask anything to start this session.</p>
     </div>
   );
