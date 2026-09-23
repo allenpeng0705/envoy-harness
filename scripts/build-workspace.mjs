@@ -276,9 +276,14 @@ function main() {
     // failure stops before the next level instead of cascading.
     const filterArgs = level.flatMap((name) => ["--filter", name]);
     try {
-      execFileSync("pnpm", [...filterArgs, "run", "build"], {
+      // On Windows, `pnpm` is a `.cmd` shim; execFileSync without shell cannot
+      // spawn it (fails immediately with no package build output). Use pnpm.cmd
+      // + shell so stdio inherit still shows tsc errors.
+      const pnpmBin = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+      execFileSync(pnpmBin, [...filterArgs, "run", "build"], {
         cwd: ROOT,
         stdio: "inherit",
+        shell: process.platform === "win32",
       });
     } catch {
       process.stderr.write(
