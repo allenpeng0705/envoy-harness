@@ -133,6 +133,10 @@ export interface AcpHostState {
   provider: string;
   /** Optional API base URL override (OpenAI-/Anthropic-compatible). */
   baseUrl: string;
+  /** System One decision gate mode (off by default). */
+  decisionMode: string;
+  decisionBackend: string;
+  decisionEndpoint: string;
   sandbox: string;
   approval: string;
   autoRun: string;

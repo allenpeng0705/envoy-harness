@@ -296,6 +296,290 @@ export function parseSetPolicyParams(params: unknown): {
   };
 }
 
+const DECISION_MODES = new Set(["off", "shadow", "enforce"]);
+const DECISION_BACKENDS = new Set(["null", "laya-http", "jev", "onnx"]);
+
+function readOptionalFiniteNumber(
+  value: unknown,
+  opts?: { min?: number; max?: number },
+): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  if (opts?.min !== undefined && value < opts.min) return undefined;
+  if (opts?.max !== undefined && value > opts.max) return undefined;
+  return value;
+}
+
+function parseDecisionSafeAuto(raw: unknown):
+  | {
+      enabled?: boolean;
+      tools?: string[];
+      destructiveThreshold?: number;
+      minConfidence?: number;
+      honorDeny?: boolean;
+    }
+  | undefined {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    return undefined;
+  }
+  const sa = raw as Record<string, unknown>;
+  const tools = Array.isArray(sa["tools"])
+    ? sa["tools"].filter(
+        (t): t is string => typeof t === "string" && t.length > 0,
+      )
+    : undefined;
+  const out = {
+    ...(typeof sa["enabled"] === "boolean" ? { enabled: sa["enabled"] } : {}),
+    ...(tools !== undefined ? { tools } : {}),
+    ...(readOptionalFiniteNumber(sa["destructiveThreshold"], {
+      min: 0,
+      max: 1,
+    }) !== undefined
+      ? {
+          destructiveThreshold: readOptionalFiniteNumber(
+            sa["destructiveThreshold"],
+            { min: 0, max: 1 },
+          )!,
+        }
+      : {}),
+    ...(readOptionalFiniteNumber(sa["minConfidence"], { min: 0, max: 1 }) !==
+    undefined
+      ? {
+          minConfidence: readOptionalFiniteNumber(sa["minConfidence"], {
+            min: 0,
+            max: 1,
+          })!,
+        }
+      : {}),
+    ...(typeof sa["honorDeny"] === "boolean"
+      ? { honorDeny: sa["honorDeny"] }
+      : {}),
+  };
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function parseDecisionModelProfile(raw: unknown):
+  | {
+      id: string;
+      provider: string;
+      model: string;
+      baseUrl?: string;
+      description?: string;
+      toolsOk?: boolean;
+    }
+  | undefined {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    return undefined;
+  }
+  const p = raw as Record<string, unknown>;
+  if (
+    typeof p["id"] !== "string" ||
+    p["id"].length === 0 ||
+    typeof p["provider"] !== "string" ||
+    p["provider"].length === 0 ||
+    typeof p["model"] !== "string" ||
+    p["model"].length === 0
+  ) {
+    return undefined;
+  }
+  return {
+    id: p["id"],
+    provider: p["provider"],
+    model: p["model"],
+    ...(typeof p["baseUrl"] === "string" && p["baseUrl"].length > 0
+      ? { baseUrl: p["baseUrl"] }
+      : {}),
+    ...(typeof p["description"] === "string"
+      ? { description: p["description"] }
+      : {}),
+    ...(typeof p["toolsOk"] === "boolean" ? { toolsOk: p["toolsOk"] } : {}),
+  };
+}
+
+function parseDecisionModelRouter(raw: unknown):
+  | {
+      enabled?: boolean;
+      timeoutMs?: number;
+      minConfidence?: number;
+      defaultProfile?: string;
+      profiles?: Array<{
+        id: string;
+        provider: string;
+        model: string;
+        baseUrl?: string;
+        description?: string;
+        toolsOk?: boolean;
+      }>;
+    }
+  | undefined {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    return undefined;
+  }
+  const mr = raw as Record<string, unknown>;
+  const profiles = Array.isArray(mr["profiles"])
+    ? mr["profiles"]
+        .map(parseDecisionModelProfile)
+        .filter((p): p is NonNullable<typeof p> => p !== undefined)
+    : undefined;
+  const timeoutMs = readOptionalFiniteNumber(mr["timeoutMs"], { min: 1 });
+  const minConfidence = readOptionalFiniteNumber(mr["minConfidence"], {
+    min: 0,
+    max: 1,
+  });
+  const out = {
+    ...(typeof mr["enabled"] === "boolean" ? { enabled: mr["enabled"] } : {}),
+    ...(timeoutMs !== undefined ? { timeoutMs: Math.floor(timeoutMs) } : {}),
+    ...(minConfidence !== undefined ? { minConfidence } : {}),
+    ...(typeof mr["defaultProfile"] === "string" &&
+    mr["defaultProfile"].length > 0
+      ? { defaultProfile: mr["defaultProfile"] }
+      : {}),
+    ...(profiles !== undefined ? { profiles } : {}),
+  };
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function parseDecisionInputGuard(raw: unknown):
+  | {
+      enabled?: boolean;
+      timeoutMs?: number;
+      injectionThreshold?: number;
+      harmScoreBlock?: number;
+      honorBlock?: boolean;
+    }
+  | undefined {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    return undefined;
+  }
+  const ig = raw as Record<string, unknown>;
+  const timeoutMs = readOptionalFiniteNumber(ig["timeoutMs"], { min: 1 });
+  const injectionThreshold = readOptionalFiniteNumber(
+    ig["injectionThreshold"],
+    { min: 0, max: 1 },
+  );
+  const harmScoreBlock = readOptionalFiniteNumber(ig["harmScoreBlock"], {
+    min: 0,
+    max: 10,
+  });
+  const out = {
+    ...(typeof ig["enabled"] === "boolean" ? { enabled: ig["enabled"] } : {}),
+    ...(timeoutMs !== undefined ? { timeoutMs: Math.floor(timeoutMs) } : {}),
+    ...(injectionThreshold !== undefined ? { injectionThreshold } : {}),
+    ...(harmScoreBlock !== undefined ? { harmScoreBlock } : {}),
+    ...(typeof ig["honorBlock"] === "boolean"
+      ? { honorBlock: ig["honorBlock"] }
+      : {}),
+  };
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+export function parseSetDecisionParams(params: unknown): {
+  sessionId: string;
+  mode?: "off" | "shadow" | "enforce";
+  backend?: "null" | "laya-http" | "jev" | "onnx";
+  endpoint?: string;
+  timeoutMs?: number;
+  apiKeyEnv?: string;
+  model?: string;
+  safeAuto?: {
+    enabled?: boolean;
+    tools?: string[];
+    destructiveThreshold?: number;
+    minConfidence?: number;
+    honorDeny?: boolean;
+  };
+  modelRouter?: {
+    enabled?: boolean;
+    timeoutMs?: number;
+    minConfidence?: number;
+    defaultProfile?: string;
+    profiles?: Array<{
+      id: string;
+      provider: string;
+      model: string;
+      baseUrl?: string;
+      description?: string;
+      toolsOk?: boolean;
+    }>;
+  };
+  inputGuard?: {
+    enabled?: boolean;
+    timeoutMs?: number;
+    injectionThreshold?: number;
+    harmScoreBlock?: number;
+    honorBlock?: boolean;
+  };
+} {
+  if (params === null || typeof params !== "object") {
+    throw new JsonRpcError("invalid params", JsonRpcErrorCode.INVALID_PARAMS);
+  }
+  const obj = params as {
+    mode?: unknown;
+    backend?: unknown;
+    endpoint?: unknown;
+    timeoutMs?: unknown;
+    apiKeyEnv?: unknown;
+    model?: unknown;
+    safeAuto?: unknown;
+    modelRouter?: unknown;
+    inputGuard?: unknown;
+  };
+  const sessionId = readSessionId(params);
+  const mode =
+    typeof obj.mode === "string" && DECISION_MODES.has(obj.mode)
+      ? (obj.mode as "off" | "shadow" | "enforce")
+      : undefined;
+  const backend =
+    typeof obj.backend === "string" && DECISION_BACKENDS.has(obj.backend)
+      ? (obj.backend as "null" | "laya-http" | "jev" | "onnx")
+      : undefined;
+  const endpoint =
+    typeof obj.endpoint === "string" && obj.endpoint.length > 0
+      ? obj.endpoint
+      : undefined;
+  const timeoutMsRaw = readOptionalFiniteNumber(obj.timeoutMs, { min: 1 });
+  const timeoutMs =
+    timeoutMsRaw !== undefined ? Math.floor(timeoutMsRaw) : undefined;
+  const apiKeyEnv =
+    typeof obj.apiKeyEnv === "string" && obj.apiKeyEnv.length > 0
+      ? obj.apiKeyEnv
+      : undefined;
+  const model =
+    typeof obj.model === "string" && obj.model.length > 0
+      ? obj.model
+      : undefined;
+  const safeAuto = parseDecisionSafeAuto(obj.safeAuto);
+  const modelRouter = parseDecisionModelRouter(obj.modelRouter);
+  const inputGuard = parseDecisionInputGuard(obj.inputGuard);
+  if (
+    mode === undefined &&
+    backend === undefined &&
+    endpoint === undefined &&
+    timeoutMs === undefined &&
+    apiKeyEnv === undefined &&
+    model === undefined &&
+    safeAuto === undefined &&
+    modelRouter === undefined &&
+    inputGuard === undefined
+  ) {
+    throw new JsonRpcError(
+      "decision field required (mode, backend, endpoint, …)",
+      JsonRpcErrorCode.INVALID_PARAMS,
+    );
+  }
+  return {
+    sessionId,
+    ...(mode !== undefined ? { mode } : {}),
+    ...(backend !== undefined ? { backend } : {}),
+    ...(endpoint !== undefined ? { endpoint } : {}),
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+    ...(apiKeyEnv !== undefined ? { apiKeyEnv } : {}),
+    ...(model !== undefined ? { model } : {}),
+    ...(safeAuto !== undefined ? { safeAuto } : {}),
+    ...(modelRouter !== undefined ? { modelRouter } : {}),
+    ...(inputGuard !== undefined ? { inputGuard } : {}),
+  };
+}
+
 export function parseGitDiffParams(params: unknown): {
   sessionId: string;
   staged?: boolean;

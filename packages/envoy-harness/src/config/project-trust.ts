@@ -77,6 +77,9 @@ export const PROJECT_LOCAL_DENYLIST: ReadonlySet<string> = new Set([
   //    config override that outranks the user's own setting is not.
   "persona",
   "developerInstructions",
+  // 7. Decision add-ons can widen auto-allow and send tool args to an
+  //    HTTP endpoint — never from an untrusted project layer.
+  "decision",
 ]);
 
 /** The result of sanitizing a project layer. */

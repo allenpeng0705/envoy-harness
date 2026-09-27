@@ -215,6 +215,25 @@ export function jobsGuidanceSection(): PromptSection {
   };
 }
 
+/**
+ * Sub-agent / `task` parallel guidance (order 107).
+ * Registered when the host wires a mesh submitter (CLI unless `--no-subagents`).
+ */
+export function taskGuidanceSection(): PromptSection {
+  return {
+    name: "tool:task",
+    order: 107,
+    text:
+      "Use the task tool to spawn sub-agents in a fresh session. For independent work, start " +
+      "several at once: either emit multiple task tool calls in one assistant message, or pass a " +
+      "tasks array in a single call. Prefer run_in_background: true when you do not need the " +
+      "result before continuing — you will get a settlement notice when each child finishes " +
+      "(injected mid-turn before the next model call, or as a follow-up turn when idle), or " +
+      "join with wait_agents / job_wait / job_output (wait: true). Do not busy-poll. Cap: at most " +
+      "maxSubagents children per turn (default 8); concurrency defaults to maxParallelToolCalls (4).",
+  };
+}
+
 /** DeepSeek tool:web_search guidance (order 110). */
 export function webSearchGuidanceSection(): PromptSection {
   return {

@@ -12,6 +12,15 @@ import {
 } from "../interaction/user-questions.js";
 import { createHostBridgeUserQuestionProvider } from "../interaction/providers/host-bridge.js";
 import {
+  createDecisionClient,
+  resolveSafeAutoAsk,
+  type DecisionClient,
+  type DecisionConfig,
+  type InputGuardRecord,
+  type ModelRouterRecord,
+  type SafeAutoRecord,
+} from "../decision/index.js";
+import {
   shouldAskUnderAutoRun,
   type AutoRunPolicy,
 } from "../permissions/auto-run.js";
@@ -19,6 +28,19 @@ import { SessionInitGuard } from "../session/lease-guard.js";
 import type { PersistedSession } from "../session/persisted-session.js";
 import type { AskHandler } from "../types.js";
 import { installToolPermissionAskHook } from "./permission-hook.js";
+
+/** Audit records from safe-auto / input-guard / model-router. */
+export type DecisionAuditRecord =
+  | SafeAutoRecord
+  | InputGuardRecord
+  | ModelRouterRecord;
+
+/** Mutable decision-gate handle shared across sessions. */
+export interface DecisionGateHandle {
+  config: DecisionConfig;
+  client: DecisionClient;
+  onRecord?: (record: DecisionAuditRecord) => void;
+}
 
 export interface LiveSession {
   agent: Agent;
@@ -68,6 +90,9 @@ export interface LiveSession {
   baseUrlLabel?: string | null;
   /** Session-level auto-run permission policy (TUI / ACP hosts). */
   autoRun?: AutoRunPolicy;
+  /** Optional System One decision gate (Laya / Jev). */
+  decisionConfig?: DecisionConfig;
+  decisionClient?: DecisionClient;
 }
 
 export function cancelPendingUserQuestions(live: LiveSession): void {
@@ -220,15 +245,73 @@ export function emptyLiveSession(): LiveSession {
 export function installLivePermissionHook(
   live: LiveSession,
   shouldAskTool: ((toolName: string, args?: unknown) => boolean) | undefined,
+  gate?: DecisionGateHandle,
 ): void {
   const hooks = live.agent.hooks ?? new HookRegistry();
+  if (gate !== undefined) {
+    live.decisionConfig = gate.config;
+    live.decisionClient = gate.client;
+    live.agent.decisionConfig = gate.config;
+    live.agent.decisionClient = gate.client;
+    if (gate.onRecord !== undefined) {
+      live.agent.decisionOnRecord = gate.onRecord;
+    }
+  }
   installToolPermissionAskHook(hooks, {
-    shouldAsk: (toolName, args) => {
+    shouldAsk: async (toolName, args) => {
       const autoRun = shouldAskUnderAutoRun(live.autoRun, toolName, args);
-      if (autoRun !== undefined) return autoRun;
-      return shouldAskTool?.(toolName, args) ?? true;
+      const incumbentAsk =
+        autoRun !== undefined
+          ? autoRun
+          : (shouldAskTool?.(toolName, args) ?? true);
+      const cfg = live.decisionConfig ?? gate?.config;
+      const client = live.decisionClient ?? gate?.client;
+      if (cfg === undefined || client === undefined || cfg.mode === "off") {
+        return incumbentAsk;
+      }
+      const resolved = await resolveSafeAutoAsk({
+        config: cfg,
+        client,
+        incumbentAsk,
+        tool: toolName,
+        args,
+        stateExtras: {
+          ...(live.autoRun !== undefined ? { autoRun: live.autoRun } : {}),
+          ...(live.agent.getPermissionMode !== undefined
+            ? { permissionMode: live.agent.getPermissionMode() }
+            : {}),
+        },
+        ...(gate?.onRecord !== undefined ? { onRecord: gate.onRecord } : {}),
+      });
+      // Phase 3b: honorDeny → hard block (not a human ask).
+      if (resolved.deny) return "deny";
+      return resolved.shouldAsk;
     },
   });
+}
+
+/** Rebuild client after a config patch (session/set_decision). */
+export function applyDecisionGateConfig(
+  gate: DecisionGateHandle,
+  next: DecisionConfig,
+): DecisionGateHandle {
+  gate.config = next;
+  gate.client = createDecisionClient(next);
+  return gate;
+}
+
+/** Push gate state onto a live session + its agent (run-loop reads Agent). */
+export function syncDecisionGateToLive(
+  live: LiveSession,
+  gate: DecisionGateHandle,
+): void {
+  live.decisionConfig = gate.config;
+  live.decisionClient = gate.client;
+  live.agent.decisionConfig = gate.config;
+  live.agent.decisionClient = gate.client;
+  if (gate.onRecord !== undefined) {
+    live.agent.decisionOnRecord = gate.onRecord;
+  }
 }
 
 

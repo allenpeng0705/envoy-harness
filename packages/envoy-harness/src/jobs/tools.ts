@@ -108,16 +108,71 @@ export function makeJobTools(registry: JobRegistry): Tool[] {
     name: "job_output",
     description:
       "Read new output from a background job since the last read " +
-      "(consuming cursor).",
+      "(consuming cursor). Set wait: true only when you are genuinely " +
+      "blocked on the job finishing; a timed-out wait leaves the job " +
+      "running.",
     parameters: z.object({
       id: z.string().describe("Job id from job_start"),
+      wait: z
+        .boolean()
+        .optional()
+        .describe(
+          "When true, block until the job finishes or timeout_ms expires. " +
+            "Defaults to false.",
+        ),
+      timeout_ms: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe(
+          "Max wait in ms when wait: true (default 30000, capped at 600000).",
+        ),
     }),
     async execute(args, ctx): Promise<ToolResult> {
       try {
+        if (args.wait === true) {
+          const timeoutMs = Math.min(args.timeout_ms ?? 30_000, 600_000);
+          try {
+            await registry.wait(
+              args.id,
+              timeoutMs,
+              ctx.session.id,
+              ctx.abortSignal,
+            );
+          } catch (err) {
+            // Timed-out / aborted waits still return current output + snapshot
+            // (DeepSeek-style): the job keeps running; the model decides next.
+            if (
+              err instanceof JobError &&
+              (err.code === "WAIT_TIMEOUT" || err.code === "WAIT_ABORTED")
+            ) {
+              const read = registry.read(args.id, ctx.session.id);
+              return {
+                content: JSON.stringify({
+                  text: read.text.length > 0 ? read.text : "(no new output)",
+                  snapshot: publicSnap(read.snapshot),
+                  wait: err.code === "WAIT_ABORTED" ? "interrupted" : "timed_out",
+                }),
+              };
+            }
+            if (ctx.abortSignal.aborted) {
+              const read = registry.read(args.id, ctx.session.id);
+              return {
+                content: JSON.stringify({
+                  text: read.text.length > 0 ? read.text : "(no new output)",
+                  snapshot: publicSnap(read.snapshot),
+                  wait: "interrupted",
+                }),
+              };
+            }
+            throw err;
+          }
+        }
         const read = registry.read(args.id, ctx.session.id);
         return {
           content: JSON.stringify({
-            text: read.text,
+            text: read.text.length > 0 ? read.text : "(no new output)",
             snapshot: publicSnap(read.snapshot),
           }),
         };

@@ -4,6 +4,16 @@
 
 import type { MemoryStore } from "../memories/store.js";
 import type { Agent } from "../agent.js";
+import {
+  createDecisionClient,
+  decisionConfigPublic,
+  defaultDecisionConfig,
+  patchDecisionConfig,
+  type DecisionConfig,
+  type DecisionConfigLayer,
+  type DecisionInputGuardConfig,
+  type DecisionModelRouterConfig,
+} from "../decision/index.js";
 import { createProviderAdapter } from "../llm/index.js";
 import { newSessionId } from "../session.js";
 import type { AskHandler } from "../types.js";
@@ -43,12 +53,15 @@ import type { UserQuestionService } from "../interaction/user-questions.js";
 import {
   DEFAULT_SESSION_ACQUIRE_TIMEOUT_MS,
   acquirePersistedSession,
+  applyDecisionGateConfig,
   cancelPendingUserQuestions,
   createHostAskHandler,
   emptyLiveSession,
   installLivePermissionHook,
   retireLiveSession,
+  syncDecisionGateToLive,
   wireHostUserQuestions,
+  type DecisionGateHandle,
   type LiveSession,
 } from "./agent-backend-host.js";
 import type {
@@ -124,6 +137,11 @@ export interface AgentSessionBackendOptions {
    * list is the honest answer for "no projects yet" either way.
    */
   workspaces?: WorkspaceRegistry;
+  /**
+   * Optional System One decision gate (Laya / Jev). Default off.
+   * Hosts may also update via `session/set_decision`.
+   */
+  decision?: DecisionConfig;
 }
 
 function assertSessionIdle(live: LiveSession): void {
@@ -151,6 +169,11 @@ export function createAgentSessionBackend(
   const acquireTimeoutMs =
     options.sessionAcquireTimeoutMs ?? DEFAULT_SESSION_ACQUIRE_TIMEOUT_MS;
 
+  const initialDecision = options.decision ?? defaultDecisionConfig();
+  const decisionGate: DecisionGateHandle = {
+    config: initialDecision,
+    client: createDecisionClient(initialDecision),
+  };
 
   const pruneIfNeeded = (): void => {
     while (sessions.size >= maxSessions) {
@@ -206,7 +229,7 @@ export function createAgentSessionBackend(
         userQuestions,
         ...(persisted !== undefined ? { session: persisted } : {}),
       });
-      installLivePermissionHook(live, options.shouldAskTool);
+      installLivePermissionHook(live, options.shouldAskTool, decisionGate);
       sessions.set(sessionId, live);
       // Keep the project's "last used" fresh for the UI. Best-effort: a
       // registry failure must never prevent a session from starting, and
@@ -246,7 +269,7 @@ export function createAgentSessionBackend(
         userQuestions,
         session: persisted,
       });
-      installLivePermissionHook(live, options.shouldAskTool);
+      installLivePermissionHook(live, options.shouldAskTool, decisionGate);
       sessions.set(sessionId, live);
       return {
         sessionId,
@@ -303,7 +326,10 @@ export function createAgentSessionBackend(
         ...(params.model !== undefined ? { model: params.model } : {}),
         ...(params.baseUrl !== undefined ? { baseUrl: params.baseUrl } : {}),
       });
-      live.agent.setModel(adapter);
+      live.agent.setModel(adapter, {
+        provider: params.provider,
+        ...(params.model !== undefined ? { model: params.model } : {}),
+      });
       live.providerLabel = params.provider;
       live.modelLabel =
         params.model !== undefined
@@ -319,6 +345,56 @@ export function createAgentSessionBackend(
         ...(params.model !== undefined ? { model: params.model } : {}),
         ...(params.baseUrl !== undefined ? { baseUrl: params.baseUrl } : {}),
       };
+    },
+
+    async setDecision(params) {
+      const live = sessions.get(params.sessionId);
+      if (live === undefined) {
+        throw new Error(`unknown session: ${params.sessionId}`);
+      }
+      assertSessionIdle(live);
+      const patch: DecisionConfigLayer = {
+        ...(params.mode !== undefined ? { mode: params.mode } : {}),
+        ...(params.backend !== undefined ? { backend: params.backend } : {}),
+        ...(params.endpoint !== undefined ? { endpoint: params.endpoint } : {}),
+        ...(params.timeoutMs !== undefined
+          ? { timeoutMs: params.timeoutMs }
+          : {}),
+        ...(params.apiKeyEnv !== undefined
+          ? { apiKeyEnv: params.apiKeyEnv }
+          : {}),
+        ...(params.model !== undefined ? { model: params.model } : {}),
+        ...(params.safeAuto !== undefined
+          ? { safeAuto: params.safeAuto }
+          : {}),
+        ...(params.modelRouter !== undefined
+          ? {
+              modelRouter: {
+                ...params.modelRouter,
+                ...(params.modelRouter.profiles !== undefined
+                  ? {
+                      profiles: params.modelRouter.profiles.map((p) => ({
+                        ...p,
+                      })),
+                    }
+                  : {}),
+              } satisfies Partial<DecisionModelRouterConfig>,
+            }
+          : {}),
+        ...(params.inputGuard !== undefined
+          ? {
+              inputGuard: {
+                ...params.inputGuard,
+              } satisfies Partial<DecisionInputGuardConfig>,
+            }
+          : {}),
+      };
+      const next = patchDecisionConfig(decisionGate.config, patch);
+      applyDecisionGateConfig(decisionGate, next);
+      for (const s of sessions.values()) {
+        syncDecisionGateToLive(s, decisionGate);
+      }
+      return decisionConfigPublic(decisionGate.config);
     },
 
     async setPolicy(params) {
@@ -525,7 +601,24 @@ export function createAgentSessionBackend(
             : {}),
         });
       }
-      return mergeLabeledConfig(base, labels);
+      const decisionPub = decisionConfigPublic(decisionGate.config);
+      // Surface last model-router choice from any live session (newest wins).
+      let lastChosen: string | undefined;
+      for (const live of sessions.values()) {
+        if (live.agent.decisionModelRouterLastChosen !== undefined) {
+          lastChosen = live.agent.decisionModelRouterLastChosen;
+        }
+      }
+      if (lastChosen !== undefined) {
+        const mr = decisionPub["modelRouter"];
+        if (mr !== null && typeof mr === "object") {
+          (mr as Record<string, unknown>)["lastChosen"] = lastChosen;
+        }
+      }
+      return {
+        ...mergeLabeledConfig(base, labels),
+        decision: decisionPub,
+      };
     },
     ...(options.listPeers !== undefined
       ? { listPeers: options.listPeers }

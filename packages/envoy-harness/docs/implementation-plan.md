@@ -10,6 +10,17 @@
 > Locked design questions live in the chunk's sub-plan; the chunk ships
 > the code + tests + a self-review commit.
 
+> **Related designs:**
+> - [`laya-decision-addons.md`](./laya-decision-addons.md) — optional System One
+>   (Laya/Jev/laya-mlx) decision add-ons. **Add-on A (safe-auto) shipped**;
+>   B/F/G/H/C/D/E + mlx sidecar fully designed with phased roadmap (§14 in
+>   that doc). Do not duplicate design prose here — implement from that
+>   source of truth.
+> - [`self-evolution-design.md`](./self-evolution-design.md) — self-evolution
+>   criterion and loop discipline.
+> - [`verifier-benchmark-decision-brief.md`](./verifier-benchmark-decision-brief.md)
+>   — frozen verifier benchmark judgements.
+
 ## Why this doc
 
 `gap-closure-plan.md` is the strategy: which gaps matter, in what order,

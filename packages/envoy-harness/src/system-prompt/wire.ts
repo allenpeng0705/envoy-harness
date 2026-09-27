@@ -26,6 +26,7 @@ import {
   permissionsPolicySection,
   planModeSection,
   readFileGuidanceSection,
+  taskGuidanceSection,
   terminalGuidanceSection,
   webSearchGuidanceSection,
   workspaceSection,
@@ -47,6 +48,11 @@ export interface BuildAgentSystemPromptOptions {
   includeHarnessIdentity?: boolean;
   /** Include default tool guidance sections (default true). */
   toolGuidance?: boolean;
+  /**
+   * Include `task` / sub-agent parallel guidance. Default false —
+   * CLI/ACP set true when a mesh submitter is wired.
+   */
+  taskGuidance?: boolean;
   /** Deployment persona (DeepSeek order 0). */
   persona?: string;
   /** Host developer instructions (order 10). */
@@ -132,6 +138,9 @@ export async function buildAgentSystemPrompt(
     registry.register(readFileGuidanceSection());
     registry.register(bashGuidanceSection());
     registry.register(jobsGuidanceSection());
+    if (options.taskGuidance === true) {
+      registry.register(taskGuidanceSection());
+    }
     registry.register(webSearchGuidanceSection());
   }
 

@@ -59,7 +59,7 @@ Three-column shell (inspired by deepseek-harness, Envoy branding):
 | **Center · Chat** | Empty hero, markdown streaming, foldable activity, Stop/Send |
 | **Right · Details** | **Mesh** tab (peers/jobs/sub-agents) · **Tools** tab (Plan/Diff/Memory/…) |
 | **Permissions** | Summary of command/path; expandable raw args |
-| **Settings** | Provider, model, base URL, policy, light/dark theme |
+| **Settings** | Provider, model, base URL, policy, decision gate (off by default), light/dark theme |
 | **Connection** | Connecting / connected / disconnected; Reconnect |
 
 **Long runs:** start with `--persist`, use **Stop** when needed, and Reconnect

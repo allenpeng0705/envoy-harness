@@ -85,6 +85,9 @@ export class AcpHost {
     model: "",
     provider: "",
     baseUrl: "",
+    decisionMode: "off",
+    decisionBackend: "null",
+    decisionEndpoint: "",
     sandbox: "read-only",
     approval: "on-request",
     autoRun: "always-confirm",
@@ -580,6 +583,46 @@ export class AcpHost {
         approval:
           res.result?.approval ?? policy.approval ?? this.#state.approval,
         autoRun: res.result?.autoRun ?? policy.autoRun ?? this.#state.autoRun,
+        error: null,
+      });
+    } catch (err) {
+      this.#patch({
+        error: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
+  }
+
+  async setDecision(partial: {
+    mode?: string;
+    backend?: string;
+    endpoint?: string;
+  }): Promise<void> {
+    const client = this.#client;
+    const sessionId = this.#state.sessionId;
+    if (!client || !sessionId) throw new Error("not connected");
+    try {
+      const res = (await client.request("session/set_decision", {
+        sessionId,
+        ...partial,
+      })) as {
+        result?: {
+          mode?: string;
+          backend?: string;
+          endpoint?: string;
+        };
+      };
+      this.#patch({
+        decisionMode: res.result?.mode ?? partial.mode ?? this.#state.decisionMode,
+        decisionBackend:
+          res.result?.backend ??
+          partial.backend ??
+          this.#state.decisionBackend,
+        decisionEndpoint:
+          res.result?.endpoint ??
+          (partial.endpoint !== undefined
+            ? partial.endpoint
+            : this.#state.decisionEndpoint),
         error: null,
       });
     } catch (err) {

@@ -27,8 +27,10 @@ import {
   HookRegistry,
   JsonLinesTracer,
   LocalMemoryStore,
+  createDecisionClient,
   loadConfigStack,
   loadConfigWithImport,
+  mergeDecisionConfig,
   NullTracer,
   ToolRegistry,
   VerboseTracer,
@@ -330,6 +332,8 @@ export async function runAgent(
     plan: parsed.plan === true,
     ...systemPromptOptionsFromConfig(configLayer),
     permissionMode: effectiveMode ?? "read-only",
+    // Parallel sub-agent coaching only when the host will wire meshSubmitter.
+    taskGuidance: parsed.noSubagents !== true,
     ...(configLayer.askForApproval !== undefined
       ? { askForApproval: configLayer.askForApproval }
       : parsed.approval !== undefined
@@ -409,6 +413,21 @@ export async function runAgent(
         : {}),
       parentSessionId: session.id,
     });
+    // Do NOT enable settlementFollowup here: after the primary run returns
+    // the CLI tears down the session/process. An idle wake would race that
+    // teardown. Mid-turn flush still delivers notices during the run;
+    // REPL/ACP enable settlementFollowup for long-lived sessions.
+  }
+  {
+    const decision = mergeDecisionConfig(configLayer.decision);
+    agentOptions.decisionConfig = decision;
+    agentOptions.decisionClient = createDecisionClient(decision);
+    if (parsed.provider !== undefined || parsed.model !== undefined) {
+      agentOptions.decisionModelHint = {
+        ...(parsed.provider !== undefined ? { provider: parsed.provider } : {}),
+        ...(parsed.model !== undefined ? { model: parsed.model } : {}),
+      };
+    }
   }
   const agent = new Agent(agentOptions);
 

@@ -13,6 +13,9 @@ export interface AcpBootstrap {
   provider: string;
   model: string;
   baseUrl: string;
+  decisionMode: string;
+  decisionBackend: string;
+  decisionEndpoint: string;
   sandbox: string;
   approval: string;
   autoRun: string;
@@ -66,12 +69,20 @@ export async function bootstrapAcpSession(
     // optional
   }
 
+  const decision =
+    config["decision"] !== null && typeof config["decision"] === "object"
+      ? (config["decision"] as Record<string, unknown>)
+      : {};
+
   return {
     sessionId: session.sessionId,
     protocolVersion: init.protocolVersion,
     provider: String(config["provider"] ?? ""),
     model: String(config["model"] ?? ""),
     baseUrl: String(config["baseUrl"] ?? ""),
+    decisionMode: String(decision["mode"] ?? "off"),
+    decisionBackend: String(decision["backend"] ?? "null"),
+    decisionEndpoint: String(decision["endpoint"] ?? ""),
     sandbox: policy.sandbox,
     approval: policy.approval,
     autoRun: policy.autoRun,

@@ -5,8 +5,28 @@ import {
   isEphemeralUserContextText,
   isEphemeralUserMessage,
 } from "../../src/context/ephemeral-user-context.js";
+import { formatSettlementNotice } from "../../src/subagent/settlement-notice.js";
 
 describe("isEphemeralUserContextText", () => {
+  it("hides settlement notices from chat bubbles", () => {
+    const notice = formatSettlementNotice({
+      jobId: "j1",
+      agentId: "a1",
+      result: {
+        status: "completed",
+        content: [{ type: "text", text: "done" }],
+        workerPeerId: "local",
+        workerRuntime: "envoy-harness",
+        costUsd: 0,
+        durationMs: 1,
+        verdict: { kind: "pass", score: 0.5, confidence: "medium" },
+        signature: "",
+      },
+    });
+    expect(notice.startsWith("[system] Sub-agent settled:")).toBe(true);
+    expect(isEphemeralUserContextText(notice)).toBe(true);
+  });
+
   it("detects skill catalog blocks", () => {
     expect(
       isEphemeralUserContextText(

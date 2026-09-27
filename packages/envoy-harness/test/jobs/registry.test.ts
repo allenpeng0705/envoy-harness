@@ -128,6 +128,25 @@ describe("createLocalJobRegistry", () => {
     await reg.dispose();
   });
 
+  it("wait abort yields WAIT_ABORTED", async () => {
+    const reg = createLocalJobRegistry();
+    const c = controllableJob();
+    const id = reg.start({
+      kind: "bash",
+      label: "slow",
+      owner: "s1",
+      run: () => c.hooks,
+    });
+    const ac = new AbortController();
+    const pending = reg.wait(id, 30_000, "s1", ac.signal);
+    ac.abort();
+    await expect(pending).rejects.toMatchObject({
+      code: "WAIT_ABORTED",
+    });
+    c.settle({ status: "completed" });
+    await reg.dispose();
+  });
+
   it("onJobDone fires once on settle", async () => {
     const reg = createLocalJobRegistry();
     const c = controllableJob();

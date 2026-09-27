@@ -560,16 +560,24 @@ export class ContinuableSubagentRegistry {
       running.settleWaiters.push(waiter);
 
       let timeout: ReturnType<typeof setTimeout> | undefined;
+      let finished = false;
       const cleanup = (): void => {
         if (timeout !== undefined) clearTimeout(timeout);
         options?.signal?.removeEventListener("abort", onAbort);
       };
+      const finishReject = (err: Error): void => {
+        if (finished) return;
+        finished = true;
+        cleanup();
+        const idx = running.settleWaiters.indexOf(waiter);
+        if (idx >= 0) running.settleWaiters.splice(idx, 1);
+        reject(err);
+      };
       const onAbort = (): void => {
-        // Parent abort settles via interruptHandle → settle().
-        // Do not reject here (race with that path); just drop the
-        // waiter-cancel timeout/listener and let settle resolve.
-        if (timeout !== undefined) clearTimeout(timeout);
-        options?.signal?.removeEventListener("abort", onAbort);
+        // Waiter abort (e.g. wait_agents) must not hang: reject so the
+        // caller can return `interrupted`. Child lifetime is unchanged —
+        // parentSignal → interruptHandle is a separate path.
+        finishReject(new Error("wait aborted"));
       };
       if (options?.signal !== undefined) {
         if (options.signal.aborted) {
@@ -580,14 +588,15 @@ export class ContinuableSubagentRegistry {
       }
       if (options?.timeoutMs !== undefined) {
         timeout = setTimeout(() => {
-          cleanup();
-          const idx = running.settleWaiters.indexOf(waiter);
-          if (idx >= 0) running.settleWaiters.splice(idx, 1);
-          reject(new Error(`waitSettle timed out (${options.timeoutMs}ms)`));
+          finishReject(
+            new Error(`waitSettle timed out (${options.timeoutMs}ms)`),
+          );
         }, options.timeoutMs);
       }
       const origResolve = waiter.resolve;
       waiter.resolve = (result) => {
+        if (finished) return;
+        finished = true;
         cleanup();
         origResolve(result);
       };

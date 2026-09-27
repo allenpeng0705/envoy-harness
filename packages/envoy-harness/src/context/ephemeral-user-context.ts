@@ -14,6 +14,9 @@ export function isEphemeralUserContextText(text: string): boolean {
   if (trimmed.startsWith("ACTIVE PLAN (approved at")) return true;
   if (trimmed.startsWith("Available memories (read with")) return true;
   if (trimmed.startsWith("[system] Your previous response")) return true;
+  // Settlement notices (formatSettlementNotice + legacy wordings).
+  if (trimmed.startsWith("[system] Sub-agent settled:")) return true;
+  if (trimmed.startsWith("[system] Background subagent ")) return true;
   // Text a lifecycle hook contributed via `add-context` is model-only
   // context, exactly like the skill catalog — it must not appear as a
   // human bubble in EH / Social / EnvoyGo.

@@ -27,8 +27,8 @@ import {
   type RoutingHint,
   type SubagentInput,
   type SubagentResult,
-  TaskInputSchema,
-} from "@envoymesh/envoy-harness";
+  TaskInputObjectSchema,
+} from "../src/index.js";
 
 // ---------------------------------------------------------------------------
 // 1. RoutingHint accepted on SubagentInput
@@ -112,7 +112,7 @@ describe("F10.3.3: RoutingHint seam", () => {
     // The model only sees the zod schema's shape. If the
     // tool's parameters don't include routingHint, the
     // model can't set it (correct — only the host can).
-    const shape = (TaskInputSchema as { shape: Record<string, unknown> }).shape;
+    const shape = TaskInputObjectSchema.shape;
     expect("routingHint" in shape).toBe(false);
     // Sanity: the standard fields ARE present.
     expect("objective" in shape).toBe(true);

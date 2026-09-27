@@ -29,6 +29,7 @@ import {
   wireMcpClientsFromConfig,
   type ModelAdapter,
   loadConfigStack,
+  mergeDecisionConfig,
   resolveAgentRuntimeConfig,
   systemPromptOptionsFromConfig,
   type ProtocolSessionBackend,
@@ -214,6 +215,7 @@ async function resolveAcpBackend(
       permissionMode: runtime.permissionMode,
       askForApproval: runtime.askForApproval,
       plan: parsed.plan === true,
+      taskGuidance: parsed.noSubagents !== true,
     });
     return {
       backend: await wireCluster(
@@ -230,6 +232,7 @@ async function resolveAcpBackend(
               process.env["ENVOY_WORKSPACES_FILE"] ?? defaultWorkspacesFilePath(),
             allowedRoots: workspaceRootsFromEnv(),
           }),
+          decision: mergeDecisionConfig(configLayer.decision),
           // U2 — the status bar reads the model label from config/get.
           getConfig: () => ({
             version: "0.0.0",
@@ -283,6 +286,18 @@ async function resolveAcpBackend(
                       configLayer.shellEnvironmentPolicy,
                   }
                 : {}),
+              ...(parsed.provider !== undefined || parsed.model !== undefined
+                ? {
+                    decisionModelHint: {
+                      ...(parsed.provider !== undefined
+                        ? { provider: parsed.provider }
+                        : {}),
+                      ...(parsed.model !== undefined
+                        ? { model: parsed.model }
+                        : {}),
+                    },
+                  }
+                : {}),
               jobRegistry,
               terminalService: env.terminals,
               ...(mcpWire !== undefined ? { mcpClients: mcpWire.registry } : {}),
@@ -303,6 +318,7 @@ async function resolveAcpBackend(
                       permissionMode: runtime.permissionMode,
                       parentSessionId: sessionId,
                     }),
+                    settlementFollowup: true,
                   }
                 : {}),
             });

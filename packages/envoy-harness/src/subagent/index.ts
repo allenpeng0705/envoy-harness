@@ -54,6 +54,7 @@ export {
 
 export {
   makeSubagentControlTools,
+  makeWaitAgentsTool,
   spawnBackgroundSubagent,
   supportsContinuable,
   type SpawnBackgroundOptions,
@@ -62,7 +63,12 @@ export {
   type SubagentBackgroundMode,
 } from "./background.js";
 
+export { mapBoundedParallel } from "./bounded-parallel.js";
+
+export { formatSettlementNotice } from "./settlement-notice.js";
+
 export {
+  TaskInputObjectSchema,
   TaskInputSchema,
   makeTaskTool,
   VERDICT_IS_PREDICTION,

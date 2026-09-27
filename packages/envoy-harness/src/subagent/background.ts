@@ -38,7 +38,12 @@
 
 import { z } from "zod";
 
-import type { JobOutcome, JobRegistry, JobStatus } from "../jobs/index.js";
+import type {
+  JobOutcome,
+  JobRegistry,
+  JobSnapshot,
+  JobStatus,
+} from "../jobs/index.js";
 import type { Tool, ToolResult } from "../tools/types.js";
 import type {
   ContinuableSubmitter,
@@ -75,6 +80,8 @@ export interface SpawnBackgroundOptions {
    * result, so calling back there would double-count.
    */
   onResult?: (result: SubagentResult) => void;
+  /** Called once when the child settles (for parent settlement notices). */
+  onSettle?: (result: SubagentResult) => void;
 }
 
 export interface SpawnBackgroundResult {
@@ -144,8 +151,13 @@ export function spawnBackgroundSubagent(
           consumed = full.length;
           return delta;
         },
-        done: child.waitSettle().then(
-          (result): JobOutcome => ({
+        done: child.waitSettle().then((result): JobOutcome => {
+          try {
+            options.onSettle?.(result);
+          } catch {
+            // Host notice callback must not break job settlement.
+          }
+          return {
             status: cancelRequested
               ? "killed"
               : result.status === "failed"
@@ -153,8 +165,8 @@ export function spawnBackgroundSubagent(
                 : "completed",
             detail: `subagent ${child.id} settled ${result.status}`,
             output: child.output(),
-          }),
-        ),
+          };
+        }),
       };
     },
   });
@@ -213,8 +225,173 @@ const InterruptAgentParams = z.object({
  * with its own tool registry, and this factory is registered by the
  * parent's `Agent`. Parent→child steering is the scope here.
  */
+const WaitAgentsParams = z.object({
+  job_ids: z
+    .array(z.string().min(1))
+    .optional()
+    .describe("Background job ids returned by task (run_in_background)."),
+  agent_ids: z
+    .array(z.string().min(1))
+    .optional()
+    .describe(
+      "Child agent ids from list_agents / task. Resolved via the " +
+        "continuable handle registry when still live.",
+    ),
+  timeout_ms: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe(
+      "Max wait per target in ms. Default 120000. Timed-out targets " +
+        "return status timed_out without cancelling the child.",
+    ),
+});
+
+/**
+ * Lean join tool: wait for background job ids and/or agent ids to settle.
+ * Registered when the host wires both a continuable submitter and jobs.
+ */
+export function makeWaitAgentsTool(options: {
+  submitter: SteerableSubmitter;
+  jobs: JobRegistry;
+}): Tool<typeof WaitAgentsParams> {
+  const { submitter, jobs } = options;
+  return {
+    name: "wait_agents",
+    description:
+      "Wait until the given background sub-agent jobs (and/or live agent " +
+      "ids) settle, then return their status and a truncated output " +
+      "excerpt. Prefer this over busy-polling job_status. Does not cancel " +
+      "timed-out children.",
+    parameters: WaitAgentsParams,
+    async execute(args, ctx): Promise<ToolResult> {
+      const jobIds = args.job_ids ?? [];
+      const agentIds = args.agent_ids ?? [];
+      if (jobIds.length === 0 && agentIds.length === 0) {
+        return errResult("wait_agents requires job_ids and/or agent_ids");
+      }
+      const timeoutMs = args.timeout_ms ?? 120_000;
+      const owner = ctx.session.id;
+
+      const waitOneJob = async (
+        id: string,
+      ): Promise<Record<string, unknown>> => {
+        try {
+          const snap: JobSnapshot = await jobs.wait(
+            id,
+            timeoutMs,
+            owner,
+            ctx.abortSignal,
+          );
+          let output = "";
+          try {
+            output = jobs.read(id, owner).text;
+          } catch {
+            /* ignore */
+          }
+          return {
+            kind: "job",
+            id,
+            status: snap.status,
+            ...(snap.detail !== undefined ? { detail: snap.detail } : {}),
+            output: truncate(output, 1500),
+          };
+        } catch (err) {
+          const code =
+            err instanceof Error && "code" in err
+              ? String((err as { code?: string }).code)
+              : "";
+          const msg = err instanceof Error ? err.message : String(err);
+          // Abort before timeout: JobRegistry maps abort to WAIT_ABORTED
+          // (or a reason Error); older paths may still say "wait aborted".
+          if (
+            ctx.abortSignal.aborted ||
+            code === "WAIT_ABORTED" ||
+            /wait aborted/i.test(msg)
+          ) {
+            return {
+              kind: "job",
+              id,
+              status: "interrupted",
+              error: "wait interrupted by abort",
+            };
+          }
+          if (code === "WAIT_TIMEOUT" || /timed out/i.test(msg)) {
+            return { kind: "job", id, status: "timed_out", error: msg };
+          }
+          return { kind: "job", id, status: "error", error: msg };
+        }
+      };
+
+      const waitOneAgent = async (
+        id: string,
+      ): Promise<Record<string, unknown>> => {
+        const handle = submitter.getHandle?.(id);
+        if (handle === undefined) {
+          return {
+            kind: "agent",
+            id,
+            status: "unknown",
+            error:
+              "no continuable child with that id (it may have settled — use job_ids)",
+          };
+        }
+        try {
+          const result = await handle.waitSettle({
+            timeoutMs,
+            signal: ctx.abortSignal,
+          });
+          const text = result.content
+            .filter(
+              (b): b is { type: "text"; text: string } => b.type === "text",
+            )
+            .map((b) => b.text)
+            .join("\n");
+          return {
+            kind: "agent",
+            id,
+            status: result.status,
+            output: truncate(text, 1500),
+          };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (
+            ctx.abortSignal.aborted ||
+            /wait aborted/i.test(msg) ||
+            /aborted/i.test(msg)
+          ) {
+            return {
+              kind: "agent",
+              id,
+              status: "interrupted",
+              error: "wait interrupted by abort",
+            };
+          }
+          if (/timed out/i.test(msg)) {
+            return { kind: "agent", id, status: "timed_out" };
+          }
+          return { kind: "agent", id, status: "error", error: msg };
+        }
+      };
+
+      const settled = await Promise.all([
+        ...jobIds.map(waitOneJob),
+        ...agentIds.map(waitOneAgent),
+      ]);
+      return { content: JSON.stringify({ results: settled }) };
+    },
+  };
+}
+
+function truncate(text: string, max: number): string {
+  if (text.length <= max) return text;
+  return `${text.slice(0, max)}…`;
+}
+
 export function makeSubagentControlTools(
   submitter: SteerableSubmitter,
+  options?: { jobs?: JobRegistry },
 ): Tool[] {
   const listAgents: Tool<typeof ListAgentsParams> = {
     name: "list_agents",
@@ -305,5 +482,11 @@ export function makeSubagentControlTools(
     },
   };
 
-  return [listAgents, sendMessage, interruptAgent];
+  const tools: Tool[] = [listAgents, sendMessage, interruptAgent];
+  if (options?.jobs !== undefined) {
+    tools.push(
+      makeWaitAgentsTool({ submitter, jobs: options.jobs }),
+    );
+  }
+  return tools;
 }

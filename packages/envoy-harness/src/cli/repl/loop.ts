@@ -34,6 +34,8 @@ import {
   InMemorySession,
   JsonLinesTracer,
   NullTracer,
+  createDecisionClient,
+  mergeDecisionConfig,
   newSessionId,
   ToolRegistry,
   type Session,
@@ -177,6 +179,7 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
       cwd,
       ...systemPromptOptionsFromConfig(configLayer),
       permissionMode: session.metadata.permissionMode ?? "read-only",
+      taskGuidance: opts.args.noSubagents !== true,
       ...(configLayer.askForApproval !== undefined
         ? { askForApproval: configLayer.askForApproval }
         : {}),
@@ -271,6 +274,25 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
           : {}),
         parentSessionId: session.id,
       });
+      // DeepSeek-like: wake the parent when a background child settles idle.
+      agentOptions.settlementFollowup = true;
+    }
+
+    {
+      const decision = mergeDecisionConfig(configLayer.decision);
+      agentOptions.decisionConfig = decision;
+      agentOptions.decisionClient = createDecisionClient(decision);
+      if (
+        opts.args.provider !== undefined ||
+        opts.args.model !== undefined
+      ) {
+        agentOptions.decisionModelHint = {
+          ...(opts.args.provider !== undefined
+            ? { provider: opts.args.provider }
+            : {}),
+          ...(opts.args.model !== undefined ? { model: opts.args.model } : {}),
+        };
+      }
     }
 
     const agent = new Agent(agentOptions);

@@ -230,11 +230,13 @@ export function createLocalJobRegistry(
         const onAbort = (): void => {
           const idx = job.waiters.indexOf(waiter);
           if (idx >= 0) job.waiters.splice(idx, 1);
-          reject(
+          const detail =
             signal?.reason instanceof Error
-              ? signal.reason
-              : new JobError("wait aborted", "WAIT_TIMEOUT"),
-          );
+              ? signal.reason.message
+              : signal?.reason !== undefined
+                ? String(signal.reason)
+                : "wait aborted";
+          reject(new JobError(detail || "wait aborted", "WAIT_ABORTED"));
         };
         if (signal !== undefined) {
           if (signal.aborted) {

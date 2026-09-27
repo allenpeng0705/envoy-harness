@@ -69,6 +69,9 @@ export interface ProtocolSetPolicyResult {
   preset?: string;
 }
 
+/** Public decision-gate snapshot returned by `session/set_decision`. */
+export type ProtocolSetDecisionResult = Record<string, unknown>;
+
 export interface ProtocolGitResult {
   output: string;
 }
@@ -301,6 +304,47 @@ export interface ProtocolSessionBackend {
   getPolicy?(params: {
     sessionId: string;
   }): Promise<ProtocolSetPolicyResult>;
+  /**
+   * Update System One decision-gate settings (Laya / Jev). Optional;
+   * default remains off. Secrets stay in host env — not in this RPC.
+   */
+  setDecision?(params: {
+    sessionId: string;
+    mode?: "off" | "shadow" | "enforce";
+    backend?: "null" | "laya-http" | "jev" | "onnx";
+    endpoint?: string;
+    timeoutMs?: number;
+    apiKeyEnv?: string;
+    model?: string;
+    safeAuto?: {
+      enabled?: boolean;
+      tools?: string[];
+      destructiveThreshold?: number;
+      minConfidence?: number;
+      honorDeny?: boolean;
+    };
+    modelRouter?: {
+      enabled?: boolean;
+      timeoutMs?: number;
+      minConfidence?: number;
+      defaultProfile?: string;
+      profiles?: Array<{
+        id: string;
+        provider: string;
+        model: string;
+        baseUrl?: string;
+        description?: string;
+        toolsOk?: boolean;
+      }>;
+    };
+    inputGuard?: {
+      enabled?: boolean;
+      timeoutMs?: number;
+      injectionThreshold?: number;
+      harmScoreBlock?: number;
+      honorBlock?: boolean;
+    };
+  }): Promise<ProtocolSetDecisionResult>;
   /** Read-only `git diff` for the session cwd. */
   gitDiff?(params: {
     sessionId: string;

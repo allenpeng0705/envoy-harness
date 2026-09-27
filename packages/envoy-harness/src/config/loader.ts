@@ -379,8 +379,148 @@ function mapKebabToCamel(obj: unknown): Record<string, unknown> {
       case "shell_environment_policy":
         out["shellEnvironmentPolicy"] = mapShellEnvPolicy(v);
         break;
+      case "decision":
+        out["decision"] = mapDecision(v);
+        break;
       default:
         // Unknown key — let the zod schema decide.
+        out[k] = v;
+        break;
+    }
+  }
+  return out;
+}
+
+function mapDecision(raw: unknown): Record<string, unknown> {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    return {};
+  }
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    switch (k) {
+      case "timeout_ms":
+        out["timeoutMs"] = v;
+        break;
+      case "api_key_env":
+        out["apiKeyEnv"] = v;
+        break;
+      case "safe_auto":
+        out["safeAuto"] = mapDecisionSafeAuto(v);
+        break;
+      case "model_router":
+        out["modelRouter"] = mapDecisionModelRouter(v);
+        break;
+      case "input_guard":
+        out["inputGuard"] = mapDecisionInputGuard(v);
+        break;
+      case "modelRouter":
+        out["modelRouter"] = mapDecisionModelRouter(v);
+        break;
+      case "inputGuard":
+        out["inputGuard"] = mapDecisionInputGuard(v);
+        break;
+      default:
+        out[k] = v;
+        break;
+    }
+  }
+  return out;
+}
+
+function mapDecisionSafeAuto(raw: unknown): Record<string, unknown> {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    return {};
+  }
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    switch (k) {
+      case "destructive_threshold":
+        out["destructiveThreshold"] = v;
+        break;
+      case "min_confidence":
+        out["minConfidence"] = v;
+        break;
+      case "honor_deny":
+        out["honorDeny"] = v;
+        break;
+      default:
+        out[k] = v;
+        break;
+    }
+  }
+  return out;
+}
+
+function mapDecisionModelRouter(raw: unknown): Record<string, unknown> {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    return {};
+  }
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    switch (k) {
+      case "timeout_ms":
+        out["timeoutMs"] = v;
+        break;
+      case "min_confidence":
+        out["minConfidence"] = v;
+        break;
+      case "default_profile":
+        out["defaultProfile"] = v;
+        break;
+      case "profiles":
+        out["profiles"] = Array.isArray(v)
+          ? v.map(mapDecisionModelProfile)
+          : v;
+        break;
+      default:
+        out[k] = v;
+        break;
+    }
+  }
+  return out;
+}
+
+function mapDecisionModelProfile(raw: unknown): Record<string, unknown> {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    return {};
+  }
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    switch (k) {
+      case "base_url":
+        out["baseUrl"] = v;
+        break;
+      case "tools_ok":
+        out["toolsOk"] = v;
+        break;
+      default:
+        out[k] = v;
+        break;
+    }
+  }
+  return out;
+}
+
+function mapDecisionInputGuard(raw: unknown): Record<string, unknown> {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    return {};
+  }
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    switch (k) {
+      case "timeout_ms":
+        out["timeoutMs"] = v;
+        break;
+      case "injection_threshold":
+        out["injectionThreshold"] = v;
+        break;
+      case "harm_score_block":
+        out["harmScoreBlock"] = v;
+        break;
+      case "honor_block":
+        out["honorBlock"] = v;
+        break;
+      default:
         out[k] = v;
         break;
     }

@@ -74,7 +74,9 @@ import {
   type SubagentBackgroundMode,
 } from "./subagent/background.js";
 import type { FanOutRegistry } from "./subagent/fan-out.js";
+import { formatSettlementNotice } from "./subagent/settlement-notice.js";
 import { ToolExecutor, type ToolExecutorContext } from "./agent/tool-executor.js";
+import { DEFAULT_MAX_PARALLEL_TOOL_CALLS } from "./agent/tool-scheduler.js";
 import type { RetryPolicy } from "./llm/retry.js";
 import {
   firePostCompact,
@@ -256,6 +258,28 @@ export interface AgentOptions {
    */
   maxSubagents?: number;
   /**
+   * Concurrency cap for parallel `task` batches and `tasks[]`
+   * expands. Distinct from {@link maxSubagents} (count cap).
+   * Default: {@link DEFAULT_MAX_PARALLEL_TOOL_CALLS} (4).
+   */
+  maxParallelToolCalls?: number;
+  /**
+   * When a background sub-agent settles while this agent is **idle**,
+   * start a follow-up turn with the settlement notice as the user
+   * message (DeepSeek-style wake). Mid-turn settlements still queue
+   * and flush before the next model call.
+   *
+   * Default false for programmatic hosts; CLI/REPL/ACP enable it.
+   * Ignored when {@link onIdleSettlement} is set.
+   */
+  settlementFollowup?: boolean;
+  /**
+   * Host hook when a background child settles while idle. Receives the
+   * notice text. Prefer this when the host owns turn scheduling
+   * (e.g. ACP). When set, {@link settlementFollowup} is not used.
+   */
+  onIdleSettlement?: (notice: string) => void | Promise<void>;
+  /**
    * F10.4.1: optional fan-out registry. When set,
    * the `task` tool consults the registry on every
    * call. If a `FanOutSpec` matches the input's
@@ -418,6 +442,25 @@ export interface AgentOptions {
    * log) is the right behavior.
    */
   userQuestions?: UserQuestionService;
+  /**
+   * Optional System One decision gate (Laya / Jev). When set,
+   * the run loop may consult input-guard / model-router add-ons
+   * before the coding model turn. Default: unset (off).
+   */
+  decisionConfig?: import("./decision/types.js").DecisionConfig;
+  decisionClient?: import("./decision/types.js").DecisionClient;
+  /** Optional sink for decision audit records (safe-auto / F / B). */
+  decisionOnRecord?: (
+    record:
+      | import("./decision/types.js").SafeAutoRecord
+      | import("./decision/input-guard.js").InputGuardRecord
+      | import("./decision/model-router.js").ModelRouterRecord,
+  ) => void;
+  /**
+   * Provider/model labels for the adapter passed as `model`, used by the
+   * model-router to resolve the incumbent profile on the first turn.
+   */
+  decisionModelHint?: { provider?: string; model?: string };
 }
 
 /** What `Agent.run()` returns. */
@@ -566,6 +609,21 @@ export class Agent {
     | undefined;
   /** @internal F10.2: max sub-agents per turn. */
   maxSubagents: number;
+  /** @internal Concurrency cap for parallel task batches. */
+  maxParallelToolCalls: number;
+  /**
+   * @internal Settlement notices from background sub-agents.
+   * Flushed into the session before each model call while a turn is
+   * running (mid-turn DeepSeek-style steer). Idle delivery uses
+   * {@link settlementFollowup} / {@link onIdleSettlement}.
+   */
+  pendingSettlementNotices: string[] = [];
+  /** @internal When true, idle settlements auto-run a follow-up turn. */
+  settlementFollowup: boolean;
+  /** @internal Host-owned idle settlement wake (overrides settlementFollowup). */
+  onIdleSettlement: ((notice: string) => void | Promise<void>) | undefined;
+  /** @internal Re-entrancy guard for settlement follow-up turns. */
+  #settlementFollowupRunning = false;
   /** @internal F10.6: parent session id (when this is a
    *  sub-agent). Every `TraceEvent.emit` includes
    *  this as `subagentOf` so the parent tracer can
@@ -616,6 +674,43 @@ export class Agent {
   retainedContext: RetainedContextStore;
   /** @internal Follow-ups / deferrals collected during the current `run()`. */
   turnHints: TurnHints = emptyTurnHints();
+  /**
+   * @internal System One decision gate (optional). Synced from the
+   * session backend or CLI config layer.
+   */
+  decisionConfig: import("./decision/types.js").DecisionConfig | undefined;
+  /** @internal */
+  decisionClient: import("./decision/types.js").DecisionClient | undefined;
+  /** @internal */
+  decisionOnRecord:
+    | ((
+        record:
+          | import("./decision/types.js").SafeAutoRecord
+          | import("./decision/input-guard.js").InputGuardRecord
+          | import("./decision/model-router.js").ModelRouterRecord,
+      ) => void)
+    | undefined;
+  /**
+   * @internal Last model-router profile id (incumbent for the next turn).
+   * When unset, routing matches {@link decisionIncumbentProvider}/Model
+   * against configured profiles (or uses an unmatched sentinel).
+   */
+  decisionModelProfileId: string | undefined;
+  /**
+   * @internal Live adapter provider/model labels for profile matching.
+   */
+  decisionIncumbentProvider: string | undefined;
+  /** @internal */
+  decisionIncumbentModel: string | undefined;
+  /**
+   * @internal Host called `setModel` — do not auto-route unless
+   * the operator clears the lock (future: profile id `"auto"`).
+   */
+  decisionModelHostLocked = false;
+  /**
+   * @internal Last model-router choice (for config/get surface).
+   */
+  decisionModelRouterLastChosen: string | undefined;
   /**
    * @internal Phase A / Item 5 (self-review): `true` when
    * `this.askHandler` is the auto-installed
@@ -680,10 +775,23 @@ export class Agent {
     this.skillCatalogDigest = undefined;
     this.shellEnvironmentPolicy = options.shellEnvironmentPolicy;
     this.maxSubagents = options.maxSubagents ?? DEFAULT_MAX_SUBAGENTS;
+    this.maxParallelToolCalls =
+      options.maxParallelToolCalls ?? DEFAULT_MAX_PARALLEL_TOOL_CALLS;
+    this.pendingSettlementNotices = [];
+    this.settlementFollowup = options.settlementFollowup ?? false;
+    this.onIdleSettlement = options.onIdleSettlement;
     this.subagentOf = options.subagentOf;
     this.approval = options.approval ?? "on-request";
     this.userQuestions = options.userQuestions;
     this.plugins = options.plugins;
+    this.decisionConfig = options.decisionConfig;
+    this.decisionClient = options.decisionClient;
+    this.decisionOnRecord = options.decisionOnRecord;
+    this.decisionModelProfileId = undefined;
+    this.decisionIncumbentProvider = options.decisionModelHint?.provider;
+    this.decisionIncumbentModel = options.decisionModelHint?.model;
+    this.decisionModelHostLocked = false;
+    this.decisionModelRouterLastChosen = undefined;
     this.assistantStreamSink = undefined;
     this.toolOutputSink = undefined;
     this.actionJournal = new ActionJournal();
@@ -761,7 +869,11 @@ export class Agent {
           submitter: this.meshSubmitter,
           ...(this.fanOutRegistry ? { fanOutRegistry: this.fanOutRegistry } : {}),
           onSubagentComplete,
+          onBackgroundSettle: (info) => {
+            this.enqueueSettlementNotice(formatSettlementNotice(info));
+          },
           maxSubagents: this.maxSubagents,
+          maxParallel: this.maxParallelToolCalls,
           backgroundMode: this.subagentBackgroundMode,
           ...(this.jobRegistry ? { jobs: this.jobRegistry } : {}),
         }),
@@ -771,7 +883,11 @@ export class Agent {
       // against a submitter with no handle registry would advertise a
       // capability that always errors.
       if (supportsContinuable(this.meshSubmitter)) {
-        for (const tool of makeSubagentControlTools(this.meshSubmitter)) {
+        for (const tool of makeSubagentControlTools(this.meshSubmitter, {
+          ...(this.jobRegistry !== undefined
+            ? { jobs: this.jobRegistry }
+            : {}),
+        })) {
           this.tools.register(tool);
         }
       }
@@ -849,6 +965,7 @@ export class Agent {
         applyShellEnvironmentPolicy(this.shellEnvironmentPolicy),
       abortSignal: this.abortController.signal,
       maxSubagents: this.maxSubagents,
+      getMaxParallelToolCalls: () => this.maxParallelToolCalls,
       meshSubmitter: this.meshSubmitter,
       mcpClients: this.mcpClients,
       ...(this.execWorld !== undefined ? { execWorld: this.execWorld } : {}),
@@ -932,6 +1049,70 @@ export class Agent {
   }
 
   /**
+   * Deliver a background-settlement notice DeepSeek-style:
+   * - mid-turn → queue for flush before the next model call
+   * - idle + host hook → `onIdleSettlement`
+   * - idle + `settlementFollowup` → auto `run(notice)`
+   * - idle otherwise → queue until the next host turn
+   */
+  enqueueSettlementNotice(notice: string): void {
+    if (this.#activeTurnId !== undefined) {
+      this.pendingSettlementNotices.push(notice);
+      return;
+    }
+    if (this.onIdleSettlement !== undefined) {
+      void Promise.resolve(this.onIdleSettlement(notice)).catch(() => undefined);
+      return;
+    }
+    if (this.settlementFollowup) {
+      void this.#runSettlementFollowup(notice);
+      return;
+    }
+    this.pendingSettlementNotices.push(notice);
+  }
+
+  /**
+   * Append any queued settlement notices to the session (user-role text).
+   * Called by the run loop before each model call.
+   */
+  flushSettlementNotices(): void {
+    if (this.pendingSettlementNotices.length === 0) return;
+    const notices = this.pendingSettlementNotices.splice(
+      0,
+      this.pendingSettlementNotices.length,
+    );
+    for (const text of notices) {
+      this.session.appendMessage("user", [{ type: "text", text }]);
+    }
+  }
+
+  async #runSettlementFollowup(notice: string): Promise<void> {
+    if (this.#settlementFollowupRunning || this.#activeTurnId !== undefined) {
+      this.pendingSettlementNotices.push(notice);
+      return;
+    }
+    this.#settlementFollowupRunning = true;
+    try {
+      await this.run(notice);
+    } catch {
+      /* Host can inspect session; never throw from settle path. */
+    } finally {
+      this.#settlementFollowupRunning = false;
+      if (
+        this.#activeTurnId === undefined &&
+        this.pendingSettlementNotices.length > 0 &&
+        this.settlementFollowup &&
+        this.onIdleSettlement === undefined
+      ) {
+        const more = this.pendingSettlementNotices
+          .splice(0, this.pendingSettlementNotices.length)
+          .join("\n\n");
+        void this.#runSettlementFollowup(more);
+      }
+    }
+  }
+
+  /**
    * Mark a turn as running and return its identity.
    *
    * Called by the run loop. Exposed so a host can capture the id and
@@ -1012,8 +1193,42 @@ export class Agent {
    * require touching the cost tracker — the next response
    * carries the new model's name.
    */
-  setModel(model: ModelAdapter): void {
+  setModel(
+    model: ModelAdapter,
+    hint?: { provider?: string; model?: string },
+  ): void {
     this.model = model;
+    // Explicit host / REPL swap locks out auto model-router apply.
+    this.decisionModelHostLocked = true;
+    // Forget prior router id so a later unlock (or diagnostics) re-matches.
+    this.decisionModelProfileId = undefined;
+    if (hint?.provider !== undefined) {
+      this.decisionIncumbentProvider = hint.provider;
+    }
+    if (hint?.model !== undefined) {
+      this.decisionIncumbentModel = hint.model;
+    }
+  }
+
+  /**
+   * Apply a model-router-chosen adapter without locking out future
+   * routing (unlike {@link setModel}).
+   * @internal
+   */
+  setModelFromRouter(
+    model: ModelAdapter,
+    profileId: string,
+    hint?: { provider?: string; model?: string },
+  ): void {
+    this.model = model;
+    this.decisionModelProfileId = profileId;
+    this.decisionModelRouterLastChosen = profileId;
+    if (hint?.provider !== undefined) {
+      this.decisionIncumbentProvider = hint.provider;
+    }
+    if (hint?.model !== undefined) {
+      this.decisionIncumbentModel = hint.model;
+    }
   }
 
   /**

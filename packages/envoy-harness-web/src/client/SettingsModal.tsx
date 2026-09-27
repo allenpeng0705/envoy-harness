@@ -20,6 +20,15 @@ export interface SettingsModalProps {
     approval?: string;
     autoRun?: string;
   }) => void;
+  decisionMode: string;
+  decisionBackend: string;
+  decisionEndpointDraft: string;
+  onDecisionEndpointDraft: (v: string) => void;
+  onDecision: (partial: {
+    mode?: string;
+    backend?: string;
+    endpoint?: string;
+  }) => void;
   theme: ThemeMode;
   onTheme: (t: ThemeMode) => void;
 }
@@ -142,6 +151,57 @@ export function SettingsModal(props: SettingsModalProps): JSX.Element | null {
             <option value="off">off</option>
           </select>
         </label>
+
+        <h3>Decision gate</h3>
+        <p className="hint">
+          Optional System One (Laya / Jev). Off by default. Keys stay in the
+          Node bridge env — not browser storage.
+        </p>
+        <label>
+          Mode
+          <select
+            value={props.decisionMode}
+            onChange={(e) => props.onDecision({ mode: e.target.value })}
+          >
+            <option value="off">off</option>
+            <option value="shadow">shadow</option>
+            <option value="enforce">enforce</option>
+          </select>
+        </label>
+        <label>
+          Backend
+          <select
+            value={props.decisionBackend}
+            disabled={props.decisionMode === "off"}
+            onChange={(e) => props.onDecision({ backend: e.target.value })}
+          >
+            <option value="null">null</option>
+            <option value="laya-http">laya-http</option>
+            <option value="jev">jev</option>
+            <option value="onnx">onnx</option>
+          </select>
+        </label>
+        <label>
+          Endpoint
+          <input
+            value={props.decisionEndpointDraft}
+            disabled={props.decisionMode === "off"}
+            onChange={(e) => props.onDecisionEndpointDraft(e.target.value)}
+            placeholder="http://127.0.0.1:8000/v1/systemone"
+          />
+        </label>
+        <button
+          type="button"
+          className="primary"
+          disabled={props.decisionMode === "off"}
+          onClick={() =>
+            props.onDecision({
+              endpoint: props.decisionEndpointDraft.trim(),
+            })
+          }
+        >
+          Apply endpoint
+        </button>
       </div>
     </div>
   );

@@ -362,6 +362,7 @@ pnpm --filter @envoymesh/envoy-harness-web test
 |---|---|
 | [`packages/envoy-harness/QUICKSTART.md`](./packages/envoy-harness/QUICKSTART.md) | Operator quickstart |
 | [`packages/envoy-harness/docs/design.en.md`](./packages/envoy-harness/docs/design.en.md) | Design |
+| [`packages/envoy-harness/docs/laya-decision-addons.md`](./packages/envoy-harness/docs/laya-decision-addons.md) | Laya / System One decision add-ons (design) |
 | [`packages/envoy-harness/docs/implementation-plan.md`](./packages/envoy-harness/docs/implementation-plan.md) | What shipped |
 | [`packages/envoy-harness/docs/envoy-harness-ui.md`](./packages/envoy-harness/docs/envoy-harness-ui.md) | UI / EHUI |
 

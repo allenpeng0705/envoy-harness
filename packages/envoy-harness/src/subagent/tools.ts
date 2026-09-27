@@ -1,53 +1,13 @@
 /**
  * `makeTaskTool` — the `task` tool the parent agent
- * uses to spawn a sub-agent.
- *
- * **Design doc:** §10.3 ("The task tool —
- * mesh-native sub-agent"). The `task` tool is the
- * parent's escape hatch: when the model decides
- * "this needs a different perspective" or "I need a
- * specialist", it calls the tool; the tool submits
- * to the `MeshSubmitter`; the submitter runs (or
- * routes) the sub-agent and returns the result.
- *
- * **Why a factory, not a singleton:** the tool
- * closes over the `MeshSubmitter` (the host injects
- * the implementation). Different hosts can wire
- * different submitters (`LocalMeshSubmitter`,
- * `NoopMeshSubmitter`, or a future
- * `RemoteMeshSubmitter`).
- *
- * **Why a tool, not an `Agent.run` option:** tools
- * are how the model expresses "I need help". The
- * model decides WHEN to spawn a sub-agent based
- * on the task. Making it a tool means the model
- * sees the tool in its tool list and decides
- * dynamically.
- *
- * **What the tool returns:** the `SubagentResult`
- * (the parent's view of what the sub-agent did).
- * The model sees the result and decides what to
- * do next (e.g. continue, retry, or report back
- * to the user).
- *
- * **F10.4.1 — capability-driven fan-out:** when
- * a `FanOutRegistry` is provided, the tool consults
- * it on every call. If a spec matches the input's
- * `capability_tag`, the tool expands ONE model
- * call into N parallel sub-agents (via
- * `Promise.all`), then aggregates the N results
- * into ONE for the model. The model sees ONE
- * call → ONE result; the host controls the
- * fan-out without teaching the model about it.
- *
- * **Stability:** additive. New fields on the
- * `TaskInput` / `TaskResult` (the tool's input /
- * output) are additive.
+ * uses to spawn a sub-agent (or a batch via `tasks[]`).
  */
 
 import { z } from "zod";
 
+import { DEFAULT_MAX_PARALLEL_TOOL_CALLS } from "../agent/tool-scheduler.js";
 import type { ContentBlock, Tool } from "../tools/types.js";
+import { mapBoundedParallel } from "./bounded-parallel.js";
 import { aggregateFanOutResults, type FanOutRegistry } from "./fan-out.js";
 import {
   spawnBackgroundSubagent,
@@ -55,29 +15,60 @@ import {
 } from "./background.js";
 import type { MeshSubmitter, SubagentInput, SubagentResult } from "./types.js";
 
-/** The tool's input schema (zod). */
-export const TaskInputSchema = z.object({
-  objective: z
-    .string()
-    .min(1)
-    .describe("What the sub-agent should do. Free-form."),
+const TaskItemSchema = z.object({
+  objective: z.string().min(1).describe("What this child should do."),
   capability_tag: z
     .string()
     .min(1)
-    .describe(
-      "A free-form tag the orchestrator (or local router) uses to " +
-        "pick the right runtime + tools. Examples: 'code-search', " +
-        "'summarize', 'code-edit', 'doc-search'.",
-    ),
+    .optional()
+    .describe("Overrides the parent call's capability_tag when set."),
   cost_ceiling_usd: z
     .number()
     .positive()
-    .describe("Cost ceiling in USD. The sub-agent's run is bounded by this."),
+    .optional()
+    .describe("Overrides the parent call's cost_ceiling_usd when set."),
   deadline_ms: z
     .number()
     .int()
     .positive()
-    .describe("Wall-clock deadline in ms from now."),
+    .optional()
+    .describe("Overrides the parent call's deadline_ms when set."),
+});
+
+/** Field shape visible to the model (before cross-field refine). */
+export const TaskInputObjectSchema = z.object({
+  objective: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "What the sub-agent should do. Required unless `tasks` is set.",
+    ),
+  capability_tag: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "Routing tag (e.g. code-search, summarize). Required for a single " +
+        "spawn, or as the default for items in `tasks`.",
+    ),
+  cost_ceiling_usd: z
+    .number()
+    .positive()
+    .optional()
+    .describe(
+      "Cost ceiling in USD. Required for a single spawn, or as the " +
+        "default for items in `tasks`.",
+    ),
+  deadline_ms: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe(
+      "Wall-clock deadline in ms. Required for a single spawn, or as " +
+        "the default for items in `tasks`.",
+    ),
   preferred_peer_id: z
     .string()
     .optional()
@@ -94,15 +85,24 @@ export const TaskInputSchema = z.object({
       "Optional: prefer a specific runtime. v0's LocalMeshSubmitter " +
         "ignores this.",
     ),
+  tasks: z
+    .array(TaskItemSchema)
+    .min(1)
+    .optional()
+    .describe(
+      "Spawn several sub-agents in one call. Each item needs an " +
+        "objective; capability_tag / cost_ceiling_usd / deadline_ms " +
+        "inherit from the parent fields when omitted. Length is capped " +
+        "by maxSubagents. Prefer this or multiple task calls in one " +
+        "assistant message for independent parallel work.",
+    ),
   run_in_background: z
     .boolean()
     .optional()
     .describe(
-      "When true, start the sub-agent in the background and return a job " +
-        "id immediately instead of waiting for it to finish, so you can " +
-        "keep working. Watch it with job_status / job_output / job_wait, " +
-        "cancel it with job_kill, and — when the host runs continuable " +
-        "children — steer it with send_message.",
+      "When true, start without waiting and return job id(s) so you can " +
+        "keep working. Watch with job_* / wait_agents; cancel with " +
+        "job_kill; steer continuable children with send_message.",
     ),
   background_mode: z
     .enum(["one-shot", "continuable"])
@@ -117,19 +117,44 @@ export const TaskInputSchema = z.object({
         "size that budget for the whole conversation.",
     ),
 });
+
+/** The tool's input schema (zod), including cross-field checks. */
+export const TaskInputSchema = TaskInputObjectSchema.superRefine((data, ctx) => {
+    const hasTasks = data.tasks !== undefined && data.tasks.length > 0;
+    if (hasTasks) {
+      for (let i = 0; i < data.tasks!.length; i++) {
+        const t = data.tasks![i]!;
+        const tag = t.capability_tag ?? data.capability_tag;
+        const cost = t.cost_ceiling_usd ?? data.cost_ceiling_usd;
+        const deadline = t.deadline_ms ?? data.deadline_ms;
+        if (tag === undefined || cost === undefined || deadline === undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message:
+              `tasks[${i}] needs capability_tag, cost_ceiling_usd, and ` +
+              `deadline_ms (set on the item or on the parent call)`,
+            path: ["tasks", i],
+          });
+        }
+      }
+      return;
+    }
+    if (
+      data.objective === undefined ||
+      data.capability_tag === undefined ||
+      data.cost_ceiling_usd === undefined ||
+      data.deadline_ms === undefined
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "Provide objective, capability_tag, cost_ceiling_usd, and " +
+          "deadline_ms — or a non-empty tasks array",
+      });
+    }
+  });
 export type TaskInput = z.infer<typeof TaskInputSchema>;
 
-/**
- * The tool's `execute` returns the full
- * `SubagentResult` (status + content + verdict +
- * cost + duration). The model sees the whole
- * picture; it can pick which fields to surface
- * in its next user-facing reply.
- *
- * **The result is wrapped in a tool result.** The
- * agent's loop converts it to a `tool_result` block
- * in the parent's transcript.
- */
 export type TaskResult = {
   status: "completed" | "failed" | "partial";
   content: ReadonlyArray<ContentBlock>;
@@ -137,113 +162,30 @@ export type TaskResult = {
   workerRuntime: string;
   costUsd: number;
   durationMs: number;
-  verdict: unknown; // wire-friendly shape; the Verdict union is the source of truth
+  verdict: unknown;
   signature: string;
 };
 
-/** F10.4.1: options for `makeTaskTool`. The submitter is
- *  required; the `fanOutRegistry` is optional (no registry
- *  = no fan-out, F10.1 + F10.2 baseline). */
 export interface MakeTaskToolOptions {
   submitter: MeshSubmitter;
-  /**
-   * F10.4.1: optional registry. When set, the tool
-   * looks up the input's `capability_tag` on each
-   * call. If a spec matches, the tool expands ONE
-   * model call into N parallel sub-agents (per the
-   * `FanOutSpec.count`), then aggregates the N
-   * results into ONE.
-   */
   fanOutRegistry?: FanOutRegistry;
-  /**
-   * F10.5: called after the `MeshSubmitter` (or the
-   * F10.4.1 fan-out aggregator) returns. The parent
-   * uses this to aggregate sub-agent cost into its
-   * own `CostTracker` (via `addSubagentCost`).
-   *
-   * **Why the callback (not direct `CostTracker`
-   * injection):** the tool doesn't know about the
-   * parent's `CostTracker`. The callback hides the
-   * wiring. The parent's `Agent` constructor wires
-   * this callback to its own `costTracker.addSubagentCost`.
-   *
-   * **For fan-out:** the callback receives the
-   * AGGREGATED result (with summed `costUsd`),
-   * not the N individual results. The parent adds
-   * the sum; the per-sub-agent breakdown is
-   * available via the individual `SubagentResult`s
-   * (not exposed in v0; future F10.6+).
-   *
-   * **The `SubagentResult` parameter:** the FULL
-   * result, not just `costUsd`. The parent may
-   * want to inspect other fields (e.g. `verdict`,
-   * `durationMs`); keeping the surface small (one
-   * callback with the whole result) is more
-   * flexible than N callbacks.
-   */
   onSubagentComplete?: (result: SubagentResult) => void;
   /**
-   * F10.2: the parent's `maxSubagents` cap. The fan-out expansion
-   * must honor it too: when `FanOutSpec.count > maxSubagents`, the
-   * tool refuses ALL (same semantics as the parallel path). v0
-   * expanded unconditionally, bypassing the cap.
+   * Called when a background child settles (push notice for the parent).
+   * Not used for foreground awaits.
    */
+  onBackgroundSettle?: (info: {
+    jobId: string;
+    agentId: string;
+    result: SubagentResult;
+  }) => void;
   maxSubagents?: number;
-  /**
-   * The parent's background-job registry. When set, `task` accepts
-   * `run_in_background: true`: the child starts without blocking the
-   * parent's turn and is registered as a `subagent` job, so the existing
-   * `job_*` tools observe and cancel it. Without a registry the option is
-   * refused with a clear error rather than silently blocking.
-   */
+  /** Concurrency for tasks[] / fan-out expands. Default 4. */
+  maxParallel?: number;
   jobs?: import("../jobs/types.js").JobRegistry;
-  /**
-   * What a background child does after its first turn.
-   *
-   * - `"one-shot"` (default): run the objective, then settle.
-   * - `"continuable"`: stay alive so `send_message` can steer it.
-   */
   backgroundMode?: import("./background.js").SubagentBackgroundMode;
 }
 
-/**
- * Build the `task` tool. The host provides the
- * `MeshSubmitter`; the tool calls it on every
- * invocation. The factory exists so multiple
- * agents can use different submitters (e.g. one
- * parent uses `LocalMeshSubmitter`, another uses
- * a future `RemoteMeshSubmitter`).
- *
- * **F10.4.1 — fan-out:** when `fanOutRegistry` is
- * provided, the tool consults the registry. If a
- * spec matches the input's `capability_tag`, the
- * tool:
- * 1. Builds N `SubagentInput`s via the spec's
- *    `partition` function (or identity if not set).
- * 2. Calls `submitter.submit` N times in parallel
- *    via `Promise.all` (F10.2 fan-out path).
- * 3. Aggregates the N results into ONE
- *    `SubagentResult` for the model.
- * 4. Honors the parent's `abortSignal` (any
- *    sub-agent abort propagates to all in-flight).
- */
-/**
- * Framing that must accompany a `task` result's `verdict`.
- *
- * **A verdict is a prediction, not an observation.** It is a judgment
- * *about* the work — synthesized from the sub-agent's stop reason and the
- * shape of its output, or from verifier rules — formed without knowing what
- * the work actually caused. The causal evidence is the work itself: command
- * output, test results, the diff, the files.
- *
- * The parent model reads a bare `verdict: {kind: "pass", score: 0.9}`
- * alongside the result and has every reason to treat it as an established
- * fact about the world. Conflating the two is how a system starts trusting
- * its own self-assessment over what happened: a "pass" verdict standing in
- * for an unrun test is a failure that reports success. Naming the
- * distinction in the tool description is the cheapest place to prevent it,
- * because that text is in the model's context on every call.
- */
 export const VERDICT_IS_PREDICTION =
   "Treat the returned `verdict` as a PREDICTION about the work's quality " +
   "(synthesized from how the sub-agent stopped and what it produced), not as " +
@@ -253,12 +195,100 @@ export const VERDICT_IS_PREDICTION =
   "evidence disagree, believe the evidence, and verify external state " +
   "yourself before relying on the result.";
 
+function resolveInputs(args: TaskInput): SubagentInput[] | { error: string } {
+  const peer =
+    args.preferred_peer_id !== undefined
+      ? { preferredPeerId: args.preferred_peer_id }
+      : {};
+  const runtime =
+    args.preferred_runtime !== undefined
+      ? { preferredRuntime: args.preferred_runtime as never }
+      : {};
+
+  if (args.tasks !== undefined && args.tasks.length > 0) {
+    const out: SubagentInput[] = [];
+    for (const t of args.tasks) {
+      const tag = t.capability_tag ?? args.capability_tag;
+      const cost = t.cost_ceiling_usd ?? args.cost_ceiling_usd;
+      const deadline = t.deadline_ms ?? args.deadline_ms;
+      if (tag === undefined || cost === undefined || deadline === undefined) {
+        return {
+          error:
+            "tasks items need capability_tag, cost_ceiling_usd, and deadline_ms",
+        };
+      }
+      out.push({
+        objective: t.objective,
+        capabilityTag: tag,
+        costCeilingUsd: cost,
+        deadlineMs: deadline,
+        ...peer,
+        ...runtime,
+      });
+    }
+    return out;
+  }
+
+  if (
+    args.objective === undefined ||
+    args.capability_tag === undefined ||
+    args.cost_ceiling_usd === undefined ||
+    args.deadline_ms === undefined
+  ) {
+    return {
+      error:
+        "objective, capability_tag, cost_ceiling_usd, and deadline_ms are required",
+    };
+  }
+  return [
+    {
+      objective: args.objective,
+      capabilityTag: args.capability_tag,
+      costCeilingUsd: args.cost_ceiling_usd,
+      deadlineMs: args.deadline_ms,
+      ...peer,
+      ...runtime,
+    },
+  ];
+}
+
+function failedResult(text: string, reason: string): SubagentResult {
+  return {
+    status: "failed",
+    content: [{ type: "text", text }],
+    workerPeerId: "",
+    workerRuntime: "envoy-harness",
+    costUsd: 0,
+    durationMs: 0,
+    verdict: { kind: "fail", reason, rollback: false },
+    signature: "",
+  };
+}
+
+/** When abort skips some children, surface requested vs completed to the model. */
+function markPartialAbort(
+  result: SubagentResult,
+  completed: number,
+  requested: number,
+): SubagentResult {
+  const note: ContentBlock = {
+    type: "text",
+    text:
+      `[aborted] completed ${completed}/${requested} sub-agents before abort. ` +
+      `Treat this as incomplete — do not assume the missing children ran.\n`,
+  };
+  return {
+    ...result,
+    // Incomplete batch is always "partial" so the model cannot treat
+    // an aborted fan-out as a full success/failure of the whole set.
+    status: "partial",
+    content: [note, ...result.content],
+  };
+}
+
 export function makeTaskTool(
   submitterOrOptions: MeshSubmitter | MakeTaskToolOptions,
 ): Tool {
-  // Backward compat: F10.1.3 callers pass a
-  // MeshSubmitter directly. F10.4.1+ callers pass
-  // an options object. Both shapes are accepted.
   const submitter: MeshSubmitter =
     "submit" in submitterOrOptions
       ? submitterOrOptions
@@ -271,10 +301,18 @@ export function makeTaskTool(
     "submit" in submitterOrOptions
       ? undefined
       : submitterOrOptions.onSubagentComplete;
+  const onBackgroundSettle =
+    "submit" in submitterOrOptions
+      ? undefined
+      : submitterOrOptions.onBackgroundSettle;
   const maxSubagents: number | undefined =
     "submit" in submitterOrOptions
       ? undefined
       : submitterOrOptions.maxSubagents;
+  const maxParallel =
+    "submit" in submitterOrOptions
+      ? DEFAULT_MAX_PARALLEL_TOOL_CALLS
+      : (submitterOrOptions.maxParallel ?? DEFAULT_MAX_PARALLEL_TOOL_CALLS);
   const backgroundJobs =
     "submit" in submitterOrOptions ? undefined : submitterOrOptions.jobs;
   const backgroundMode =
@@ -285,45 +323,38 @@ export function makeTaskTool(
   return {
     name: "task",
     description:
-      "Spawn a sub-agent. The sub-agent runs in a NEW local session " +
-      "(own permission state, own transcript) and may run on this " +
-      "node or a peer in the mesh. Returns the sub-agent's final " +
-      "text + verdict + cost. Use this when a sub-problem deserves " +
-      "a fresh session with its own permission state — e.g. a " +
-      "research sub-agent that should run read-only while you " +
-      "continue to edit files. " +
-      "Set `run_in_background: true` to start it without waiting and " +
-      "keep working: you get a job id you can watch with job_output / " +
-      "job_wait and cancel with job_kill. " +
+      "Spawn one or more sub-agents in NEW sessions (own permission state " +
+      "and transcript); they may run on this node or a peer in the mesh. " +
+      "For independent work, either emit several task calls in one " +
+      "assistant message or pass a tasks array in one call. Foreground " +
+      "awaits results; set run_in_background: true to keep working and " +
+      "join later with wait_agents / job_wait (settlement notices also " +
+      "arrive in-session). " +
       VERDICT_IS_PREDICTION,
     parameters: TaskInputSchema,
     async execute(args, ctx) {
-      const baseInput: SubagentInput = {
-        objective: args.objective,
-        capabilityTag: args.capability_tag,
-        costCeilingUsd: args.cost_ceiling_usd,
-        deadlineMs: args.deadline_ms,
-        ...(args.preferred_peer_id !== undefined
-          ? { preferredPeerId: args.preferred_peer_id }
-          : {}),
-        ...(args.preferred_runtime !== undefined
-          ? { preferredRuntime: args.preferred_runtime as never }
-          : {}),
-      };
-
-      // ---- background path -------------------------------------------
-      // Refuse loudly rather than silently blocking: a model that asked
-      // for background work and got a synchronous result would be misled
-      // about what happened.
       if (args.background_mode !== undefined && args.run_in_background !== true) {
-        // Accepting a parameter and ignoring it is how a model learns the
-        // wrong lesson about what its call did.
         return {
           content:
             "background_mode has no effect without run_in_background: true. Set run_in_background, or drop background_mode.",
           isError: true,
         };
       }
+
+      const resolved = resolveInputs(args);
+      if ("error" in resolved) {
+        return { content: resolved.error, isError: true };
+      }
+      const inputs = resolved;
+
+      if (maxSubagents !== undefined && inputs.length > maxSubagents) {
+        return {
+          content: `maxSubagents reached: ${inputs.length} sub-agents requested (cap is ${maxSubagents}). Refused.`,
+          isError: true,
+        };
+      }
+
+      // ---- background path -------------------------------------------
       if (args.run_in_background === true) {
         if (backgroundJobs === undefined) {
           return {
@@ -339,32 +370,67 @@ export function makeTaskTool(
             isError: true,
           };
         }
-        if (fanOutRegistry?.lookup(baseInput.capabilityTag) !== undefined) {
-          return {
-            content:
-              "run_in_background cannot be combined with a fan-out capability tag: fan-out aggregates N children into one result, which a background job id cannot represent. Run it in the foreground, or use a tag without a fan-out spec.",
-            isError: true,
-          };
+        for (const input of inputs) {
+          if (fanOutRegistry?.lookup(input.capabilityTag) !== undefined) {
+            return {
+              content:
+                "run_in_background cannot be combined with a fan-out capability tag: fan-out aggregates N children into one result, which a background job id cannot represent. Run it in the foreground, or use a tag without a fan-out spec.",
+              isError: true,
+            };
+          }
         }
         try {
           const mode = args.background_mode ?? backgroundMode ?? "one-shot";
-          const started = spawnBackgroundSubagent({
-            submitter,
-            jobs: backgroundJobs,
-            input: baseInput,
-            owner: ctx.session.id,
-            mode,
-            ...(onSubagentComplete !== undefined
-              ? { onResult: onSubagentComplete }
-              : {}),
-          });
+          const batch: Array<{
+            job_id: string;
+            agent_id: string;
+            status: string;
+          }> = [];
+          for (const input of inputs) {
+            const ids: { jobId: string; agentId: string } = {
+              jobId: "",
+              agentId: "",
+            };
+            const s = spawnBackgroundSubagent({
+              submitter,
+              jobs: backgroundJobs,
+              input,
+              owner: ctx.session.id,
+              mode,
+              ...(onSubagentComplete !== undefined
+                ? { onResult: onSubagentComplete }
+                : {}),
+              ...(onBackgroundSettle !== undefined
+                ? {
+                    onSettle: (result) => {
+                      onBackgroundSettle({
+                        jobId: ids.jobId,
+                        agentId: ids.agentId,
+                        result,
+                      });
+                    },
+                  }
+                : {}),
+            });
+            ids.jobId = s.jobId;
+            ids.agentId = s.agentId;
+            batch.push({
+              job_id: s.jobId,
+              agent_id: s.agentId,
+              status: s.status,
+            });
+          }
           return {
             content: JSON.stringify({
-              job_id: started.jobId,
-              agent_id: started.agentId,
-              status: started.status,
+              ...(batch.length === 1
+                ? {
+                    job_id: batch[0]!.job_id,
+                    agent_id: batch[0]!.agent_id,
+                    status: batch[0]!.status,
+                  }
+                : { jobs: batch }),
               mode,
-              hint: "job_status / job_output / job_wait observe it; job_kill cancels it; list_agents finds it later.",
+              hint: "wait_agents / job_status / job_output / job_wait observe; job_kill cancels; list_agents finds them later.",
             }),
           };
         } catch (err) {
@@ -376,82 +442,78 @@ export function makeTaskTool(
       }
       // ---- end background path ---------------------------------------
 
-      // F10.4.1: fan-out expansion. Check the
-      // registry first; if a spec matches, expand
-      // to N parallel sub-agents.
-      const spec = fanOutRegistry?.lookup(baseInput.capabilityTag);
-      let result: SubagentResult;
-      if (spec) {
-        if (spec.count < 1) {
-          // Defensive: invalid spec. Refuse all.
-          result = {
-            status: "failed",
-            content: [
-              {
-                type: "text",
-                text: `FanOutSpec for "${spec.capabilityTag}" has invalid count ${spec.count}; must be >= 1.`,
-              },
-            ],
-            workerPeerId: "",
-            workerRuntime: "envoy-harness",
-            costUsd: 0,
-            durationMs: 0,
-            verdict: {
-              kind: "fail",
-              reason: "invalid FanOutSpec count",
-              rollback: false,
-            },
-            signature: "",
-          };
-        } else if (maxSubagents !== undefined && spec.count > maxSubagents) {
-          // F10.2 cap applies to the expanded count too.
-          result = {
-            status: "failed",
-            content: [
-              {
-                type: "text",
-                text: `maxSubagents reached: FanOutSpec for "${spec.capabilityTag}" expands to ${spec.count} sub-agents (cap is ${maxSubagents}). Refused.`,
-              },
-            ],
-            workerPeerId: "",
-            workerRuntime: "envoy-harness",
-            costUsd: 0,
-            durationMs: 0,
-            verdict: {
-              kind: "fail",
-              reason: "maxSubagents exceeded by FanOutSpec",
-              rollback: false,
-            },
-            signature: "",
-          };
-        } else {
-          const partition = spec.partition ?? ((input) => input);
-          const inputs: SubagentInput[] = [];
-          for (let i = 0; i < spec.count; i++) {
-            inputs.push(partition(baseInput, i, spec.count));
+      // Single input + fan-out registry
+      if (inputs.length === 1) {
+        const baseInput = inputs[0]!;
+        const spec = fanOutRegistry?.lookup(baseInput.capabilityTag);
+        let result: SubagentResult;
+        if (spec) {
+          if (spec.count < 1) {
+            result = failedResult(
+              `FanOutSpec for "${spec.capabilityTag}" has invalid count ${spec.count}; must be >= 1.`,
+              "invalid FanOutSpec count",
+            );
+          } else if (
+            maxSubagents !== undefined &&
+            spec.count > maxSubagents
+          ) {
+            result = failedResult(
+              `maxSubagents reached: FanOutSpec for "${spec.capabilityTag}" expands to ${spec.count} sub-agents (cap is ${maxSubagents}). Refused.`,
+              "maxSubagents exceeded by FanOutSpec",
+            );
+          } else {
+            const partition = spec.partition ?? ((input) => input);
+            const fanInputs: SubagentInput[] = [];
+            for (let i = 0; i < spec.count; i++) {
+              fanInputs.push(partition(baseInput, i, spec.count));
+            }
+            const results = await mapBoundedParallel(
+              fanInputs,
+              maxParallel,
+              ctx.abortSignal,
+              (input) => submitter.submit(input, ctx.abortSignal),
+            );
+            if (results.length === 0) {
+              return {
+                content:
+                  "aborted: no fan-out sub-agents completed before abort",
+                isError: true,
+              };
+            }
+            result = aggregateFanOutResults(results);
+            if (results.length < fanInputs.length) {
+              result = markPartialAbort(
+                result,
+                results.length,
+                fanInputs.length,
+              );
+            }
           }
-          // Parallel run (F10.2 path). Abort propagates
-          // via the shared `ctx.abortSignal`; each
-          // sub-agent's submitter honors it.
-          const results = await Promise.all(
-            inputs.map((input) => submitter.submit(input, ctx.abortSignal)),
-          );
-          result = aggregateFanOutResults(results);
+        } else {
+          result = await submitter.submit(baseInput, ctx.abortSignal);
         }
-      } else {
-        // No fan-out: single sub-agent (F10.1 baseline).
-        result = await submitter.submit(baseInput, ctx.abortSignal);
+        if (onSubagentComplete) onSubagentComplete(result);
+        return { content: result };
       }
 
-      // F10.5: cost aggregation callback. Fires
-      // AFTER the submitter (or fan-out aggregator)
-      // returns, with the final result. For
-      // fan-out, the parent sees the AGGREGATED
-      // result (with summed costUsd), not the N
-      // individual ones.
-      if (onSubagentComplete) {
-        onSubagentComplete(result);
+      // Multi tasks[] foreground — bounded parallel, then aggregate
+      const results = await mapBoundedParallel(
+        inputs,
+        maxParallel,
+        ctx.abortSignal,
+        (input) => submitter.submit(input, ctx.abortSignal),
+      );
+      if (results.length === 0) {
+        return {
+          content: "aborted: no sub-agents completed before abort",
+          isError: true,
+        };
       }
+      let result = aggregateFanOutResults(results);
+      if (results.length < inputs.length) {
+        result = markPartialAbort(result, results.length, inputs.length);
+      }
+      if (onSubagentComplete) onSubagentComplete(result);
       return { content: result };
     },
   };

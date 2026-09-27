@@ -9,11 +9,18 @@
 import type { HookRegistry } from "../hooks/index.js";
 import type { HookDecision, HookEvent } from "../types.js";
 
+export type ToolPermissionAskResult = boolean | "deny";
+
 export interface ToolPermissionAskHookOptions {
   /**
-   * Return false to skip asking (auto-allow). Default: ask for every tool.
+   * Return false to skip asking (auto-allow), true to ask the host,
+   * or `"deny"` to hard-block (Phase 3b honorDeny). Default: ask.
+   * May return a Promise (decision add-ons / async gates).
    */
-  shouldAsk?: (toolName: string, args?: unknown) => boolean;
+  shouldAsk?: (
+    toolName: string,
+    args?: unknown,
+  ) => ToolPermissionAskResult | Promise<ToolPermissionAskResult>;
 }
 
 /**
@@ -46,7 +53,14 @@ export function installToolPermissionAskHook(
       typeof payload === "object" && payload !== null
         ? (payload as { args?: unknown }).args
         : undefined;
-    if (!shouldAsk(tool, args)) {
+    const ask = await shouldAsk(tool, args);
+    if (ask === "deny") {
+      return {
+        kind: "block",
+        reason: `denied by decision gate for tool \`${tool}\``,
+      };
+    }
+    if (!ask) {
       return { kind: "continue" };
     }
     return {

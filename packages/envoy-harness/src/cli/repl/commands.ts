@@ -123,7 +123,10 @@ const providerCommand: ReplCommand = {
         ...(modelId !== undefined ? { model: modelId } : {}),
         ...(baseUrl !== undefined ? { baseUrl } : {}),
       });
-      ctx.agent.setModel(newAdapter);
+      ctx.agent.setModel(newAdapter, {
+        provider,
+        ...(modelId !== undefined ? { model: modelId } : {}),
+      });
       const bits = [
         `provider: ${provider}`,
         modelId ? `model: ${modelId}` : undefined,

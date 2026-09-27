@@ -54,6 +54,7 @@ export function App(): JSX.Element {
   const [providerDraft, setProviderDraft] = useState("");
   const [modelDraft, setModelDraft] = useState("");
   const [baseUrlDraft, setBaseUrlDraft] = useState("");
+  const [decisionEndpointDraft, setDecisionEndpointDraft] = useState("");
   const [questionDraft, setQuestionDraft] = useState("");
   const [ehuiRefresh, setEhuiRefresh] = useState(0);
   const [theme, setTheme] = useState<ThemeMode>(readTheme);
@@ -92,7 +93,8 @@ export function App(): JSX.Element {
     setProviderDraft(state.provider);
     setModelDraft(state.model);
     setBaseUrlDraft(state.baseUrl);
-  }, [state.provider, state.model, state.baseUrl]);
+    setDecisionEndpointDraft(state.decisionEndpoint);
+  }, [state.provider, state.model, state.baseUrl, state.decisionEndpoint]);
 
   const refreshSessions = useCallback(() => {
     if (!state.ready) return;
@@ -453,6 +455,13 @@ export function App(): JSX.Element {
         autoRun={state.autoRun}
         onPolicy={(partial) =>
           void host.setPolicy(partial).catch(() => undefined)
+        }
+        decisionMode={state.decisionMode}
+        decisionBackend={state.decisionBackend}
+        decisionEndpointDraft={decisionEndpointDraft}
+        onDecisionEndpointDraft={setDecisionEndpointDraft}
+        onDecision={(partial) =>
+          void host.setDecision(partial).catch(() => undefined)
         }
         theme={theme}
         onTheme={setTheme}

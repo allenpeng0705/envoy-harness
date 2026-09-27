@@ -12,6 +12,7 @@ export {
   developerInstructionsSection,
   harnessIdentitySection,
   jobsGuidanceSection,
+  taskGuidanceSection,
   personaSection,
   permissionsPolicySection,
   planModeSection,

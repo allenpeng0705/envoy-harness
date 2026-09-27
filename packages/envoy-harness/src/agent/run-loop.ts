@@ -43,12 +43,20 @@
  * `Agent.run(prompt)` still returns the same
  * `AgentResult`.
  */
+import * as path from "node:path";
+
 import type { ContentBlock } from "../tools/index.js";
 import type { ModelResponse } from "../model.js";
 import type { Agent, AgentResult } from "../agent.js";
 import { MCP_TOOL_PREFIX } from "../mcp/types.js";
 import { injectEphemeralUserContext } from "../context/ephemeral-user-context.js";
 import { assembleTurnContext } from "../context/turn-context.js";
+import {
+  resolveIncumbentProfileId,
+  resolveInputGuard,
+  resolveModelRouter,
+} from "../decision/index.js";
+import { createProviderAdapter } from "../llm/index.js";
 import { collaborationModeBlockReason } from "../plan/tool-policy.js";
 import { stripThinking } from "../util/strip-thinking.js";
 import {
@@ -125,6 +133,10 @@ async function runAgentTurn(
   prompt: string | ReadonlyArray<ContentBlock>,
   turnId: string,
 ): Promise<AgentResult> {
+  // Flush background sub-agent settlement notices before the new prompt
+  // and again before each model call (mid-turn DeepSeek-style steer).
+  agent.flushSettlementNotices();
+
   // System prompt goes first (idempotent: skip if a system
   // message is already present).
   if (
@@ -187,6 +199,96 @@ async function runAgentTurn(
       });
       agent.session.appendMessage("assistant", [note]);
       return agent.makeResult([note], "aborted", 0);
+    }
+  }
+
+  // Add-on F — input guard (next to UserPromptSubmit; fail-open).
+  const decisionCfg = agent.decisionConfig;
+  const decisionClient = agent.decisionClient;
+  if (decisionCfg !== undefined && decisionClient !== undefined) {
+    const guard = await resolveInputGuard({
+      config: decisionCfg,
+      client: decisionClient,
+      prompt: promptText,
+      cwd: path.basename(agent.cwd),
+      ...(agent.decisionOnRecord !== undefined
+        ? { onRecord: agent.decisionOnRecord }
+        : {}),
+    });
+    if (guard.block) {
+      const reason = guard.reason ?? "blocked by decision input guard";
+      const note: ContentBlock = {
+        type: "text",
+        text: `[blocked] ${reason}`,
+      };
+      agent.emit({
+        kind: "error",
+        ts: new Date().toISOString(),
+        iteration: 0,
+        message: reason,
+      });
+      agent.session.appendMessage("assistant", [note]);
+      return agent.makeResult([note], "aborted", 0);
+    }
+
+    // Add-on B — model router (turn-start; skip when host locked model).
+    if (
+      decisionCfg.modelRouter.enabled &&
+      !agent.decisionModelHostLocked &&
+      decisionCfg.modelRouter.profiles.length > 0
+    ) {
+      const incumbent = resolveIncumbentProfileId(decisionCfg.modelRouter, {
+        ...(agent.decisionModelProfileId !== undefined
+          ? { profileId: agent.decisionModelProfileId }
+          : {}),
+        ...(agent.decisionIncumbentProvider !== undefined
+          ? { provider: agent.decisionIncumbentProvider }
+          : {}),
+        ...(agent.decisionIncumbentModel !== undefined
+          ? { model: agent.decisionIncumbentModel }
+          : {}),
+      });
+      // Cache a successful match so later turns stay stable.
+      if (agent.decisionModelProfileId === undefined) {
+        agent.decisionModelProfileId = incumbent;
+      }
+      const routed = await resolveModelRouter({
+        config: decisionCfg,
+        client: decisionClient,
+        prompt: promptText,
+        incumbentProfileId: incumbent,
+        ...(agent.getPermissionMode !== undefined
+          ? { sandbox: agent.getPermissionMode() }
+          : {}),
+        ...(agent.decisionOnRecord !== undefined
+          ? { onRecord: agent.decisionOnRecord }
+          : {}),
+      });
+      agent.decisionModelRouterLastChosen = routed.record.chosenProfileId;
+      if (routed.applied && routed.profile !== undefined) {
+        try {
+          const adapter = createProviderAdapter({
+            provider: routed.profile.provider,
+            model: routed.profile.model,
+            ...(routed.profile.baseUrl !== undefined
+              ? { baseUrl: routed.profile.baseUrl }
+              : {}),
+          });
+          agent.setModelFromRouter(adapter, routed.profileId, {
+            provider: routed.profile.provider,
+            model: routed.profile.model,
+          });
+          agent.decisionOnRecord?.(routed.record);
+        } catch (err) {
+          // Keep incumbent adapter; record that apply failed.
+          agent.decisionOnRecord?.({
+            ...routed.record,
+            applied: false,
+            error:
+              err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
     }
   }
 
@@ -263,6 +365,10 @@ async function runAgentTurn(
       return agent.makeResult([], "aborted", iterations);
     }
     iterations++;
+
+    // Mid-turn settlement: children that finished during the previous
+    // tool batch become visible before this model call.
+    agent.flushSettlementNotices();
 
     // 1. Call the model.
     let response: ModelResponse;

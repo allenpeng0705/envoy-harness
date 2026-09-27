@@ -20,6 +20,7 @@ import {
   parseSessionPlanParams,
   parseSessionReviewParams,
   parseSessionSetModeParams,
+  parseSetDecisionParams,
   parseSetModelParams,
   parseSetPolicyParams,
   readOptionalCwd,
@@ -323,6 +324,18 @@ export function attachAcpServer(options: AcpServerOptions): () => void {
         }
         const p = parseSetPolicyParams(params);
         return { result: await backend.setPolicy(p) };
+      }
+
+      case "session/set_decision": {
+        assertInitialized(initialized);
+        if (backend.setDecision === undefined) {
+          throw new JsonRpcError(
+            "session/set_decision not supported",
+            JsonRpcErrorCode.METHOD_NOT_FOUND,
+          );
+        }
+        const p = parseSetDecisionParams(params);
+        return { result: await backend.setDecision(p) };
       }
 
       case "session/get_policy": {

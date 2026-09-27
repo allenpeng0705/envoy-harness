@@ -77,7 +77,8 @@ export class JobError extends Error {
       | "FOREIGN_OWNER"
       | "LIMIT"
       | "INVALID"
-      | "WAIT_TIMEOUT",
+      | "WAIT_TIMEOUT"
+      | "WAIT_ABORTED",
   ) {
     super(message);
   }

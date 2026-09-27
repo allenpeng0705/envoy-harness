@@ -31,6 +31,7 @@ import {
   PermissionModeSchema,
   SandboxBackendSchema,
 } from "../types.js";
+import { DecisionConfigSchema } from "../decision/config.js";
 import { ShellEnvironmentPolicySchema } from "./shell-env.js";
 
 /**
@@ -245,6 +246,12 @@ export const ConfigLayerSchema = z
      * TOML: `[shell_environment_policy]`.
      */
     shellEnvironmentPolicy: ShellEnvironmentPolicySchema.optional(),
+    /**
+     * Optional System One decision add-ons (Laya / Jev). Default off.
+     * TOML: `[decision]` / `[decision.safe_auto]`. See
+     * `docs/laya-decision-addons.md`. Denied in untrusted project TOML.
+     */
+    decision: DecisionConfigSchema.optional(),
   })
   .strict();
 export type ConfigLayer = z.infer<typeof ConfigLayerSchema>;
