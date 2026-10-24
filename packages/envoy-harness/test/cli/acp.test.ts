@@ -75,6 +75,19 @@ describe("run --acp", () => {
     }
   });
 
+  it("treats an explicit `run` subcommand as the mode, not a prompt", async () => {
+    // Regression: hosts launch `envoy-harness run --acp`. If `run` is left in
+    // `positional`, ACP refuses before any session opens.
+    const { parseArgs } = await import("../../src/cli/argv.js");
+    const parsed = parseArgs(["run", "--acp", "--provider", "openai", "--model", "gpt-4o"]);
+    expect(parsed.subcommand).toBe("run");
+    if (parsed.subcommand !== "run") throw new Error("expected run");
+    expect(parsed.acp).toBe(true);
+    expect(parsed.positional).toEqual([]);
+    expect(parsed.provider).toBe("openai");
+    expect(parsed.model).toBe("gpt-4o");
+  });
+
   it("rejects --acp with --repl", async () => {
     try {
       await run({ argv: ["--acp", "--repl"] });

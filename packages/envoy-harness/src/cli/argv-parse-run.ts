@@ -280,6 +280,11 @@ export function parseRunArgs(argv: ReadonlyArray<string>): RunParsedArgs {
       // Should be unreachable.
       throw new ArgvError(`unhandled flag: ${arg}`);
     }
+    // Strip the optional default subcommand keyword. Hosts (and our
+    // own help) write `envoy-harness run --acp`; without this, `run`
+    // lands in `positional` and `--acp` refuses to start — the same
+    // strip `team` / `mcp` / `doctor` already do for their names.
+    if (arg === "run") continue;
     out.positional.push(arg);
   }
   if (out.peers.length === 0) {

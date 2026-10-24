@@ -102,7 +102,13 @@ export function attachAcpServer(options: AcpServerOptions): () => void {
         return { sessionId };
       }
 
-      case "session/load": {
+      case "session/load":
+      // EnvoyDev (and the ACP resume capability we advertise) call
+      // `session/resume`. The harness's own clients historically used
+      // `session/load` for the same backend hook. One body, both names —
+      // without this alias, a host that sends `resume: true` fails with
+      // "method not found: session/resume" even though we claimed resume.
+      case "session/resume": {
         assertInitialized(initialized);
         if (backend.loadSession === undefined) {
           throw new JsonRpcError(

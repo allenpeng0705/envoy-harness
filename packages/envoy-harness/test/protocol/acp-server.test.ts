@@ -187,6 +187,23 @@ describe("ACP server", () => {
     ]);
     pair.close();
   });
+
+  it("session/resume is an alias of session/load (EnvoyDev hosts send resume)", async () => {
+    const pair = createInProcessJsonRpcPair();
+    const backend = createFakeSessionBackend({
+      loadMessages: [{ role: "user", text: "earlier" }],
+    });
+    attachAcpServer({ connection: pair.server, backend });
+    await pair.client.request("initialize", {});
+    const loaded = (await pair.client.request("session/resume", {
+      sessionId: "sess-resume-2",
+      cwd: "/tmp",
+      mcpServers: [],
+    })) as { sessionId: string; messages?: Array<{ role: string; text: string }> };
+    expect(loaded.sessionId).toBe("sess-resume-2");
+    expect(loaded.messages).toEqual([{ role: "user", text: "earlier" }]);
+    pair.close();
+  });
 });
 
 describe("ACP capability declaration (standard-client shape)", () => {
