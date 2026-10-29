@@ -64,7 +64,9 @@ export { hasUnbalancedQuotes, containsBackticks } from "./permissions/bash/seman
 
 export {
   AUTO_RUN_SAFE_TOOLS,
+  AUTO_RUN_WORKSPACE_MUTATION_TOOLS,
   isAutoRunSafeBashCommand,
+  isPathInsideWorkspace,
   shouldAskUnderAutoRun,
   policyFromMode,
   PERMISSION_PRESETS,
@@ -74,6 +76,7 @@ export {
   permissionPresetToConfigFields,
   resolvePermissionPreset,
   type AutoRunPolicy,
+  type ShouldAskUnderAutoRunOptions,
   type PermissionPresetName,
   type PermissionPresetResolved,
 } from "./permissions/index.js";

@@ -4,9 +4,12 @@
 
 export {
   AUTO_RUN_SAFE_TOOLS,
+  AUTO_RUN_WORKSPACE_MUTATION_TOOLS,
   isAutoRunSafeBashCommand,
+  isPathInsideWorkspace,
   shouldAskUnderAutoRun,
   type AutoRunPolicy,
+  type ShouldAskUnderAutoRunOptions,
 } from "./auto-run.js";
 
 export { policyFromMode } from "./policy.js";

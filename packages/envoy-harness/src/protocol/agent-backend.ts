@@ -402,7 +402,15 @@ export function createAgentSessionBackend(
       if (live === undefined) {
         throw new Error(`unknown session: ${params.sessionId}`);
       }
-      assertSessionIdle(live);
+      // autoRun alone is a flag the next shouldAsk reads — safe while a turn is
+      // blocked on a permission ask (hosts offer "don't ask again" on that card).
+      // Sandbox / approval / preset still need an idle session.
+      const onlyAutoRun =
+        params.autoRun !== undefined &&
+        params.preset === undefined &&
+        params.sandbox === undefined &&
+        params.approval === undefined;
+      if (!onlyAutoRun) assertSessionIdle(live);
       const out: {
         sandbox?: string;
         approval?: string;

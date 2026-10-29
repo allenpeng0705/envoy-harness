@@ -259,7 +259,9 @@ export function installLivePermissionHook(
   }
   installToolPermissionAskHook(hooks, {
     shouldAsk: async (toolName, args) => {
-      const autoRun = shouldAskUnderAutoRun(live.autoRun, toolName, args);
+      const autoRun = shouldAskUnderAutoRun(live.autoRun, toolName, args, {
+        workspaceRoot: live.agent.cwd,
+      });
       const incumbentAsk =
         autoRun !== undefined
           ? autoRun
