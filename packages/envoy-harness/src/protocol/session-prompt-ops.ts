@@ -14,6 +14,7 @@ import type { MemoryStore } from "../memories/store.js";
 import type { Agent, AgentResult } from "../agent.js";
 import type { Tracer } from "../trace/types.js";
 import { hasTurnHints } from "../interaction/turn-hints.js";
+import { acpPlanUpdateParams } from "../plan/items.js";
 import { stripThinking } from "../util/strip-thinking.js";
 import { traceEventToActivity } from "./activity-format.js";
 import { traceEventToCommittedMessage } from "./message-format.js";
@@ -104,6 +105,18 @@ export async function runSessionPrompt(
     if (message !== undefined) params.onUpdate?.(message);
     return slash;
   }
+
+  // Wire todo_write → ACP plan_update for EnvoyDev / other hosts.
+  live.agent.planItemsListener = (sessionId, items) => {
+    params.onSessionUpdate?.(acpPlanUpdateParams(sessionId, items).update);
+  };
+  const restored = live.agent.getSession().getPlanItems();
+  if (restored.length > 0) {
+    params.onSessionUpdate?.(
+      acpPlanUpdateParams(params.sessionId, restored).update,
+    );
+  }
+
   live.requestPermission = params.requestPermission;
   live.requestUserQuestion =
     params.requestUserQuestion !== undefined

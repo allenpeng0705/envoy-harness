@@ -229,6 +229,14 @@ export interface ProtocolSessionBackend {
     onUpdate?: (msg: ProtocolCommittedMessage) => void;
     onActivity?: (activity: ProtocolActivityEvent) => void;
     onToken?: (token: ProtocolToken) => void;
+    /**
+     * Spec-shaped `session/update.update` (e.g. `plan_update`). Distinct from
+     * `onUpdate`, which carries harness committed message rows.
+     */
+    onSessionUpdate?: (update: {
+      sessionUpdate: string;
+      [key: string]: unknown;
+    }) => void;
   }): Promise<ProtocolPromptResult>;
   cancel(sessionId: string): void;
   listTools?(): ProtocolToolInfo[];

@@ -109,6 +109,11 @@ export interface SessionMetadata {
    */
   plan?: import("./plan/state.js").PlanState;
   /**
+   * Live ACP checklist (todo_write). Orthogonal to markdown `plan`
+   * lifecycle — execution progress for clients such as EnvoyDev.
+   */
+  planItems?: readonly import("./plan/items.js").PlanItem[];
+  /**
    * R4.6 — collaboration mode (Plan / Default / Review).
    * Orthogonal to `plan` document lifecycle. Controls tool
    * policy + prompt guidance; see `plan/mode-kind.ts`.
@@ -257,6 +262,10 @@ export interface Session {
    * `undefined` when no plan has been set.
    */
   getPlan(): import("./plan/state.js").PlanState | undefined;
+  /** Replace the live ACP checklist (todo_write). Empty clears. */
+  setPlanItems(items: readonly import("./plan/items.js").PlanItem[]): void;
+  /** Current checklist, or empty when none. */
+  getPlanItems(): readonly import("./plan/items.js").PlanItem[];
   /**
    * R4.6 — set collaboration mode (Plan / Default / Review).
    */
@@ -340,6 +349,18 @@ export class InMemorySession implements Session {
   /** Phase A / Item 6: read the current plan state. */
   getPlan(): import("./plan/state.js").PlanState | undefined {
     return this.metadata.plan;
+  }
+
+  setPlanItems(items: readonly import("./plan/items.js").PlanItem[]): void {
+    if (items.length === 0) {
+      delete this.metadata.planItems;
+    } else {
+      this.metadata.planItems = items.map((item) => ({ ...item }));
+    }
+  }
+
+  getPlanItems(): readonly import("./plan/items.js").PlanItem[] {
+    return this.metadata.planItems ?? [];
   }
 
   setCollaborationMode(

@@ -541,6 +541,19 @@ export class PersistedSession implements Session {
     return this.metadata.plan;
   }
 
+  setPlanItems(items: readonly import("../plan/items.js").PlanItem[]): void {
+    if (items.length === 0) {
+      delete this.metadata.planItems;
+    } else {
+      this.metadata.planItems = items.map((item) => ({ ...item }));
+    }
+    this.rewriteHeader();
+  }
+
+  getPlanItems(): readonly import("../plan/items.js").PlanItem[] {
+    return this.metadata.planItems ?? [];
+  }
+
   setCollaborationMode(
     mode: import("../plan/mode-kind.js").CollaborationModeState,
   ): void {

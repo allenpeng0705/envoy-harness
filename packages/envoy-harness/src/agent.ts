@@ -109,6 +109,8 @@ import {
   makeEnterPlanModeTool,
   makeExitPlanModeTool,
 } from "./plan/mode-tools.js";
+import { makeTodoWriteTool } from "./plan/todo-write.js";
+import type { PlanItem } from "./plan/items.js";
 import {
   createCollaborationModeState,
   modeForcesReadOnly,
@@ -727,6 +729,12 @@ export class Agent {
    */
   askHandlerIsShim: boolean;
   /**
+   * ACP hosts subscribe so `todo_write` can push `plan_update`
+   * without the tool knowing about JSON-RPC.
+   * @internal
+   */
+  planItemsListener?: (sessionId: string, items: readonly PlanItem[]) => void;
+  /**
    * T2.3: the per-tool-call execution seam, extracted
    * from this file. `run()` calls `executor.executeMany(calls, iter)`
    * for each batch of tool calls in the model's response.
@@ -816,6 +824,12 @@ export class Agent {
     // same pattern as `task` + LSP). The tool closes
     // over the service; `setUserQuestions(s)` replaces
     // it with a fresh closure over the new service.
+    // Cursor-style checklist — always available so EnvoyDev can track progress.
+    this.tools.register(
+      makeTodoWriteTool({
+        onChange: (sessionId, items) => this.planItemsListener?.(sessionId, items),
+      }),
+    );
     if (this.userQuestions) {
       this.tools.register(makeAskUserTool({ service: this.userQuestions }));
       this.tools.register(

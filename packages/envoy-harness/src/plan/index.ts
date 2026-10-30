@@ -26,6 +26,16 @@ export {
   makeExitPlanModeTool,
 } from "./mode-tools.js";
 
+export { makeTodoWriteTool } from "./todo-write.js";
+
+export {
+  acpPlanUpdateParams,
+  planItemsToAcpEntries,
+  type PlanItem,
+  type PlanItemPriority,
+  type PlanItemStatus,
+} from "./items.js";
+
 export {
   collaborationModePrompt,
   createCollaborationModeState,

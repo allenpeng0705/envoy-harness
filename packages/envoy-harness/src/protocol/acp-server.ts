@@ -204,6 +204,12 @@ export function attachAcpServer(options: AcpServerOptions): () => void {
                 token,
               });
             },
+            onSessionUpdate: (update) => {
+              connection.notify("session/update", {
+                sessionId: p.sessionId,
+                update,
+              });
+            },
           });
         } finally {
           state.busy = false;
