@@ -118,8 +118,14 @@ import {
 } from "./plan/index.js";
 import type { UserQuestionService } from "./interaction/user-questions.js";
 
-/** Default max iterations before the agent throws. */
+/** Default max model calls per phase before the loop yields `max_iterations` (or continues). */
 export const DEFAULT_MAX_ITERATIONS = 50;
+/**
+ * Extra phases after the first budget is spent. `0` = one hard phase (one-shot /
+ * tests). Long-running hosts (ACP / REPL) set this higher so a large task can
+ * continue instead of dying mid-investigation.
+ */
+export const DEFAULT_MAX_CONTINUATION_PHASES = 0;
 /** F10.2: default cap on sub-agents per turn.
  *  Picked to be generous (the model rarely needs
  *  more than 3-4 sub-agents in one turn) while
@@ -142,8 +148,14 @@ export interface AgentOptions {
   hooks?: HookRegistry;
   /** Working directory for tool execution. Defaults to `process.cwd()`. */
   cwd?: string;
-  /** Max iterations before throwing. Default 50. */
+  /** Max model calls per phase. Default 50. Exhaustion returns `max_iterations` (or continues — see `maxContinuationPhases`). */
   maxIterations?: number;
+  /**
+   * How many times the loop may reset the per-phase budget after
+   * `maxIterations` with a continuation hint. Default 0 (one phase).
+   * ACP / REPL set this so big tasks finish instead of stopping cold.
+   */
+  maxContinuationPhases?: number;
   /**
    * Retry policy for transient model failures (429 / 5xx / dropped
    * socket / timeout). Defaults to {@link DEFAULT_RETRY_POLICY}
@@ -538,6 +550,8 @@ export class Agent {
   cwd: string;
   /** @internal */
   maxIterations: number;
+  /** @internal Extra phases after the first budget (see {@link AgentOptions.maxContinuationPhases}). */
+  maxContinuationPhases: number;
   readonly retryPolicy: RetryPolicy | undefined;
   /** @internal */
   abortController: AbortController;
@@ -757,6 +771,8 @@ export class Agent {
     this.hooks = options.hooks ?? new HookRegistry();
     this.cwd = options.cwd ?? process.cwd();
     this.maxIterations = options.maxIterations ?? DEFAULT_MAX_ITERATIONS;
+    this.maxContinuationPhases =
+      options.maxContinuationPhases ?? DEFAULT_MAX_CONTINUATION_PHASES;
     this.retryPolicy = options.retryPolicy;
     this.maxCostUsd =
       options.maxCostUsd !== undefined && options.maxCostUsd > 0
@@ -1755,9 +1771,11 @@ export class Agent {
    * to the session. Reads from the model and executes tools.
    * Fires PreToolUse and PostToolUse hooks.
    *
-   * **Throws:** only on `maxIterations` exhaustion. All other
-   * failures (tool errors, unknown tools, invalid args) become
-   * `isError: true` tool results in the transcript.
+   * **Budget:** when a phase hits `maxIterations`, the loop either
+   * continues (if `maxContinuationPhases` remain) or returns
+   * `stopReason: "max_iterations"`. All other failures (tool errors,
+   * unknown tools, invalid args) become `isError: true` tool results
+   * in the transcript.
    *
    * **T3.1:** the loop body was extracted to
    * `runAgentLoop` in `./agent/run-loop.ts` so

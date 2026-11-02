@@ -230,7 +230,11 @@ export function taskGuidanceSection(): PromptSection {
       "result before continuing — you will get a settlement notice when each child finishes " +
       "(injected mid-turn before the next model call, or as a follow-up turn when idle), or " +
       "join with wait_agents / job_wait / job_output (wait: true). Do not busy-poll. Cap: at most " +
-      "maxSubagents children per turn (default 8); concurrency defaults to maxParallelToolCalls (4).",
+      "maxSubagents children per turn (default 8); concurrency defaults to maxParallelToolCalls (4). " +
+      "For large investigations (repo summaries, audits, refactors across many packages): outline a " +
+      "short plan, fan out independent slices via task / tasks[], then synthesize the children's " +
+      "results into one final answer. Do not burn the whole iteration budget on serial ls/read of " +
+      "the entire tree yourself.",
   };
 }
 

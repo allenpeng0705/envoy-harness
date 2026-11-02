@@ -7,7 +7,7 @@
  *    (with the system prompt, if any, as the
  *    first message).
  * 2. Emit `agent_start`.
- * 3. Loop (bounded by `maxIterations`):
+ * 3. Loop (bounded by `maxIterations` per phase):
  *    a. Call the model.
  *    b. Attribute cost (F7.1).
  *    c. Check the cost cap (F7.5).
@@ -16,7 +16,9 @@
  *    f. Extract tool calls; if none → return.
  *    g. Run the tool calls through `ToolExecutor`.
  *    h. If the model said `max_tokens` → return.
- * 4. Throw on `maxIterations` exhaustion.
+ * 4. On phase exhaustion: continue up to `maxContinuationPhases`
+ *    with a decomposition / wrap-up hint, else return
+ *    `stopReason: "max_iterations"` (never throw).
  *
  * **Why a top-level function, not a method:** the
  * loop body is ~180 lines and the only method
@@ -77,6 +79,24 @@ import {
   withRetry,
   type RetryPolicy,
 } from "../llm/retry.js";
+
+/** Injected when a phase has ≤2 iterations left. */
+const NEAR_BUDGET_HINT =
+  "[system] Iteration budget for this phase is nearly exhausted. Stop broad " +
+  "exploration. Prefer the task tool for remaining independent slices, or " +
+  "synthesize a complete answer from evidence so far. Do not restart from scratch.";
+
+/** Injected when starting another phase after budget exhaustion. */
+const CONTINUE_HINT =
+  "[system] You hit the per-phase iteration budget mid-task. Continue from " +
+  "where you left off — do not restart. Finish open plan items; prefer the " +
+  "task tool for independent remaining slices; then deliver a complete answer when done.";
+
+/** Injected when starting the last allowed continuation phase. */
+const LAST_PHASE_HINT =
+  "[system] This is the final continuation phase. Synthesize a complete answer " +
+  "from evidence gathered so far. Use the task tool only if a short focused " +
+  "slice is still required. Do not restart exploration of the whole tree.";
 
 /**
  * Run the agent's turn loop. Reads from the
@@ -347,7 +367,12 @@ async function runAgentTurn(
   );
 
   void turnId;
+  /** Model calls in the current phase (bounded by `maxIterations`). */
+  let phaseIterations = 0;
+  /** Model calls across all phases — reported on `AgentResult`. */
   let iterations = 0;
+  let continuationsUsed = 0;
+  let nearBudgetHinted = false;
   // Self-healing: track how many consecutive times the model attempted
   // the SAME failing tool call, so the loop can inject a corrective
   // message and break an error spiral (weak providers often repeat a
@@ -360,11 +385,30 @@ async function runAgentTurn(
   let turnContextInjected = false;
   let previousStep: StepSnapshot | undefined;
 
-  while (iterations < agent.maxIterations) {
+  phaseLoop: for (;;) {
+  while (phaseIterations < agent.maxIterations) {
     if (agent.abortController.signal.aborted) {
       return agent.makeResult([], "aborted", iterations);
     }
+    phaseIterations++;
     iterations++;
+
+    // Near the end of a phase: ask the model to wrap up or fan out via Task.
+    if (
+      !nearBudgetHinted &&
+      agent.maxIterations - phaseIterations <= 1
+    ) {
+      nearBudgetHinted = true;
+      agent.session.appendMessage("user", [
+        { type: "text", text: NEAR_BUDGET_HINT },
+      ]);
+      agent.emit({
+        kind: "error",
+        ts: new Date().toISOString(),
+        iteration: iterations,
+        message: "iteration budget nearly exhausted — wrap-up hint injected",
+      });
+    }
 
     // Mid-turn settlement: children that finished during the previous
     // tool batch become visible before this model call.
@@ -705,9 +749,27 @@ async function runAgentTurn(
     }
   }
 
-  throw new Error(
-    `agent loop exceeded max iterations (${agent.maxIterations})`,
-  );
+  // Phase budget exhausted — continue with a fresh budget, or stop cleanly.
+  if (continuationsUsed < agent.maxContinuationPhases) {
+    continuationsUsed++;
+    const lastPhase = continuationsUsed >= agent.maxContinuationPhases;
+    const hint = lastPhase ? LAST_PHASE_HINT : CONTINUE_HINT;
+    agent.session.appendMessage("user", [{ type: "text", text: hint }]);
+    agent.emit({
+      kind: "error",
+      ts: new Date().toISOString(),
+      iteration: iterations,
+      message: lastPhase
+        ? "iteration budget exhausted — final-phase synthesize hint injected"
+        : `iteration budget exhausted — continuation ${continuationsUsed}/${agent.maxContinuationPhases} injected`,
+    });
+    phaseIterations = 0;
+    nearBudgetHinted = false;
+    continue phaseLoop;
+  }
+
+  return agent.makeResult([], "max_iterations", iterations);
+  } // phaseLoop
 }
 
 /** Find the `tool_result` message for a tool call id (most recent first). */

@@ -206,6 +206,7 @@ export {
 export {
   Agent,
   DEFAULT_MAX_ITERATIONS,
+  DEFAULT_MAX_CONTINUATION_PHASES,
   type AgentOptions,
   type AgentResult,
 } from "./agent.js";

@@ -24,7 +24,7 @@ export function formatHelp(version: string): string {
     "  --provider <name>      LLM provider (openai, anthropic, deepseek, ollama, …)",
     "  --base-url <url>       override provider API base (OpenAI-/Anthropic-compatible)",
     "  --cwd <path>           override working directory",
-    "  --max-turns <n>        agent loop iteration cap (default 50 one-shot / 200 REPL)",
+    "  --max-turns <n>        agent loop iteration cap per phase (default 50 one-shot / 200 REPL+ACP)",
     "  --max-cost-usd <n>     cost ceiling (default 5.00 one-shot; uncapped REPL)",
     "  --resume <session-id>  resume a previous session",
     "  --resume-remote <node>/<session>  resume from a mesh peer (requires mesh adapter)",

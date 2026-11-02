@@ -4,6 +4,10 @@
 import { describe, expect, it } from "vitest";
 
 import { runRepl } from "../../src/index.js";
+import {
+  ACP_DEFAULT_MAX_CONTINUATION_PHASES,
+  ACP_DEFAULT_MAX_ITERATIONS,
+} from "../../src/cli/run/acp.js";
 import { wireCliPeers } from "../../src/cli/run/wire-cli-peers.js";
 import type { ConfigLayer } from "../../src/config/index.js";
 import type { ReplCommand } from "../../src/cli/repl/types.js";
@@ -18,11 +22,13 @@ import {
 describe("R8.2 REPL long-run defaults", () => {
   it("defaults maxIterations to 200 when --max-turns unset", async () => {
     let captured = 0;
+    let continuations = 0;
     const probe: ReplCommand = {
       name: "/probe-max",
       description: "test probe",
       handler(_args, ctx) {
         captured = ctx.agent.maxIterations;
+        continuations = ctx.agent.maxContinuationPhases;
       },
     };
     await runRepl({
@@ -34,6 +40,12 @@ describe("R8.2 REPL long-run defaults", () => {
       stderr: new StringWritable(),
     });
     expect(captured).toBe(200);
+    expect(continuations).toBe(3);
+  });
+
+  it("ACP long-run defaults match the REPL turn budget", () => {
+    expect(ACP_DEFAULT_MAX_ITERATIONS).toBe(200);
+    expect(ACP_DEFAULT_MAX_CONTINUATION_PHASES).toBe(3);
   });
 
   it("honors explicit --max-turns over the REPL default", async () => {

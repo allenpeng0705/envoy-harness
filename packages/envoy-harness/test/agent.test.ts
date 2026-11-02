@@ -81,6 +81,7 @@ function makeAgent(
     hooks?: HookRegistry;
     systemPrompt?: string;
     maxIterations?: number;
+    maxContinuationPhases?: number;
     abortSignal?: AbortSignal;
   } = {},
 ): { agent: Agent; tools: ToolRegistry; session: Session; hooks: HookRegistry } {
@@ -97,6 +98,9 @@ function makeAgent(
     hooks,
     ...(opts.systemPrompt !== undefined ? { systemPrompt: opts.systemPrompt } : {}),
     ...(opts.maxIterations !== undefined ? { maxIterations: opts.maxIterations } : {}),
+    ...(opts.maxContinuationPhases !== undefined
+      ? { maxContinuationPhases: opts.maxContinuationPhases }
+      : {}),
     ...(opts.abortSignal !== undefined ? { abortSignal: opts.abortSignal } : {}),
   });
   return { agent, tools, session, hooks };
@@ -672,7 +676,7 @@ describe("Agent.compactWithSummary", () => {
 });
 
 describe("Agent: limits and abort", () => {
-  it("throws when maxIterations is exceeded", async () => {
+  it("returns max_iterations when the phase budget is exceeded", async () => {
     // Scripted: model always returns a tool call (never reaches end_turn).
     const script: ModelResponse[] = [];
     for (let i = 0; i < 10; i++) {
@@ -683,8 +687,42 @@ describe("Agent: limits and abort", () => {
     }
     const model = new FakeModel(script);
     const { agent } = makeAgent(model, { maxIterations: 3 });
-    await expect(agent.run("loop forever")).rejects.toThrow(
-      /max iterations/,
+    const result = await agent.run("loop forever");
+    expect(result.stopReason).toBe("max_iterations");
+    expect(result.iterations).toBe(3);
+  });
+
+  it("continues into a new phase then can finish with end_turn", async () => {
+    // Two tool-only steps exhaust phase budget (2); continuation injects a
+    // hint; the next scripted response is a plain answer.
+    const script: ModelResponse[] = [
+      {
+        content: [toolCall("tc0", "echo", { message: "a" })],
+        stopReason: "tool_use",
+      },
+      {
+        content: [toolCall("tc1", "echo", { message: "b" })],
+        stopReason: "tool_use",
+      },
+      textResponse("done after continue"),
+    ];
+    const model = new FakeModel(script);
+    const { agent, session } = makeAgent(model, {
+      maxIterations: 2,
+      maxContinuationPhases: 1,
+    });
+    const result = await agent.run("big task");
+    expect(result.stopReason).toBe("end_turn");
+    expect(result.iterations).toBe(3);
+    const texts = session.messages
+      .filter((m) => m.role === "user")
+      .flatMap((m) =>
+        m.content
+          .filter((b): b is { type: "text"; text: string } => b.type === "text")
+          .map((b) => b.text),
+      );
+    expect(texts.some((t) => t.includes("final continuation phase"))).toBe(
+      true,
     );
   });
 

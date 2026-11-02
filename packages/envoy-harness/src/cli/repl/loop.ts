@@ -191,6 +191,9 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
     } else {
       agentOptions.maxIterations = REPL_DEFAULT_MAX_TURNS;
     }
+    // Same multi-phase continue as ACP: a stuck tool loop gets wrap-up /
+    // Task hints instead of dying at the first phase boundary.
+    agentOptions.maxContinuationPhases = 3;
     if (opts.args.maxCostUsd !== undefined) {
       agentOptions.maxCostUsd = opts.args.maxCostUsd;
     }

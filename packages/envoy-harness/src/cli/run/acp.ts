@@ -42,6 +42,11 @@ import { EXIT_USAGE, type RunOptions, type RunResult } from "./types.js";
 import { mergeClusterSeams, wirePeerCluster } from "../../peers/wire-cluster.js";
 import { buildCliLocalMeshSubmitter } from "./build-local-mesh-submitter.js";
 
+/** Per-phase model-call budget when `--max-turns` is unset (matches REPL). */
+export const ACP_DEFAULT_MAX_ITERATIONS = 200;
+/** Extra phases after budget exhaustion so large ACP tasks can finish. */
+export const ACP_DEFAULT_MAX_CONTINUATION_PHASES = 3;
+
 /**
  * Run until the JSON-RPC input stream ends (or the connection
  * closes). Returns an empty run result.
@@ -301,9 +306,11 @@ async function resolveAcpBackend(
               jobRegistry,
               terminalService: env.terminals,
               ...(mcpWire !== undefined ? { mcpClients: mcpWire.registry } : {}),
-              ...(parsed.maxTurns !== undefined
-                ? { maxIterations: parsed.maxTurns }
-                : {}),
+              // Long-run like the REPL: 200 turns/phase and a few continuation
+              // phases so a broad "analyze this repo" finishes instead of dying
+              // at the Agent default of 50 with a hard throw.
+              maxIterations: parsed.maxTurns ?? ACP_DEFAULT_MAX_ITERATIONS,
+              maxContinuationPhases: ACP_DEFAULT_MAX_CONTINUATION_PHASES,
               ...(parsed.maxCostUsd !== undefined
                 ? { maxCostUsd: parsed.maxCostUsd }
                 : {}),
