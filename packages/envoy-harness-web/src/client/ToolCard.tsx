@@ -75,6 +75,14 @@ export function ToolCard(props: ToolCardProps): JSX.Element {
             <pre className="tool-card-raw">{argsPreview.raw}</pre>
           ) : null}
           {body ? <pre className="tool-card-output">{body}</pre> : null}
+          {(tool.images ?? props.message.images)?.map((img, i) => (
+            <img
+              key={`${img.mimeType}-${i}`}
+              className="tool-card-image"
+              alt={`tool result ${i + 1}`}
+              src={`data:${img.mimeType};base64,${img.data}`}
+            />
+          ))}
         </div>
       ) : null}
     </article>

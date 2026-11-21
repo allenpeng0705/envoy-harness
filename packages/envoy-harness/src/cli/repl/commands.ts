@@ -224,28 +224,30 @@ const approvalCommand: ReplCommand = {
 
 /**
  * `/preset <name>` — R4.5b one-knob policy (sandbox + approval).
- * Valid: `safe` | `ask-all` | `approve-all`.
+ * Valid: `safe` | `ask-all` | `approve-all` | `mobile` | `webdev`.
  */
 const presetCommand: ReplCommand = {
   name: "/preset",
-  description: "permission preset (safe | ask-all | approve-all)",
+  description: "permission preset (safe | ask-all | approve-all | mobile | webdev)",
   handler(args, ctx) {
-    const VALID = new Set(["safe", "ask-all", "approve-all"]);
+    const VALID = new Set(["safe", "ask-all", "approve-all", "mobile", "webdev"]);
     if (args.length === 0) {
       const current = ctx.agent.getPermissionPreset() ?? "(custom)";
       ctx.stdout.write(`current preset: ${current}\n`);
-      ctx.stdout.write("usage: /preset <safe | ask-all | approve-all>\n");
+      ctx.stdout.write(
+        "usage: /preset <safe | ask-all | approve-all | mobile | webdev>\n",
+      );
       return;
     }
     const name = args[0];
     if (name === undefined || !VALID.has(name)) {
       ctx.stderr.write(
-        `error: invalid preset: ${name} (expected safe | ask-all | approve-all)\n`,
+        `error: invalid preset: ${name} (expected safe | ask-all | approve-all | mobile | webdev)\n`,
       );
       return;
     }
     const preset = ctx.agent.setPermissionPreset(
-      name as "safe" | "ask-all" | "approve-all",
+      name as "safe" | "ask-all" | "approve-all" | "mobile" | "webdev",
     );
     ctx.args.sandbox = preset.permissionMode;
     ctx.args.approval = preset.askForApproval;

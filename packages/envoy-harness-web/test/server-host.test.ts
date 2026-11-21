@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   defaultWebAcpCwd,
+  newestClientSourceMtime,
   shouldPreferViteDev,
   withHarnessCwd,
 } from "../src/server/start.js";
@@ -46,7 +47,7 @@ describe("shouldPreferViteDev", () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  it("prefers Vite when App.tsx is newer than dist index.html", () => {
+  it("prefers Vite when any client source is newer than dist index.html", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "eh-web-dist-"));
     const index = path.join(dir, "index.html");
     fs.writeFileSync(index, "<html></html>");
@@ -56,9 +57,28 @@ describe("shouldPreferViteDev", () => {
       path.dirname(fileURLToPath(import.meta.url)),
       "..",
     );
-    expect(fs.existsSync(path.join(pkgRoot, "src/client/App.tsx"))).toBe(true);
+    const newest = newestClientSourceMtime(
+      path.join(pkgRoot, "src/client"),
+    );
+    expect(newest).toBeGreaterThan(past.getTime());
     expect(shouldPreferViteDev(dir)).toBe(true);
     fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("tracks nested client sources, not only App.tsx", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "eh-web-src-"));
+    const nested = path.join(root, "acp");
+    fs.mkdirSync(nested, { recursive: true });
+    const old = path.join(root, "App.tsx");
+    const young = path.join(nested, "host.ts");
+    fs.writeFileSync(old, "export {}\n");
+    fs.writeFileSync(young, "export {}\n");
+    const past = new Date("2020-01-01T00:00:00Z");
+    const future = new Date("2035-01-01T00:00:00Z");
+    fs.utimesSync(old, past, past);
+    fs.utimesSync(young, future, future);
+    expect(newestClientSourceMtime(root)).toBe(future.getTime());
+    fs.rmSync(root, { recursive: true, force: true });
   });
 });
 

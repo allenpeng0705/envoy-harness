@@ -223,10 +223,21 @@ describe("groupSessionsByProject", () => {
         { path: "/work/beta/" },
       ],
     );
-    // Launch-cwd / unknown sessions are omitted from Projects (not Ungrouped).
+    // Unregistered sessions stay under Ungrouped — never become a project heading.
     expect(groups.map((g) => g.label)).toEqual(["Alpha App", "beta"]);
     expect(groups[0]?.sessions.map((s) => s.id)).toEqual(["b"]);
     expect(groups[1]?.sessions.map((s) => s.id)).toEqual(["a"]);
+    const withUngrouped = groupSessionsByProject(
+      [
+        summary("a", "/work/beta"),
+        summary("c", "/launch/cwd"),
+      ],
+      undefined,
+      [{ path: "/work/beta/" }],
+      { includeUngrouped: true },
+    );
+    expect(withUngrouped.map((g) => g.label)).toEqual(["beta", "Ungrouped"]);
+    expect(withUngrouped[1]?.sessions.map((s) => s.id)).toEqual(["c"]);
   });
 
   it("registry mode never invents a project from launch cwd", () => {
@@ -234,19 +245,10 @@ describe("groupSessionsByProject", () => {
       [summary("c", "/Users/me/envoy-harness")],
       undefined,
       [],
-    );
-    expect(groups).toEqual([]);
-  });
-
-  it("registry mode can optionally show Ungrouped", () => {
-    const groups = groupSessionsByProject(
-      [summary("c", "/Users/me/envoy-harness")],
-      undefined,
-      [{ path: "/work/only-manual", name: "Manual" }],
       { includeUngrouped: true },
     );
-    expect(groups.map((g) => g.label)).toEqual(["Manual", "Ungrouped"]);
-    expect(groups[1]?.sessions.map((s) => s.id)).toEqual(["c"]);
+    expect(groups.map((g) => g.label)).toEqual(["Ungrouped"]);
+    expect(groups[0]?.cwd).toBe("");
   });
 
   it("disambiguates two paths that share a basename", () => {

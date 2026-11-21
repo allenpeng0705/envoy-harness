@@ -70,6 +70,7 @@ import {
   InMemorySession,
   installToolPermissionAskHook,
   newSessionId,
+  resolveAgentRuntimeConfig,
   ToolRegistry,
   type AskHandler,
   type MeshSubmitter,
@@ -431,14 +432,19 @@ export function defaultBuildAgentFactory(opts: {
       // code-edit is the write skill; the default executor needs
       // workspace-write for bash to be able to edit files. All
       // other skills stay read-only.
-      permissionMode: skillId === "code-edit" ? "workspace-write" : "read-only",
+      permissionMode:
+        skillId === "code-edit" ||
+        skillId === "device-debug" ||
+        skillId === "browser-debug"
+          ? "workspace-write"
+          : "read-only",
       startedAt: new Date().toISOString(),
     });
     const toolNames = new Set(getToolsForSkill(skillId));
     const tools = new ToolRegistry();
     // Standard BUILTIN tools (read_file, bash, etc.).
     for (const t of BUILTIN_TOOLS) {
-      if (toolNames.has(t.name as "read_file" | "bash")) {
+      if (toolNames.has(t.name as import("./skills.js").EnvoyHarnessToolName)) {
         tools.register(t);
       }
     }
@@ -463,6 +469,16 @@ export function defaultBuildAgentFactory(opts: {
           : {}),
       });
     }
+    const mobileRuntime =
+      skillId === "device-debug"
+        ? resolveAgentRuntimeConfig(cwd, { permissionPreset: "mobile" })
+        : undefined;
+    const webdevRuntime =
+      skillId === "browser-debug"
+        ? resolveAgentRuntimeConfig(cwd, { permissionPreset: "webdev" })
+        : undefined;
+    const domainSandbox =
+      mobileRuntime?.sandboxPolicy ?? webdevRuntime?.sandboxPolicy;
     return new Agent({
       model: opts.model,
       tools,
@@ -482,6 +498,9 @@ export function defaultBuildAgentFactory(opts: {
       // `defaultBuildSubagentFactory` (Package 1).
       ...(opts.meshSubmitter ? { meshSubmitter: opts.meshSubmitter } : {}),
       ...(askHandler !== undefined ? { askHandler } : {}),
+      ...(domainSandbox !== undefined
+        ? { sandboxPolicy: domainSandbox }
+        : {}),
     });
   };
 }

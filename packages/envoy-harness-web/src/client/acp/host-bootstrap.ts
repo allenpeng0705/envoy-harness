@@ -22,7 +22,11 @@ export interface AcpBootstrap {
   autoRun: string;
   cwd: string;
   /** Hydrated transcript when resumed via `session/load`. */
-  messages?: Array<{ role?: string; text?: string }>;
+  messages?: Array<{
+    role?: string;
+    text?: string;
+    images?: Array<{ mimeType: string; data: string }>;
+  }>;
   /** True when an existing session was loaded instead of `session/new`. */
   resumed: boolean;
 }
@@ -77,7 +81,8 @@ async function tryLoadSession(
   sessionId: string,
 ): Promise<{
   sessionId: string;
-  messages?: Array<{ role?: string; text?: string }>;
+  cwd?: string;
+  messages?: Array<{ role?: string; text?: string; images?: Array<{ mimeType: string; data: string }> }>;
   resumed: true;
 } | null> {
   try {
@@ -85,11 +90,15 @@ async function tryLoadSession(
       sessionId,
     })) as {
       sessionId?: string;
-      messages?: Array<{ role?: string; text?: string }>;
+      cwd?: string;
+      messages?: Array<{ role?: string; text?: string; images?: Array<{ mimeType: string; data: string }> }>;
     };
     const id = loaded.sessionId ?? sessionId;
     return {
       sessionId: id,
+      ...(typeof loaded.cwd === "string" && loaded.cwd.trim().length > 0
+        ? { cwd: loaded.cwd.trim() }
+        : {}),
       ...(loaded.messages !== undefined ? { messages: loaded.messages } : {}),
       resumed: true,
     };
@@ -99,31 +108,47 @@ async function tryLoadSession(
 }
 
 /**
- * Pick the newest persisted session id from `session/list`, if any.
+ * Pick the newest persisted session from `session/list`, if any.
  * Avoids spawning a fresh `--persist` session on every WebUI restart.
  */
-async function mostRecentSessionId(
+async function mostRecentListedSession(
   client: WsJsonRpcClient,
-): Promise<string | undefined> {
+): Promise<{ id: string; cwd?: string } | undefined> {
   try {
     const res = (await client.request("session/list", {})) as {
-      sessions?: Array<{ id?: string; mtimeMs?: number }>;
+      sessions?: Array<{
+        id?: string;
+        sessionId?: string;
+        cwd?: string;
+        mtimeMs?: number;
+      }>;
     };
     const list = Array.isArray(res.sessions) ? res.sessions : [];
-    let bestId: string | undefined;
+    let best: { id: string; cwd?: string } | undefined;
     let bestMtime = -1;
     for (const s of list) {
-      if (typeof s.id !== "string" || s.id.length === 0) continue;
+      const id =
+        typeof s.id === "string" && s.id.length > 0
+          ? s.id
+          : typeof s.sessionId === "string" && s.sessionId.length > 0
+            ? s.sessionId
+            : "";
+      if (id === "") continue;
       const m =
         typeof s.mtimeMs === "number" && Number.isFinite(s.mtimeMs)
           ? s.mtimeMs
           : 0;
       if (m >= bestMtime) {
         bestMtime = m;
-        bestId = s.id;
+        best = {
+          id,
+          ...(typeof s.cwd === "string" && s.cwd.trim().length > 0
+            ? { cwd: s.cwd.trim() }
+            : {}),
+        };
       }
     }
-    return bestId;
+    return best;
   } catch {
     return undefined;
   }
@@ -134,7 +159,8 @@ async function openSession(
   preferSessionId: string | undefined,
 ): Promise<{
   sessionId: string;
-  messages?: Array<{ role?: string; text?: string }>;
+  cwd?: string;
+  messages?: Array<{ role?: string; text?: string; images?: Array<{ mimeType: string; data: string }> }>;
   resumed: boolean;
 }> {
   if (preferSessionId !== undefined && preferSessionId.length > 0) {
@@ -142,10 +168,18 @@ async function openSession(
     if (loaded !== null) return loaded;
   }
 
-  const recent = await mostRecentSessionId(client);
+  const recent = await mostRecentListedSession(client);
   if (recent !== undefined) {
-    const loaded = await tryLoadSession(client, recent);
-    if (loaded !== null) return loaded;
+    const loaded = await tryLoadSession(client, recent.id);
+    if (loaded !== null) {
+      return {
+        ...loaded,
+        // Prefer load echo; fall back to list metadata.
+        ...(loaded.cwd === undefined && recent.cwd !== undefined
+          ? { cwd: recent.cwd }
+          : {}),
+      };
+    }
   }
 
   const session = (await client.request("session/new", {})) as {
@@ -209,6 +243,14 @@ export async function bootstrapAcpSession(
 
   writeLastSessionId(opened.sessionId);
 
+  // Prefer the loaded session's cwd over config default (scratch). Otherwise
+  // resume leaves the agent in a project while the UI thinks "No project".
+  const configCwd = String(config["cwd"] ?? "");
+  const cwd =
+    opened.cwd !== undefined && opened.cwd.trim().length > 0
+      ? opened.cwd.trim()
+      : configCwd;
+
   return {
     sessionId: opened.sessionId,
     protocolVersion: init.protocolVersion,
@@ -221,7 +263,7 @@ export async function bootstrapAcpSession(
     sandbox: policy.sandbox,
     approval: policy.approval,
     autoRun: policy.autoRun,
-    cwd: String(config["cwd"] ?? ""),
+    cwd,
     ...(opened.messages !== undefined ? { messages: opened.messages } : {}),
     resumed: opened.resumed,
   };

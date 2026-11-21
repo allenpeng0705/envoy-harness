@@ -55,7 +55,11 @@ export function SessionRail(props: SessionRailProps): JSX.Element {
       showArchived,
     );
     const filtered = filterSessions(visible, query);
-    return groupSessionsByProject(filtered, props.pinnedIds, props.workspaces);
+    // Show Ungrouped so auto-resumed / scratch sessions remain reachable
+    // without promoting their cwd to a fake project heading.
+    return groupSessionsByProject(filtered, props.pinnedIds, props.workspaces, {
+      includeUngrouped: true,
+    });
   }, [
     props.sessions,
     props.workspaces,

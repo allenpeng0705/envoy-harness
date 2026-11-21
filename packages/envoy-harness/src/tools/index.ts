@@ -28,3 +28,11 @@ export type {
   ToolResult,
   ToolResultMeta,
 } from "./types.js";
+
+export {
+  isMultimodalToolContent,
+  multimodalToolContentToText,
+  normalizeToolResultContent,
+  type MultimodalToolContent,
+  type ToolImageContent,
+} from "./multimodal.js";

@@ -9,11 +9,15 @@ import { z } from "zod";
 
 import type { AskForApproval, PermissionMode } from "../types.js";
 import type { AutoRunPolicy } from "./auto-run.js";
+import { mobileWritableRoots } from "./mobile-roots.js";
+import { webdevWritableRoots } from "./webdev-roots.js";
 
 export const PermissionPresetNameSchema = z.enum([
   "safe",
   "ask-all",
   "approve-all",
+  "mobile",
+  "webdev",
 ]);
 export type PermissionPresetName = z.infer<typeof PermissionPresetNameSchema>;
 
@@ -26,6 +30,18 @@ export interface PermissionPresetResolved {
   label: string;
   /** One-line description for menus / `/preset` help. */
   description: string;
+  /**
+   * Optional sandbox extras. Applied by
+   * `resolveAgentRuntimeConfig` / `Agent.setPermissionPreset`.
+   */
+  networkAccess?: boolean;
+  /**
+   * Extra writable roots. When set, callers resolve against cwd/home
+   * via {@link resolvePresetWritableRoots}.
+   */
+  expandMobileRoots?: boolean;
+  /** Expand Vite/Next/Playwright cache roots. */
+  expandWebdevRoots?: boolean;
 }
 
 /**
@@ -36,6 +52,12 @@ export interface PermissionPresetResolved {
  * | safe | read-only | unless-trusted | always-confirm |
  * | ask-all | workspace-write | on-request | always-confirm |
  * | approve-all | danger-full-access | never | off |
+ * | mobile | workspace-write + network + SDK roots | on-request | safe-only |
+ * | webdev | workspace-write + network + frontend caches | on-request | safe-only |
+ *
+ * Note: `mobile` and `webdev` share mode/approval/autoRun axes; hosts
+ * should track the named preset (Agent.permissionPresetName) rather than
+ * inferring solely from axes.
  */
 export const PERMISSION_PRESETS: ReadonlyArray<PermissionPresetResolved> = [
   {
@@ -62,6 +84,28 @@ export const PERMISSION_PRESETS: ReadonlyArray<PermissionPresetResolved> = [
     label: "Approve all",
     description: "Full access; never ask (unattended)",
   },
+  {
+    name: "mobile",
+    permissionMode: "workspace-write",
+    askForApproval: "on-request",
+    autoRun: "safe-only",
+    networkAccess: true,
+    expandMobileRoots: true,
+    label: "Mobile",
+    description:
+      "Workspace + network + Simulator/SDK roots for Flutter/RN/native loops",
+  },
+  {
+    name: "webdev",
+    permissionMode: "workspace-write",
+    askForApproval: "on-request",
+    autoRun: "safe-only",
+    networkAccess: true,
+    expandWebdevRoots: true,
+    label: "Webdev",
+    description:
+      "Workspace + network + Vite/Next/Playwright caches for browser UI loops",
+  },
 ];
 
 const BY_NAME = new Map(
@@ -84,12 +128,24 @@ export function resolvePermissionPreset(
   return preset;
 }
 
+/** Resolve expandable writable roots for a preset (cwd/home aware). */
+export function resolvePresetWritableRoots(
+  preset: PermissionPresetResolved,
+  opts: { cwd: string; homeDir?: string },
+): string[] {
+  const roots: string[] = [];
+  if (preset.expandMobileRoots) {
+    roots.push(...mobileWritableRoots(opts));
+  }
+  if (preset.expandWebdevRoots) {
+    roots.push(...webdevWritableRoots(opts));
+  }
+  return roots;
+}
+
 /**
  * Find the preset that exactly matches the live policy axes, or
- * `undefined` when the mix is custom.
- *
- * When `autoRun` is omitted, match on sandbox + approval only if that
- * pair uniquely identifies a preset.
+ * `undefined` when the mix is custom / ambiguous (e.g. mobile vs webdev).
  */
 export function matchPermissionPreset(axes: {
   permissionMode: PermissionMode;
@@ -97,16 +153,13 @@ export function matchPermissionPreset(axes: {
   autoRun?: AutoRunPolicy;
 }): PermissionPresetName | undefined {
   if (axes.autoRun !== undefined) {
-    for (const p of PERMISSION_PRESETS) {
-      if (
+    const matches = PERMISSION_PRESETS.filter(
+      (p) =>
         p.permissionMode === axes.permissionMode &&
         p.askForApproval === axes.askForApproval &&
-        p.autoRun === axes.autoRun
-      ) {
-        return p.name;
-      }
-    }
-    return undefined;
+        p.autoRun === axes.autoRun,
+    );
+    return matches.length === 1 ? matches[0]!.name : undefined;
   }
   const candidates = PERMISSION_PRESETS.filter(
     (p) =>
@@ -124,6 +177,7 @@ export function permissionPresetToConfigFields(
   permissionMode: PermissionMode;
   askForApproval: AskForApproval;
   autoRun: AutoRunPolicy;
+  networkAccess?: boolean;
 } {
   const p = resolvePermissionPreset(name);
   return {
@@ -131,5 +185,8 @@ export function permissionPresetToConfigFields(
     permissionMode: p.permissionMode,
     askForApproval: p.askForApproval,
     autoRun: p.autoRun,
+    ...(p.networkAccess !== undefined
+      ? { networkAccess: p.networkAccess }
+      : {}),
   };
 }

@@ -19,6 +19,7 @@
 export {
   type FilesystemSkillProviderOptions,
   type SkillRoot,
+  bundledSkillRoot,
   createFilesystemSkillProvider,
   defaultSkillRoots,
 } from "./fs-provider.js";

@@ -24,25 +24,24 @@ import {
 } from "../src/skills.js";
 
 describe("ENVOY_HARNESS_SKILLS catalog", () => {
-  it("has exactly 9 skills (5 envoy-harness + 4 B-class)", () => {
+  it("has exactly 11 skills (5 envoy-harness + 4 B-class + device/browser)", () => {
     // Phase 8 / Step 3 commit 2 — the catalog grew from
     // 5 to 8 with the addition of 3 B-class skills
     // (setup-sponsor-friend / peer-list / relay-status);
     // the distributed-collaboration round added
     // `peer-cluster` (the model-facing peers tool).
-    // Both runtimes advertise the same 3 B-class skills
-    // per the "invoking-runtime tag" decision; see
-    // `docs/agent-harness-integration-step3.md` §3.4
-    // (EnvoyMesh monorepo) for the rationale.
-    expect(ENVOY_HARNESS_SKILLS).toHaveLength(9);
+    // Mobile/web worker skills: device-debug + browser-debug.
+    expect(ENVOY_HARNESS_SKILLS).toHaveLength(11);
   });
 
-  it("includes the 9 expected skill IDs", () => {
+  it("includes the 11 expected skill IDs", () => {
     const ids = ENVOY_HARNESS_SKILLS.map((s) => s.skillId).sort();
     expect(ids).toEqual([
       "bash-run",
+      "browser-debug",
       "code-edit",
       "code-review",
+      "device-debug",
       "doc-search",
       "peer-cluster",
       "peer-list",
@@ -88,6 +87,8 @@ describe("ENVOY_HARNESS_SKILLS catalog", () => {
       "peer-list": 0.1,
       "relay-status": 0.1,
       "peer-cluster": 0.1,
+      "device-debug": 5.0,
+      "browser-debug": 5.0,
     });
   });
 });
@@ -116,6 +117,14 @@ describe("getToolsForSkill", () => {
 
   it("peer-cluster exposes only peers", () => {
     expect(getToolsForSkill("peer-cluster")).toEqual(["peers"]);
+  });
+
+  it("browser-debug exposes browser_* + read_file + bash", () => {
+    const tools = getToolsForSkill("browser-debug");
+    expect(tools).toContain("browser_navigate");
+    expect(tools).toContain("browser_screenshot");
+    expect(tools).toContain("read_file");
+    expect(tools).toContain("bash");
   });
 
   it("unknown skill ID returns empty array (defensive)", () => {
@@ -156,18 +165,11 @@ describe("ENVOY_HARNESS_VERSION", () => {
 });
 
 describe("EnvoyHarnessSkillId literal union", () => {
-  it("matches the 9 catalog IDs", () => {
+  it("matches the 11 catalog IDs", () => {
     // Phase 8 / Step 3 commit 2 — the literal union
     // grew to 8 (5 envoy-harness + 3 B-class); the
     // distributed-collaboration round added `peer-cluster`.
-    // Note: `EnvoyHarnessSkillId` is the *adapter-
-    // internal* union (for the tool-name mapping in
-    // `getToolsForSkill`); the wire-side `skillId`
-    // is a plain `string` (per `@envoymesh/protocol`).
-    // The 3 B-class skill IDs here are the kebab-case
-    // string IDs, not the snake_case tool names
-    // (`sponsor_friend` / `list_peers` / `relay_status`
-    // live in `EnvoyHarnessToolName`).
+    // Mobile/web: device-debug + browser-debug.
     const ids: EnvoyHarnessSkillId[] = [
       "code-edit",
       "code-review",
@@ -178,7 +180,9 @@ describe("EnvoyHarnessSkillId literal union", () => {
       "peer-list",
       "relay-status",
       "peer-cluster",
+      "device-debug",
+      "browser-debug",
     ];
-    expect(new Set(ids).size).toBe(9);
+    expect(new Set(ids).size).toBe(11);
   });
 });

@@ -226,6 +226,12 @@ async function resolveAcpBackend(
         process.env["ENVOY_MEMORY_DIR"] ??
         path.join(defaultCwd, "memories"),
     });
+    if (parsed.permissionPreset !== undefined) {
+      configLayer = {
+        ...configLayer,
+        permissionPreset: parsed.permissionPreset,
+      };
+    }
     const runtime = resolveAgentRuntimeConfig(defaultCwd, configLayer, {
       permissionMode: parsed.sandbox ?? "workspace-write",
       ...(parsed.approval !== undefined
@@ -264,6 +270,9 @@ async function resolveAcpBackend(
             allowedRoots: workspaceRootsFromEnv(),
           }),
           decision: mergeDecisionConfig(configLayer.decision),
+          ...(runtime.autoRun !== undefined
+            ? { initialAutoRun: runtime.autoRun }
+            : {}),
           // U2 — WebUI Settings / status bar read provider+model from config/get.
           getConfig: () => ({
             version: "0.0.0",
@@ -311,6 +320,12 @@ async function resolveAcpBackend(
               systemPrompt,
               approval: runtime.askForApproval,
               sandboxPolicy: runtime.sandboxPolicy,
+              ...(runtime.autoRun !== undefined
+                ? { autoRun: runtime.autoRun }
+                : {}),
+              ...(runtime.permissionPreset !== undefined
+                ? { permissionPreset: runtime.permissionPreset }
+                : {}),
               memoryStore,
               skills: env.skills,
               ...(configLayer.shellEnvironmentPolicy !== undefined

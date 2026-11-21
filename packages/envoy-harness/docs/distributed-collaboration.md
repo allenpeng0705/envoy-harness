@@ -90,6 +90,19 @@ instance is not a “lite” product.
 **What only we ship as product:** multi-node MAP + model routing +
 cross-instance verify + federatable scoreboards.
 
+## 1.2 Device-worker peers (mobile)
+
+A Mac with Xcode / Android SDK can advertise capability `device-worker` and
+expose the same `device_*` tools (`device-debug` skill on the adapter). Laptop
+agents submit long builds / UI tests via `PeerMeshSubmitter` without a second
+API. See [`mobile.md`](./mobile.md) and `envoy-peer serve --device-worker`.
+
+## 1.3 Browser-worker peers (web)
+
+A host with Playwright/Chromium can advertise capability `browser-worker` and
+expose the same `browser_*` tools (`browser-debug` skill on the adapter). See
+[`webdev.md`](./webdev.md) and `envoy-peer serve --browser-worker`.
+
 ## 2. The seams (already shipped — this is why it's tractable)
 
 | Seam | Where | Role |

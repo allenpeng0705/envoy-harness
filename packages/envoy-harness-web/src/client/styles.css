@@ -588,6 +588,12 @@ button.primary {
   color: var(--muted);
 }
 
+.tool-card-image {
+  display: block;
+  max-width: 100%;
+  margin-top: 0.5rem;
+  border-radius: 4px;
+}
 .tool-card-output,
 .tool-card-raw {
   margin: 0;

@@ -24,6 +24,8 @@ export interface ToolTrajectory {
   durationMs?: number;
   /** Incremental progress lines (tool_progress). */
   progress?: string[];
+  /** Vision images from multimodal tool results (e.g. screenshots). */
+  images?: ReadonlyArray<{ mimeType: string; data: string }>;
 }
 
 export interface ChatMessage {
@@ -33,6 +35,8 @@ export interface ChatMessage {
   at: number;
   /** When set, Transcript renders a ToolCard instead of a plain bubble. */
   tool?: ToolTrajectory;
+  /** Standalone images (loaded transcript / user attachments). */
+  images?: ReadonlyArray<{ mimeType: string; data: string }>;
 }
 
 export interface PermissionPrompt {

@@ -63,16 +63,51 @@ function clientDistDir(): string {
 }
 
 /**
+ * Newest mtime among client sources (ts/tsx/js/jsx/css). Used so edits to
+ * SessionRail / session-groups / etc. also invalidate a stale `dist/client`,
+ * not only App.tsx.
+ */
+export function newestClientSourceMtime(
+  clientSrcDir: string = path.join(packageRoot(), "src/client"),
+): number {
+  let newest = 0;
+  const walk = (dir: string): void => {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const ent of entries) {
+      const full = path.join(dir, ent.name);
+      if (ent.isDirectory()) {
+        if (ent.name === "node_modules" || ent.name === "dist") continue;
+        walk(full);
+        continue;
+      }
+      if (!/\.(tsx?|jsx?|css)$/.test(ent.name)) continue;
+      try {
+        newest = Math.max(newest, fs.statSync(full).mtimeMs);
+      } catch {
+        // ignore
+      }
+    }
+  };
+  walk(clientSrcDir);
+  return newest;
+}
+
+/**
  * Prefer Vite when the packaged client is missing **or stale** relative to
- * `src/client`. Otherwise a leftover `dist/client` from an older build keeps
- * serving yesterday's UI (e.g. cwd-invented "projects") after source fixes.
+ * any file under `src/client`. Otherwise a leftover `dist/client` from an
+ * older build keeps serving yesterday's UI after source fixes.
  */
 export function shouldPreferViteDev(distDir: string = clientDistDir()): boolean {
   const indexHtml = path.join(distDir, "index.html");
   if (!fs.existsSync(indexHtml)) return true;
-  const srcProbe = path.join(packageRoot(), "src/client/App.tsx");
   try {
-    const srcMtime = fs.statSync(srcProbe).mtimeMs;
+    const srcMtime = newestClientSourceMtime();
+    if (srcMtime <= 0) return false;
     const distMtime = fs.statSync(indexHtml).mtimeMs;
     return srcMtime > distMtime;
   } catch {

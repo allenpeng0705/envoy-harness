@@ -476,6 +476,8 @@ See [`docs/boundary.en.md`](./docs/boundary.en.md) for the package boundary cont
 - [`docs/design.en.md`](./docs/design.en.md) — the full design (English, source of truth)
 - [`docs/design.zh.md`](./docs/design.zh.md) — 中文版
 - [`docs/boundary.en.md`](./docs/boundary.en.md) — package boundary one-pager (envoy-harness vs envoy-harness-adapter vs EnvoyMesh)
+- [`docs/mobile.md`](./docs/mobile.md) — Flutter / RN / native device tools, `--permission-preset mobile`, mesh device-worker
+- [`docs/webdev.md`](./docs/webdev.md) — Vite / Next / SPA browser tools, `--permission-preset webdev`, mesh browser-worker
 - [`docs/implementation-plan.md`](./docs/implementation-plan.md) — the single source of truth for **what shipped, where it lives, what's still open** (per-sub-chunk commit history + test inventory)
 - [`QUICKSTART.md`](./QUICKSTART.md) — focused how-to: use it, embed it, integrate with EnvoyMesh
 - The MAP protocol that envoy-harness speaks is defined in `EnvoyMesh/docs/agent-network-architecture.md` (in the EnvoyMesh repo, the predecessor design doc)

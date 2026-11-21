@@ -10,6 +10,10 @@ import type { TraceEvent } from "../trace/types.js";
 import type { ProtocolActivityEvent } from "./session-backend.js";
 import { stripThinking } from "../util/strip-thinking.js";
 import { truncateChars } from "../util/retention.js";
+import {
+  multimodalToolContentToText,
+  normalizeToolResultContent,
+} from "../tools/multimodal.js";
 
 function truncate(s: string, max: number): string {
   // Char-based cap for display strings; never splits a surrogate pair.
@@ -151,10 +155,8 @@ export function traceEventToActivity(event: TraceEvent): ProtocolActivityEvent {
       };
     case "tool_result": {
       const isError = event.result.isError === true;
-      const text =
-        typeof event.result.content === "string"
-          ? event.result.content
-          : String(event.result.content);
+      const normalized = normalizeToolResultContent(event.result.content);
+      const text = multimodalToolContentToText(normalized);
       return {
         ...base,
         kind: "tool_result",
@@ -166,6 +168,14 @@ export function traceEventToActivity(event: TraceEvent): ProtocolActivityEvent {
         // should read the session transcript, not the activity feed.
         resultPreview: truncate(text, 240),
         summary: summarizeToolResult(event.toolName, text, isError),
+        ...(normalized.images.length > 0
+          ? {
+              images: normalized.images.map((img) => ({
+                mimeType: img.mimeType,
+                data: img.data,
+              })),
+            }
+          : {}),
       };
     }
     case "agent_end":

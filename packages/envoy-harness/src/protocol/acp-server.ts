@@ -133,6 +133,7 @@ export function attachAcpServer(options: AcpServerOptions): () => void {
         );
         return {
           sessionId: loaded.sessionId,
+          ...(loaded.cwd !== undefined ? { cwd: loaded.cwd } : {}),
           ...(loaded.messages !== undefined ? { messages: loaded.messages } : {}),
         };
       }

@@ -20,13 +20,41 @@ export {
   makeSpillReadTool,
   type MakeGlobGrepToolsOptions,
 } from "./glob-grep.js";
+export {
+  MOBILE_DEVICE_TOOLS,
+  MOBILE_DEVICE_TOOL_NAMES,
+  deviceListTool,
+  deviceBootTool,
+  deviceInstallTool,
+  deviceLaunchTool,
+  deviceScreenshotTool,
+  deviceUiTreeTool,
+  deviceTestTool,
+  setHostCommandRunner,
+} from "./mobile/index.js";
+export {
+  BROWSER_TOOLS,
+  BROWSER_TOOL_NAMES,
+  browserNavigateTool,
+  browserSnapshotTool,
+  browserClickTool,
+  browserTypeTool,
+  browserPressTool,
+  browserScreenshotTool,
+  browserConsoleTool,
+  browserNetworkTool,
+  browserCloseTool,
+  setBrowserSessionManager,
+} from "./browser/index.js";
 
 /** All built-in tools, in registration order. */
 import { applyPatchTool } from "./apply-patch.js";
 import { bashTool } from "./bash.js";
+import { BROWSER_TOOLS } from "./browser/index.js";
 import { editTool } from "./edit.js";
 import { gitTool } from "./git.js";
 import { makeGlobTool, makeGrepTool } from "./glob-grep.js";
+import { MOBILE_DEVICE_TOOLS } from "./mobile/index.js";
 import { readFileTool } from "./read-file.js";
 import { writeTool } from "./write.js";
 
@@ -39,4 +67,6 @@ export const BUILTIN_TOOLS = [
   gitTool,
   makeGlobTool(),
   makeGrepTool(),
+  ...MOBILE_DEVICE_TOOLS,
+  ...BROWSER_TOOLS,
 ] as const;

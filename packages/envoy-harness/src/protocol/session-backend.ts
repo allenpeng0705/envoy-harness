@@ -94,6 +94,8 @@ export interface ProtocolActivityEvent {
   toolArgs?: unknown;
   toolCallId?: string;
   resultPreview?: string;
+  /** Multimodal tool images (e.g. device_screenshot) for host transcript. */
+  images?: ReadonlyArray<{ mimeType: string; data: string }>;
   isError?: boolean;
   durationMs?: number;
   iterations?: number;
@@ -195,9 +197,12 @@ export interface ProtocolSessionBackend {
     cwd?: string;
   }): Promise<{
     sessionId: string;
+    /** Resolved working directory for the live agent (for host UI sync). */
+    cwd?: string;
     messages?: ReadonlyArray<{
       role: "user" | "assistant" | "system" | "tool";
       text: string;
+      images?: ReadonlyArray<{ mimeType: string; data: string }>;
     }>;
   }>;
   /** U6a.5 — list persisted sessions for resume picker. */
@@ -307,8 +312,8 @@ export interface ProtocolSessionBackend {
     sandbox?: "read-only" | "workspace-write" | "danger-full-access";
     approval?: "unless-trusted" | "on-request" | "granular" | "never";
     autoRun?: "always-confirm" | "safe-only" | "off";
-    /** R4.5b — one-knob preset; expands sandbox + approval + autoRun. */
-    preset?: "safe" | "ask-all" | "approve-all";
+    /** R4.5b — one-knob preset; expands sandbox + approval + autoRun (+ domain roots). */
+    preset?: "safe" | "ask-all" | "approve-all" | "mobile" | "webdev";
   }): Promise<ProtocolSetPolicyResult>;
   /** Read the current sandbox / approval / auto-run policy for a session. */
   getPolicy?(params: {

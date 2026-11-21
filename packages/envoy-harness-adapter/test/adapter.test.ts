@@ -158,7 +158,7 @@ describe("EnvoyHarnessAdapter.describeSkills", () => {
       signResult: fakeSign("peer-1"),
       workerPeerId: "peer-1",
     });
-    expect(a.describeSkills()).toHaveLength(9);
+    expect(a.describeSkills()).toHaveLength(11);
     expect(a.describeSkills().map((s) => s.skillId).sort()).toEqual(
       [...ENVOY_HARNESS_SKILLS.map((s) => s.skillId)].sort(),
     );
@@ -172,11 +172,9 @@ describe("EnvoyHarnessAdapter.describeSkills", () => {
     });
     const skills = a.describeSkills();
     skills.pop();
-    // Phase 8 / Step 3 commit 2 — the catalog grew to 8
-    // (5 envoy-harness + 3 B-class). The defensive copy
-    // still holds: mutating the returned array doesn't
+    // Defensive copy: mutating the returned array doesn't
     // affect the adapter's internal catalog.
-    expect(a.describeSkills()).toHaveLength(9);
+    expect(a.describeSkills()).toHaveLength(11);
   });
 });
 
@@ -200,7 +198,7 @@ describe("EnvoyHarnessAdapter.buildManifest", () => {
     expect(m.runtimeVersion).toBe(ENVOY_HARNESS_SKILLS[0]?.description ? "0.0.0" : "0.0.0");
     expect(m.peerId).toBe("peer-1");
     expect(m.ownerId).toBe("owner-1");
-    expect(m.skills).toHaveLength(9);
+    expect(m.skills).toHaveLength(11);
     expect(m.reputationBySkill).toEqual({
       "code-edit": 0.9,
       "code-review": 0.8,

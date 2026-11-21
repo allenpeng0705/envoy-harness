@@ -2,11 +2,23 @@
  * Flatten persisted transcript messages into UI-friendly rows for WebUI/TUI.
  */
 
+import {
+  multimodalToolContentToText,
+  normalizeToolResultContent,
+  type ToolImageContent,
+} from "../tools/multimodal.js";
 import type { ContentBlock, Message, Role } from "../tools/types.js";
+
+export interface ProtocolUiImage {
+  mimeType: string;
+  data: string;
+}
 
 export interface ProtocolUiMessage {
   role: "user" | "assistant" | "system" | "tool";
   text: string;
+  /** Vision images from multimodal tool results (e.g. device_screenshot). */
+  images?: ReadonlyArray<ProtocolUiImage>;
 }
 
 function blockToText(block: ContentBlock): string | undefined {
@@ -22,10 +34,9 @@ function blockToText(block: ContentBlock): string | undefined {
     return `⚙ ${block.name}(${clipped})`;
   }
   if (block.type === "tool_result") {
-    const body =
-      typeof block.content === "string"
-        ? block.content
-        : JSON.stringify(block.content);
+    const body = multimodalToolContentToText(
+      normalizeToolResultContent(block.content),
+    );
     const clipped = body.length > 200 ? `${body.slice(0, 197)}…` : body;
     return block.isError ? `tool error: ${clipped}` : clipped;
   }
@@ -33,6 +44,16 @@ function blockToText(block: ContentBlock): string | undefined {
     return `[image ${block.mimeType}]`;
   }
   return undefined;
+}
+
+function imagesFromBlock(block: ContentBlock): ToolImageContent[] {
+  if (block.type === "image") {
+    return [{ mimeType: block.mimeType, data: block.data }];
+  }
+  if (block.type === "tool_result") {
+    return [...normalizeToolResultContent(block.content).images];
+  }
+  return [];
 }
 
 function roleToUi(role: Role): ProtocolUiMessage["role"] {
@@ -49,13 +70,21 @@ export function messagesToUiTranscript(
   const out: ProtocolUiMessage[] = [];
   for (const m of messages) {
     const parts: string[] = [];
+    const images: ProtocolUiImage[] = [];
     for (const block of m.content) {
       const t = blockToText(block);
       if (t !== undefined && t.length > 0) parts.push(t);
+      for (const img of imagesFromBlock(block)) {
+        images.push({ mimeType: img.mimeType, data: img.data });
+      }
     }
     const text = parts.join("\n").trim();
-    if (text.length === 0) continue;
-    out.push({ role: roleToUi(m.role), text });
+    if (text.length === 0 && images.length === 0) continue;
+    out.push({
+      role: roleToUi(m.role),
+      text: text.length > 0 ? text : "(image)",
+      ...(images.length > 0 ? { images } : {}),
+    });
   }
   return out;
 }

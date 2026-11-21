@@ -56,7 +56,9 @@ export type EnvoyHarnessSkillId =
   | "setup-sponsor-friend"
   | "peer-list"
   | "relay-status"
-  | "peer-cluster";
+  | "peer-cluster"
+  | "device-debug"
+  | "browser-debug";
 
 /** The full catalog. The orchestrator reads this for the manifest. */
 export const ENVOY_HARNESS_SKILLS: ReadonlyArray<SkillDescriptor> = [
@@ -166,6 +168,25 @@ export const ENVOY_HARNESS_SKILLS: ReadonlyArray<SkillDescriptor> = [
     maxSensitivity: "private",
     tags: ["mesh", "observability", "routing"],
   },
+  {
+    skillId: "device-debug",
+    description:
+      "Mobile device worker: list/boot/install/launch devices, capture " +
+      "screenshots for vision, dump UI trees, and run Flutter/RN/native " +
+      "UI tests on iOS Simulator or Android Emulator.",
+    costCeilingUsd: 5.0,
+    maxSensitivity: "private",
+    tags: ["mobile", "device-worker", "ios", "android"],
+  },
+  {
+    skillId: "browser-debug",
+    description:
+      "Browser worker: navigate/snapshot/click/type in Playwright Chromium, " +
+      "capture screenshots for vision, and inspect console/network for SPA UI debug.",
+    costCeilingUsd: 5.0,
+    maxSensitivity: "private",
+    tags: ["web", "browser-worker", "playwright"],
+  },
 ];
 
 /** The set of well-known envoy-harness tool names. v0 ships two
@@ -176,7 +197,23 @@ export type EnvoyHarnessToolName =
   | "sponsor_friend"
   | "list_peers"
   | "relay_status"
-  | "peers";
+  | "peers"
+  | "device_list"
+  | "device_boot"
+  | "device_install"
+  | "device_launch"
+  | "device_screenshot"
+  | "device_ui_tree"
+  | "device_test"
+  | "browser_navigate"
+  | "browser_snapshot"
+  | "browser_click"
+  | "browser_type"
+  | "browser_press"
+  | "browser_screenshot"
+  | "browser_console"
+  | "browser_network"
+  | "browser_close";
 
 /**
  * Map a skill ID to the local tools the executor should
@@ -217,6 +254,32 @@ export function getToolsForSkill(skillId: string): ReadonlyArray<EnvoyHarnessToo
       return ["relay_status"];
     case "peer-cluster":
       return ["peers"];
+    case "device-debug":
+      return [
+        "read_file",
+        "bash",
+        "device_list",
+        "device_boot",
+        "device_install",
+        "device_launch",
+        "device_screenshot",
+        "device_ui_tree",
+        "device_test",
+      ];
+    case "browser-debug":
+      return [
+        "read_file",
+        "bash",
+        "browser_navigate",
+        "browser_snapshot",
+        "browser_click",
+        "browser_type",
+        "browser_press",
+        "browser_screenshot",
+        "browser_console",
+        "browser_network",
+        "browser_close",
+      ];
     default:
       // Unknown skill ID: refuse the surface. The orchestrator
       // would not send this (it reads the manifest), so the

@@ -14,6 +14,7 @@ const RUN_FLAGS = new Set([
   "--json",
   "--sandbox",
   "--sandbox-executor",
+  "--permission-preset",
   "--approval",
   "--model",
   "--provider",
@@ -60,6 +61,7 @@ const RUN_FLAGS = new Set([
 const RUN_VALUED_FLAGS = new Set([
   "--sandbox",
   "--sandbox-executor",
+  "--permission-preset",
   "--approval",
   "--model",
   "--provider",
@@ -96,6 +98,7 @@ export function parseRunArgs(argv: ReadonlyArray<string>): RunParsedArgs {
     json: false,
     sandbox: undefined,
     sandboxExecutor: undefined,
+    permissionPreset: undefined,
     approval: undefined,
     model: undefined,
     provider: undefined,
@@ -234,6 +237,20 @@ export function parseRunArgs(argv: ReadonlyArray<string>): RunParsedArgs {
               );
             }
             out.sandboxExecutor = value;
+            break;
+          case "--permission-preset":
+            if (
+              value !== "safe" &&
+              value !== "ask-all" &&
+              value !== "approve-all" &&
+              value !== "mobile" &&
+              value !== "webdev"
+            ) {
+              throw new ArgvError(
+                `invalid --permission-preset: ${value} (expected safe | ask-all | approve-all | mobile | webdev)`,
+              );
+            }
+            out.permissionPreset = value;
             break;
           case "--approval":
             if (

@@ -22,9 +22,22 @@
 import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { parseFrontmatter } from "./frontmatter.js";
 import type { SkillDefinition, SkillProvider, SkillSummary } from "./types.js";
+
+/** Bundled package skills (Flutter / RN / native mobile playbooks). */
+export function bundledSkillRoot(): SkillRoot {
+  // dist/skills/fs-provider.js → ../../skills ; src same relative depth.
+  const root = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "..",
+    "..",
+    "skills",
+  );
+  return { name: "package:envoy", path: root };
+}
 
 /** A filesystem root to scan (relative to cwd or absolute). */
 export interface SkillRoot {
@@ -39,6 +52,12 @@ export interface FilesystemSkillProviderOptions {
   readonly extraRoots?: ReadonlyArray<SkillRoot>;
   /** Override the home directory (tests). */
   readonly homeDir?: string;
+  /**
+   * Include packaged skills (Flutter / RN / native mobile playbooks).
+   * Default true for CLI hosts; tests that assert exact catalogs
+   * pass `false`.
+   */
+  readonly includeBundledSkills?: boolean;
 }
 
 /** Default skill roots in priority order (project first). */
@@ -69,11 +88,22 @@ export function createFilesystemSkillProvider(
   let lastDefs: Map<string, SkillDefinition> | undefined;
 
   function rootsFor(cwd: string): ReadonlyArray<SkillRoot> {
-    const base = defaultSkillRoots({ cwd, ...(options.homeDir !== undefined ? { homeDir: options.homeDir } : {}) });
+    const base = defaultSkillRoots({
+      cwd,
+      ...(options.homeDir !== undefined ? { homeDir: options.homeDir } : {}),
+    });
+    const withBundled =
+      options.includeBundledSkills === false
+        ? base
+        : [
+            ...base.slice(0, 3),
+            bundledSkillRoot(),
+            ...base.slice(3),
+          ];
     if (options.extraRoots !== undefined) {
-      return [...options.extraRoots, ...base];
+      return [...options.extraRoots, ...withBundled];
     }
-    return base;
+    return withBundled;
   }
 
   async function readSkillMd(root: SkillRoot, name: string): Promise<{

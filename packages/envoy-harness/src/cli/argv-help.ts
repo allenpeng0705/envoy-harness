@@ -20,6 +20,7 @@ export function formatHelp(version: string): string {
     "Flags (run):",
     "  --sandbox <mode>       read-only | workspace-write | danger-full-access",
     "  --sandbox-executor <b> landlock | seatbelt | windows-sandbox | none  (opt-in kernel sandbox; default none)",
+    "  --permission-preset <p> safe | ask-all | approve-all | mobile | webdev  (mobile: device_*; webdev: browser_* + Vite/Next caches)",
     "  --approval <mode>      unless-trusted | on-request | granular | never",
     "  --model <id>           LLM model identifier",
     "  --provider <name>      LLM provider (openai, anthropic, deepseek, ollama, …)",

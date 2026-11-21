@@ -6,7 +6,10 @@ import type { ConfigLayer } from "./schema.js";
 import type { AskForApproval, PermissionMode, SandboxPolicy } from "../types.js";
 import type { AutoRunPolicy } from "../permissions/auto-run.js";
 import { policyFromMode } from "../permissions/policy.js";
-import { resolvePermissionPreset } from "../permissions/presets.js";
+import {
+  resolvePermissionPreset,
+  resolvePresetWritableRoots,
+} from "../permissions/presets.js";
 
 export interface ResolvedAgentRuntimeConfig {
   permissionMode: PermissionMode;
@@ -54,20 +57,25 @@ export function resolveAgentRuntimeConfig(
     layer.autoRun ?? fromPreset?.autoRun ?? defaults.autoRun;
 
   const base = policyFromMode(permissionMode, cwd);
+  const presetRoots =
+    fromPreset !== undefined
+      ? resolvePresetWritableRoots(fromPreset, { cwd })
+      : [];
+  const networkAccess =
+    layer.networkAccess ?? fromPreset?.networkAccess ?? base.networkAccess;
   const sandboxPolicy: SandboxPolicy = {
     ...base,
     approval: askForApproval,
     ...(layer.sandboxBackend !== undefined
       ? { backend: layer.sandboxBackend }
       : {}),
-    ...(layer.networkAccess !== undefined
-      ? { networkAccess: layer.networkAccess }
-      : {}),
+    networkAccess,
     ...(layer.slashTmpWritable !== undefined
       ? { slashTmpWritable: layer.slashTmpWritable }
       : {}),
     writableRoots: [
       ...base.writableRoots,
+      ...presetRoots,
       ...(layer.writableRoots ?? []),
     ],
   };

@@ -21,6 +21,18 @@ export interface RunParsedArgs {
   /** `--sandbox <mode>`: permission mode. */
   sandbox: PermissionMode | undefined;
   /**
+   * `--permission-preset <name>`: one-knob preset
+   * (`safe` | `ask-all` | `approve-all` | `mobile` | `webdev`).
+   * Expands to sandbox + approval + (for mobile/webdev) network + domain roots.
+   */
+  permissionPreset:
+    | "safe"
+    | "ask-all"
+    | "approve-all"
+    | "mobile"
+    | "webdev"
+    | undefined;
+  /**
    * `--sandbox-executor <name>`: opt into a kernel-level
    * sandbox backend. `none` is the default (validators only,
    * hermetic tests). Supported: `landlock` (Linux only),

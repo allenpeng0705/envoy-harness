@@ -14,6 +14,13 @@
  * re-sync after a server's tool list changes).
  */
 
+import type {
+  MultimodalToolContent,
+  ToolImageContent,
+} from "../tools/multimodal.js";
+import {
+  multimodalToolContentToText,
+} from "../tools/multimodal.js";
 import type { Tool, ToolResult } from "../tools/types.js";
 import {
   mcpToolName,
@@ -30,19 +37,34 @@ export interface McpToolBridgeResult {
   errors: ReadonlyArray<{ server: string; error: string }>;
 }
 
-/** Render an MCP `tools/call` result as text for the model. */
-export function formatMcpResult(result: McpCallToolResult): string {
-  const parts = result.content.map((block) => {
+/**
+ * Convert an MCP `tools/call` result into multimodal tool content so
+ * image blocks reach the model as vision input (not text placeholders).
+ */
+export function mcpResultToMultimodal(
+  result: McpCallToolResult,
+): MultimodalToolContent {
+  const textParts: string[] = [];
+  const images: ToolImageContent[] = [];
+  for (const block of result.content) {
     switch (block.type) {
       case "text":
-        return block.text;
+        textParts.push(block.text);
+        break;
       case "image":
-        return `[image ${block.mimeType} (${block.data.length} bytes base64)]`;
+        images.push({ mimeType: block.mimeType, data: block.data });
+        break;
       case "resource":
-        return block.text ?? `[resource ${block.uri}]`;
+        textParts.push(block.text ?? `[resource ${block.uri}]`);
+        break;
     }
-  });
-  return parts.join("\n");
+  }
+  return { text: textParts.join("\n"), images };
+}
+
+/** Text-only rendering (legacy / hosts without vision). */
+export function formatMcpResult(result: McpCallToolResult): string {
+  return multimodalToolContentToText(mcpResultToMultimodal(result));
 }
 
 /**
@@ -78,10 +100,10 @@ export async function registerMcpTools(
         name: fullName,
         description: tool.description,
         parameters: tool.inputSchema,
-        async execute(args): Promise<ToolResult<string>> {
+        async execute(args): Promise<ToolResult> {
           try {
             const result = await client.callTool(tool.name, args);
-            return { content: formatMcpResult(result) };
+            return { content: mcpResultToMultimodal(result) };
           } catch (err) {
             return {
               content: `mcp error (${fullName}): ${

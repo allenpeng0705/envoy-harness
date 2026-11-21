@@ -2,8 +2,8 @@
  * Group persisted sessions for the session rail.
  *
  * Projects come only from the manual workspace registry (deepseek-style).
- * Launch/`process.cwd()` is never promoted to a project heading — sessions
- * whose cwd is not registered land in a trailing "Other" bucket.
+ * Launch/`process.cwd()` is never promoted to a project heading. Unregistered
+ * sessions are omitted from the Projects rail unless `includeUngrouped` is set.
  */
 
 import type { SessionSummary } from "./acp/host-types.js";
@@ -106,8 +106,9 @@ function sortSessions(
  * When `registered` is omitted, falls back to cwd-inferred groups (legacy
  * / tests). Pass an array (even empty) for deepseek-style manual projects.
  *
- * Pass `includeUngrouped: true` only when a host wants a trailing Ungrouped
- * bucket (tests / alternate UIs). The WebUI Projects rail omits it.
+ * Pass `includeUngrouped: true` for a trailing Ungrouped bucket (WebUI does
+ * this so auto-resumed / scratch sessions stay reachable without becoming
+ * named projects).
  */
 export function groupSessionsByProject(
   sessions: readonly SessionSummary[],

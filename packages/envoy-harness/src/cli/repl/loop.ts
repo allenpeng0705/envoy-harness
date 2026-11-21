@@ -236,6 +236,12 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
     }
     // R8.2 — align sandbox policy with one-shot / ACP via config layer.
     {
+      if (opts.args.permissionPreset !== undefined) {
+        configLayer = {
+          ...configLayer,
+          permissionPreset: opts.args.permissionPreset,
+        };
+      }
       const { resolveAgentRuntimeConfig } = await import("../../config/apply.js");
       const runtime = resolveAgentRuntimeConfig(cwd, configLayer, {
         permissionMode: session.metadata.permissionMode ?? "read-only",
@@ -244,6 +250,12 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
           : {}),
       });
       agentOptions.sandboxPolicy = runtime.sandboxPolicy;
+      if (runtime.autoRun !== undefined) {
+        agentOptions.autoRun = runtime.autoRun;
+      }
+      if (runtime.permissionPreset !== undefined) {
+        agentOptions.permissionPreset = runtime.permissionPreset;
+      }
     }
     if (opts.lspManager) {
       agentOptions.lspManager = opts.lspManager;

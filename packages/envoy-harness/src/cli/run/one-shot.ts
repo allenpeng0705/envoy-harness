@@ -394,6 +394,12 @@ export async function runAgent(
   }
   // Apply ConfigLayer sandbox extras on top of session mode.
   {
+    if (parsed.permissionPreset !== undefined) {
+      configLayer = {
+        ...configLayer,
+        permissionPreset: parsed.permissionPreset,
+      };
+    }
     const { resolveAgentRuntimeConfig } = await import("../../config/apply.js");
     const runtime = resolveAgentRuntimeConfig(cwd, configLayer, {
       permissionMode: effectiveMode ?? "read-only",
@@ -402,6 +408,12 @@ export async function runAgent(
         : {}),
     });
     agentOptions.sandboxPolicy = runtime.sandboxPolicy;
+    if (runtime.autoRun !== undefined) {
+      agentOptions.autoRun = runtime.autoRun;
+    }
+    if (runtime.permissionPreset !== undefined) {
+      agentOptions.permissionPreset = runtime.permissionPreset;
+    }
   }
   if (options.askHandler) {
     agentOptions.askHandler = options.askHandler;

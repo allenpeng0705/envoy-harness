@@ -66,6 +66,27 @@ describe("parseServeArgs", () => {
     ).toThrow(/--max-verify-after-execute/);
     expect(() => parseServeArgs(["--host"])).toThrow(/requires a value/);
   });
+
+  it("parses --device-worker and --capability", () => {
+    expect(
+      parseServeArgs([
+        "--device-worker",
+        "--capability",
+        "gpu",
+        "--capability",
+        "ios",
+      ]),
+    ).toMatchObject({
+      deviceWorker: true,
+      capabilities: ["gpu", "ios"],
+    });
+  });
+
+  it("parses --browser-worker", () => {
+    expect(parseServeArgs(["--browser-worker"])).toMatchObject({
+      browserWorker: true,
+    });
+  });
 });
 
 describe("createDemoAdapter", () => {

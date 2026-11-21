@@ -241,7 +241,7 @@ export function parseSetPolicyParams(params: unknown): {
   sandbox?: "read-only" | "workspace-write" | "danger-full-access";
   approval?: "unless-trusted" | "on-request" | "granular" | "never";
   autoRun?: "always-confirm" | "safe-only" | "off";
-  preset?: "safe" | "ask-all" | "approve-all";
+  preset?: "safe" | "ask-all" | "approve-all" | "mobile" | "webdev";
 } {
   if (params === null || typeof params !== "object") {
     throw new JsonRpcError("invalid params", JsonRpcErrorCode.INVALID_PARAMS);
@@ -254,13 +254,34 @@ export function parseSetPolicyParams(params: unknown): {
     preset?: unknown;
   };
   const sessionId = readSessionId(params);
-  const preset =
-    typeof obj.preset === "string" &&
-    (obj.preset === "safe" ||
-      obj.preset === "ask-all" ||
-      obj.preset === "approve-all")
-      ? (obj.preset as "safe" | "ask-all" | "approve-all")
-      : undefined;
+  const PRESET_NAMES = new Set([
+    "safe",
+    "ask-all",
+    "approve-all",
+    "mobile",
+    "webdev",
+  ]);
+  let preset:
+    | "safe"
+    | "ask-all"
+    | "approve-all"
+    | "mobile"
+    | "webdev"
+    | undefined;
+  if (typeof obj.preset === "string") {
+    if (!PRESET_NAMES.has(obj.preset)) {
+      throw new JsonRpcError(
+        `invalid preset: ${obj.preset} (expected safe | ask-all | approve-all | mobile | webdev)`,
+        JsonRpcErrorCode.INVALID_PARAMS,
+      );
+    }
+    preset = obj.preset as
+      | "safe"
+      | "ask-all"
+      | "approve-all"
+      | "mobile"
+      | "webdev";
+  }
   const sandbox =
     typeof obj.sandbox === "string" && SANDBOX_MODES.has(obj.sandbox)
       ? (obj.sandbox as "read-only" | "workspace-write" | "danger-full-access")

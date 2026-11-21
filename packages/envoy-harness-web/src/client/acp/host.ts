@@ -738,7 +738,12 @@ export class AcpHost {
     writeLastSessionId(boot.sessionId);
     const hydrated =
       boot.messages
-        ?.filter((m) => m.text && m.text.trim().length > 0)
+        ?.filter(
+          (m) =>
+            (m.text && m.text.trim().length > 0) ||
+            (Array.isArray((m as { images?: unknown }).images) &&
+              ((m as { images?: unknown[] }).images?.length ?? 0) > 0),
+        )
         .map((m) => {
           const roleRaw = m.role ?? "system";
           const role: ChatRole =
@@ -749,11 +754,23 @@ export class AcpHost {
             roleRaw === "status"
               ? roleRaw
               : "system";
+          const images = (m as { images?: Array<{ mimeType: string; data: string }> })
+            .images;
           return {
             id: nextMsgId(),
             role,
-            text: m.text!,
+            text: m.text?.trim() ? m.text : "(image)",
             at: Date.now(),
+            ...(images !== undefined && images.length > 0 ? { images } : {}),
+            ...(role === "tool" && images !== undefined && images.length > 0
+              ? {
+                  tool: {
+                    phase: "result" as const,
+                    summary: m.text?.trim() || "screenshot",
+                    images,
+                  },
+                }
+              : {}),
           };
         }) ?? [];
     const messages = boot.resumed
@@ -1505,14 +1522,20 @@ export class AcpHost {
       sessionId,
     })) as {
       sessionId: string;
+      cwd?: string;
       messages?: Array<{
         role?: string;
         text?: string;
+        images?: Array<{ mimeType: string; data: string }>;
       }>;
     };
     const hydrated =
       res.messages
-        ?.filter((m) => m.text && m.text.trim().length > 0)
+        ?.filter(
+          (m) =>
+            (m.text && m.text.trim().length > 0) ||
+            (m.images !== undefined && m.images.length > 0),
+        )
         .map((m) => {
           const roleRaw = m.role ?? "system";
           const role: ChatRole =
@@ -1526,8 +1549,22 @@ export class AcpHost {
           return {
             id: nextMsgId(),
             role,
-            text: m.text!,
+            text: m.text?.trim() ? m.text : "(image)",
             at: Date.now(),
+            ...(m.images !== undefined && m.images.length > 0
+              ? { images: m.images }
+              : {}),
+            ...(role === "tool" &&
+            m.images !== undefined &&
+            m.images.length > 0
+              ? {
+                  tool: {
+                    phase: "result" as const,
+                    summary: m.text?.trim() || "screenshot",
+                    images: m.images,
+                  },
+                }
+              : {}),
           };
         }) ?? [];
     const messages =
@@ -1541,11 +1578,25 @@ export class AcpHost {
               at: Date.now(),
             },
           ];
+    // Fall back to list metadata when older servers omit cwd on load.
+    let cwd =
+      typeof res.cwd === "string" && res.cwd.trim().length > 0
+        ? res.cwd.trim()
+        : undefined;
+    if (cwd === undefined) {
+      try {
+        const listed = await this.listSessions();
+        cwd = listed.find((s) => s.id === res.sessionId)?.cwd;
+      } catch {
+        // keep previous state cwd
+      }
+    }
+    const nextCwd = cwd ?? this.#state.cwd;
     writeLastSessionId(res.sessionId);
     this.#warmSessions.add(res.sessionId);
     this.#sessionCaches.set(res.sessionId, {
       messages,
-      cwd: this.#state.cwd,
+      cwd: nextCwd,
       changedFiles: [],
       turnHints: null,
       contextStats: null,
@@ -1553,6 +1604,7 @@ export class AcpHost {
     });
     this.#patch({
       sessionId: res.sessionId,
+      ...(cwd !== undefined ? { cwd } : {}),
       messages,
       error: null,
       busy: this.#busySessions.has(res.sessionId),

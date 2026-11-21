@@ -118,12 +118,13 @@ export const ConfigLayerSchema = z
     /** Mirrors `AskForApproval`. */
     askForApproval: AskForApprovalSchema.optional(),
     /**
-     * R4.5b — one-knob preset (`safe` | `ask-all` | `approve-all`).
+     * R4.5b — one-knob preset (`safe` | `ask-all` | `approve-all` | `mobile` | `webdev`).
      * Expands to permissionMode + askForApproval + autoRun unless
      * those fields are also set explicitly (explicit wins).
+     * `mobile` / `webdev` also enable networkAccess and domain writableRoots.
      */
     permissionPreset: z
-      .enum(["safe", "ask-all", "approve-all"])
+      .enum(["safe", "ask-all", "approve-all", "mobile", "webdev"])
       .optional(),
     /**
      * R4.5b / ACP auto-run policy companion to AskForApproval.

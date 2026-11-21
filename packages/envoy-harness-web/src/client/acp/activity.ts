@@ -11,6 +11,7 @@ export interface ActivityLike {
   toolArgs?: unknown;
   toolCallId?: string;
   resultPreview?: string;
+  images?: ReadonlyArray<{ mimeType: string; data: string }>;
   isError?: boolean;
   durationMs?: number;
   costUsd?: number;

@@ -54,9 +54,11 @@ import type {
 import { CostTracker } from "./cost.js";
 import { applyShellEnvironmentPolicy } from "./config/shell-env.js";
 import { policyFromMode } from "./permissions/policy.js";
+import type { AutoRunPolicy } from "./permissions/auto-run.js";
 import {
   matchPermissionPreset,
   resolvePermissionPreset,
+  resolvePresetWritableRoots,
   type PermissionPresetName,
   type PermissionPresetResolved,
 } from "./permissions/presets.js";
@@ -476,6 +478,14 @@ export interface AgentOptions {
    */
   sandboxPolicy?: import("./types.js").SandboxPolicy;
   /**
+   * R4.5b — initial auto-run policy (from permission preset / config).
+   * Hosts that gate tool asks via LiveSession.autoRun should also set
+   * that field; this keeps Agent.getPermissionPreset() accurate.
+   */
+  autoRun?: import("./permissions/auto-run.js").AutoRunPolicy;
+  /** R4.5b — named preset applied at construction (e.g. mobile). */
+  permissionPreset?: import("./permissions/presets.js").PermissionPresetName;
+  /**
    * Phase F: optional explicit OS sandbox executor.
    * When omitted, the agent resolves one from the
    * live sandbox policy + host platform (landlock
@@ -648,6 +658,10 @@ export class Agent {
   toolCallCount = 0;
   /** @internal Effective sandbox policy, derived from the session. The verifier reads this. */
   sandboxPolicy: SandboxPolicy;
+  /** @internal R4.5b — last applied auto-run policy (for preset matching). */
+  autoRun: AutoRunPolicy | undefined;
+  /** @internal R4.5b — last applied named preset, when known. */
+  permissionPresetName: PermissionPresetName | undefined;
   /**
    * @internal Phase F: optional host-supplied OS sandbox
    * executor. When undefined, `getSandboxExecutor` resolves
@@ -1224,6 +1238,8 @@ export class Agent {
         this.session.metadata.permissionMode ?? "read-only",
         this.cwd,
       );
+    this.autoRun = options.autoRun;
+    this.permissionPresetName = options.permissionPreset;
     this.sandboxExecutor = options.sandboxExecutor;
     this.execWorld = options.execWorld;
     // Cost tracker. v0 defaults to "local" (which has $0 pricing);
@@ -2092,6 +2108,7 @@ export class Agent {
     mode: NonNullable<Session["metadata"]["permissionMode"]>,
   ): void {
     this.sandboxPolicy = policyFromMode(mode, this.cwd);
+    this.permissionPresetName = undefined;
   }
 
   /**
@@ -2135,6 +2152,7 @@ export class Agent {
     // still asked). Do not replace `askHandler` here. `setAskHandler(undefined)` restores the
     // user-question shim and drops the host handler, so Allow on the card comes back denied.
     this.approval = mode;
+    this.permissionPresetName = undefined;
   }
 
   /** Current approval policy label. */
@@ -2150,16 +2168,41 @@ export class Agent {
     const preset = resolvePermissionPreset(name);
     this.setPermissionMode(preset.permissionMode);
     this.setApprovalPolicy(preset.askForApproval);
+    const extraRoots = resolvePresetWritableRoots(preset, { cwd: this.cwd });
+    if (preset.networkAccess !== undefined || extraRoots.length > 0) {
+      this.sandboxPolicy = {
+        ...this.sandboxPolicy,
+        ...(preset.networkAccess !== undefined
+          ? { networkAccess: preset.networkAccess }
+          : {}),
+        writableRoots: [...this.sandboxPolicy.writableRoots, ...extraRoots],
+      };
+    }
+    this.autoRun = preset.autoRun;
+    this.permissionPresetName = preset.name;
     return preset;
   }
 
   /**
    * R4.5b — matched preset for the live sandbox + approval, if any.
+   * Prefers the last explicitly applied preset name when still consistent
+   * with live axes (so mobile vs ask-all is not ambiguous).
    */
   getPermissionPreset(): PermissionPresetName | undefined {
+    if (this.permissionPresetName !== undefined) {
+      const named = resolvePermissionPreset(this.permissionPresetName);
+      if (
+        named.permissionMode === this.getPermissionMode() &&
+        named.askForApproval === this.getApprovalPolicy() &&
+        (this.autoRun === undefined || named.autoRun === this.autoRun)
+      ) {
+        return this.permissionPresetName;
+      }
+    }
     return matchPermissionPreset({
       permissionMode: this.getPermissionMode(),
       askForApproval: this.getApprovalPolicy(),
+      ...(this.autoRun !== undefined ? { autoRun: this.autoRun } : {}),
     });
   }
 

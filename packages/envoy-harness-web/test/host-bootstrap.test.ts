@@ -47,10 +47,11 @@ describe("bootstrapAcpSession", () => {
       initialize: () => ({ protocolVersion: 1 }),
       "session/load": () => ({
         sessionId: "s-keep",
+        cwd: "/work/project",
         messages: [{ role: "user", text: "hi" }],
       }),
       "discovery/subscribe": () => ({}),
-      "config/get": () => ({ cwd: "/tmp" }),
+      "config/get": () => ({ cwd: "/tmp/scratch" }),
       "session/get_policy": () => ({
         result: {
           sandbox: "workspace-write",
@@ -64,6 +65,7 @@ describe("bootstrapAcpSession", () => {
     });
     expect(boot.sessionId).toBe("s-keep");
     expect(boot.resumed).toBe(true);
+    expect(boot.cwd).toBe("/work/project");
     expect(boot.messages?.[0]?.text).toBe("hi");
     expect(client.request).not.toHaveBeenCalledWith(
       "session/new",
@@ -77,22 +79,27 @@ describe("bootstrapAcpSession", () => {
       "session/load": (params) => {
         const p = params as { sessionId: string };
         if (p.sessionId === "s-old") throw new Error("gone");
-        return { sessionId: p.sessionId, messages: [] };
+        return {
+          sessionId: p.sessionId,
+          cwd: "/proj/newest",
+          messages: [],
+        };
       },
       "session/list": () => ({
         sessions: [
-          { id: "s-older", mtimeMs: 1 },
-          { id: "s-newest", mtimeMs: 99 },
+          { id: "s-older", mtimeMs: 1, cwd: "/proj/old" },
+          { id: "s-newest", mtimeMs: 99, cwd: "/proj/newest" },
         ],
       }),
       "discovery/subscribe": () => ({}),
-      "config/get": () => ({}),
+      "config/get": () => ({ cwd: "/scratch" }),
       "session/get_policy": () => ({}),
     });
     writeLastSessionId("s-old");
     const boot = await bootstrapAcpSession(client);
     expect(boot.sessionId).toBe("s-newest");
     expect(boot.resumed).toBe(true);
+    expect(boot.cwd).toBe("/proj/newest");
     expect(client.request).not.toHaveBeenCalledWith(
       "session/new",
       expect.anything(),

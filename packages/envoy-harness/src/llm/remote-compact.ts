@@ -6,6 +6,10 @@
  */
 
 import type { Message, ModelAdapter } from "../model.js";
+import {
+  multimodalToolContentToText,
+  normalizeToolResultContent,
+} from "../tools/multimodal.js";
 
 const REMOTE_COMPACT_SYSTEM =
   "You are a context compaction assistant. Summarize the conversation " +
@@ -26,7 +30,10 @@ export async function remoteCompactViaComplete(
             return `[tool_call ${b.name} ${JSON.stringify(b.args)}]`;
           }
           if (b.type === "tool_result") {
-            return `[tool_result ${String(b.content).slice(0, 500)}]`;
+            const flat = multimodalToolContentToText(
+              normalizeToolResultContent(b.content),
+            );
+            return `[tool_result ${flat.slice(0, 500)}]`;
           }
           return `[${b.type}]`;
         })

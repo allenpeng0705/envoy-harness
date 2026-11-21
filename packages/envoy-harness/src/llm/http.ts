@@ -20,6 +20,10 @@
  * version bump; new fields are additive.
  */
 
+import {
+  multimodalToolContentToText,
+  normalizeToolResultContent,
+} from "../tools/multimodal.js";
 import type { ContentBlock, Message, Tool } from "../tools/index.js";
 
 // ---------------------------------------------------------------------------
@@ -470,18 +474,39 @@ export function messagesToOpenAI(messages: ReadonlyArray<Message>): OpenAIMessag
     }
     if (m.role === "tool") {
       // One tool message per tool result. We emit one OpenAI
-      // tool message per block.
+      // tool message per block. Images cannot live in `role:tool`
+      // content for most providers, so attach them as a follow-up
+      // user vision message (same shape as user image prompts).
+      const visionParts: OpenAIUserContentPart[] = [];
       for (const b of m.content) {
         if (b.type === "tool_result") {
-          const content = typeof b.content === "string"
-            ? b.content
-            : JSON.stringify(b.content);
+          const normalized = normalizeToolResultContent(b.content);
           out.push({
             role: "tool",
             tool_call_id: lastWireIdByOriginal.get(b.toolCallId) ?? b.toolCallId,
-            content,
+            content: multimodalToolContentToText(normalized),
           });
+          for (const img of normalized.images) {
+            visionParts.push({
+              type: "image_url",
+              image_url: {
+                url: `data:${img.mimeType};base64,${img.data}`,
+              },
+            });
+          }
         }
+      }
+      if (visionParts.length > 0) {
+        out.push({
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: "[tool result image(s) attached for vision]",
+            },
+            ...visionParts,
+          ],
+        });
       }
     }
   }

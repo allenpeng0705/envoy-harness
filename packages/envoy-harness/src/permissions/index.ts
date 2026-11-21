@@ -21,6 +21,21 @@ export {
   matchPermissionPreset,
   permissionPresetToConfigFields,
   resolvePermissionPreset,
+  resolvePresetWritableRoots,
   type PermissionPresetName,
   type PermissionPresetResolved,
 } from "./presets.js";
+
+export {
+  ENVOY_MOBILE_TOOLS_ENV,
+  isMobileDeviceAccessAllowed,
+  isMobileWritableRoot,
+  mobileWritableRoots,
+} from "./mobile-roots.js";
+
+export {
+  ENVOY_WEB_TOOLS_ENV,
+  isWebBrowserAccessAllowed,
+  isWebdevWritableRoot,
+  webdevWritableRoots,
+} from "./webdev-roots.js";

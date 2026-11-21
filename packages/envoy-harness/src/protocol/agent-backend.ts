@@ -56,10 +56,7 @@ import {
   turnOutlineOp,
   type SessionConfigLabels,
 } from "./session-introspection-ops.js";
-import {
-  matchPermissionPreset,
-  resolvePermissionPreset,
-} from "../permissions/presets.js";
+import { matchPermissionPreset } from "../permissions/presets.js";
 import type { Session } from "../session.js";
 import { SessionStore } from "../session/session-store.js";
 import { messagesToUiTranscript } from "./transcript-ui.js";
@@ -157,6 +154,12 @@ export interface AgentSessionBackendOptions {
    */
   decision?: DecisionConfig;
   /**
+   * R4.5b — seed LiveSession.autoRun from the host runtime config
+   * (e.g. `--permission-preset mobile` → `safe-only`) so tool asks
+   * honor the preset before any later `setPolicy` call.
+   */
+  initialAutoRun?: import("../permissions/auto-run.js").AutoRunPolicy;
+  /**
    * Wave 3 — shared terminal session service for interactive ACP PTY.
    * Owner fence is the ACP session id.
    */
@@ -248,6 +251,11 @@ export function createAgentSessionBackend(
         userQuestions,
         ...(persisted !== undefined ? { session: persisted } : {}),
       });
+      if (options.initialAutoRun !== undefined) {
+        live.autoRun = options.initialAutoRun;
+      } else if (live.agent.autoRun !== undefined) {
+        live.autoRun = live.agent.autoRun;
+      }
       installLivePermissionHook(live, options.shouldAskTool, decisionGate);
       sessions.set(sessionId, live);
       // Keep the project's "last used" fresh for the UI. Best-effort: a
@@ -288,10 +296,16 @@ export function createAgentSessionBackend(
         userQuestions,
         session: persisted,
       });
+      if (options.initialAutoRun !== undefined) {
+        live.autoRun = options.initialAutoRun;
+      } else if (live.agent.autoRun !== undefined) {
+        live.autoRun = live.agent.autoRun;
+      }
       installLivePermissionHook(live, options.shouldAskTool, decisionGate);
       sessions.set(sessionId, live);
       return {
         sessionId,
+        cwd,
         messages: messagesToUiTranscript(persisted.messages),
       };
     },
@@ -452,9 +466,9 @@ export function createAgentSessionBackend(
         preset?: string;
       } = {};
       if (params.preset !== undefined) {
-        const preset = resolvePermissionPreset(params.preset);
-        live.agent.setPermissionMode(preset.permissionMode);
-        live.agent.setApprovalPolicy(preset.askForApproval);
+        // Use Agent.setPermissionPreset so mobile (and future presets)
+        // also expand networkAccess + writableRoots — not just mode/approval.
+        const preset = live.agent.setPermissionPreset(params.preset);
         live.autoRun = preset.autoRun;
         out.preset = preset.name;
         out.sandbox = preset.permissionMode;
@@ -484,11 +498,14 @@ export function createAgentSessionBackend(
       }
       const sandbox = live.agent.getPermissionMode();
       const approval = live.agent.getApprovalPolicy();
-      const preset = matchPermissionPreset({
-        permissionMode: sandbox,
-        askForApproval: approval,
-        ...(live.autoRun !== undefined ? { autoRun: live.autoRun } : {}),
-      });
+      // Prefer the named preset on the agent (mobile vs webdev share axes).
+      const preset =
+        live.agent.getPermissionPreset() ??
+        matchPermissionPreset({
+          permissionMode: sandbox,
+          askForApproval: approval,
+          ...(live.autoRun !== undefined ? { autoRun: live.autoRun } : {}),
+        });
       return {
         sandbox,
         approval,

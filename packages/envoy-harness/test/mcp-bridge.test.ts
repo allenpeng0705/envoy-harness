@@ -9,6 +9,7 @@ import { z } from "zod";
 import {
   DefaultMcpClientRegistry,
   formatMcpResult,
+  mcpResultToMultimodal,
   registerMcpTools,
   type McpClient,
 } from "../src/mcp/index.js";
@@ -64,11 +65,11 @@ describe("registerMcpTools", () => {
     expect(githubTool?.description).toBe("Create an issue");
 
     const out = await githubTool!.execute({}, { cwd: "/tmp", session: { id: "s" } as never, abortSignal: new AbortController().signal });
-    expect(out.content).toBe("created");
+    expect(out.content).toEqual({ text: "created", images: [] });
 
     const webTool = tools.get("mcp__web__search");
     const webOut = await webTool!.execute({}, { cwd: "/tmp", session: { id: "s" } as never, abortSignal: new AbortController().signal });
-    expect(webOut.content).toBe("hits");
+    expect(webOut.content).toEqual({ text: "hits", images: [] });
   });
 
   it("maps client errors to isError results", async () => {
@@ -113,7 +114,7 @@ describe("registerMcpTools", () => {
 });
 
 describe("formatMcpResult", () => {
-  it("renders text blocks and summarizes images", () => {
+  it("renders text blocks and notes attached vision images", () => {
     const text = formatMcpResult({
       content: [
         { type: "text", text: "hello" },
@@ -121,6 +122,22 @@ describe("formatMcpResult", () => {
       ],
     });
     expect(text).toContain("hello");
-    expect(text).toContain("[image image/png");
+    expect(text).toContain("image/png");
+    expect(text).toContain("attached for vision");
+  });
+});
+
+describe("mcpResultToMultimodal", () => {
+  it("preserves image blocks for model vision", () => {
+    const mm = mcpResultToMultimodal({
+      content: [
+        { type: "text", text: "shot" },
+        { type: "image", data: "abc123", mimeType: "image/png" },
+      ],
+    });
+    expect(mm.text).toBe("shot");
+    expect(mm.images).toEqual([
+      { mimeType: "image/png", data: "abc123" },
+    ]);
   });
 });

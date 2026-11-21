@@ -34,18 +34,36 @@ describe("permission presets", () => {
       askForApproval: "never",
       autoRun: "off",
     });
-    expect(PERMISSION_PRESETS).toHaveLength(3);
+    expect(resolvePermissionPreset("mobile")).toMatchObject({
+      permissionMode: "workspace-write",
+      askForApproval: "on-request",
+      autoRun: "safe-only",
+      networkAccess: true,
+      expandMobileRoots: true,
+    });
+    expect(resolvePermissionPreset("webdev")).toMatchObject({
+      permissionMode: "workspace-write",
+      askForApproval: "on-request",
+      autoRun: "safe-only",
+      networkAccess: true,
+      expandWebdevRoots: true,
+    });
+    expect(PERMISSION_PRESETS).toHaveLength(5);
   });
 
-  it("matchPermissionPreset round-trips exact axes", () => {
+  it("matchPermissionPreset round-trips unique axes; ambiguous → undefined", () => {
     for (const p of PERMISSION_PRESETS) {
-      expect(
-        matchPermissionPreset({
-          permissionMode: p.permissionMode,
-          askForApproval: p.askForApproval,
-          autoRun: p.autoRun,
-        }),
-      ).toBe(p.name);
+      const matched = matchPermissionPreset({
+        permissionMode: p.permissionMode,
+        askForApproval: p.askForApproval,
+        autoRun: p.autoRun,
+      });
+      // mobile and webdev share axes — inference is ambiguous.
+      if (p.name === "mobile" || p.name === "webdev") {
+        expect(matched).toBeUndefined();
+      } else {
+        expect(matched).toBe(p.name);
+      }
     }
     expect(
       matchPermissionPreset({

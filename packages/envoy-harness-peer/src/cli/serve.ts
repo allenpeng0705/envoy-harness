@@ -57,6 +57,18 @@ export interface PeerServeArgs {
   advertise?: boolean;
   /** Address to advertise (default: the first private LAN IPv4). */
   advertiseAddress?: string;
+  /**
+   * Advertise capability `device-worker` (mobile Simulator/Emulator host).
+   * Implies including that tag in mDNS TXT when `--advertise` is set.
+   */
+  deviceWorker?: boolean;
+  /**
+   * Advertise capability `browser-worker` (Playwright/Chromium host).
+   * Implies including that tag in mDNS TXT when `--advertise` is set.
+   */
+  browserWorker?: boolean;
+  /** Extra capability tags (repeatable via `--capability <tag>`). */
+  capabilities?: string[];
   help?: boolean;
 }
 
@@ -109,6 +121,17 @@ export function parseServeArgs(argv: readonly string[]): PeerServeArgs {
       case "--advertise-address":
         args.advertiseAddress = requireValue(argv, ++i, "--advertise-address");
         break;
+      case "--device-worker":
+        args.deviceWorker = true;
+        break;
+      case "--browser-worker":
+        args.browserWorker = true;
+        break;
+      case "--capability": {
+        const cap = requireValue(argv, ++i, "--capability");
+        args.capabilities = [...(args.capabilities ?? []), cap];
+        break;
+      }
       case "--max-verify-after-execute": {
         const value = Number(requireValue(argv, ++i, "--max-verify-after-execute"));
         if (!Number.isInteger(value) || value < 0) {
@@ -157,6 +180,11 @@ Options:
                              fails open with a warning)
   --advertise-address <ip>   address to publish (default: first private
                              LAN IPv4)
+  --device-worker            advertise capability "device-worker" (mobile
+                             Simulator/Emulator host for remote device_* )
+  --browser-worker           advertise capability "browser-worker"
+                             (Playwright/Chromium host for remote browser_* )
+  --capability <tag>         extra capability tag for routing (repeatable)
   --help                     show this help
 `;
 
@@ -345,6 +373,16 @@ export async function runPeerServeCli(
     io.stdout.write(
       `envoy-peer serve: listening on ${args.host}:${started.port} (peer ${args.peerId}) — Ctrl-C to stop\n`,
     );
+    if (args.deviceWorker === true) {
+      io.stdout.write(
+        "envoy-peer serve: device-worker mode — advertise capability device-worker; use an adapter with device_* tools (EnvoyHarnessAdapter + mobile preset)\n",
+      );
+    }
+    if (args.browserWorker === true) {
+      io.stdout.write(
+        "envoy-peer serve: browser-worker mode — advertise capability browser-worker; use an adapter with browser_* tools (EnvoyHarnessAdapter + webdev preset)\n",
+      );
+    }
 
     // Optional LAN advertisement so `--discovery mdns` works with no
     // `--peers` config on the other machine. Fail-open by design: a
@@ -358,12 +396,23 @@ export async function runPeerServeCli(
           "envoy-peer serve: --advertise skipped (no non-internal IPv4 address)\n",
         );
       } else {
+        const capabilities: string[] = [...(args.capabilities ?? [])];
+        if (args.deviceWorker === true && !capabilities.includes("device-worker")) {
+          capabilities.push("device-worker");
+        }
+        if (
+          args.browserWorker === true &&
+          !capabilities.includes("browser-worker")
+        ) {
+          capabilities.push("browser-worker");
+        }
         advertiser = new MdnsAdvertiser({
           info: {
             peerId: args.peerId,
             port: started.port,
             address,
             ...(args.model !== undefined ? { model: args.model } : {}),
+            ...(capabilities.length > 0 ? { capabilities } : {}),
           },
           onError: (err) => {
             io.stderr.write(

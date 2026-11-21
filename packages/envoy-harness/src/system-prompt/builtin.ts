@@ -12,6 +12,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import { discoverAgentsMd, type DiscoveryOptions } from "../agents-md/index.js";
+import { deviceWorkerRoutingHint } from "../mobile/device-worker.js";
+import { browserWorkerRoutingHint } from "../web/browser-worker.js";
 import type { AskForApproval, PermissionMode } from "../types.js";
 import type { PromptSection } from "./types.js";
 
@@ -235,7 +237,10 @@ export function taskGuidanceSection(): PromptSection {
       "For large investigations (repo summaries, audits, refactors across many packages): outline a " +
       "short plan, fan out independent slices via task / tasks[], then synthesize the children's " +
       "results into one final answer. Do not burn the whole iteration budget on serial ls/read of " +
-      "the entire tree yourself.",
+      "the entire tree yourself. " +
+      deviceWorkerRoutingHint() +
+      " " +
+      browserWorkerRoutingHint(),
   };
 }
 

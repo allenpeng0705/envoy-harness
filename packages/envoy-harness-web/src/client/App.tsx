@@ -32,7 +32,7 @@ import {
 import { SessionTabsBar } from "./SessionTabsBar.js";
 import { SettingsModal, type ThemeMode } from "./SettingsModal.js";
 import { TurnHintsDock } from "./TurnHintsDock.js";
-import { isPrimaryMod } from "./path-display.js";
+import { isPrimaryMod, shortPathLabel } from "./path-display.js";
 import {
   activateLeafTab,
   bindFocusedPaneSession,
@@ -871,11 +871,24 @@ export function App(): JSX.Element {
                   return next;
                 });
                 if (state.sessionId === id) {
+                  // Always keep a live ACP session after deleting the active
+                  // one — opening the picker alone left a zombie sessionId.
                   if (isRegisteredProjectCwd(state.cwd, workspaces)) {
                     startSessionIn(state.cwd);
                   } else {
-                    setProjectsOpen(true);
-                    refreshSessions();
+                    drainHaltRef.current = false;
+                    setPromptQueue([]);
+                    void host
+                      .newSession()
+                      .then(() => {
+                        setEhuiRefresh((n) => n + 1);
+                        refreshSessions();
+                        setProjectsOpen(true);
+                      })
+                      .catch(() => {
+                        refreshSessions();
+                        setProjectsOpen(true);
+                      });
                   }
                 } else {
                   refreshSessions();
@@ -954,6 +967,8 @@ export function App(): JSX.Element {
                   if (project !== undefined) {
                     return project.name.trim() || projectLabel(project.path);
                   }
+                  // Unregistered (Ungrouped) — show the real path, not a fake project name.
+                  if (key.length > 0) return shortPathLabel(state.cwd, 40);
                   return "No project";
                 })()}
               </span>

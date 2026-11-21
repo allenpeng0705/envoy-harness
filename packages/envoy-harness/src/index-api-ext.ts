@@ -301,6 +301,7 @@ export {
   type SkillRoot,
   type SkillSummary,
   SkillError,
+  bundledSkillRoot,
   createFilesystemSkillProvider,
   createSkillRegistry,
   defaultSkillRoots,
@@ -447,6 +448,24 @@ export {
 // the two entry points cannot summarize with different priorities; exported
 // because a host implementing its own compaction should use the same one.
 export { SUMMARIZE_SYSTEM } from "./protocol/session-ops.js";
+
+// Mobile device-worker (mesh Phase 3)
+export {
+  DEVICE_DEBUG_SKILL_ID,
+  DEVICE_WORKER_CAPABILITY,
+  DEVICE_WORKER_TOOL_NAMES,
+  deviceWorkerCapabilities,
+  deviceWorkerRoutingHint,
+} from "./mobile/device-worker.js";
+
+// Browser-worker (mesh Phase 3)
+export {
+  BROWSER_DEBUG_SKILL_ID,
+  BROWSER_WORKER_CAPABILITY,
+  BROWSER_WORKER_TOOL_NAMES,
+  browserWorkerCapabilities,
+  browserWorkerRoutingHint,
+} from "./web/browser-worker.js";
 
 // Distributed mesh — static peer endpoint parsing + optional cluster wiring
 export {

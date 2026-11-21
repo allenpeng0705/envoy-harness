@@ -2,6 +2,10 @@
  * Map trace events and content blocks to protocol committed messages.
  */
 
+import {
+  multimodalToolContentToText,
+  normalizeToolResultContent,
+} from "../tools/multimodal.js";
 import type { ContentBlock } from "../tools/types.js";
 import type { TraceEvent } from "../trace/types.js";
 import type { ProtocolCommittedMessage } from "./session-backend.js";
@@ -26,13 +30,8 @@ export function messageTextFromContent(
 }
 
 function toolResultContentToText(content: unknown): string {
-  if (typeof content === "string") return content;
   if (content === undefined || content === null) return "";
-  try {
-    return JSON.stringify(content);
-  } catch {
-    return String(content);
-  }
+  return multimodalToolContentToText(normalizeToolResultContent(content));
 }
 
 /**

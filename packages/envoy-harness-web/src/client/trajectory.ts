@@ -61,6 +61,9 @@ export function activityToToolMessage(
     ...(activity.resultPreview !== undefined
       ? { resultPreview: activity.resultPreview }
       : {}),
+    ...(activity.images !== undefined && activity.images.length > 0
+      ? { images: activity.images }
+      : {}),
     ...(activity.isError === true ? { isError: true } : {}),
     ...(activity.durationMs !== undefined
       ? { durationMs: activity.durationMs }
@@ -73,6 +76,9 @@ export function activityToToolMessage(
     text: activity.summary,
     at,
     tool,
+    ...(activity.images !== undefined && activity.images.length > 0
+      ? { images: activity.images }
+      : {}),
   };
 }
 
@@ -141,6 +147,9 @@ export function applyToolActivity(
         ...(activity.resultPreview !== undefined
           ? { resultPreview: activity.resultPreview }
           : {}),
+        ...(activity.images !== undefined && activity.images.length > 0
+          ? { images: activity.images }
+          : {}),
         ...(activity.isError === true
           ? { isError: true }
           : { isError: false }),
@@ -148,6 +157,9 @@ export function applyToolActivity(
           ? { durationMs: activity.durationMs }
           : {}),
       },
+      ...(activity.images !== undefined && activity.images.length > 0
+        ? { images: activity.images }
+        : {}),
     };
     return next;
   }

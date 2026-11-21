@@ -55,6 +55,7 @@ import {
   type HttpClient,
   type HttpResponse,
 } from "./http.js";
+import { normalizeToolResultContent } from "../tools/multimodal.js";
 import type { ContentBlock, Message, Tool } from "../tools/types.js";
 import type {
   CompleteInput,
@@ -106,11 +107,25 @@ interface AnthropicToolUseBlock {
   input: Record<string, unknown>;
 }
 
+type AnthropicToolResultContent =
+  | string
+  | Array<
+      | { type: "text"; text: string }
+      | {
+          type: "image";
+          source: {
+            type: "base64";
+            media_type: string;
+            data: string;
+          };
+        }
+    >;
+
 /** A tool-result block in a user content array. */
 interface AnthropicToolResultBlock {
   type: "tool_result";
   tool_use_id: string;
-  content: string;
+  content: AnthropicToolResultContent;
 }
 
 /** A user content block (text or tool result) — used when a
@@ -441,11 +456,37 @@ function collectToolResults(
       out.push({
         type: "tool_result",
         tool_use_id: idMap?.get(b.toolCallId) ?? b.toolCallId,
-        content: typeof b.content === "string" ? b.content : JSON.stringify(b.content),
+        content: anthropicToolResultContent(b.content),
       });
     }
   }
   return out;
+}
+
+function anthropicToolResultContent(content: unknown): AnthropicToolResultContent {
+  const normalized = normalizeToolResultContent(content);
+  if (normalized.images.length === 0) return normalized.text;
+  const blocks: Array<
+    | { type: "text"; text: string }
+    | {
+        type: "image";
+        source: { type: "base64"; media_type: string; data: string };
+      }
+  > = [];
+  if (normalized.text.trim().length > 0) {
+    blocks.push({ type: "text", text: normalized.text });
+  }
+  for (const img of normalized.images) {
+    blocks.push({
+      type: "image",
+      source: {
+        type: "base64",
+        media_type: img.mimeType,
+        data: img.data,
+      },
+    });
+  }
+  return blocks.length > 0 ? blocks : normalized.text;
 }
 
 /** Concatenate text blocks into a single string. */

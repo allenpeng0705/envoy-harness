@@ -10,6 +10,14 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createFilesystemSkillProvider } from "../../src/skills/index.js";
 
+/** Hermetic tests: do not pick up package-bundled mobile skills. */
+function testProvider() {
+  return createFilesystemSkillProvider({
+    homeDir: tmpHome,
+    includeBundledSkills: false,
+  });
+}
+
 let tmpCwd: string;
 let tmpHome: string;
 
@@ -49,7 +57,7 @@ describe("createFilesystemSkillProvider", () => {
       { name: "deploy", description: "Deploy the service." },
       "Run tests.\nThen tag.",
     );
-    const provider = createFilesystemSkillProvider({ homeDir: tmpHome });
+    const provider = testProvider();
     const list = await provider.list({
       cwd: tmpCwd,
       signal: new AbortController().signal,
@@ -73,7 +81,7 @@ Step 1: build.
 Step 2: ship.`,
       "utf8",
     );
-    const provider = createFilesystemSkillProvider({ homeDir: tmpHome });
+    const provider = testProvider();
     const def = await provider.get("deploy", {
       cwd: tmpCwd,
       signal: new AbortController().signal,
@@ -96,7 +104,7 @@ Step 2: ship.`,
       { name: "deploy", description: "USER version" },
       "user body",
     );
-    const provider = createFilesystemSkillProvider({ homeDir: tmpHome });
+    const provider = testProvider();
     const def = await provider.get("deploy", {
       cwd: tmpCwd,
       signal: new AbortController().signal,
@@ -123,7 +131,7 @@ Step 2: ship.`,
       { name: "universal", description: "from .agents" },
       "x",
     );
-    const provider = createFilesystemSkillProvider({ homeDir: tmpHome });
+    const provider = testProvider();
     const list = await provider.list({
       cwd: tmpCwd,
       signal: new AbortController().signal,
@@ -150,7 +158,7 @@ description: no fence
 body body body`,
       "utf8",
     );
-    const provider = createFilesystemSkillProvider({ homeDir: tmpHome });
+    const provider = testProvider();
     const list = await provider.list({
       cwd: tmpCwd,
       signal: new AbortController().signal,
@@ -159,7 +167,7 @@ body body body`,
   });
 
   it("returns undefined from get() for an unknown skill", async () => {
-    const provider = createFilesystemSkillProvider({ homeDir: tmpHome });
+    const provider = testProvider();
     const def = await provider.get("nonexistent", {
       cwd: tmpCwd,
       signal: new AbortController().signal,
@@ -170,11 +178,29 @@ body body body`,
   it("honors an already-aborted signal (returns empty list)", async () => {
     const ac = new AbortController();
     ac.abort();
-    const provider = createFilesystemSkillProvider({ homeDir: tmpHome });
+    const provider = testProvider();
     const list = await provider.list({
       cwd: tmpCwd,
       signal: ac.signal,
     });
     expect(list).toEqual([]);
+  });
+
+  it("includes bundled mobile skills by default", async () => {
+    const provider = createFilesystemSkillProvider({ homeDir: tmpHome });
+    const list = await provider.list({
+      cwd: tmpCwd,
+      signal: new AbortController().signal,
+    });
+    const names = new Set(list.map((s) => s.name));
+    expect(names.has("flutter-mobile")).toBe(true);
+    expect(names.has("react-native-mobile")).toBe(true);
+    expect(names.has("native-mobile")).toBe(true);
+    expect(names.has("vite-react")).toBe(true);
+    expect(names.has("nextjs")).toBe(true);
+    expect(names.has("frontend-debug")).toBe(true);
+    expect(list.find((s) => s.name === "flutter-mobile")?.provider).toBe(
+      "package:envoy",
+    );
   });
 });

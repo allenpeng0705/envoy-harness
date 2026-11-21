@@ -221,6 +221,7 @@ function acpRunArgs(
     json: false,
     sandbox,
     sandboxExecutor: undefined,
+    permissionPreset: undefined,
     approval: undefined,
     model: undefined,
     provider: undefined,

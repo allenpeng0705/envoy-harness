@@ -27,6 +27,7 @@ export {
 } from "./stdio-client.js";
 export {
   formatMcpResult,
+  mcpResultToMultimodal,
   registerMcpTools,
   type McpToolBridgeResult,
 } from "./bridge.js";

@@ -64,6 +64,7 @@ export { traceEventToCommittedMessage, messageTextFromContent } from "./message-
 export { formatGitOutput, runGitDiff, runGitStatus } from "./git-runner.js";
 export {
   messagesToUiTranscript,
+  type ProtocolUiImage,
   type ProtocolUiMessage,
 } from "./transcript-ui.js";
 
