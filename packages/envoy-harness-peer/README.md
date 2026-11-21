@@ -47,10 +47,27 @@ On another machine, replace `127.0.0.1` with the peer’s LAN or public IP.
 | `--model` | — | Advertised model (for routing) |
 | `--adapter <file>` | built-in demo | ESM module exporting an `AgentAdapter` |
 | `--verify-after-execute` | off | Run verify after each submit |
+| `--advertise` | off | Publish mDNS / DNS-SD (`_envoy-harness._tcp.local`) |
+| `--device-worker` | off | Advertise capability `device-worker` (mobile `device_*` host) |
+| `--browser-worker` | off | Advertise capability `browser-worker` (Playwright `browser_*` host) |
+| `--capability <tag>` | — | Extra capability tag (repeatable) |
 
 ```sh
 envoy-peer serve --help
+
+# Example: Mac lab for remote Simulator/Emulator work
+envoy-peer serve --port 8123 --peer-id mac-lab \
+  --adapter ./envoy-harness-adapter.mjs \
+  --device-worker --advertise
+
+# Example: machine with Playwright/Chromium for remote UI debug
+envoy-peer serve --port 8124 --peer-id web-lab \
+  --adapter ./envoy-harness-adapter.mjs \
+  --browser-worker --advertise
 ```
+
+Worker docs: [`../envoy-harness/docs/mobile.md`](../envoy-harness/docs/mobile.md),
+[`../envoy-harness/docs/webdev.md`](../envoy-harness/docs/webdev.md).
 
 ## How it fits
 

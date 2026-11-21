@@ -42,15 +42,24 @@ the `link:` paths in this package's `package.json`.
 
 ## Public API
 
-The package exports are additive. The first exports are:
+Exports include:
 
-- `ENVOY_HARNESS_ADAPTER_VERSION` — the package version.
+- `ENVOY_HARNESS_ADAPTER_VERSION` — the package version
+- `ENVOY_HARNESS_SKILLS` / `getToolsForSkill` — skill catalog + tool mapping
+- `EnvoyHarnessAdapter` — the adapter class
+- `EnvoyHarnessAdapterInput` — constructor options
 
-Future exports (F8.1+):
+### Domain worker skills
 
-- `ENVOY_HARNESS_SKILLS` — the 5-skill catalog.
-- `EnvoyHarnessAdapter` — the adapter class.
-- `EnvoyHarnessAdapterInput` — constructor options.
+| Skill id | Tools | Peer capability | Preset on worker |
+|---|---|---|---|
+| `device-debug` | `device_*` (+ `read_file` / `bash`) | `device-worker` | `mobile` |
+| `browser-debug` | `browser_*` (+ `read_file` / `bash`) | `browser-worker` | `webdev` |
+
+Advertise with `envoy-peer serve --device-worker` or `--browser-worker`
+(see peer README). Details:
+[`../envoy-harness/docs/mobile.md`](../envoy-harness/docs/mobile.md),
+[`../envoy-harness/docs/webdev.md`](../envoy-harness/docs/webdev.md).
 
 ## Stability
 

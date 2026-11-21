@@ -192,6 +192,8 @@ auto-persisted session: <id> (use --resume <id>)
 envoy> /help
 envoy> /model gpt-4o
 envoy> /preset safe
+envoy> /preset mobile    # Flutter / RN / native + device_*
+envoy> /preset webdev    # Vite / Next / SPA + browser_*
 envoy> /agents
 envoy> /quit
 ```
@@ -202,12 +204,33 @@ Resume:
 pnpm envoy -- --repl --resume <session-id>
 ```
 
+### Permission presets
+
+One knob expands sandbox + approval + auto-run (and domain roots):
+
+| Preset | Sandbox | Approval | Auto-run | Extra |
+|---|---|---|---|---|
+| `safe` | read-only | unless-trusted | always-confirm | — |
+| `ask-all` | workspace-write | on-request | always-confirm | — |
+| `approve-all` | danger-full-access | never | off | — |
+| `mobile` | workspace-write | on-request | safe-only | network + Simulator/SDK roots → `device_*` |
+| `webdev` | workspace-write | on-request | safe-only | network + Vite/Next/Playwright caches → `browser_*` |
+
+```sh
+pnpm envoy -- --permission-preset mobile --repl …
+pnpm envoy -- --permission-preset webdev --repl …
+```
+
+Details: [`mobile.md`](./mobile.md), [`webdev.md`](./webdev.md). ACP/SDK:
+`session/set_policy` with `{ "preset": "mobile" | "webdev" | … }`.
+
 ### Useful shared flags
 
 | Flag | Meaning |
 |---|---|
 | `--provider` / `--model` | LLM |
 | `--base-url` | Compatible API base |
+| `--permission-preset` | `safe` · `ask-all` · `approve-all` · `mobile` · `webdev` |
 | `--sandbox` | `read-only` · `workspace-write` · `danger-full-access` |
 | `--approval` | `unless-trusted` · `on-request` · `granular` · `never` |
 | `--cwd` | Tool working directory |

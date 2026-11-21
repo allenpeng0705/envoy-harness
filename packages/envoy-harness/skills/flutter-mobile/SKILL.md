@@ -25,3 +25,4 @@ when-to-use: When working on a Flutter project (pubspec.yaml), running on iOS Si
 - Prefer `device_screenshot` over describing pixels from memory.
 - Keep Metro/Flutter attach in a job; use `device_launch` only when installing a built artifact.
 - If CLIs are missing, tool errors name Xcode CLT / Android SDK / Flutter — install those on the host (or route to a mesh `device-worker` peer).
+- Full reference: `docs/mobile.md`.

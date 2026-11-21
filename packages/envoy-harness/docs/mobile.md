@@ -4,6 +4,8 @@ Envoy-harness can drive **Flutter / React Native / native** loops on a local
 Mac (iOS Simulator + Android Emulator), with optional remote device workers
 over the existing mesh.
 
+For Vite / Next / SPA browser loops, see [`webdev.md`](./webdev.md).
+
 ## Permission preset
 
 ```bash
@@ -11,18 +13,34 @@ envoy-harness --permission-preset mobile --repl
 # or in config.toml:
 # permission_preset = "mobile"
 # or REPL: /preset mobile
+# or ACP/SDK: session/set_policy { "preset": "mobile" }
 ```
 
 The `mobile` preset sets:
 
-- `permissionMode = workspace-write`
-- `askForApproval = on-request`
-- `autoRun = safe-only`
-- `networkAccess = true`
-- extra `writableRoots`: CoreSimulator, Xcode, Android SDK/AVD, project `build/`
+| Axis | Value |
+|---|---|
+| `permissionMode` | `workspace-write` |
+| `askForApproval` | `on-request` |
+| `autoRun` | `safe-only` |
+| `networkAccess` | `true` |
+| Extra `writableRoots` | CoreSimulator, Xcode, XCTestDevices, Android SDK / `~/.android` / AVD, project `build/`, `android/…/build`, `ios/build`, `.dart_tool` |
 
-`device_*` tools are gated: they require this preset (mobile roots),
-`danger-full-access` / approve-all, or `ENVOY_MOBILE_TOOLS=1`.
+### Gating `device_*`
+
+Tools run only when one of these is true:
+
+1. Sandbox writable roots include a **high-signal** mobile marker
+   (CoreSimulator / Xcode / Android SDK / `.android` / AVD / `.dart_tool` /
+   `android/…/build` / `ios/build`), **or**
+2. `permissionMode = danger-full-access` / `approve-all`, **or**
+3. `ENVOY_MOBILE_TOOLS=1`
+
+A bare path that merely ends in `/build` (for example a project cwd named
+`build`) does **not** unlock the tools.
+
+`mobile` and `webdev` share sandbox/approval/auto-run axes. Prefer the named
+preset from `Agent.getPermissionPreset` / ACP `get_policy`.
 
 ## Device tools
 
@@ -43,9 +61,11 @@ Long boots and builds should use existing **jobs / PTY** (`bash` background,
 
 Bundled under `packages/envoy-harness/skills/`:
 
-- `flutter-mobile`
-- `react-native-mobile`
-- `native-mobile`
+| Skill | When |
+|---|---|
+| `flutter-mobile` | Flutter + Simulator/Emulator |
+| `react-native-mobile` | Metro + Detox / Maestro |
+| `native-mobile` | Xcode / Gradle / Espresso |
 
 Loaded via the package skill root (`package:envoy`) in addition to project /
 user skill directories.
@@ -57,6 +77,8 @@ to `[image …]` text placeholders. They become multimodal content:
 
 - Anthropic: images inside `tool_result` content blocks
 - OpenAI-compatible: tool text + follow-up user `image_url` parts
+
+WebUI renders those images in the transcript.
 
 ## Remote device worker (mesh)
 
@@ -76,8 +98,11 @@ envoy-harness --repl --peers mac-lab@192.168.1.10:8123 --permission-preset mobil
 ```
 
 Route long UI tests with `task` toward capability `device-worker` / skill
-`device-debug` (`preferred_peer_id` or capability tag). Helpers live in
-`src/mobile/device-worker.ts`.
+`device-debug` (`preferred_peer_id` or capability tag). Helpers:
+`src/mobile/device-worker.ts`. Adapter skill mapping:
+`@envoymesh/envoy-harness-adapter` → `device-debug`.
+
+See also [`distributed-collaboration.md`](./distributed-collaboration.md) §1.2.
 
 ## Smoke test
 

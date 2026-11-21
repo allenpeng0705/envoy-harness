@@ -27,3 +27,5 @@ when-to-use: When working on a Next.js project (next.config / app router), fixin
 - Prefer App Router conventions (`app/`, `layout.tsx`, `page.tsx`, server vs client components).
 - Keep the Next server in a job; clear `.next` only when the cache is corrupt.
 - Prefer `browser_screenshot` over guessing layout from source alone.
+- Use snapshot `ref=eN` after UI changes; headless by default (`headed: true` recycles the browser).
+- Full reference: `docs/webdev.md`.

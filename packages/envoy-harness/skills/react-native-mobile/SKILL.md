@@ -27,3 +27,4 @@ when-to-use: When working on a React Native / Expo app, debugging native UI on S
 - Clear Metro cache only when needed (`--reset-cache`) — expensive.
 - Use `adb logcat` / `xcrun simctl spawn … log` via `bash` for crash stacks; keep filters tight.
 - Remote Mac with Xcode: submit long builds/UI tests to a mesh peer advertising capability `device-worker`.
+- Full reference: `docs/mobile.md`.

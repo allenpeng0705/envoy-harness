@@ -280,7 +280,21 @@ pnpm --filter @envoymesh/envoy-harness-peer exec \
 - Listens on `0.0.0.0:8123` by default (reachable on the LAN if the firewall allows it).
 - Built-in demo adapter is fine for smoke tests; production should pass `--adapter <module>`.
 
-See [`packages/envoy-harness-peer/README.md`](./packages/envoy-harness-peer/README.md).
+**Domain workers** (optional capability tags for routing):
+
+```sh
+# Mac with Xcode / Android SDK — remote device_* / device-debug
+envoy-peer serve --port 8123 --peer-id mac-lab \
+  --adapter ./path-to-adapter.mjs --device-worker --advertise
+
+# Host with Playwright Chromium — remote browser_* / browser-debug
+envoy-peer serve --port 8124 --peer-id web-lab \
+  --adapter ./path-to-adapter.mjs --browser-worker --advertise
+```
+
+See [`packages/envoy-harness-peer/README.md`](./packages/envoy-harness-peer/README.md),
+[`packages/envoy-harness/docs/mobile.md`](./packages/envoy-harness/docs/mobile.md),
+[`packages/envoy-harness/docs/webdev.md`](./packages/envoy-harness/docs/webdev.md).
 
 ### Step 2 — Connect from CLI or WebUI
 

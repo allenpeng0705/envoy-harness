@@ -29,15 +29,29 @@ One UI/config control = sandbox mode + approval + auto-run policy
 | `ask-all` | workspace-write | on-request | always-confirm |
 | `approve-all` | danger-full-access | never | off |
 
+### Later extensions (shipped)
+
+| Preset | Same axes as | Extra |
+|---|---|---|
+| `mobile` | ask-all-like write + `safe-only` + network | Simulator/SDK roots → `device_*` — [`mobile.md`](./mobile.md) |
+| `webdev` | same as `mobile` | Vite/Next/Playwright caches → `browser_*` — [`webdev.md`](./webdev.md) |
+
+`mobile` / `webdev` share mode/approval/autoRun; hosts track the **named**
+preset (`Agent.permissionPresetName` / ACP `get_policy`) instead of
+inferring from axes alone. ACP/SDK `session/set_policy` accepts all five
+names.
+
 ## Tests
 
 - `test/permissions/presets.test.ts` — resolve/match, config round-trip,
   TOML load, override precedence
+- `test/mobile/preset.test.ts`, `test/web/preset.test.ts` — domain roots + gates
 
 ## Accept
 
 - [x] Preset round-trip in config
 - [x] UI can set one value (`/preset`, `session/set_policy` `{ preset }`)
+- [x] `mobile` / `webdev` expand roots + unlock domain tools
 
 ## Out of scope
 

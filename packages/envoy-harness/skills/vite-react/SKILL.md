@@ -26,4 +26,7 @@ when-to-use: When working on a Vite React project (vite.config), fixing UI bugs 
 
 - Prefer `browser_screenshot` over describing pixels from memory.
 - Keep the Vite server in a job; restart only when config / env changes.
+- After `browser_snapshot`, prefer `ref=eN` (duplicate labels use `nth`) over brittle CSS.
+- Headless by default; pass `headed: true` on `browser_navigate` only when you need a visible window (flipping headed recycles Chromium).
 - If Playwright is missing, tool errors name the install commands — do not invent a Selenium stack.
+- Full reference: `docs/webdev.md`.

@@ -23,6 +23,8 @@ when-to-use: When debugging any local web UI (Vite, Next, CRA, static HTML, Stor
 
 ## Tips
 
-- Prefer snapshot refs over brittle absolute CSS when the tree is stable.
+- Prefer snapshot refs (`ref=eN`, including `nth` for duplicates) over brittle absolute CSS.
 - Do not block the agent turn waiting on a long-lived server — use jobs.
+- Headless by default; `headed: true` on `browser_navigate` when a display is required.
 - For remote browser hosts, route via mesh capability `browser-worker` / skill `browser-debug`.
+- Full reference: `docs/webdev.md`.

@@ -93,15 +93,30 @@ cross-instance verify + federatable scoreboards.
 ## 1.2 Device-worker peers (mobile)
 
 A Mac with Xcode / Android SDK can advertise capability `device-worker` and
-expose the same `device_*` tools (`device-debug` skill on the adapter). Laptop
-agents submit long builds / UI tests via `PeerMeshSubmitter` without a second
-API. See [`mobile.md`](./mobile.md) and `envoy-peer serve --device-worker`.
+expose the same `device_*` tools (`device-debug` skill on the adapter; worker
+agent uses `--permission-preset mobile`). Laptop agents submit long builds /
+UI tests via `PeerMeshSubmitter` without a second API.
+
+```sh
+envoy-peer serve --port 8123 --peer-id mac-lab \
+  --adapter ./adapter.mjs --device-worker --advertise
+```
+
+See [`mobile.md`](./mobile.md).
 
 ## 1.3 Browser-worker peers (web)
 
 A host with Playwright/Chromium can advertise capability `browser-worker` and
-expose the same `browser_*` tools (`browser-debug` skill on the adapter). See
-[`webdev.md`](./webdev.md) and `envoy-peer serve --browser-worker`.
+expose the same `browser_*` tools (`browser-debug` skill on the adapter; worker
+agent uses `--permission-preset webdev`).
+
+```sh
+envoy-peer serve --port 8124 --peer-id web-lab \
+  --adapter ./adapter.mjs --browser-worker --advertise
+```
+
+See [`webdev.md`](./webdev.md). Task guidance injects both device- and
+browser-worker routing hints when mesh is enabled.
 
 ## 2. The seams (already shipped — this is why it's tractable)
 

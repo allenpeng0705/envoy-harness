@@ -31,3 +31,4 @@ when-to-use: When debugging native Swift/Kotlin apps, Xcode schemes, Gradle conn
 
 - Prefer structured `device_*` for lifecycle; use `bash` for one-off SDK flags.
 - Gate stays closed on default sandboxes — never assume Simulator paths are writable without the mobile preset.
+- Full reference: `docs/mobile.md`.

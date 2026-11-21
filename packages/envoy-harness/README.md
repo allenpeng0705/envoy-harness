@@ -97,8 +97,14 @@ envoy-harness --repl --provider openai --model gpt-4o
 envoy> /help
 envoy> explain the auth module
 envoy> /preset safe
+envoy> /preset mobile          # Flutter / RN / native → device_*
+envoy> /preset webdev          # Vite / Next / SPA → browser_*
 envoy> /agents                 # local sub-agents from task
 envoy> /quit
+
+# One-knob presets (also --permission-preset / config permission_preset)
+envoy-harness --permission-preset mobile --repl …
+envoy-harness --permission-preset webdev --repl …
 
 # Browser WebUI (primary GUI — spawns --acp)
 envoy-harness web --provider openai --model gpt-4o --persist

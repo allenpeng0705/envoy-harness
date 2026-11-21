@@ -72,6 +72,7 @@ scannable overview.
 | `--provider <name>` | (env) | `openai` / `anthropic` / `deepseek` / `ollama` |
 | `--model <id>` | provider default | Model identifier (e.g. `gpt-4o`, `claude-sonnet-4-6`) |
 | `--cwd <path>` | `process.cwd()` | Working directory for tool execution |
+| `--permission-preset <p>` | — | `safe` / `ask-all` / `approve-all` / `mobile` / `webdev` (one knob; see below) |
 | `--sandbox <mode>` | `read-only` | `read-only` / `workspace-write` / `danger-full-access` |
 | `--approval <policy>` | `on-request` | `unless-trusted` / `on-request` / `granular` / `never` |
 | `--max-turns <n>` | 50 (one-shot) / 200 (REPL) | Max agent iterations before force-stop |
@@ -151,10 +152,33 @@ envoy-harness --json "explain this" | tee /tmp/envoy-trace.jsonl
 # pnpm envoy -- "explain the auth module"
 ```
 
+### Permission presets (recommended)
+
+One control expands sandbox + approval + auto-run (and domain roots):
+
+| Preset | Sandbox | Approval | Auto-run | Unlocks |
+|---|---|---|---|---|
+| `safe` | read-only | unless-trusted | always-confirm | — |
+| `ask-all` | workspace-write | on-request | always-confirm | — |
+| `approve-all` | danger-full-access | never | off | — |
+| `mobile` | workspace-write | on-request | safe-only | `device_*` (Simulator/SDK roots) |
+| `webdev` | workspace-write | on-request | safe-only | `browser_*` (Vite/Next/Playwright caches) |
+
+```sh
+envoy-harness --permission-preset mobile --repl …
+envoy-harness --permission-preset webdev --repl …
+# REPL: /preset mobile | /preset webdev
+# config.toml: permission_preset = "webdev"
+# ACP: session/set_policy { "preset": "webdev" }
+```
+
+Details: [`docs/mobile.md`](./docs/mobile.md), [`docs/webdev.md`](./docs/webdev.md).
+
 ### Permission modes
 
 Three modes, set via `--sandbox <mode>` (or `permission_mode` in
-the TOML config). The default is `read-only`.
+the TOML config). The default is `read-only`. Prefer `--permission-preset`
+when you want approval + auto-run + domain roots together.
 
 | Mode | Reads | Writes | Bash mutations | Sub-agents |
 |---|---|---|---|---|
@@ -196,12 +220,14 @@ defaults apply). The schema is zod `.strict()` — a typo in any
 field name surfaces as `ConfigLoadError` instead of being silently
 ignored.
 
-**6 fields** ship in v0:
+Core fields (subset; schema grows over time):
 
 | Field | Type | Effect |
 |---|---|---|
+| `permission_preset` | enum | One knob: `safe` / `ask-all` / `approve-all` / `mobile` / `webdev` |
 | `permission_mode` | enum | Initial sandbox mode for the agent |
 | `ask_for_approval` | enum | Initial approval policy |
+| `auto_run` | enum | `always-confirm` / `safe-only` / `off` |
 | `sandbox_backend` | string | Kernel sandbox: `linux-landlock` / `darwin-sandbox` / `windows-sandbox` / `none` (win32 uses job object + optional sidecar) |
 | `network_access` | bool | Allow network in restricted sandbox modes (backend-dependent) |
 | `slash_tmp_writable` | bool | Allow `/tmp` writes in `workspace-write` when the sandbox backend honors it |
@@ -210,8 +236,10 @@ ignored.
 Example `~/.config/envoy-harness/config.toml`:
 
 ```toml
-permission_mode = "workspace-write"
-ask_for_approval = "on-request"
+permission_preset = "webdev"
+# Or set axes explicitly:
+# permission_mode = "workspace-write"
+# ask_for_approval = "on-request"
 writable_roots = ["/Users/me/projects"]
 # On Windows:
 # sandbox_backend = "windows-sandbox"
@@ -229,7 +257,7 @@ turns. 26 built-in slash commands, in 5 files.
 
 | Group | Commands |
 |---|---|
-| **Core (9)** | `/help` · `/model` · `/provider` · `/sandbox` · `/approval` · `/clear` · `/cost` · `/status` · `/quit` |
+| **Core** | `/help` · `/model` · `/provider` · `/sandbox` · `/approval` · `/preset` · `/clear` · `/cost` · `/status` · `/quit` |
 | **Info (8)** | `/session` · `/context` · `/scoreboard` · `/rules` · `/lsp` · `/hooks` · `/mcp` · `/profile` |
 | **Tier 2 (3)** | `/new` · `/compact` · `/init` |
 | **Batch 2 (2)** | `/agents` · `/diff` |
