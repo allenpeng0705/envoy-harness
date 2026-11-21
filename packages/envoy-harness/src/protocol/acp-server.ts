@@ -16,13 +16,16 @@ import {
   parsePromptParams,
   parseRouteInput,
   parseSessionCompactParams,
+  parseSessionGoalsParams,
   parseSessionMemoryParams,
   parseSessionPlanParams,
   parseSessionReviewParams,
+  parseSessionScheduleParams,
   parseSessionSetModeParams,
   parseSetDecisionParams,
   parseSetModelParams,
   parseSetPolicyParams,
+  parseTerminalWriteParams,
   readOptionalCwd,
   readSessionId,
 } from "./acp-params.js";
@@ -80,6 +83,7 @@ export function attachAcpServer(options: AcpServerOptions): () => void {
               // `{}` means "supported"; the key's presence is the signal.
               ...(backend.listSessions !== undefined ? { list: {} } : {}),
               ...(backend.listSessions !== undefined ? { resume: {} } : {}),
+              ...(backend.openTerminal !== undefined ? { terminal: {} } : {}),
             },
           },
           authMethods: [],
@@ -145,18 +149,43 @@ export function attachAcpServer(options: AcpServerOptions): () => void {
           );
         }
         const sessions = await backend.listSessions();
-        // Spec shape: `{ sessions: [{ sessionId, cwd }], nextCursor? }`.
-        // `nextCursor` is OMITTED (not null) when there is no next page.
+        // Spec core: sessionId (+ cwd). Envoy also forwards title /
+        // mtimeMs / messageCount so web/TUI pickers are not title-blind.
         return {
           sessions: sessions.map((entry) =>
             typeof entry === "string"
-              ? { sessionId: entry }
+              ? { sessionId: entry, id: entry, messageCount: 0, mtimeMs: 0 }
               : {
                   sessionId: entry.id,
+                  id: entry.id,
+                  messageCount: entry.messageCount,
+                  mtimeMs: entry.mtimeMs,
                   ...(entry.cwd !== undefined ? { cwd: entry.cwd } : {}),
+                  ...(entry.title !== undefined ? { title: entry.title } : {}),
+                  ...(entry.startedAt !== undefined
+                    ? { startedAt: entry.startedAt }
+                    : {}),
                 },
           ),
         };
+      }
+
+      case "session/delete": {
+        assertInitialized(initialized);
+        if (backend.deleteSession === undefined) {
+          throw new JsonRpcError(
+            "session/delete not supported",
+            JsonRpcErrorCode.METHOD_NOT_FOUND,
+          );
+        }
+        const p = params as { sessionId?: string };
+        if (typeof p?.sessionId !== "string" || p.sessionId.length === 0) {
+          throw new JsonRpcError(
+            "session/delete requires sessionId",
+            JsonRpcErrorCode.INVALID_PARAMS,
+          );
+        }
+        return await backend.deleteSession(p.sessionId);
       }
 
       case "session/prompt": {
@@ -444,10 +473,38 @@ export function attachAcpServer(options: AcpServerOptions): () => void {
       case "session/agent_interrupt":
       case "workspace/list":
       case "workspace/add":
-      case "workspace/remove": {
+      case "workspace/remove":
+      case "workspace/fs/list":
+      case "workspace/fs/read":
+      case "workspace/attach":
+      case "session/terminal/open":
+      case "session/terminal/read":
+      case "session/terminal/list":
+      case "session/terminal/close": {
         // Shared with the SDK dialect; ACP additionally requires `initialize`.
         assertInitialized(initialized);
         return await dispatchSessionControl(backend, method, params);
+      }
+
+      case "session/terminal/write": {
+        assertInitialized(initialized);
+        if (backend.writeTerminal === undefined) {
+          throw new JsonRpcError(
+            "session/terminal/write not supported",
+            JsonRpcErrorCode.METHOD_NOT_FOUND,
+          );
+        }
+        const p = parseTerminalWriteParams(params);
+        return await backend.writeTerminal({
+          ...p,
+          onDelta: (delta) => {
+            connection.notify("session/terminal/output", {
+              sessionId: p.sessionId,
+              terminalId: p.terminalId,
+              data: delta,
+            });
+          },
+        });
       }
 
       case "session/plan": {
@@ -508,6 +565,30 @@ export function attachAcpServer(options: AcpServerOptions): () => void {
         return await backend.sessionInit({
           sessionId: readSessionId(params),
         });
+      }
+
+      case "session/schedule": {
+        assertInitialized(initialized);
+        if (backend.sessionSchedule === undefined) {
+          throw new JsonRpcError(
+            "session/schedule not supported",
+            JsonRpcErrorCode.METHOD_NOT_FOUND,
+          );
+        }
+        return await backend.sessionSchedule(
+          parseSessionScheduleParams(params),
+        );
+      }
+
+      case "session/goals": {
+        assertInitialized(initialized);
+        if (backend.sessionGoals === undefined) {
+          throw new JsonRpcError(
+            "session/goals not supported",
+            JsonRpcErrorCode.METHOD_NOT_FOUND,
+          );
+        }
+        return await backend.sessionGoals(parseSessionGoalsParams(params));
       }
 
       default:

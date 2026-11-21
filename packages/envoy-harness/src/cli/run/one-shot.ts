@@ -143,9 +143,15 @@ export async function runAgent(
     // Config stack: dist → user → project `.envoy/config.toml`.
     try {
       const cwd = parsed.cwd ?? options.cwd ?? process.cwd();
+      const overrides: import("../../config/schema.js").ConfigLayer = {};
+      if (parsed.configPatch !== undefined) {
+        const { parseConfigPatchFragment } = await import("./config-patch.js");
+        Object.assign(overrides, parseConfigPatchFragment(parsed.configPatch));
+      }
       const { layer, ignoredProjectKeys } = await loadConfigStack({
         cwd,
         ...(parsed.config !== undefined ? { filePath: parsed.config } : {}),
+        ...(Object.keys(overrides).length > 0 ? { overrides } : {}),
       });
       configLayer = layer;
       // SECURITY: the project layer is repository-controlled. Never
@@ -169,11 +175,51 @@ export async function runAgent(
       }
     }
   }
+  // `--config-patch` / `--profile` apply after both import and stack
+  // loads so they win as highest file-layer overrides.
+  if (parsed.importConfig !== undefined && parsed.configPatch !== undefined) {
+    const { parseConfigPatchFragment } = await import("./config-patch.js");
+    configLayer = {
+      ...configLayer,
+      ...parseConfigPatchFragment(parsed.configPatch),
+    };
+  }
+  if (parsed.profile !== undefined) {
+    const { createConfigProfileLoader, profileAsOverrides } = await import(
+      "./profile-loader.js"
+    );
+    const loader = createConfigProfileLoader(configLayer);
+    const profile = loader.get(parsed.profile);
+    // ReplProfileLoader.get returns null for unknown names.
+    if (profile === null) {
+      throw new CliError(
+        `unknown --profile: ${parsed.profile}`,
+        EXIT_USAGE,
+      );
+    }
+    configLayer = { ...configLayer, ...profileAsOverrides(profile) };
+  }
   // Surface the import-warning summary (one line) so the user
   // sees it even without --verbose. We do this BEFORE the agent
   // runs so the user doesn't miss it.
   if (importWarningSummary !== undefined) {
     stderr.write(`${importWarningSummary}\n`);
+  }
+  if (parsed.verbose) {
+    const { collectStartupReport, formatStartupReport } = await import(
+      "./startup-report.js"
+    );
+    const report = await collectStartupReport({
+      cwd: parsed.cwd ?? options.cwd ?? process.cwd(),
+      ...(parsed.config !== undefined ? { config: parsed.config } : {}),
+      ...(parsed.sessionDir !== undefined
+        ? { sessionDir: parsed.sessionDir }
+        : {}),
+      ...(parsed.sandboxExecutor !== undefined
+        ? { sandboxExecutor: parsed.sandboxExecutor }
+        : {}),
+    });
+    stderr.write(`${formatStartupReport(report)}\n`);
   }
 
   // 3. Build the agent.
@@ -241,33 +287,14 @@ export async function runAgent(
   // Build the sandbox executor from CLI flags (opt-in).
   // `--sandbox-executor landlock` / `seatbelt` activates a
   // kernel-level executor; absence (or `none`) keeps the
-  // default noop — the 6 bash validators are the v1
-  // enforcement layer and the default test path stays
-  // hermetic. The agent's `sandboxExecutor` option takes
-  // priority if the caller also passed one via RunOptions.
+  // default noop. RunOptions.sandboxExecutor wins if set.
   let sandboxExecutor: import("../../index.js").SandboxExecutor | undefined =
     options.sandboxExecutor;
-  if (sandboxExecutor === undefined && parsed.sandboxExecutor !== undefined) {
-    const { resolveSandboxExecutor } = await import(
-      "../../sandbox/resolve.js"
+  if (sandboxExecutor === undefined) {
+    const { resolveSandboxExecutorFromArgs } = await import(
+      "./sandbox-executor-flag.js"
     );
-    // The CLI's `--sandbox-executor none` is a user-facing
-    // synonym for "no override" (same as omitting the flag),
-    // but the resolver's `force` enum is `"noop"` for
-    // explicit noop. Map at the boundary.
-    const force:
-      | "landlock"
-      | "seatbelt"
-      | "windows-sandbox"
-      | "noop"
-      | undefined =
-      parsed.sandboxExecutor === "none"
-        ? "noop"
-        : parsed.sandboxExecutor;
-    sandboxExecutor = resolveSandboxExecutor({
-      policy: policyFromMode(parsed.sandbox ?? "read-only", cwd),
-      force,
-    });
+    sandboxExecutor = resolveSandboxExecutorFromArgs(parsed, cwd);
   }
 
   const agentOptions: ConstructorParameters<typeof Agent>[0] = {
@@ -281,6 +308,8 @@ export async function runAgent(
     ...(mcpWire !== undefined ? { mcpClients: mcpWire.registry } : {}),
     ...(sandboxExecutor !== undefined ? { sandboxExecutor } : {}),
   };
+  const { applyPowerFeatureFlags } = await import("./power-flags.js");
+  applyPowerFeatureFlags(agentOptions, parsed);
   if (parsed.maxTurns !== undefined) {
     agentOptions.maxIterations = parsed.maxTurns;
   }
@@ -399,15 +428,23 @@ export async function runAgent(
     // Default: NullTracer (no observable side effect).
     agentOptions.tracer = new NullTracer();
   }
+  // Late-bound so child spawn inherits the live parent's permission/sandbox.
+  const parentRef: { agent?: Agent } = {};
   // R8.1 — default LocalMeshSubmitter so standalone CLI gets `task`.
   if (!parsed.noSubagents) {
     const { buildCliLocalMeshSubmitter } = await import(
       "./build-local-mesh-submitter.js"
     );
+    const fallbackMode = effectiveMode ?? "workspace-write";
     agentOptions.meshSubmitter = buildCliLocalMeshSubmitter({
       model,
       cwd,
-      permissionMode: effectiveMode ?? "workspace-write",
+      permissionMode: fallbackMode,
+      getPermissionMode: () =>
+        parentRef.agent?.getPermissionMode() ?? fallbackMode,
+      getSandboxPolicy: () =>
+        parentRef.agent?.sandboxPolicy ??
+        policyFromMode(fallbackMode, cwd),
       ...(agentOptions.tracer !== undefined
         ? { parentTracer: agentOptions.tracer }
         : {}),
@@ -430,6 +467,7 @@ export async function runAgent(
     }
   }
   const agent = new Agent(agentOptions);
+  parentRef.agent = agent;
 
   // `Setup` runs once for this process; `SessionStart` per session. Both
   // may contribute `add-context`, which is injected as durable user-role

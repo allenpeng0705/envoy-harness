@@ -7,6 +7,7 @@ import {
   type TeamParsedArgs,
   type McpParsedArgs,
   type DoctorParsedArgs,
+  type ConfigDumpParsedArgs,
   type TuiParsedArgs,
   type WebParsedArgs,
 } from "./argv-types.js";
@@ -118,6 +119,59 @@ export function parseMcpArgs(argv: ReadonlyArray<string>): McpParsedArgs {
   return out;
 }
 
+export function parseConfigArgs(argv: ReadonlyArray<string>): ConfigDumpParsedArgs {
+  const out: ConfigDumpParsedArgs = {
+    subcommand: "config",
+    action: "dump",
+    help: false,
+    version: false,
+    json: false,
+    effective: false,
+  };
+  let sawDump = false;
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]!;
+    if (arg === "config") continue;
+    if (arg === "dump") {
+      sawDump = true;
+      continue;
+    }
+    if (arg === "--help") {
+      out.help = true;
+      continue;
+    }
+    if (arg === "--version") {
+      out.version = true;
+      continue;
+    }
+    if (arg === "--json") {
+      out.json = true;
+      continue;
+    }
+    if (arg === "--effective") {
+      out.effective = true;
+      continue;
+    }
+    if (arg === "--config") {
+      const next = argv[++i];
+      if (next === undefined) throw new ArgvError("--config requires a value");
+      out.config = next;
+      continue;
+    }
+    if (arg === "--cwd") {
+      const next = argv[++i];
+      if (next === undefined) throw new ArgvError("--cwd requires a value");
+      out.cwd = next;
+      continue;
+    }
+    throw new ArgvError(`unknown flag for config subcommand: ${arg}`);
+  }
+  if (!sawDump && !out.help && !out.version) {
+    throw new ArgvError("usage: envoy-harness config dump [--json] [--effective]");
+  }
+  return out;
+}
+
 export function parseDoctorArgs(argv: ReadonlyArray<string>): DoctorParsedArgs {
   const out: DoctorParsedArgs = {
     subcommand: "doctor",
@@ -225,6 +279,8 @@ const WEB_FLAGS = new Set([
   "--persist",
   "--no-subagents",
   "--peers",
+  "--config-patch",
+  "--profile",
   "--dev",
   "--no-open",
   "--help",
@@ -266,7 +322,9 @@ export function parseWebArgs(argv: ReadonlyArray<string>): WebParsedArgs {
       arg === "--provider" ||
       arg === "--model" ||
       arg === "--base-url" ||
-      arg === "--peers"
+      arg === "--peers" ||
+      arg === "--config-patch" ||
+      arg === "--profile"
     ) {
       const next = argv[i + 1];
       if (next === undefined || next.startsWith("--")) {

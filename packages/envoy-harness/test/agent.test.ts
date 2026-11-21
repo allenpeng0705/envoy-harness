@@ -704,7 +704,7 @@ describe("Agent: limits and abort", () => {
         content: [toolCall("tc1", "echo", { message: "b" })],
         stopReason: "tool_use",
       },
-      textResponse("done after continue"),
+      { ...textResponse("done after continue"), stopReason: "end_turn" },
     ];
     const model = new FakeModel(script);
     const { agent, session } = makeAgent(model, {

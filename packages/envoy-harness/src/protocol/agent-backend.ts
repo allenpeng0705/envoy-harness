@@ -37,6 +37,20 @@ import {
   sendAgentMessageOp,
 } from "./session-control-ops.js";
 import {
+  attachWorkspaceFileOp,
+  listWorkspaceFsOp,
+  readWorkspaceFsOp,
+} from "./workspace-fs-ops.js";
+import {
+  closeTerminalOp,
+  listTerminalsOp,
+  mapTerminalError,
+  openTerminalOp,
+  readTerminalOp,
+  writeTerminalOp,
+} from "./terminal-ops.js";
+import type { TerminalSessionService } from "../terminal/types.js";
+import {
   mergeLabeledConfig,
   sessionContextOp,
   turnOutlineOp,
@@ -142,6 +156,11 @@ export interface AgentSessionBackendOptions {
    * Hosts may also update via `session/set_decision`.
    */
   decision?: DecisionConfig;
+  /**
+   * Wave 3 — shared terminal session service for interactive ACP PTY.
+   * Owner fence is the ACP session id.
+   */
+  terminals?: TerminalSessionService;
 }
 
 function assertSessionIdle(live: LiveSession): void {
@@ -284,11 +303,26 @@ export function createAgentSessionBackend(
       return await options.sessionStore.listSummaries();
     },
 
+    async deleteSession(sessionId: string) {
+      if (options.sessionStore === undefined) {
+        return { deleted: false };
+      }
+      const live = sessions.get(sessionId);
+      if (live !== undefined) {
+        live.abort?.abort();
+        sessions.delete(sessionId);
+      }
+      const deleted = await options.sessionStore.delete(sessionId);
+      return { deleted };
+    },
+
     async prompt(params) {
       const live = sessions.get(params.sessionId);
       if (live === undefined) {
         throw new Error(`unknown session: ${params.sessionId}`);
       }
+      // Wave 3 — claim due schedules into the inbox before the turn.
+      live.agent.tickSchedules();
       return runSessionPrompt(live, params, {
         ...(options.memoryStore !== undefined
           ? { memoryStore: options.memoryStore }
@@ -531,6 +565,128 @@ export function createAgentSessionBackend(
       return removeWorkspaceOp(options.workspaces, params);
     },
 
+    async listWorkspaceFs(params) {
+      const live = requireLive(sessions, params.sessionId);
+      const rootCwd = live.agent.getSession().metadata.cwd;
+      return listWorkspaceFsOp({
+        rootCwd,
+        ...(params.path !== undefined ? { path: params.path } : {}),
+        ...(options.workspaces !== undefined
+          ? { registry: options.workspaces }
+          : {}),
+      });
+    },
+
+    async readWorkspaceFs(params) {
+      const live = requireLive(sessions, params.sessionId);
+      const rootCwd = live.agent.getSession().metadata.cwd;
+      return readWorkspaceFsOp({
+        rootCwd,
+        path: params.path,
+        ...(params.maxBytes !== undefined
+          ? { maxBytes: params.maxBytes }
+          : {}),
+        ...(options.workspaces !== undefined
+          ? { registry: options.workspaces }
+          : {}),
+      });
+    },
+
+    async attachWorkspaceFile(params) {
+      const live = requireLive(sessions, params.sessionId);
+      const rootCwd = live.agent.getSession().metadata.cwd;
+      return attachWorkspaceFileOp({
+        rootCwd,
+        name: params.name,
+        dataBase64: params.dataBase64,
+        ...(params.mimeType !== undefined
+          ? { mimeType: params.mimeType }
+          : {}),
+        ...(options.workspaces !== undefined
+          ? { registry: options.workspaces }
+          : {}),
+      });
+    },
+
+    async openTerminal(params) {
+      if (options.terminals === undefined) {
+        throw new Error("terminal service not wired");
+      }
+      requireLive(sessions, params.sessionId);
+      try {
+        const live = requireLive(sessions, params.sessionId);
+        const cwd =
+          params.cwd ?? live.agent.getSession().metadata.cwd;
+        return await openTerminalOp(options.terminals, params.sessionId, {
+          cwd,
+          ...(params.name !== undefined ? { name: params.name } : {}),
+        });
+      } catch (err) {
+        throw mapTerminalError(err);
+      }
+    },
+
+    async writeTerminal(params) {
+      if (options.terminals === undefined) {
+        throw new Error("terminal service not wired");
+      }
+      requireLive(sessions, params.sessionId);
+      try {
+        return await writeTerminalOp(
+          options.terminals,
+          params.sessionId,
+          {
+            terminalId: params.terminalId,
+            data: params.data,
+            ...(params.submit !== undefined ? { submit: params.submit } : {}),
+            ...(params.onDelta !== undefined
+              ? { onDelta: params.onDelta }
+              : {}),
+          },
+        );
+      } catch (err) {
+        throw mapTerminalError(err);
+      }
+    },
+
+    async readTerminal(params) {
+      if (options.terminals === undefined) {
+        throw new Error("terminal service not wired");
+      }
+      requireLive(sessions, params.sessionId);
+      try {
+        return readTerminalOp(options.terminals, params.sessionId, {
+          terminalId: params.terminalId,
+          ...(params.offset !== undefined ? { offset: params.offset } : {}),
+          ...(params.count !== undefined ? { count: params.count } : {}),
+        });
+      } catch (err) {
+        throw mapTerminalError(err);
+      }
+    },
+
+    async listTerminals(params) {
+      if (options.terminals === undefined) {
+        throw new Error("terminal service not wired");
+      }
+      requireLive(sessions, params.sessionId);
+      return listTerminalsOp(options.terminals, params.sessionId);
+    },
+
+    async closeTerminal(params) {
+      if (options.terminals === undefined) {
+        throw new Error("terminal service not wired");
+      }
+      requireLive(sessions, params.sessionId);
+      try {
+        return await closeTerminalOp(options.terminals, params.sessionId, {
+          terminalId: params.terminalId,
+        });
+      } catch (err) {
+        throw mapTerminalError(err);
+      }
+    },
+
     async sessionPlan(params) {
       const live = requireLive(sessions, params.sessionId);
       assertSessionIdle(live);
@@ -593,6 +749,99 @@ export function createAgentSessionBackend(
       assertSessionIdle(live);
       const result = await runSessionInit(live.agent, live.agent.cwd);
       return { output: result.preview };
+    },
+
+    async sessionSchedule(params) {
+      const live = requireLive(sessions, params.sessionId);
+      if (params.action === "list") {
+        const schedules = live.agent.listSchedules().map((t) => ({
+          id: t.id,
+          prompt: t.prompt,
+          enabled: t.enabled,
+          createdAt: t.createdAt,
+          recurrence: t.recurrence,
+          ...(t.lastFiredAt !== undefined
+            ? { lastFiredAt: t.lastFiredAt }
+            : {}),
+        }));
+        return {
+          schedules,
+          enabled: live.agent.tools.has("schedule_list"),
+        };
+      }
+      if (params.action === "tick") {
+        const fired = live.agent.tickSchedules();
+        return {
+          fired,
+          enabled: live.agent.tools.has("schedule_list"),
+        };
+      }
+      // create
+      try {
+        const task = live.agent.createSchedule({
+          prompt: params.prompt!,
+          ...(params.runAt !== undefined ? { runAt: params.runAt } : {}),
+          ...(params.everyMs !== undefined ? { everyMs: params.everyMs } : {}),
+        });
+        return {
+          schedule: {
+            id: task.id,
+            prompt: task.prompt,
+            enabled: task.enabled,
+            createdAt: task.createdAt,
+            recurrence: task.recurrence,
+            ...(task.lastFiredAt !== undefined
+              ? { lastFiredAt: task.lastFiredAt }
+              : {}),
+          },
+          enabled: true,
+        };
+      } catch (err) {
+        return {
+          enabled: false,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+    },
+
+    async sessionGoals(params) {
+      const live = requireLive(sessions, params.sessionId);
+      if (params.action === "list") {
+        const goals = live.agent.listGoals().map((g) => ({
+          id: g.id,
+          title: g.title,
+          status: g.status,
+          createdAt: g.createdAt,
+          updatedAt: g.updatedAt,
+          ...(g.detail !== undefined ? { detail: g.detail } : {}),
+        }));
+        return {
+          goals,
+          enabled: live.agent.tools.has("create_goal"),
+        };
+      }
+      try {
+        const goal = live.agent.createGoal({
+          title: params.title!,
+          ...(params.detail !== undefined ? { detail: params.detail } : {}),
+        });
+        return {
+          goal: {
+            id: goal.id,
+            title: goal.title,
+            status: goal.status,
+            createdAt: goal.createdAt,
+            updatedAt: goal.updatedAt,
+            ...(goal.detail !== undefined ? { detail: goal.detail } : {}),
+          },
+          enabled: true,
+        };
+      } catch (err) {
+        return {
+          enabled: false,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
     },
 
     getConfig() {

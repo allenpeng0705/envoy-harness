@@ -28,6 +28,13 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
+import {
+  Agent,
+  HookRegistry,
+  ToolRegistry,
+  type ModelAdapter,
+  type ModelResponse,
+} from "../src/index.js";
 import { PersistedSession } from "../src/session/persisted-session.js";
 
 let tmpDir: string;
@@ -374,3 +381,150 @@ describe("PersistedSession: formatVersion", () => {
     );
   });
 });
+
+describe("PersistedSession events + pendingChildren (Gap 1)", () => {
+  it("live Agent turn writes event JSONL that survives reopen", async () => {
+    const id = "test-events-live-agent";
+    const session = await PersistedSession.create({
+      id,
+      metadata: makeMeta({ cwd: tmpDir }),
+      filePath: fileFor(id),
+    });
+    const model: ModelAdapter = {
+      async complete(): Promise<ModelResponse> {
+        return {
+          content: [{ type: "text", text: "acked" }],
+          stopReason: "end_turn",
+        };
+      },
+    };
+    const agent = new Agent({
+      model,
+      tools: new ToolRegistry(),
+      session,
+      hooks: new HookRegistry(),
+      systemPrompt: "test",
+      cwd: tmpDir,
+    });
+    agent.inject("parked-for-disk");
+    await agent.run("host turn");
+    await session.flush();
+    await session.close();
+
+    const file = await readFile(fileFor(id), "utf-8");
+    const lines = file.split("\n").filter((l) => l.length > 0);
+    const events = lines
+      .slice(1)
+      .map((l) => JSON.parse(l) as { _kind?: string; kind?: string; role?: string })
+      .filter((row) => row._kind === "event");
+    expect(events.some((e) => e.kind === "inbox_splice")).toBe(true);
+    expect(events.some((e) => e.kind === "inbox_claim")).toBe(true);
+
+    const reopened = await PersistedSession.open(fileFor(id));
+    expect(reopened.events().some((e) => e.kind === "inbox_splice")).toBe(true);
+    expect(reopened.events().some((e) => e.kind === "inbox_claim")).toBe(true);
+    expect(
+      reopened.messages.some(
+        (m) =>
+          m.role === "user" &&
+          m.content.some(
+            (b) => b.type === "text" && b.text.includes("parked-for-disk"),
+          ),
+      ),
+    ).toBe(true);
+    await reopened.close();
+  });
+
+  it("survives flush + reopen for event lines and child snapshot", async () => {
+    const id = "test-events-1";
+    const session = await PersistedSession.create({
+      id,
+      metadata: makeMeta(),
+      filePath: fileFor(id),
+    });
+    session.appendMessage("user", [{ type: "text", text: "hi" }]);
+    const { buildSessionEvent } = await import("../src/session/format.js");
+    session.recordEvent(
+      buildSessionEvent("inbox_splice", { detail: "next-turn+wake" }),
+    );
+    session.setPendingChildren([
+      {
+        sessionId: "child-1",
+        objective: "research",
+        status: "running",
+        startedAt: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
+    await session.flush();
+    await session.close();
+
+    const reopened = await PersistedSession.open(fileFor(id));
+    expect(reopened.messages).toHaveLength(1);
+    expect(reopened.events()).toHaveLength(1);
+    expect(reopened.events()[0]?.kind).toBe("inbox_splice");
+    expect(reopened.getPendingChildren()[0]?.sessionId).toBe("child-1");
+    await reopened.close();
+  });
+});
+
+describe("PersistedSession.setPendingInbox (Gap 4b)", () => {
+  it("survives flush + reopen", async () => {
+    const id = "test-pending-inbox-1";
+    const session = await PersistedSession.create({
+      id,
+      metadata: makeMeta(),
+      filePath: fileFor(id),
+    });
+    session.setPendingInbox({
+      nextTurn: [
+        {
+          target: "next-turn",
+          content: "follow-up after crash",
+          enqueuedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      nextStep: [
+        {
+          target: "next-step",
+          content: "steer bit",
+          enqueuedAt: "2026-01-01T00:00:01.000Z",
+        },
+      ],
+    });
+    await session.flush();
+    await session.close();
+
+    const reopened = await PersistedSession.open(fileFor(id));
+    const pending = reopened.getPendingInbox();
+    expect(pending?.nextTurn).toHaveLength(1);
+    expect(pending?.nextTurn[0]?.content).toBe("follow-up after crash");
+    expect(pending?.nextStep[0]?.content).toBe("steer bit");
+    await reopened.close();
+  });
+
+  it("clears the header field when emptied", async () => {
+    const id = "test-pending-inbox-2";
+    const session = await PersistedSession.create({
+      id,
+      metadata: makeMeta(),
+      filePath: fileFor(id),
+    });
+    session.setPendingInbox({
+      nextTurn: [
+        {
+          target: "next-turn",
+          content: "x",
+          enqueuedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      nextStep: [],
+    });
+    session.setPendingInbox(undefined);
+    await session.flush();
+    const file = await readFile(fileFor(id), "utf-8");
+    const header = JSON.parse(file.split("\n")[0]!);
+    expect(header.metadata.pendingInbox).toBeUndefined();
+    await session.close();
+  });
+});
+

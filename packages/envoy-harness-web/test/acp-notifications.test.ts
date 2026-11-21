@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import {
   mergePromptRows,
+  parseAvailableCommandsUpdate,
   parseSessionTokenDelta,
   parseSessionUpdateMessage,
   rowsFromPromptResult,
@@ -94,5 +95,50 @@ describe("rowsFromPromptResult / mergePromptRows", () => {
       { role: "assistant", text: "done" },
       { role: "tool", text: "ls out" },
     ]);
+  });
+});
+
+describe("parseAvailableCommandsUpdate", () => {
+  it("reads available_commands_update from session/update", () => {
+    expect(
+      parseAvailableCommandsUpdate(
+        {
+          sessionId: "s1",
+          update: {
+            sessionUpdate: "available_commands_update",
+            availableCommands: [
+              { name: "/help", description: "list" },
+              { name: "compact", description: "shrink" },
+              { name: 1 },
+            ],
+          },
+        },
+        "s1",
+      ),
+    ).toEqual([
+      { name: "help", description: "list" },
+      { name: "compact", description: "shrink" },
+    ]);
+  });
+
+  it("ignores message updates and other sessions", () => {
+    expect(
+      parseAvailableCommandsUpdate(
+        { sessionId: "s1", message: { role: "assistant", text: "hi" } },
+        "s1",
+      ),
+    ).toBeUndefined();
+    expect(
+      parseAvailableCommandsUpdate(
+        {
+          sessionId: "other",
+          update: {
+            sessionUpdate: "available_commands_update",
+            availableCommands: [{ name: "x", description: "" }],
+          },
+        },
+        "s1",
+      ),
+    ).toBeUndefined();
   });
 });

@@ -92,3 +92,51 @@ export function buildCreateHeader(
     generation: 1,
   };
 }
+
+/** Gap 1 — durable session event kinds (forensic JSONL, not model context). */
+export type SessionEventKind =
+  | "inbox_splice"
+  | "inbox_claim"
+  | "compact"
+  | "child_spawn"
+  | "child_settle";
+
+/** One append-only event line (`_kind: "event"`). */
+export interface SessionEventRecord {
+  readonly _kind: "event";
+  readonly kind: SessionEventKind;
+  /** ISO timestamp. */
+  readonly at: string;
+  /** Short human-readable detail. */
+  readonly detail?: string;
+  /** Optional child / job correlation. */
+  readonly sessionId?: string;
+  readonly jobId?: string;
+}
+
+export function isSessionEventRecord(
+  value: unknown,
+): value is SessionEventRecord {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return v._kind === "event" && typeof v.kind === "string" && typeof v.at === "string";
+}
+
+export function buildSessionEvent(
+  kind: SessionEventKind,
+  fields?: {
+    detail?: string;
+    sessionId?: string;
+    jobId?: string;
+    at?: string;
+  },
+): SessionEventRecord {
+  return {
+    _kind: "event",
+    kind,
+    at: fields?.at ?? new Date().toISOString(),
+    ...(fields?.detail !== undefined ? { detail: fields.detail } : {}),
+    ...(fields?.sessionId !== undefined ? { sessionId: fields.sessionId } : {}),
+    ...(fields?.jobId !== undefined ? { jobId: fields.jobId } : {}),
+  };
+}

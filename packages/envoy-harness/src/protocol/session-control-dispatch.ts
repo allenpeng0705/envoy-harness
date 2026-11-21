@@ -18,7 +18,13 @@ import { JsonRpcError, JsonRpcErrorCode } from "./types.js";
 import {
   parseSessionAgentInterruptParams,
   parseSessionAgentMessageParams,
+  parseTerminalIdParams,
+  parseTerminalOpenParams,
+  parseTerminalWriteParams,
   parseWorkspaceAddParams,
+  parseWorkspaceAttachParams,
+  parseWorkspaceFsListParams,
+  parseWorkspaceFsReadParams,
   parseWorkspaceRemoveParams,
   readSessionId,
 } from "./acp-params.js";
@@ -31,6 +37,14 @@ export const SESSION_CONTROL_METHODS: ReadonlySet<string> = new Set([
   "workspace/list",
   "workspace/add",
   "workspace/remove",
+  "workspace/fs/list",
+  "workspace/fs/read",
+  "workspace/attach",
+  "session/terminal/open",
+  "session/terminal/write",
+  "session/terminal/read",
+  "session/terminal/list",
+  "session/terminal/close",
 ]);
 
 export function isSessionControlMethod(method: string): boolean {
@@ -89,6 +103,46 @@ export async function dispatchSessionControl(
     case "workspace/remove": {
       if (backend.removeWorkspace === undefined) throw unsupported(method);
       return await backend.removeWorkspace(parseWorkspaceRemoveParams(params));
+    }
+    case "workspace/fs/list": {
+      if (backend.listWorkspaceFs === undefined) throw unsupported(method);
+      return await backend.listWorkspaceFs(parseWorkspaceFsListParams(params));
+    }
+    case "workspace/fs/read": {
+      if (backend.readWorkspaceFs === undefined) throw unsupported(method);
+      return await backend.readWorkspaceFs(parseWorkspaceFsReadParams(params));
+    }
+    case "workspace/attach": {
+      if (backend.attachWorkspaceFile === undefined) throw unsupported(method);
+      return await backend.attachWorkspaceFile(
+        parseWorkspaceAttachParams(params),
+      );
+    }
+    case "session/terminal/open": {
+      if (backend.openTerminal === undefined) throw unsupported(method);
+      return await backend.openTerminal(parseTerminalOpenParams(params));
+    }
+    case "session/terminal/write": {
+      if (backend.writeTerminal === undefined) throw unsupported(method);
+      return await backend.writeTerminal(parseTerminalWriteParams(params));
+    }
+    case "session/terminal/read": {
+      if (backend.readTerminal === undefined) throw unsupported(method);
+      return await backend.readTerminal(parseTerminalIdParams(params));
+    }
+    case "session/terminal/list": {
+      if (backend.listTerminals === undefined) throw unsupported(method);
+      return await backend.listTerminals({
+        sessionId: readSessionId(params),
+      });
+    }
+    case "session/terminal/close": {
+      if (backend.closeTerminal === undefined) throw unsupported(method);
+      const p = parseTerminalIdParams(params);
+      return await backend.closeTerminal({
+        sessionId: p.sessionId,
+        terminalId: p.terminalId,
+      });
     }
     default:
       throw unsupported(method);

@@ -22,6 +22,8 @@ const WEB_FORWARD_FLAGS = new Set([
   "--persist",
   "--no-subagents",
   "--peers",
+  "--config-patch",
+  "--profile",
   "--dev",
   "--no-open",
   "--help",
@@ -114,7 +116,9 @@ function buildForwardArgv(
       arg === "--provider" ||
       arg === "--model" ||
       arg === "--base-url" ||
-      arg === "--peers"
+      arg === "--peers" ||
+      arg === "--config-patch" ||
+      arg === "--profile"
     ) {
       const val = rawArgv[i + 1];
       if (val === undefined || val.startsWith("--")) {

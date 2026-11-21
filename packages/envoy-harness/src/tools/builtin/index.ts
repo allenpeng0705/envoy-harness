@@ -13,11 +13,20 @@ export { bashTool, makeBashTool, type MakeBashToolOptions } from "./bash.js";
 export { writeTool } from "./write.js";
 export { editTool } from "./edit.js";
 export { gitTool } from "./git.js";
+export { applyPatchTool } from "./apply-patch.js";
+export {
+  makeGlobTool,
+  makeGrepTool,
+  makeSpillReadTool,
+  type MakeGlobGrepToolsOptions,
+} from "./glob-grep.js";
 
 /** All built-in tools, in registration order. */
+import { applyPatchTool } from "./apply-patch.js";
 import { bashTool } from "./bash.js";
 import { editTool } from "./edit.js";
 import { gitTool } from "./git.js";
+import { makeGlobTool, makeGrepTool } from "./glob-grep.js";
 import { readFileTool } from "./read-file.js";
 import { writeTool } from "./write.js";
 
@@ -26,5 +35,8 @@ export const BUILTIN_TOOLS = [
   bashTool,
   writeTool,
   editTool,
+  applyPatchTool,
   gitTool,
+  makeGlobTool(),
+  makeGrepTool(),
 ] as const;

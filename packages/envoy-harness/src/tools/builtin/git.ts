@@ -59,6 +59,7 @@ export const gitTool: Tool<
   name: "git",
   // A hung `git` (credential prompt, stuck index lock) must not hang the turn.
   timeoutMs: 60_000,
+  isConcurrencySafe: () => true,
   description:
     "Read-only git operations. Op is one of: " +
     "'status' (working tree status), " +

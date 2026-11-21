@@ -10,6 +10,10 @@ import {
   requestHostUserQuestion,
 } from "./host-request.js";
 import { dispatchSessionControl } from "./session-control-dispatch.js";
+import {
+  parseSessionGoalsParams,
+  parseSessionScheduleParams,
+} from "./acp-params.js";
 
 export interface SdkServerOptions {
   connection: JsonRpcConnection;
@@ -225,7 +229,15 @@ export function attachSdkServer(options: SdkServerOptions): () => void {
       case "session/agent_interrupt":
       case "workspace/list":
       case "workspace/add":
-      case "workspace/remove": {
+      case "workspace/remove":
+      case "workspace/fs/list":
+      case "workspace/fs/read":
+      case "workspace/attach":
+      case "session/terminal/open":
+      case "session/terminal/write":
+      case "session/terminal/read":
+      case "session/terminal/list":
+      case "session/terminal/close": {
         // Shared with the ACP dialect (this one has no `initialize` gate).
         return await dispatchSessionControl(backend, method, params);
       }
@@ -282,6 +294,28 @@ export function attachSdkServer(options: SdkServerOptions): () => void {
         return await backend.sessionInit({
           sessionId: readSessionId(params),
         });
+      }
+
+      case "session/schedule": {
+        if (backend.sessionSchedule === undefined) {
+          throw new JsonRpcError(
+            "session/schedule not supported",
+            JsonRpcErrorCode.METHOD_NOT_FOUND,
+          );
+        }
+        return await backend.sessionSchedule(
+          parseSessionScheduleParams(params),
+        );
+      }
+
+      case "session/goals": {
+        if (backend.sessionGoals === undefined) {
+          throw new JsonRpcError(
+            "session/goals not supported",
+            JsonRpcErrorCode.METHOD_NOT_FOUND,
+          );
+        }
+        return await backend.sessionGoals(parseSessionGoalsParams(params));
       }
 
       case "peers/list":

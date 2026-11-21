@@ -5,7 +5,11 @@ import {
   isEphemeralUserContextText,
   isEphemeralUserMessage,
 } from "../../src/context/ephemeral-user-context.js";
-import { formatSettlementNotice } from "../../src/subagent/settlement-notice.js";
+import {
+  formatJobSettlementNotice,
+  formatSettlementNotice,
+  JOB_SETTLEMENT_NOTICE_PREFIX,
+} from "../../src/subagent/settlement-notice.js";
 
 describe("isEphemeralUserContextText", () => {
   it("hides settlement notices from chat bubbles", () => {
@@ -24,6 +28,19 @@ describe("isEphemeralUserContextText", () => {
       },
     });
     expect(notice.startsWith("[system] Sub-agent settled:")).toBe(true);
+    expect(isEphemeralUserContextText(notice)).toBe(true);
+  });
+
+  it("hides bash job settlement notices", () => {
+    const notice = formatJobSettlementNotice({
+      id: "bash-1",
+      kind: "bash",
+      label: "echo",
+      status: "completed",
+      startedAt: Date.now(),
+      finishedAt: Date.now(),
+    });
+    expect(notice.startsWith(JOB_SETTLEMENT_NOTICE_PREFIX)).toBe(true);
     expect(isEphemeralUserContextText(notice)).toBe(true);
   });
 

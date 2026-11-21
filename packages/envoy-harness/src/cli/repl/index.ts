@@ -16,6 +16,7 @@ export { BUILTIN_TIER2_COMMANDS } from "./commands-tier2.js";
 export { BUILTIN_TIER2_BATCH2_COMMANDS } from "./commands-tier2-batch2.js";
 export { BUILTIN_TIER2_BATCH3_COMMANDS } from "./commands-tier2-batch3.js";
 export { BUILTIN_TIER2_BATCH4_COMMANDS } from "./commands-tier2-batch4.js";
+export { BUILTIN_TIER2_BATCH5_COMMANDS } from "./commands-tier2-batch5.js";
 export {
   ReplCommandRegistry,
   dispatchCommand,

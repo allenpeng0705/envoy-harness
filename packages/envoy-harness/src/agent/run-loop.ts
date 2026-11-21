@@ -156,6 +156,9 @@ async function runAgentTurn(
   // Flush background sub-agent settlement notices before the new prompt
   // and again before each model call (mid-turn DeepSeek-style steer).
   agent.flushSettlementNotices();
+  // Inbox wake: claim next-step + one next-turn as the turn's user input
+  // instead of appending an empty host prompt.
+  const skipHostPrompt = agent.consumeInboxWakeSkipPrompt();
 
   // System prompt goes first (idempotent: skip if a system
   // message is already present).
@@ -312,11 +315,15 @@ async function runAgentTurn(
     }
   }
 
-  if (typeof prompt === "string") {
-    agent.session.appendMessage("user", [{ type: "text", text: prompt }]);
-  } else {
-    agent.session.appendMessage("user", [...prompt]);
+  if (!skipHostPrompt) {
+    if (typeof prompt === "string") {
+      agent.session.appendMessage("user", [{ type: "text", text: prompt }]);
+    } else {
+      agent.session.appendMessage("user", [...prompt]);
+    }
   }
+  // Admit pending followup/steer/inject (DeepSeek turn-start claim).
+  agent.flushInbox("turn-start");
 
   agent.clearTurnHints();
 
@@ -381,6 +388,10 @@ async function runAgentTurn(
     string,
     { count: number; lastError: string }
   >();
+  // Distinct from failure spiral: identical *successful* tool+args
+  // repeats (DeepSeek-style reminder; do not hard-block).
+  const toolSuccessCounts = new Map<string, number>();
+  const REPEAT_SUCCESS_REMINDER_EVERY = 3;
   let emptyResponseHinted = false;
   let turnContextInjected = false;
   let previousStep: StepSnapshot | undefined;
@@ -413,6 +424,8 @@ async function runAgentTurn(
     // Mid-turn settlement: children that finished during the previous
     // tool batch become visible before this model call.
     agent.flushSettlementNotices();
+    // Mid-turn steer/inject: next-step inbox messages only.
+    agent.flushInbox("step");
 
     // 1. Call the model.
     let response: ModelResponse;
@@ -437,13 +450,24 @@ async function runAgentTurn(
         turnId,
         iteration: iterations,
         filterTools: (tools) =>
-          [...tools, ...mcpToolDefinitions].filter(
-            (t) =>
+          [...tools, ...mcpToolDefinitions].filter((t) => {
+            if (
               collaborationModeBlockReason(
                 agent.session.getCollaborationMode().kind,
                 t.name,
-              ) === undefined,
-          ),
+              ) !== undefined
+            ) {
+              return false;
+            }
+            // Wave 1: hide deferred tools until tool_search grants them.
+            if (
+              agent.toolSearchEnabled &&
+              !agent.isToolVisibleToModel(t)
+            ) {
+              return false;
+            }
+            return true;
+          }),
       });
       const changed = describeSnapshotChange(previousStep, step);
       if (changed !== undefined) {
@@ -711,32 +735,50 @@ async function runAgentTurn(
     // 5b. Self-healing: detect repeated identical tool failures and
     // inject a corrective message so the model changes approach instead
     // of looping on the same error (e.g. a nameless bash call).
+    // Also remind on identical *successful* repeats (separate streak).
     for (const call of toolCalls) {
       const result = findToolResult(agent.session.messages, call.id);
       const signature = `${call.name}\u0000${JSON.stringify(call.args)}`;
-      if (result === undefined || result.isError !== true) {
-        // A success (or an absent result) resets the failure streak.
-        toolFailureCounts.delete(signature);
+      if (result === undefined) {
         continue;
       }
-      const errorText =
-        typeof result.content === "string"
-          ? result.content
-          : JSON.stringify(result.content);
-      const prev = toolFailureCounts.get(signature);
-      const count = (prev?.count ?? 0) + 1;
-      toolFailureCounts.set(signature, { count, lastError: errorText });
-      if (count % 2 === 0) {
-        const corrective =
-          `[system] You attempted tool \`${call.name}\` with the same arguments ${count} times and it failed each time with: ${errorText}. ` +
-          `Do NOT repeat that exact call — change your approach (different arguments, a different tool, or answer directly).`;
-        agent.session.appendMessage("user", [{ type: "text", text: corrective }]);
-        agent.emit({
-          kind: "error",
-          ts: new Date().toISOString(),
-          iteration: iterations,
-          message: `tool call loop detected (${call.name}) — corrective hint injected`,
-        });
+      if (result.isError === true) {
+        toolSuccessCounts.delete(signature);
+        const errorText =
+          typeof result.content === "string"
+            ? result.content
+            : JSON.stringify(result.content);
+        const prev = toolFailureCounts.get(signature);
+        const count = (prev?.count ?? 0) + 1;
+        toolFailureCounts.set(signature, { count, lastError: errorText });
+        if (count % 2 === 0) {
+          const corrective =
+            `[system] You attempted tool \`${call.name}\` with the same arguments ${count} times and it failed each time with: ${errorText}. ` +
+            `Do NOT repeat that exact call — change your approach (different arguments, a different tool, or answer directly).`;
+          agent.session.appendMessage("user", [
+            { type: "text", text: corrective },
+          ]);
+          agent.emit({
+            kind: "error",
+            ts: new Date().toISOString(),
+            iteration: iterations,
+            message: `tool call loop detected (${call.name}) — corrective hint injected`,
+          });
+        }
+        continue;
+      }
+      // Success: reset failure streak; bump success streak.
+      toolFailureCounts.delete(signature);
+      const successCount = (toolSuccessCounts.get(signature) ?? 0) + 1;
+      toolSuccessCounts.set(signature, successCount);
+      if (
+        successCount >= REPEAT_SUCCESS_REMINDER_EVERY &&
+        successCount % REPEAT_SUCCESS_REMINDER_EVERY === 0
+      ) {
+        const reminder =
+          `[system] You called tool \`${call.name}\` with the same arguments ${successCount} times successfully. ` +
+          `If you already have what you need, stop repeating that call and continue with the next step or answer.`;
+        agent.session.appendMessage("user", [{ type: "text", text: reminder }]);
       }
     }
 

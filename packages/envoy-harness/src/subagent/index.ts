@@ -46,6 +46,7 @@ export {
 
 export {
   ContinuableSubagentRegistry,
+  type ContinuableSendDelivery,
   type ContinuableSubagentHandle,
   type ContinuableSubmitter,
   type SubagentHandleId,
@@ -65,7 +66,11 @@ export {
 
 export { mapBoundedParallel } from "./bounded-parallel.js";
 
-export { formatSettlementNotice } from "./settlement-notice.js";
+export {
+  formatJobSettlementNotice,
+  formatSettlementNotice,
+  JOB_SETTLEMENT_NOTICE_PREFIX,
+} from "./settlement-notice.js";
 
 export {
   TaskInputObjectSchema,
@@ -82,6 +87,16 @@ export {
   aggregateFanOutResults,
   type FanOutSpec,
 } from "./fan-out.js";
+
+export {
+  makeWorkflowTool,
+  type MakeWorkflowToolOptions,
+} from "./workflow-tool.js";
+
+export {
+  makeCollaborationAliasTools,
+  type MakeCollaborationAliasToolsOptions,
+} from "./collaboration-aliases.js";
 
 export {
   parallel,

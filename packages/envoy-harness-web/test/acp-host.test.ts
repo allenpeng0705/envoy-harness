@@ -69,6 +69,14 @@ describe("AcpHost", () => {
     expect(ticks).toBeGreaterThan(0);
     unsub();
   });
+
+  it("peekSessionMessages returns empty for null / unknown sessions", () => {
+    const host = new AcpHost();
+    expect(host.peekSessionMessages(null)).toEqual([]);
+    expect(host.peekSessionMessages("no-cache")).toEqual([]);
+    expect(host.state.sessionCacheEpoch).toBe(0);
+    host.close();
+  });
 });
 
 describe("request shaping", () => {

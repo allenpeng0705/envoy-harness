@@ -211,6 +211,13 @@ const ListAgentsParams = z.object({});
 const SendMessageParams = z.object({
   agent_id: z.string().describe("Child id from list_agents or the task result"),
   message: z.string().min(1).describe("The follow-up instruction"),
+  delivery: z
+    .enum(["queue", "trigger"])
+    .optional()
+    .describe(
+      "queue: enqueue only (do not wake an idle child). " +
+        "trigger: enqueue and ensure the child runs (default).",
+    ),
 });
 const InterruptAgentParams = z.object({
   agent_id: z.string().describe("Child id from list_agents or the task result"),
@@ -391,7 +398,15 @@ function truncate(text: string, max: number): string {
 
 export function makeSubagentControlTools(
   submitter: SteerableSubmitter,
-  options?: { jobs?: JobRegistry },
+  options?: {
+    jobs?: JobRegistry;
+    /** Wave 4 — durable child snapshots for generation fencing. */
+    getPendingChildren?: () => ReadonlyArray<{
+      sessionId: string;
+      status: string;
+      generation?: number;
+    }>;
+  },
 ): Tool[] {
   const listAgents: Tool<typeof ListAgentsParams> = {
     name: "list_agents",
@@ -401,6 +416,7 @@ export function makeSubagentControlTools(
       "send_message / interrupt_agent, or to check whether a background " +
       "child is still running.",
     parameters: ListAgentsParams,
+    isConcurrencySafe: () => true,
     async execute(): Promise<ToolResult> {
       const records =
         typeof submitter.listSubagents === "function"
@@ -429,8 +445,9 @@ export function makeSubagentControlTools(
     name: "send_message",
     description:
       "Send a follow-up message to a continuable child agent. The message " +
-      "runs as the child's next turn; the child keeps its own session, " +
-      "context and tools. Only works on children started with " +
+      "is enqueued on the child's inbox; use delivery: \"trigger\" (default) " +
+      "to wake an idle child, or delivery: \"queue\" to enqueue without " +
+      "starting a turn. Only works on children started with " +
       "`run_in_background` in `continuable` mode (a one-shot child has " +
       "already settled).",
     parameters: SendMessageParams,
@@ -441,14 +458,35 @@ export function makeSubagentControlTools(
           `no continuable child '${args.agent_id}' in this session (it may have settled, or been started without run_in_background)`,
         );
       }
+      // Wave 4 — generation fence.
+      const pending = options?.getPendingChildren?.() ?? [];
+      const snapChild = pending.find((c) => c.sessionId === args.agent_id);
+      if (snapChild?.status === "stale") {
+        return errResult(
+          `child '${args.agent_id}' is stale after resume; refuse steer (generation fence)`,
+        );
+      }
+      const liveGen = handle.status().generation;
+      if (
+        snapChild?.generation !== undefined &&
+        liveGen !== undefined &&
+        snapChild.generation !== liveGen
+      ) {
+        return errResult(
+          `child '${args.agent_id}' generation mismatch ` +
+            `(snapshot ${snapChild.generation} vs live ${liveGen}); refuse steer`,
+        );
+      }
+      const delivery = args.delivery ?? "trigger";
       try {
-        await handle.send(args.message);
+        await handle.send(args.message, { delivery });
       } catch (err) {
         return errResult(err instanceof Error ? err.message : String(err));
       }
       return {
         content: JSON.stringify({
           queued: true,
+          delivery,
           agent_id: args.agent_id,
           status: handle.status().status,
         }),

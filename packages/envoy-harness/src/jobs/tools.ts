@@ -91,6 +91,7 @@ export function makeJobTools(registry: JobRegistry): Tool[] {
     parameters: z.object({
       id: z.string().describe("Job id from job_start"),
     }),
+    isConcurrencySafe: () => true,
     async execute(args, ctx): Promise<ToolResult> {
       try {
         return {
@@ -133,6 +134,7 @@ export function makeJobTools(registry: JobRegistry): Tool[] {
       try {
         if (args.wait === true) {
           const timeoutMs = Math.min(args.timeout_ms ?? 30_000, 600_000);
+          registry.beginSettlementSuppress(args.id);
           try {
             await registry.wait(
               args.id,
@@ -167,6 +169,8 @@ export function makeJobTools(registry: JobRegistry): Tool[] {
               };
             }
             throw err;
+          } finally {
+            registry.endSettlementSuppress(args.id);
           }
         }
         const read = registry.read(args.id, ctx.session.id);
@@ -220,6 +224,7 @@ export function makeJobTools(registry: JobRegistry): Tool[] {
     }),
     async execute(args, ctx): Promise<ToolResult> {
       try {
+        registry.markSettlementKilledByModel(args.id);
         const result = registry.kill(args.id, ctx.session.id, args.reason);
         return {
           content: JSON.stringify({
@@ -238,6 +243,7 @@ export function makeJobTools(registry: JobRegistry): Tool[] {
     description:
       "List background jobs visible to this session (owned + unowned).",
     parameters: z.object({}),
+    isConcurrencySafe: () => true,
     async execute(_args, ctx): Promise<ToolResult> {
       try {
         const list = registry.list(ctx.session.id).map(publicSnap);

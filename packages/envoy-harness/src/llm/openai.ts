@@ -43,7 +43,9 @@ import type {
   CompleteInput,
   ModelAdapter,
   ModelResponse,
+  Message,
 } from "../model.js";
+import { remoteCompactViaComplete } from "./remote-compact.js";
 
 /** Options for `OpenAIAdapter`. */
 export interface OpenAIAdapterOptions {
@@ -138,6 +140,16 @@ export class OpenAIAdapter implements ModelAdapter {
         options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {},
       );
     this.organization = options.organization;
+  }
+
+  /**
+   * Wave 1 — remote compaction via a summarization `complete()` call.
+   */
+  async remoteCompact(input: {
+    messages: ReadonlyArray<Message>;
+    signal?: AbortSignal;
+  }): Promise<{ summary: string }> {
+    return remoteCompactViaComplete(this, input);
   }
 
   async complete(input: CompleteInput): Promise<ModelResponse> {

@@ -10,11 +10,29 @@ export type ConnectionState =
   | "connected"
   | "disconnected";
 
+/** Wave 4 — structured tool trajectory on a transcript row. */
+export type ToolPhase = "call" | "result" | "progress";
+
+export interface ToolTrajectory {
+  phase: ToolPhase;
+  summary: string;
+  toolName?: string;
+  toolCallId?: string;
+  args?: unknown;
+  resultPreview?: string;
+  isError?: boolean;
+  durationMs?: number;
+  /** Incremental progress lines (tool_progress). */
+  progress?: string[];
+}
+
 export interface ChatMessage {
   id: string;
   role: ChatRole;
   text: string;
   at: number;
+  /** When set, Transcript renders a ToolCard instead of a plain bubble. */
+  tool?: ToolTrajectory;
 }
 
 export interface PermissionPrompt {
@@ -29,9 +47,16 @@ export interface UserQuestionPrompt {
   sessionId: string;
   question: string;
   options?: string[];
+  /** Wave 9 / M3 — highlight suggested option. */
+  recommendedIndex?: number;
+  /** Wave 9 / M3 — free-text uses a textarea. */
+  multiline?: boolean;
+  /** Wave 9 / M3 — allow selecting several options. */
+  multiple?: boolean;
   resolve: (answer: {
     value: string;
     optionIndex?: number;
+    optionIndexes?: readonly number[];
     cancelled?: boolean;
   }) => void;
 }
@@ -123,6 +148,17 @@ export interface MeshSnapshot {
   lastDiscovery?: string;
 }
 
+/** Wave 6 — end-of-turn follow-ups from `session/prompt` result. */
+export interface DeferredTask {
+  task: string;
+  reason: string;
+}
+
+export interface TurnHints {
+  followUps?: ReadonlyArray<string>;
+  deferred?: ReadonlyArray<DeferredTask>;
+}
+
 export interface AcpHostState {
   connectionState: ConnectionState;
   ready: boolean;
@@ -148,4 +184,30 @@ export interface AcpHostState {
   retryAttempt: number;
   permission: PermissionPrompt | null;
   userQuestion: UserQuestionPrompt | null;
+  /** Wave 6 — files touched this turn (write/edit/apply_patch / agent_end). */
+  changedFiles: string[];
+  /** Wave 6 — follow-ups / deferred from last prompt result. */
+  turnHints: TurnHints | null;
+  /**
+   * Wave 9 / M2 — live slash catalog from `available_commands_update`.
+   * Null until the host publishes one; UI falls back to static catalog.
+   */
+  slashCatalog: ReadonlyArray<{ name: string; description: string }> | null;
+  /** Wave 9 / M5 — last `session/context` snapshot. */
+  contextStats: SessionContextStats | null;
+  /** M1 — session ids with an in-flight turn (for tab busy dots). */
+  busySessionIds: string[];
+  /**
+   * M1 panes — bumps when any session cache changes so background panes
+   * can re-read transcripts without being the active session.
+   */
+  sessionCacheEpoch: number;
+}
+
+/** Wave 9 / M5 — `session/context` wire snapshot. */
+export interface SessionContextStats {
+  messageCount: number;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
 }

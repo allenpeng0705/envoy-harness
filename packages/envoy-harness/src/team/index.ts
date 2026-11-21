@@ -28,3 +28,8 @@ export type {
 export { parseTeamToml, TomlParseError } from "./toml.js";
 
 export { Team, type TeamOptions } from "./runner.js";
+
+export {
+  makeTeamTools,
+  type MakeTeamToolsOptions,
+} from "./tools.js";

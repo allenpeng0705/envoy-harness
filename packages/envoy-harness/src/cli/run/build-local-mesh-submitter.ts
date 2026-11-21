@@ -6,7 +6,7 @@
  */
 
 import type { ModelAdapter } from "../../model.js";
-import type { PermissionMode } from "../../types.js";
+import type { PermissionMode, SandboxPolicy } from "../../types.js";
 import type { Tracer } from "../../trace/index.js";
 import type { MeshSubmitter } from "../../subagent/types.js";
 import {
@@ -18,6 +18,13 @@ export interface BuildCliLocalMeshSubmitterOptions {
   model: ModelAdapter;
   cwd: string;
   permissionMode?: PermissionMode;
+  /**
+   * Live parent permission at child spawn. When set, children inherit
+   * the parent's current mode instead of a construction-time snapshot.
+   */
+  getPermissionMode?: () => PermissionMode;
+  /** Live parent sandbox policy at child spawn. */
+  getSandboxPolicy?: () => SandboxPolicy;
   parentTracer?: Tracer;
   parentSessionId?: string;
   workerPeerId?: string;
@@ -48,6 +55,12 @@ export function buildCliLocalMeshSubmitter(
       model: options.model,
       cwd: options.cwd,
       permissionMode,
+      ...(options.getPermissionMode !== undefined
+        ? { getPermissionMode: options.getPermissionMode }
+        : {}),
+      ...(options.getSandboxPolicy !== undefined
+        ? { getSandboxPolicy: options.getSandboxPolicy }
+        : {}),
       meshSubmitter: nestedSubmitter,
       ...(options.parentTracer !== undefined
         ? { parentTracer: options.parentTracer }

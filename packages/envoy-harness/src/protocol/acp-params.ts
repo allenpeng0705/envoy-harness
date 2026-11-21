@@ -719,6 +719,170 @@ export function parseWorkspaceRemoveParams(params: unknown): { path: string } {
   }
   return { path: obj.path };
 }
+
+/** `workspace/fs/list` — one-level directory listing under session cwd. */
+export function parseWorkspaceFsListParams(params: unknown): {
+  sessionId: string;
+  path?: string;
+} {
+  const sessionId = readSessionId(params);
+  if (params === null || typeof params !== "object") {
+    return { sessionId };
+  }
+  const obj = params as { path?: unknown };
+  const path =
+    typeof obj.path === "string" && obj.path.length > 0 ? obj.path : undefined;
+  return { sessionId, ...(path !== undefined ? { path } : {}) };
+}
+
+/** `workspace/fs/read` — read a text file under session cwd. */
+export function parseWorkspaceFsReadParams(params: unknown): {
+  sessionId: string;
+  path: string;
+  maxBytes?: number;
+} {
+  const sessionId = readSessionId(params);
+  if (params === null || typeof params !== "object") {
+    throw new JsonRpcError("invalid params", JsonRpcErrorCode.INVALID_PARAMS);
+  }
+  const obj = params as { path?: unknown; maxBytes?: unknown };
+  if (typeof obj.path !== "string" || obj.path.length === 0) {
+    throw new JsonRpcError("path required", JsonRpcErrorCode.INVALID_PARAMS);
+  }
+  const maxBytes =
+    typeof obj.maxBytes === "number" &&
+    Number.isFinite(obj.maxBytes) &&
+    obj.maxBytes > 0
+      ? Math.floor(obj.maxBytes)
+      : undefined;
+  return {
+    sessionId,
+    path: obj.path,
+    ...(maxBytes !== undefined ? { maxBytes } : {}),
+  };
+}
+
+/** `workspace/attach` — write a file under `{cwd}/.envoy-attachments/`. */
+export function parseWorkspaceAttachParams(params: unknown): {
+  sessionId: string;
+  name: string;
+  dataBase64: string;
+  mimeType?: string;
+} {
+  const sessionId = readSessionId(params);
+  if (params === null || typeof params !== "object") {
+    throw new JsonRpcError("invalid params", JsonRpcErrorCode.INVALID_PARAMS);
+  }
+  const obj = params as {
+    name?: unknown;
+    dataBase64?: unknown;
+    mimeType?: unknown;
+  };
+  if (typeof obj.name !== "string" || obj.name.trim().length === 0) {
+    throw new JsonRpcError("name required", JsonRpcErrorCode.INVALID_PARAMS);
+  }
+  if (typeof obj.dataBase64 !== "string" || obj.dataBase64.length === 0) {
+    throw new JsonRpcError(
+      "dataBase64 required",
+      JsonRpcErrorCode.INVALID_PARAMS,
+    );
+  }
+  const mimeType =
+    typeof obj.mimeType === "string" && obj.mimeType.length > 0
+      ? obj.mimeType
+      : undefined;
+  return {
+    sessionId,
+    name: obj.name,
+    dataBase64: obj.dataBase64,
+    ...(mimeType !== undefined ? { mimeType } : {}),
+  };
+}
+/** `session/terminal/open` */
+export function parseTerminalOpenParams(params: unknown): {
+  sessionId: string;
+  cwd?: string;
+  name?: string;
+} {
+  const sessionId = readSessionId(params);
+  if (params === null || typeof params !== "object") {
+    return { sessionId };
+  }
+  const obj = params as { cwd?: unknown; name?: unknown };
+  const cwd =
+    typeof obj.cwd === "string" && obj.cwd.length > 0 ? obj.cwd : undefined;
+  const name =
+    typeof obj.name === "string" && obj.name.length > 0 ? obj.name : undefined;
+  return {
+    sessionId,
+    ...(cwd !== undefined ? { cwd } : {}),
+    ...(name !== undefined ? { name } : {}),
+  };
+}
+
+/** `session/terminal/write` */
+export function parseTerminalWriteParams(params: unknown): {
+  sessionId: string;
+  terminalId: string;
+  data: string;
+  submit?: boolean;
+} {
+  const sessionId = readSessionId(params);
+  if (params === null || typeof params !== "object") {
+    throw new JsonRpcError("invalid params", JsonRpcErrorCode.INVALID_PARAMS);
+  }
+  const obj = params as {
+    terminalId?: unknown;
+    data?: unknown;
+    submit?: unknown;
+  };
+  if (typeof obj.terminalId !== "string" || obj.terminalId.length === 0) {
+    throw new JsonRpcError(
+      "terminalId required",
+      JsonRpcErrorCode.INVALID_PARAMS,
+    );
+  }
+  if (typeof obj.data !== "string") {
+    throw new JsonRpcError("data required", JsonRpcErrorCode.INVALID_PARAMS);
+  }
+  return {
+    sessionId,
+    terminalId: obj.terminalId,
+    data: obj.data,
+    ...(typeof obj.submit === "boolean" ? { submit: obj.submit } : {}),
+  };
+}
+
+/** `session/terminal/read` | close */
+export function parseTerminalIdParams(params: unknown): {
+  sessionId: string;
+  terminalId: string;
+  offset?: number;
+  count?: number;
+} {
+  const sessionId = readSessionId(params);
+  if (params === null || typeof params !== "object") {
+    throw new JsonRpcError("invalid params", JsonRpcErrorCode.INVALID_PARAMS);
+  }
+  const obj = params as {
+    terminalId?: unknown;
+    offset?: unknown;
+    count?: unknown;
+  };
+  if (typeof obj.terminalId !== "string" || obj.terminalId.length === 0) {
+    throw new JsonRpcError(
+      "terminalId required",
+      JsonRpcErrorCode.INVALID_PARAMS,
+    );
+  }
+  return {
+    sessionId,
+    terminalId: obj.terminalId,
+    ...(typeof obj.offset === "number" ? { offset: obj.offset } : {}),
+    ...(typeof obj.count === "number" ? { count: obj.count } : {}),
+  };
+}
+
 export function parseSessionSetModeParams(params: unknown): {
   sessionId: string;
   mode?: "default" | "plan" | "review";
@@ -791,5 +955,109 @@ export function parseSessionReviewParams(params: unknown): {
   return {
     sessionId,
     ...(staged !== undefined ? { staged } : {}),
+  };
+}
+
+/** Wave 8 — schedule list/create/tick. */
+export function parseSessionScheduleParams(params: unknown): {
+  sessionId: string;
+  action: "list" | "create" | "tick";
+  prompt?: string;
+  runAt?: string;
+  everyMs?: number;
+} {
+  if (params === null || typeof params !== "object") {
+    throw new JsonRpcError("invalid params", JsonRpcErrorCode.INVALID_PARAMS);
+  }
+  const obj = params as {
+    action?: unknown;
+    prompt?: unknown;
+    runAt?: unknown;
+    everyMs?: unknown;
+  };
+  const sessionId = readSessionId(params);
+  const action = obj.action ?? "list";
+  if (action !== "list" && action !== "create" && action !== "tick") {
+    throw new JsonRpcError(
+      "action must be list|create|tick",
+      JsonRpcErrorCode.INVALID_PARAMS,
+    );
+  }
+  const prompt =
+    typeof obj.prompt === "string" && obj.prompt.trim().length > 0
+      ? obj.prompt.trim()
+      : undefined;
+  const runAt =
+    typeof obj.runAt === "string" && obj.runAt.trim().length > 0
+      ? obj.runAt.trim()
+      : undefined;
+  let everyMs: number | undefined;
+  if (obj.everyMs !== undefined) {
+    const n = Number(obj.everyMs);
+    if (!Number.isFinite(n) || n <= 0) {
+      throw new JsonRpcError(
+        "everyMs must be a positive number",
+        JsonRpcErrorCode.INVALID_PARAMS,
+      );
+    }
+    everyMs = n;
+  }
+  if (action === "create" && prompt === undefined) {
+    throw new JsonRpcError(
+      "create requires prompt",
+      JsonRpcErrorCode.INVALID_PARAMS,
+    );
+  }
+  return {
+    sessionId,
+    action,
+    ...(prompt !== undefined ? { prompt } : {}),
+    ...(runAt !== undefined ? { runAt } : {}),
+    ...(everyMs !== undefined ? { everyMs } : {}),
+  };
+}
+
+/** Wave 8 — goals list/create. */
+export function parseSessionGoalsParams(params: unknown): {
+  sessionId: string;
+  action: "list" | "create";
+  title?: string;
+  detail?: string;
+} {
+  if (params === null || typeof params !== "object") {
+    throw new JsonRpcError("invalid params", JsonRpcErrorCode.INVALID_PARAMS);
+  }
+  const obj = params as {
+    action?: unknown;
+    title?: unknown;
+    detail?: unknown;
+  };
+  const sessionId = readSessionId(params);
+  const action = obj.action ?? "list";
+  if (action !== "list" && action !== "create") {
+    throw new JsonRpcError(
+      "action must be list|create",
+      JsonRpcErrorCode.INVALID_PARAMS,
+    );
+  }
+  const title =
+    typeof obj.title === "string" && obj.title.trim().length > 0
+      ? obj.title.trim()
+      : undefined;
+  const detail =
+    typeof obj.detail === "string" && obj.detail.trim().length > 0
+      ? obj.detail.trim()
+      : undefined;
+  if (action === "create" && title === undefined) {
+    throw new JsonRpcError(
+      "create requires title",
+      JsonRpcErrorCode.INVALID_PARAMS,
+    );
+  }
+  return {
+    sessionId,
+    action,
+    ...(title !== undefined ? { title } : {}),
+    ...(detail !== undefined ? { detail } : {}),
   };
 }

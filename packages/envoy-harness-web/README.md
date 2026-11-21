@@ -5,28 +5,36 @@
 Chat, permissions, model/policy settings, session resume, mesh status, and
 EHUI panels over ACP WebSocket. **EnvoyMesh is not required.**
 
-→ Full monorepo guide: [root README](../../README.md#how-to-use-the-webui)
-
+→ Full monorepo guide: [root README](../../README.md#how-to-use-the-webui) ·
+[Build + run (CLI / WebUI)](../envoy-harness/docs/build-and-run.md)
 ---
 
 ## Start
 
+From the monorepo root (fresh clone needs a workspace build first — packages
+resolve each other through `dist/`):
+
 ```sh
-# Monorepo (recommended while developing)
+pnpm install
+pnpm run build
+
+# Recommended while developing (tsx + Vite middleware if client dist missing)
 pnpm --filter @envoymesh/envoy-harness-web start -- \
   --provider openai --model gpt-4o --persist
 
-# Same via Package 1
-envoy-harness web --provider openai --model gpt-4o --persist
+# Same via Package 1 CLI
+pnpm envoy -- web --provider openai --model gpt-4o --persist
+# or, after a global/link install:  envoy-harness web …
 
-# Don’t open a browser tab; use Vite middleware mode
-envoy-harness web --dev --no-open --port 5177
+# Don’t open a browser tab; force Vite middleware mode
+pnpm envoy -- web --dev --no-open --port 5177
 ```
 
 Then open **http://127.0.0.1:5177/**
 
 Each browser tab opens `/ws/acp`; the Node bridge spawns one
-`envoy-harness --acp` child process.
+`envoy-harness --acp` child process. Put API keys in the **shell env** on that
+Node host (or `config.toml`) — not in the browser.
 
 ### Flags
 
@@ -55,12 +63,15 @@ Three-column shell (inspired by deepseek-harness, Envoy branding):
 
 | Area | Purpose |
 |---|---|
-| **Left · Sessions** | Sessions grouped by project, per-project "+", **Open project…**, resume list, connection pill, Settings |
-| **Center · Chat** | Empty hero, markdown streaming, foldable activity, Stop/Send |
-| **Right · Details** | **Mesh** tab (peers/jobs/sub-agents) · **Tools** tab (Plan/Diff/Memory/…) |
-| **Permissions** | Summary of command/path; expandable raw args |
-| **Settings** | Provider, model, base URL, policy, decision gate (off by default), light/dark theme |
+| **Left · Sessions** | Filter, archive, pin/rename/delete, project groups, **Open project…**, Settings |
+| **Center · Chat** | Session tabs + nested split panes (per-pane tabs), Lexical composer, docks, context chrome |
+| **Right · Details** | Mesh · Tools · Files · Preview · Terminal · Schedule · Goals |
+| **Permissions / ask_user** | Permission dock + richer AskUser (recommended / multi / multiline) |
+| **Settings** | Tabs: Model · Permissions · Appearance |
 | **Connection** | Connecting / connected / disconnected; Reconnect |
+
+**Parity roadmap** (remaining gaps vs deepseek-harness web, wave-by-wave):
+[`docs/webui-deepseek-parity.md`](../envoy-harness/docs/webui-deepseek-parity.md).
 
 **Long runs:** start with `--persist`, use **Stop** when needed, and Reconnect
 if the ACP child dies (auto-backoff + manual button). Resume hydrates the
@@ -108,9 +119,12 @@ Details: [root README — Distributed](../../README.md#distributed-features-no-e
 ## Develop
 
 ```sh
+# From monorepo root
+pnpm run build                                          # workspace dist/ (once / after dep changes)
 pnpm --filter @envoymesh/envoy-harness-web test
 pnpm --filter @envoymesh/envoy-harness-web typecheck
-pnpm --filter @envoymesh/envoy-harness-web build
+pnpm --filter @envoymesh/envoy-harness-web build         # tsc server + vite client → dist/
+pnpm --filter @envoymesh/envoy-harness-web start -- --dev   # force Vite HMR even if dist/ exists
 ```
 
 ```text

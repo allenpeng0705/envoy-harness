@@ -211,6 +211,8 @@ export interface ProtocolSessionBackend {
       messageCount: number;
     }>
   >;
+  /** Wave 1 web — delete a persisted session file. */
+  deleteSession?(sessionId: string): Promise<{ deleted: boolean }>;
   prompt(params: {
     sessionId: string;
     prompt: ProtocolPromptInput;
@@ -426,6 +428,86 @@ export interface ProtocolSessionBackend {
     name?: string;
   }): Promise<{ workspace: WorkspaceEntry }>;
   removeWorkspace?(params: { path: string }): Promise<{ removed: boolean }>;
+  /** Wave 2 — one-level directory listing under the session cwd. */
+  listWorkspaceFs?(params: {
+    sessionId: string;
+    path?: string;
+  }): Promise<{
+    entries: ReadonlyArray<{
+      name: string;
+      path: string;
+      kind: "file" | "dir";
+    }>;
+  }>;
+  /** Wave 2 — read a text file under the session cwd. */
+  readWorkspaceFs?(params: {
+    sessionId: string;
+    path: string;
+    maxBytes?: number;
+  }): Promise<{
+    path: string;
+    text?: string;
+    truncated?: boolean;
+    mime?: string;
+    binary?: boolean;
+  }>;
+  /** Wave 2 — write under `{cwd}/.envoy-attachments/`. */
+  attachWorkspaceFile?(params: {
+    sessionId: string;
+    name: string;
+    dataBase64: string;
+    mimeType?: string;
+  }): Promise<{ relativePath: string; path: string; bytes: number }>;
+  /** Wave 3 — interactive PTY open (owner = sessionId). */
+  openTerminal?(params: {
+    sessionId: string;
+    cwd?: string;
+    name?: string;
+  }): Promise<{
+    terminalId: string;
+    type: string;
+    motd: string;
+    status: unknown;
+  }>;
+  writeTerminal?(params: {
+    sessionId: string;
+    terminalId: string;
+    data: string;
+    submit?: boolean;
+    onDelta?: (delta: string) => void;
+  }): Promise<{
+    viewport: string;
+    waitReason: string;
+    truncated: boolean;
+    status: unknown;
+  }>;
+  readTerminal?(params: {
+    sessionId: string;
+    terminalId: string;
+    offset?: number;
+    count?: number;
+  }): Promise<{
+    text: string;
+    totalLines: number;
+    lineBegin: number;
+    lineEnd: number;
+    truncated: boolean;
+  }>;
+  listTerminals?(params: {
+    sessionId: string;
+  }): Promise<{
+    terminals: ReadonlyArray<{
+      sessionId: string;
+      name?: string;
+      type: string;
+      pid?: number;
+      status: unknown;
+    }>;
+  }>;
+  closeTerminal?(params: {
+    sessionId: string;
+    terminalId: string;
+  }): Promise<{ closed: boolean }>;
   /** Plan lifecycle (`/plan`). */
   sessionPlan?(params: {
     sessionId: string;
@@ -452,6 +534,58 @@ export interface ProtocolSessionBackend {
   }): Promise<ProtocolGitResult>;
   /** Generate AGENTS.md (`/init`). */
   sessionInit?(params: { sessionId: string }): Promise<ProtocolGitResult>;
+  /** Wave 8 — schedule list/create/tick (REPL `/schedule` parity). */
+  sessionSchedule?(params: {
+    sessionId: string;
+    action: "list" | "create" | "tick";
+    prompt?: string;
+    runAt?: string;
+    everyMs?: number;
+  }): Promise<ProtocolScheduleResult>;
+  /** Wave 8 — goals list/create (REPL `/goals` parity). */
+  sessionGoals?(params: {
+    sessionId: string;
+    action: "list" | "create";
+    title?: string;
+    detail?: string;
+  }): Promise<ProtocolGoalsResult>;
+}
+
+/** Wire shape for one schedule task (Wave 8). */
+export interface ProtocolScheduleTask {
+  id: string;
+  prompt: string;
+  enabled: boolean;
+  createdAt: string;
+  lastFiredAt?: string;
+  recurrence:
+    | { kind: "once"; at: string }
+    | { kind: "interval"; everyMs: number; nextAt: string };
+}
+
+export interface ProtocolScheduleResult {
+  schedules?: ReadonlyArray<ProtocolScheduleTask>;
+  schedule?: ProtocolScheduleTask;
+  fired?: number;
+  enabled?: boolean;
+  error?: string;
+}
+
+/** Wire shape for one goal (Wave 8). */
+export interface ProtocolGoal {
+  id: string;
+  title: string;
+  detail?: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProtocolGoalsResult {
+  goals?: ReadonlyArray<ProtocolGoal>;
+  goal?: ProtocolGoal;
+  enabled?: boolean;
+  error?: string;
 }
 
 /** In-memory backend for hermetic protocol tests. */

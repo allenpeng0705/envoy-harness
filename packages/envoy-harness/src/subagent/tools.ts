@@ -179,6 +179,12 @@ export interface MakeTaskToolOptions {
     agentId: string;
     result: SubagentResult;
   }) => void;
+  /** Gap 1 — called when a background child is spawned. */
+  onBackgroundSpawn?: (info: {
+    jobId: string;
+    agentId: string;
+    objective: string;
+  }) => void;
   maxSubagents?: number;
   /** Concurrency for tasks[] / fan-out expands. Default 4. */
   maxParallel?: number;
@@ -305,6 +311,10 @@ export function makeTaskTool(
     "submit" in submitterOrOptions
       ? undefined
       : submitterOrOptions.onBackgroundSettle;
+  const onBackgroundSpawn =
+    "submit" in submitterOrOptions
+      ? undefined
+      : submitterOrOptions.onBackgroundSpawn;
   const maxSubagents: number | undefined =
     "submit" in submitterOrOptions
       ? undefined
@@ -332,6 +342,7 @@ export function makeTaskTool(
       "arrive in-session). " +
       VERDICT_IS_PREDICTION,
     parameters: TaskInputSchema,
+    isConcurrencySafe: () => true,
     async execute(args, ctx) {
       if (args.background_mode !== undefined && args.run_in_background !== true) {
         return {
@@ -414,6 +425,11 @@ export function makeTaskTool(
             });
             ids.jobId = s.jobId;
             ids.agentId = s.agentId;
+            onBackgroundSpawn?.({
+              jobId: s.jobId,
+              agentId: s.agentId,
+              objective: input.objective,
+            });
             batch.push({
               job_id: s.jobId,
               agent_id: s.agentId,

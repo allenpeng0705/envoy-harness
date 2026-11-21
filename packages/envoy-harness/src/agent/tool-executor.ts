@@ -199,12 +199,27 @@ export interface ToolExecutorContext {
   /**
    * Cap on tool calls running concurrently within one model turn.
    *
-   * Only the all-`task` fan-out path is parallel today. This is a
-   * *concurrency* cap, distinct from `maxSubagents` (a count cap that
-   * refuses the whole batch). Optional so existing hosts keep working;
-   * defaults to {@link DEFAULT_MAX_PARALLEL_TOOL_CALLS}.
+   * Applies to consecutive concurrency-safe groups in `executeMany`.
+   * Distinct from `maxSubagents` (a count cap that refuses excess
+   * `task` calls). Optional so existing hosts keep working; defaults
+   * to {@link DEFAULT_MAX_PARALLEL_TOOL_CALLS}.
    */
   getMaxParallelToolCalls?: () => number;
+  /**
+   * Codex rollout-budget lite: consume one unit before a tool batch.
+   * When this returns false, the whole batch is refused.
+   */
+  tryConsumeWorkBudget?: (units?: number) => boolean;
+  /**
+   * Gap 9 — optional Guardian reviewer before dispatch.
+   * Scores are forensic only (not model context).
+   */
+  guardian?: import("../guardian/types.js").GuardianReviewer;
+  /**
+   * Wave 1 — deferred exposure gate. When false, refuse the call
+   * (tool exists but is not granted for the model).
+   */
+  isToolVisibleToModel?: (tool: import("../tools/types.js").Tool) => boolean;
 }
 
 
@@ -254,33 +269,111 @@ export class ToolExecutor {
   ): Promise<void> {
     if (calls.length === 0) return;
 
-    // Sub-agent fan-out: parallel when ALL calls are `task`. Other tools
-    // (bash, lsp_*, etc.) may have order dependencies; they stay serial.
-    const allTask =
-      this.ctx.meshSubmitter !== undefined &&
-      calls.every((c) => c.name === "task");
-    if (!allTask) {
-      for (const call of calls) {
-        if (this.ctx.abortSignal.aborted) break;
-        await this.execute(call, iteration);
-      }
-      return;
-    }
-
-    // Cap check: refuse ALL when exceeded (a count cap, not a
-    // concurrency limit — see `getMaxParallelToolCalls`).
-    if (calls.length > this.ctx.maxSubagents) {
+    if (this.ctx.tryConsumeWorkBudget?.(1) === false) {
       for (const call of calls) {
         this.appendToolResult(
           call.id,
-          `maxSubagents reached: ${calls.length} task calls in one turn (cap is ${this.ctx.maxSubagents}). Refused.`,
+          "work_budget exhausted: no new tool work admitted for this agent.",
           true,
         );
       }
       return;
     }
 
-    await this.executeBoundedParallel(calls, iteration);
+    // Gap 9: Guardian pre-batch review (NullGuardian = allow).
+    if (this.ctx.guardian !== undefined) {
+      const review = await Promise.resolve(
+        this.ctx.guardian.reviewToolBatch(calls),
+      );
+      // Only record forensic diagnostics for non-default / non-allow-noop
+      // reviews so NullGuardian does not spam the session header path.
+      if (review.decision === "block" || review.score !== undefined || review.reason !== undefined) {
+        this.ctx.session.recordDiagnostic?.({
+          kind: "guardian_review",
+          at: new Date().toISOString(),
+          detail: `${review.decision}${review.score !== undefined ? `:score=${review.score}` : ""}${review.reason !== undefined ? `:${review.reason}` : ""}`,
+          iteration,
+        });
+      }
+      if (review.decision === "block") {
+        const reason =
+          review.reason ?? "guardian blocked this tool batch";
+        for (const call of calls) {
+          this.appendToolResult(
+            call.id,
+            `guardian blocked: ${reason}`,
+            true,
+          );
+        }
+        return;
+      }
+    }
+
+    // Count cap on `task` calls in this batch (unchanged semantics for
+    // all-task turns; also applies when mixed with other tools).
+    const taskCalls = calls.filter((c) => c.name === "task");
+    if (
+      this.ctx.meshSubmitter !== undefined &&
+      taskCalls.length > this.ctx.maxSubagents
+    ) {
+      for (const call of taskCalls) {
+        this.appendToolResult(
+          call.id,
+          `maxSubagents reached: ${taskCalls.length} task calls in one turn (cap is ${this.ctx.maxSubagents}). Refused.`,
+          true,
+        );
+      }
+      // Still run non-task calls via barriers below.
+      const nonTask = calls.filter((c) => c.name !== "task");
+      if (nonTask.length === 0) return;
+      await this.executeManyBarriers(nonTask, iteration);
+      return;
+    }
+
+    await this.executeManyBarriers(calls, iteration);
+  }
+
+  /**
+   * Walk calls in model order: consecutive concurrency-safe tools run
+   * as a parallel group; exclusive tools are barriers (run alone).
+   * Fail-closed when `isConcurrencySafe` is omitted.
+   */
+  private async executeManyBarriers(
+    calls: ReadonlyArray<Extract<ContentBlock, { type: "tool_call" }>>,
+    iteration: number,
+  ): Promise<void> {
+    let i = 0;
+    while (i < calls.length) {
+      if (this.ctx.abortSignal.aborted) break;
+      const call = calls[i]!;
+      if (!this.isCallConcurrencySafe(call)) {
+        await this.execute(call, iteration);
+        i += 1;
+        continue;
+      }
+      const group: Array<Extract<ContentBlock, { type: "tool_call" }>> = [
+        call,
+      ];
+      i += 1;
+      while (i < calls.length) {
+        const next = calls[i]!;
+        if (!this.isCallConcurrencySafe(next)) break;
+        group.push(next);
+        i += 1;
+      }
+      if (group.length === 1) {
+        await this.execute(group[0]!, iteration);
+      } else {
+        await this.executeBoundedParallel(group, iteration);
+      }
+    }
+  }
+
+  private isCallConcurrencySafe(
+    call: Extract<ContentBlock, { type: "tool_call" }>,
+  ): boolean {
+    const tool = this.ctx.tools.get(call.name);
+    return tool?.isConcurrencySafe?.(call.args) === true;
   }
 
   /**
@@ -418,6 +511,31 @@ export class ToolExecutor {
         callId: call.id,
         toolName: call.name,
         result: { content: `unknown tool: ${call.name}`, isError: true },
+        durationMs: 0,
+      });
+      return;
+    }
+
+    if (
+      tool !== undefined &&
+      this.ctx.isToolVisibleToModel?.(tool) === false
+    ) {
+      const message =
+        `deferred tool '${call.name}' is not granted; call tool_search first`;
+      this.ctx.emit({
+        kind: "tool_call",
+        ts: new Date().toISOString(),
+        iteration,
+        call,
+      });
+      commit(call.id, message, true);
+      this.ctx.emit({
+        kind: "tool_result",
+        ts: new Date().toISOString(),
+        iteration,
+        callId: call.id,
+        toolName: call.name,
+        result: { content: message, isError: true },
         durationMs: 0,
       });
       return;

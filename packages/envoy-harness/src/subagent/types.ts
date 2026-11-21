@@ -245,6 +245,11 @@ export interface SubagentRecord {
   /** Cost in USD. Undefined while running; populated
    *  from `SubagentResult.costUsd` on completion. */
   costUsd?: number;
+  /**
+   * Wave 4 — generation fence id assigned at spawn. Stale after
+   * process restart unless the live handle matches.
+   */
+  generation?: number;
 }
 
 /**

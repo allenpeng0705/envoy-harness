@@ -276,6 +276,69 @@ describe("continuable background children", () => {
     await jobs.dispose();
   });
 
+  it("send_message delivery queue parks; trigger wakes the child", async () => {
+    const jobs = createLocalJobRegistry();
+    const ctx = makeCtx();
+    const submitter = localSubmitter([
+      { content: [text("turn one")] },
+      { content: [text("turn two")] },
+      { content: [text("turn three")] },
+    ]);
+    const tool = makeTaskTool({ submitter, jobs });
+    const control = makeSubagentControlTools(submitter);
+
+    const res = await tool.execute(
+      { ...BASE_ARGS, run_in_background: true, background_mode: "continuable" },
+      ctx,
+    );
+    const parsed = JSON.parse(String(res.content)) as {
+      job_id: string;
+      agent_id: string;
+    };
+    await until("turn one", () =>
+      jobs.read(parsed.job_id, ctx.session.id).text.includes("turn one"),
+    );
+
+    const queued = await toolByName(control, "send_message").execute(
+      {
+        agent_id: parsed.agent_id,
+        message: "queued",
+        delivery: "queue",
+      },
+      ctx,
+    );
+    expect(queued.isError).toBeUndefined();
+    const queuedPayload = JSON.parse(String(queued.content)) as {
+      delivery: string;
+    };
+    expect(queuedPayload.delivery).toBe("queue");
+    await new Promise((r) => setTimeout(r, 40));
+    expect(jobs.read(parsed.job_id, ctx.session.id).text).not.toContain(
+      "turn two",
+    );
+
+    const triggered = await toolByName(control, "send_message").execute(
+      {
+        agent_id: parsed.agent_id,
+        message: "go",
+        delivery: "trigger",
+      },
+      ctx,
+    );
+    expect(triggered.isError).toBeUndefined();
+    const triggerPayload = JSON.parse(String(triggered.content)) as {
+      delivery: string;
+    };
+    expect(triggerPayload.delivery).toBe("trigger");
+    await until("turn two+", () =>
+      jobs.read(parsed.job_id, ctx.session.id).text.includes("turn two"),
+    );
+
+    jobs.kill(parsed.job_id, ctx.session.id, "done");
+    await jobs.wait(parsed.job_id, 5_000, ctx.session.id).catch(() => undefined);
+    await jobs.dispose();
+  });
+
   it("send_message to a settled child reports an error instead of throwing", async () => {
     const jobs = createLocalJobRegistry();
     const ctx = makeCtx();

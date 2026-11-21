@@ -8,6 +8,9 @@ export interface ActivityLike {
   ts?: string;
   subagentOf?: string;
   toolName?: string;
+  toolArgs?: unknown;
+  toolCallId?: string;
+  resultPreview?: string;
   isError?: boolean;
   durationMs?: number;
   costUsd?: number;

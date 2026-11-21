@@ -59,6 +59,10 @@ export function createLocalJobRegistry(
   const store = new Map<string, TrackedJob>();
   const counters = new Map<string, number>();
   const doneListeners = new Set<JobDoneListener>();
+  /** job id → active job_output-wait suppress refcount */
+  const waitSuppress = new Map<string, number>();
+  /** job ids the model killed — skip one settlement notice */
+  const killedByModel = new Set<string>();
   let disposed = false;
 
   function assertNotDisposed(): void {
@@ -274,6 +278,30 @@ export function createLocalJobRegistry(
       };
     },
 
+    beginSettlementSuppress(id: string): void {
+      waitSuppress.set(id, (waitSuppress.get(id) ?? 0) + 1);
+    },
+
+    endSettlementSuppress(id: string): void {
+      const n = waitSuppress.get(id) ?? 0;
+      if (n <= 1) waitSuppress.delete(id);
+      else waitSuppress.set(id, n - 1);
+    },
+
+    markSettlementKilledByModel(id: string): void {
+      killedByModel.add(id);
+    },
+
+    consumeSettlementNoticeSuppress(id: string): boolean {
+      const waiting = (waitSuppress.get(id) ?? 0) > 0;
+      const killed = killedByModel.delete(id);
+      if (waiting) {
+        // Waiters still hold refs; leave refcount for endSettlementSuppress.
+        return true;
+      }
+      return killed;
+    },
+
     async disposeOwner(owner: string): Promise<void> {
       const owned = [...store.values()].filter((j) => j.owner === owner);
       for (const job of owned) {
@@ -317,6 +345,8 @@ export function createLocalJobRegistry(
       );
       store.clear();
       doneListeners.clear();
+      waitSuppress.clear();
+      killedByModel.clear();
     },
   };
 }

@@ -24,6 +24,8 @@ function printHelp(): void {
       "  --persist            forwarded to envoy-harness --acp",
       "  --no-subagents       forwarded to envoy-harness --acp",
       "  --peers <id>@host:port  forwarded (repeatable)",
+      "  --config-patch <toml|json>  forwarded to envoy-harness --acp",
+      "  --profile <name>     forwarded to envoy-harness --acp",
       "  --dev                force Vite middleware mode",
       "  --no-open            do not open a browser tab",
       "  --help               print this help",
@@ -74,7 +76,9 @@ function parseArgv(argv: string[]): {
       arg === "--provider" ||
       arg === "--model" ||
       arg === "--base-url" ||
-      arg === "--peers"
+      arg === "--peers" ||
+      arg === "--config-patch" ||
+      arg === "--profile"
     ) {
       const val = argv[i + 1];
       if (val === undefined || val.startsWith("--")) {

@@ -41,6 +41,8 @@ import { makeEmptyRunResult, resolveModel, defaultSessionDir } from "./helpers.j
 import { EXIT_USAGE, type RunOptions, type RunResult } from "./types.js";
 import { mergeClusterSeams, wirePeerCluster } from "../../peers/wire-cluster.js";
 import { buildCliLocalMeshSubmitter } from "./build-local-mesh-submitter.js";
+import { applyPowerFeatureFlags } from "./power-flags.js";
+import { resolveSandboxExecutorFromArgs } from "./sandbox-executor-flag.js";
 
 /** Per-phase model-call budget when `--max-turns` is unset (matches REPL). */
 export const ACP_DEFAULT_MAX_ITERATIONS = 200;
@@ -136,10 +138,32 @@ async function resolveAcpBackend(
   }
 
   const defaultCwdEarly = parsed.cwd ?? options.cwd ?? process.cwd();
-  const { layer: configLayer } = await loadConfigStack({
+  const patchOverrides: import("../../config/schema.js").ConfigLayer = {};
+  if (parsed.configPatch !== undefined) {
+    const { parseConfigPatchFragment } = await import("./config-patch.js");
+    Object.assign(patchOverrides, parseConfigPatchFragment(parsed.configPatch));
+  }
+  let { layer: configLayer } = await loadConfigStack({
     cwd: defaultCwdEarly,
     ...(parsed.config !== undefined ? { filePath: parsed.config } : {}),
+    ...(Object.keys(patchOverrides).length > 0
+      ? { overrides: patchOverrides }
+      : {}),
   });
+  if (parsed.profile !== undefined) {
+    const { createConfigProfileLoader, profileAsOverrides } = await import(
+      "./profile-loader.js"
+    );
+    const loader = createConfigProfileLoader(configLayer);
+    const profile = loader.get(parsed.profile);
+    if (profile === null) {
+      throw new CliError(
+        `unknown --profile: ${parsed.profile}`,
+        EXIT_USAGE,
+      );
+    }
+    configLayer = { ...configLayer, ...profileAsOverrides(profile) };
+  }
   const { resolvePeerEndpoints } = await import("../../peers/resolve.js");
   const peerEndpoints = resolvePeerEndpoints({
     configLayer,
@@ -227,6 +251,8 @@ async function resolveAcpBackend(
         createAgentSessionBackend({
           defaultCwd,
           memoryStore,
+          // Wave 3 — interactive PTY over ACP (same service as terminal_* tools).
+          terminals: env.terminals,
           // Project registry: lets an ACP host (the web UI) open a project
           // other than `defaultCwd` and group sessions by project. Lazy —
           // constructing it does no I/O until a client asks.
@@ -267,7 +293,8 @@ async function resolveAcpBackend(
           }) => {
             const sessionCwd = cwd ?? defaultCwd;
             const hooks = new HookRegistry();
-            return new Agent({
+            const parentRef: { agent?: Agent } = {};
+            const agentOptions: ConstructorParameters<typeof Agent>[0] = {
               model,
               tools,
               hooks,
@@ -323,12 +350,31 @@ async function resolveAcpBackend(
                       model,
                       cwd: sessionCwd,
                       permissionMode: runtime.permissionMode,
+                      getPermissionMode: () =>
+                        parentRef.agent?.getPermissionMode() ??
+                        runtime.permissionMode,
+                      getSandboxPolicy: () =>
+                        parentRef.agent?.sandboxPolicy ??
+                        runtime.sandboxPolicy,
                       parentSessionId: sessionId,
                     }),
                     settlementFollowup: true,
                   }
                 : {}),
+            };
+            applyPowerFeatureFlags(agentOptions, parsed, {
+              scheduleGoalsPresent: true,
             });
+            const sandboxExecutor = resolveSandboxExecutorFromArgs(
+              parsed,
+              sessionCwd,
+            );
+            if (sandboxExecutor !== undefined) {
+              agentOptions.sandboxExecutor = sandboxExecutor;
+            }
+            const agent = new Agent(agentOptions);
+            parentRef.agent = agent;
+            return agent;
           },
           sessionStore: new SessionStore({
             dir: parsed.sessionDir ?? defaultSessionDir(parsed),

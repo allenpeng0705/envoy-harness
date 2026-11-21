@@ -16,6 +16,7 @@ import {
   createSystemPromptRegistry,
   DEFAULT_PROJECT_DOC_FALLBACKS,
   InMemorySession,
+  jobsGuidanceSection,
   newSessionId,
   terminalGuidanceSection,
   ToolRegistry,
@@ -116,6 +117,19 @@ describe("built-in sections", () => {
   });
 });
 
+describe("jobsGuidanceSection", () => {
+  it("documents bash + subagent settle notices and wait dedup", () => {
+    const section = jobsGuidanceSection();
+    expect(section.name).toBe("tool:jobs");
+    expect(section.order).toBe(106);
+    expect(section.text).toContain("job_start");
+    expect(section.text).toContain("notified in-session");
+    expect(section.text).toContain("wait: true");
+    expect(section.text).toContain("duplicate notice");
+    expect(section.text).toContain("job_kill");
+  });
+});
+
 describe("buildAgentSystemPrompt", () => {
   it("composes Codex-style environment_context + AGENTS.md + terminal guidance", async () => {
     await fs.writeFile(path.join(tmpDir, "AGENTS.md"), "Team conventions.");
@@ -125,6 +139,12 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("<shell>");
     expect(prompt).toContain("Team conventions.");
     expect(prompt).toContain("inferred_idle");
+  });
+
+  it("includes jobs guidance by default", async () => {
+    const prompt = await buildAgentSystemPrompt({ cwd: tmpDir });
+    expect(prompt).toContain("notified in-session when a job finishes");
+    expect(prompt).toContain("job_output");
   });
 
   it("adds plan mode and can drop terminal guidance", async () => {

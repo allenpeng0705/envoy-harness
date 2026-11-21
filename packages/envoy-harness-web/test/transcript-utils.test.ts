@@ -32,6 +32,25 @@ describe("groupTranscript", () => {
     }
     expect(items[2]).toMatchObject({ kind: "message" });
   });
+
+  it("emits tool cards separately from activity folds", () => {
+    const call: ChatMessage = {
+      ...msg("2", "tool", "bash"),
+      tool: { phase: "call", summary: "bash", toolName: "bash" },
+    };
+    const items = groupTranscript([
+      msg("1", "user", "hi"),
+      call,
+      msg("3", "status", "── done"),
+      msg("4", "assistant", "ok"),
+    ]);
+    expect(items.map((i) => i.kind)).toEqual([
+      "message",
+      "tool",
+      "activity",
+      "message",
+    ]);
+  });
 });
 
 describe("permissionPreview", () => {

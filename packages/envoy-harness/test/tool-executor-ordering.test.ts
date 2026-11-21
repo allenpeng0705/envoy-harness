@@ -42,6 +42,7 @@ function slowEchoTool(delays: Map<string, number>): Tool {
     name: "task",
     description: "fake task tool",
     parameters: z.object({ objective: z.string() }),
+    isConcurrencySafe: () => true,
     execute: async (args) => {
       const { objective } = args as { objective: string };
       const delay = delays.get(objective) ?? 0;
@@ -179,6 +180,7 @@ describe("parallel tool fan-out commits in model order", () => {
       name: "task",
       description: "concurrency probe",
       parameters: z.object({ objective: z.string() }),
+      isConcurrencySafe: () => true,
       execute: async (args) => {
         const { objective } = args as { objective: string };
         active += 1;
@@ -216,6 +218,7 @@ describe("parallel tool fan-out commits in model order", () => {
       name: "task",
       description: "counts executions",
       parameters: z.object({ objective: z.string() }),
+      isConcurrencySafe: () => true,
       execute: async () => {
         executed += 1;
         return { content: "ran" };
@@ -281,5 +284,451 @@ describe("parallel tool fan-out commits in model order", () => {
     );
 
     expect(order).toEqual(["one", "two"]);
+  });
+
+  it("parallelizes mixed concurrency-safe tools (task + read)", async () => {
+    const started: string[] = [];
+    let releaseGate!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+    let waiting = 0;
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "task",
+      description: "safe",
+      parameters: z.object({ objective: z.string() }),
+      isConcurrencySafe: () => true,
+      execute: async () => {
+        started.push("task");
+        waiting += 1;
+        if (waiting === 2) releaseGate();
+        await gate;
+        return { content: "task-done" };
+      },
+    } as Tool);
+    registry.register({
+      name: "read_file",
+      description: "safe read",
+      parameters: z.object({ path: z.string() }),
+      isConcurrencySafe: () => true,
+      execute: async () => {
+        started.push("read_file");
+        waiting += 1;
+        if (waiting === 2) releaseGate();
+        await gate;
+        return { content: "read-done" };
+      },
+    } as Tool);
+    const session = makeSession();
+    const executor = new ToolExecutor({
+      hooks: { fire: async () => ({ kind: "continue" }) as never },
+      tools: registry,
+      session,
+      cwd: process.cwd(),
+      getSandboxPolicy: () => ({
+        mode: "read-only",
+        approval: "on-request",
+        backend: "none",
+        writableRoots: [],
+        networkAccess: false,
+        slashTmpWritable: false,
+      }),
+      getSandboxExecutor: () => undefined,
+      getAskHandler: () => undefined,
+      getApproval: () => "on-request",
+      abortSignal: new AbortController().signal,
+      maxSubagents: 8,
+      meshSubmitter: noopSubmitter(),
+      mcpClients: undefined,
+      emit: () => {},
+      noteToolCall: () => {},
+      getMaxParallelToolCalls: () => 8,
+    });
+
+    const done = executor.executeMany(
+      [
+        {
+          type: "tool_call",
+          id: "1",
+          name: "task",
+          args: { objective: "a" },
+        },
+        {
+          type: "tool_call",
+          id: "2",
+          name: "read_file",
+          args: { path: "x" },
+        },
+      ],
+      1,
+    );
+    await gate;
+    expect(started.sort()).toEqual(["read_file", "task"]);
+    await done;
+    expect(resultOrder(session)).toEqual(["task-done", "read-done"]);
+  });
+
+  it("exclusive barrier: bash completes before following task starts", async () => {
+    const order: string[] = [];
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "bash",
+      description: "exclusive",
+      parameters: z.object({ command: z.string() }),
+      execute: async () => {
+        order.push("bash-start");
+        await new Promise((r) => setTimeout(r, 20));
+        order.push("bash-end");
+        return { content: "bash-done" };
+      },
+    } as Tool);
+    registry.register({
+      name: "task",
+      description: "safe",
+      parameters: z.object({ objective: z.string() }),
+      isConcurrencySafe: () => true,
+      execute: async () => {
+        order.push("task-start");
+        return { content: "task-done" };
+      },
+    } as Tool);
+    const session = makeSession();
+    const executor = new ToolExecutor({
+      hooks: { fire: async () => ({ kind: "continue" }) as never },
+      tools: registry,
+      session,
+      cwd: process.cwd(),
+      getSandboxPolicy: () => ({
+        mode: "read-only",
+        approval: "on-request",
+        backend: "none",
+        writableRoots: [],
+        networkAccess: false,
+        slashTmpWritable: false,
+      }),
+      getSandboxExecutor: () => undefined,
+      getAskHandler: () => undefined,
+      getApproval: () => "on-request",
+      abortSignal: new AbortController().signal,
+      maxSubagents: 8,
+      meshSubmitter: noopSubmitter(),
+      mcpClients: undefined,
+      emit: () => {},
+      noteToolCall: () => {},
+      getMaxParallelToolCalls: () => 8,
+    });
+
+    await executor.executeMany(
+      [
+        {
+          type: "tool_call",
+          id: "1",
+          name: "bash",
+          args: { command: "echo" },
+        },
+        {
+          type: "tool_call",
+          id: "2",
+          name: "task",
+          args: { objective: "a" },
+        },
+      ],
+      1,
+    );
+
+    expect(order).toEqual(["bash-start", "bash-end", "task-start"]);
+  });
+
+  it("fail-closed: tools without isConcurrencySafe run as exclusive barriers", async () => {
+    const order: string[] = [];
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "safe_a",
+      description: "safe",
+      parameters: z.object({}),
+      isConcurrencySafe: () => true,
+      execute: async () => {
+        order.push("safe_a-start");
+        await new Promise((r) => setTimeout(r, 15));
+        order.push("safe_a-end");
+        return { content: "a" };
+      },
+    } as Tool);
+    registry.register({
+      name: "unsafe",
+      description: "no flag",
+      parameters: z.object({}),
+      execute: async () => {
+        order.push("unsafe-start");
+        await new Promise((r) => setTimeout(r, 10));
+        order.push("unsafe-end");
+        return { content: "u" };
+      },
+    } as Tool);
+    registry.register({
+      name: "safe_b",
+      description: "safe",
+      parameters: z.object({}),
+      isConcurrencySafe: () => true,
+      execute: async () => {
+        order.push("safe_b-start");
+        return { content: "b" };
+      },
+    } as Tool);
+    const session = makeSession();
+    const executor = new ToolExecutor({
+      hooks: { fire: async () => ({ kind: "continue" }) as never },
+      tools: registry,
+      session,
+      cwd: process.cwd(),
+      getSandboxPolicy: () => ({
+        mode: "read-only",
+        approval: "on-request",
+        backend: "none",
+        writableRoots: [],
+        networkAccess: false,
+        slashTmpWritable: false,
+      }),
+      getSandboxExecutor: () => undefined,
+      getAskHandler: () => undefined,
+      getApproval: () => "on-request",
+      abortSignal: new AbortController().signal,
+      maxSubagents: 8,
+      meshSubmitter: noopSubmitter(),
+      mcpClients: undefined,
+      emit: () => {},
+      noteToolCall: () => {},
+      getMaxParallelToolCalls: () => 8,
+    });
+
+    await executor.executeMany(
+      [
+        { type: "tool_call", id: "1", name: "safe_a", args: {} },
+        { type: "tool_call", id: "2", name: "unsafe", args: {} },
+        { type: "tool_call", id: "3", name: "safe_b", args: {} },
+      ],
+      1,
+    );
+
+    expect(order).toEqual([
+      "safe_a-start",
+      "safe_a-end",
+      "unsafe-start",
+      "unsafe-end",
+      "safe_b-start",
+    ]);
+  });
+
+  it("refuses excess tasks but still runs non-task calls", async () => {
+    const session = makeSession();
+    let taskRuns = 0;
+    let readRuns = 0;
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "task",
+      description: "task",
+      parameters: z.object({ objective: z.string() }),
+      isConcurrencySafe: () => true,
+      execute: async () => {
+        taskRuns += 1;
+        return { content: "task" };
+      },
+    } as Tool);
+    registry.register({
+      name: "read_file",
+      description: "read",
+      parameters: z.object({ path: z.string() }),
+      isConcurrencySafe: () => true,
+      execute: async () => {
+        readRuns += 1;
+        return { content: "read-ok" };
+      },
+    } as Tool);
+    const executor = new ToolExecutor({
+      hooks: { fire: async () => ({ kind: "continue" }) as never },
+      tools: registry,
+      session,
+      cwd: process.cwd(),
+      getSandboxPolicy: () => ({
+        mode: "read-only",
+        approval: "on-request",
+        backend: "none",
+        writableRoots: [],
+        networkAccess: false,
+        slashTmpWritable: false,
+      }),
+      getSandboxExecutor: () => undefined,
+      getAskHandler: () => undefined,
+      getApproval: () => "on-request",
+      abortSignal: new AbortController().signal,
+      maxSubagents: 1,
+      meshSubmitter: noopSubmitter(),
+      mcpClients: undefined,
+      emit: () => {},
+      noteToolCall: () => {},
+    });
+
+    await executor.executeMany(
+      [
+        {
+          type: "tool_call",
+          id: "1",
+          name: "task",
+          args: { objective: "a" },
+        },
+        {
+          type: "tool_call",
+          id: "2",
+          name: "task",
+          args: { objective: "b" },
+        },
+        {
+          type: "tool_call",
+          id: "3",
+          name: "read_file",
+          args: { path: "x" },
+        },
+      ],
+      1,
+    );
+
+    expect(taskRuns).toBe(0);
+    expect(readRuns).toBe(1);
+    const results = resultOrder(session);
+    expect(results.filter((r) => r.includes("maxSubagents"))).toHaveLength(2);
+    expect(results).toContain("read-ok");
+  });
+
+  it("marks real job_list/job_status, list_agents, git/read_file, task as concurrency-safe", async () => {
+    const { makeJobTools } = await import("../src/jobs/tools.js");
+    const { createLocalJobRegistry } = await import("../src/jobs/index.js");
+    const { gitTool } = await import("../src/tools/builtin/git.js");
+    const { readFileTool } = await import("../src/tools/builtin/read-file.js");
+    const { makeTaskTool } = await import("../src/subagent/tools.js");
+    const { makeSubagentControlTools } = await import(
+      "../src/subagent/background.js"
+    );
+
+    const reg = createLocalJobRegistry();
+    const jobTools = makeJobTools(reg);
+    const status = jobTools.find((t) => t.name === "job_status")!;
+    const list = jobTools.find((t) => t.name === "job_list")!;
+    expect(status.isConcurrencySafe?.({})).toBe(true);
+    expect(list.isConcurrencySafe?.({})).toBe(true);
+    expect(jobTools.find((t) => t.name === "job_start")?.isConcurrencySafe).toBe(
+      undefined,
+    );
+    expect(gitTool.isConcurrencySafe?.({})).toBe(true);
+    expect(readFileTool.isConcurrencySafe?.({})).toBe(true);
+    expect(
+      makeTaskTool(noopSubmitter()).isConcurrencySafe?.({}),
+    ).toBe(true);
+    const control = makeSubagentControlTools({
+      submit: async () => {
+        throw new Error("unused");
+      },
+      getHandle: () => undefined,
+      listSubagents: () => [],
+    } as never);
+    expect(
+      control.find((t) => t.name === "list_agents")?.isConcurrencySafe?.({}),
+    ).toBe(true);
+    await reg.dispose();
+  });
+
+  it("safe → exclusive → safe: task group, bash barrier, then task", async () => {
+    const order: string[] = [];
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "task",
+      description: "safe",
+      parameters: z.object({ objective: z.string() }),
+      isConcurrencySafe: () => true,
+      execute: async (args) => {
+        const id = (args as { objective: string }).objective;
+        order.push(`task-${id}-start`);
+        await new Promise((r) => setTimeout(r, 15));
+        order.push(`task-${id}-end`);
+        return { content: `done:${id}` };
+      },
+    } as Tool);
+    registry.register({
+      name: "bash",
+      description: "exclusive",
+      parameters: z.object({ command: z.string() }),
+      execute: async () => {
+        order.push("bash-start");
+        await new Promise((r) => setTimeout(r, 10));
+        order.push("bash-end");
+        return { content: "bash" };
+      },
+    } as Tool);
+    const session = makeSession();
+    const executor = new ToolExecutor({
+      hooks: { fire: async () => ({ kind: "continue" }) as never },
+      tools: registry,
+      session,
+      cwd: process.cwd(),
+      getSandboxPolicy: () => ({
+        mode: "read-only",
+        approval: "on-request",
+        backend: "none",
+        writableRoots: [],
+        networkAccess: false,
+        slashTmpWritable: false,
+      }),
+      getSandboxExecutor: () => undefined,
+      getAskHandler: () => undefined,
+      getApproval: () => "on-request",
+      abortSignal: new AbortController().signal,
+      maxSubagents: 8,
+      meshSubmitter: noopSubmitter(),
+      mcpClients: undefined,
+      emit: () => {},
+      noteToolCall: () => {},
+      getMaxParallelToolCalls: () => 8,
+    });
+
+    await executor.executeMany(
+      [
+        {
+          type: "tool_call",
+          id: "1",
+          name: "task",
+          args: { objective: "a" },
+        },
+        {
+          type: "tool_call",
+          id: "2",
+          name: "task",
+          args: { objective: "b" },
+        },
+        {
+          type: "tool_call",
+          id: "3",
+          name: "bash",
+          args: { command: "echo" },
+        },
+        {
+          type: "tool_call",
+          id: "4",
+          name: "task",
+          args: { objective: "c" },
+        },
+      ],
+      1,
+    );
+
+    const bashIdx = order.indexOf("bash-start");
+    expect(order.indexOf("task-a-end")).toBeLessThan(bashIdx);
+    expect(order.indexOf("task-b-end")).toBeLessThan(bashIdx);
+    expect(order.indexOf("bash-end")).toBeLessThan(order.indexOf("task-c-start"));
+    expect(resultOrder(session)).toEqual([
+      "done:a",
+      "done:b",
+      "bash",
+      "done:c",
+    ]);
   });
 });

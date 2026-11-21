@@ -11,6 +11,7 @@ function serializeSession(
   formatVersion: number,
   generation: number,
   messages: ReadonlyArray<Message>,
+  events: ReadonlyArray<import("./format.js").SessionEventRecord> = [],
 ): string {
   const header: PersistedHeader = {
     _kind: "header",
@@ -21,6 +22,7 @@ function serializeSession(
   };
   const lines = [JSON.stringify(header)];
   for (const m of messages) lines.push(JSON.stringify(m));
+  for (const e of events) lines.push(JSON.stringify(e));
   return `${lines.join("\n")}\n`;
 }
 
@@ -97,8 +99,10 @@ import {
 import {
   PERSISTED_SESSION_FORMAT_VERSION,
   buildCreateHeader,
+  isSessionEventRecord,
   resolveHeaderFormatVersion,
   type PersistedHeader,
+  type SessionEventRecord,
 } from "./format.js";
 import {
   acquireSessionWriteLease,
@@ -159,6 +163,8 @@ export class PersistedSession implements Session {
   readonly id: string;
   readonly metadata: SessionMetadata;
   private _messages: Message[] = [];
+  /** Gap 1 — durable forensic events (not model transcript). */
+  private _events: SessionEventRecord[] = [];
   /**
    * Absolute path of the JSONL file backing this session. Public because
    * hosts need it for `--resume`, the session picker, and `doctor`.
@@ -343,11 +349,15 @@ export class PersistedSession implements Session {
       formatVersion,
       generation,
     );
-    // Lines 2..N: messages.
+    // Lines 2..N: messages and Gap-1 `_kind: "event"` records.
     for (let i = 1; i < lines.length; i++) {
       const line = lines[i]!;
       try {
         const parsed = JSON.parse(line) as unknown;
+        if (isSessionEventRecord(parsed)) {
+          session._events.push(parsed);
+          continue;
+        }
         if (
           typeof parsed !== "object" ||
           parsed === null ||
@@ -395,6 +405,7 @@ export class PersistedSession implements Session {
             session.formatVersion,
             session.generation,
             session._messages,
+            session._events,
           ),
         );
         await session.writer.flush();
@@ -460,6 +471,7 @@ export class PersistedSession implements Session {
       this.formatVersion,
       this.generation,
       this._messages,
+      this._events,
     );
   }
 
@@ -568,6 +580,57 @@ export class PersistedSession implements Session {
         updatedAt: this.metadata.startedAt,
       }
     );
+  }
+
+  setPendingInbox(
+    snapshot: import("../session.js").PendingInboxSnapshot | undefined,
+  ): void {
+    if (
+      snapshot === undefined ||
+      (snapshot.nextTurn.length === 0 && snapshot.nextStep.length === 0)
+    ) {
+      delete this.metadata.pendingInbox;
+    } else {
+      this.metadata.pendingInbox = {
+        nextTurn: snapshot.nextTurn.map((e) => ({ ...e })),
+        nextStep: snapshot.nextStep.map((e) => ({ ...e })),
+      };
+    }
+    this.rewriteHeader();
+  }
+
+  getPendingInbox():
+    | import("../session.js").PendingInboxSnapshot
+    | undefined {
+    return this.metadata.pendingInbox;
+  }
+
+  setPendingChildren(
+    children:
+      | ReadonlyArray<import("../session.js").PendingChildSnapshot>
+      | undefined,
+  ): void {
+    if (children === undefined || children.length === 0) {
+      delete this.metadata.pendingChildren;
+    } else {
+      this.metadata.pendingChildren = children.map((c) => ({ ...c }));
+    }
+    this.rewriteHeader();
+  }
+
+  getPendingChildren(): ReadonlyArray<
+    import("../session.js").PendingChildSnapshot
+  > {
+    return this.metadata.pendingChildren ?? [];
+  }
+
+  recordEvent(event: SessionEventRecord): void {
+    this._events.push(event);
+    this.writer.append(JSON.stringify(event));
+  }
+
+  events(): ReadonlyArray<SessionEventRecord> {
+    return this._events;
   }
 
   /**

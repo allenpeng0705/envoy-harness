@@ -163,4 +163,52 @@ describe("createLocalJobRegistry", () => {
     expect(seen).toEqual([id]);
     await reg.dispose();
   });
+
+  it("settlement suppress uses begin/end refcount", () => {
+    const reg = createLocalJobRegistry();
+    const c = controllableJob();
+    const id = reg.start({
+      kind: "bash",
+      label: "x",
+      owner: "s1",
+      run: () => c.hooks,
+    });
+
+    expect(reg.consumeSettlementNoticeSuppress(id)).toBe(false);
+    expect(reg.consumeSettlementNoticeSuppress("missing")).toBe(false);
+
+    reg.beginSettlementSuppress(id);
+    reg.beginSettlementSuppress(id);
+    expect(reg.consumeSettlementNoticeSuppress(id)).toBe(true);
+    // Waiters still hold refs — suppress remains until end*.
+    expect(reg.consumeSettlementNoticeSuppress(id)).toBe(true);
+
+    reg.endSettlementSuppress(id);
+    expect(reg.consumeSettlementNoticeSuppress(id)).toBe(true);
+    reg.endSettlementSuppress(id);
+    expect(reg.consumeSettlementNoticeSuppress(id)).toBe(false);
+  });
+
+  it("kill mark suppresses exactly once then clears", () => {
+    const reg = createLocalJobRegistry();
+    const c = controllableJob();
+    const id = reg.start({
+      kind: "bash",
+      label: "x",
+      owner: "s1",
+      run: () => c.hooks,
+    });
+    reg.markSettlementKilledByModel(id);
+    expect(reg.consumeSettlementNoticeSuppress(id)).toBe(true);
+    expect(reg.consumeSettlementNoticeSuppress(id)).toBe(false);
+
+    const other = controllableJob();
+    const id2 = reg.start({
+      kind: "bash",
+      label: "y",
+      owner: "s1",
+      run: () => other.hooks,
+    });
+    expect(reg.consumeSettlementNoticeSuppress(id2)).toBe(false);
+  });
 });

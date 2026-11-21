@@ -31,7 +31,9 @@ import { CliError } from "./run/errors.js";
 import { EXIT_USAGE } from "./run/types.js";
 import { formatHelpText, makeEmptyRunResult } from "./run/helpers.js";
 import { runAcpDispatch } from "./run/acp.js";
+import { runConfigDumpDispatch } from "./run/config-dump.js";
 import { runDoctorDispatch } from "./run/doctor.js";
+import { writeStartupFailureLog } from "./run/startup-report.js";
 import { runMcpServerDispatch } from "./run/mcp.js";
 import { runTuiDispatch } from "./run/tui.js";
 import { runWebDispatch } from "./run/web.js";
@@ -111,6 +113,9 @@ export async function run(
   if (parsed.subcommand === "doctor") {
     return runDoctorDispatch(parsed, options, stdout);
   }
+  if (parsed.subcommand === "config") {
+    return runConfigDumpDispatch(parsed, options, stdout);
+  }
   if (parsed.subcommand === "mcp") {
     return runMcpServerDispatch(parsed, stdout);
   }
@@ -120,21 +125,33 @@ export async function run(
   if (parsed.subcommand === "web") {
     return runWebDispatch(parsed, argv);
   }
-  // 3a. Phase E / G: --acp serves ACP JSON-RPC on stdio.
-  if (parsed.subcommand === "run" && parsed.acp) {
-    return runAcpDispatch(parsed, options, stdout, stderr);
-  }
-  // 3b. F17.1: --repl activates the interactive REPL. The
-  //     REPL takes no positional prompt; a positional + --repl
-  //     is a usage error.
-  if (parsed.repl) {
-    if (parsed.positional.length > 0) {
-      throw new CliError(
-        "--repl takes no positional prompt; type into the REPL instead",
-        EXIT_USAGE,
-      );
+  try {
+    // 3a. Phase E / G: --acp serves ACP JSON-RPC on stdio.
+    if (parsed.subcommand === "run" && parsed.acp) {
+      return await runAcpDispatch(parsed, options, stdout, stderr);
     }
-    return runReplDispatch(parsed, options, stdout, stderr);
+    // 3b. F17.1: --repl activates the interactive REPL. The
+    //     REPL takes no positional prompt; a positional + --repl
+    //     is a usage error.
+    if (parsed.repl) {
+      if (parsed.positional.length > 0) {
+        throw new CliError(
+          "--repl takes no positional prompt; type into the REPL instead",
+          EXIT_USAGE,
+        );
+      }
+      return await runReplDispatch(parsed, options, stdout, stderr);
+    }
+    return await runAgent(parsed, options, stdout, stderr);
+  } catch (err) {
+    if (!(err instanceof CliError) || err.exitCode !== EXIT_USAGE) {
+      try {
+        const logPath = writeStartupFailureLog(err, parsed.sessionDir);
+        stderr.write(`startup failure logged: ${logPath}\n`);
+      } catch {
+        // ignore log write failures
+      }
+    }
+    throw err;
   }
-  return runAgent(parsed, options, stdout, stderr);
 }

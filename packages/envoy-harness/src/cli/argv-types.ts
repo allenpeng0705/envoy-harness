@@ -56,6 +56,19 @@ export interface RunParsedArgs {
    * (R8.1 — sub-agents are on by default for standalone CLI).
    */
   noSubagents: boolean;
+  /**
+   * Wave 1–4 power features (CLI). `--power` enables all of them.
+   * `schedule` / `goals` / `present` may be `false` via `--no-*`
+   * (REPL/ACP default those three on).
+   */
+  runCode: boolean;
+  codeMode: boolean;
+  toolSearch: boolean;
+  /** `true` = --schedule; `false` = --no-schedule; `undefined` = default. */
+  schedule: boolean | undefined;
+  goals: boolean | undefined;
+  present: boolean | undefined;
+  power: boolean;
   /** `--resume <session-id>`: resume a saved session. */
   resume: string | undefined;
   /**
@@ -102,6 +115,17 @@ export interface RunParsedArgs {
    * other is a usage error).
    */
   importFrom?: string | undefined;
+  /**
+   * Wave 1 ops: `--config-patch <toml-or-json>` merged as highest
+   * file-stack override before CLI field winners.
+   */
+  configPatch?: string | undefined;
+  /**
+   * Wave 1 ops: `--profile <name>` selects a named profile from
+   * the top-level `[profiles]` table. Applies sandbox/approval
+   * into the config layer; provider/model are not auto-swapped.
+   */
+  profile?: string | undefined;
   /**
    * Phase B / Item 3.1: `--plugin <module>` (repeatable):
    * a plugin module path to load. The path MUST be in
@@ -244,6 +268,19 @@ export interface DoctorParsedArgs {
   sessionDir?: string | undefined;
 }
 
+/** Args for `envoy-harness config dump`. */
+export interface ConfigDumpParsedArgs {
+  subcommand: "config";
+  action: "dump";
+  help: boolean;
+  version: boolean;
+  json: boolean;
+  /** Annotate that CLI flags win at run time (file stack dump). */
+  effective: boolean;
+  config?: string | undefined;
+  cwd?: string | undefined;
+}
+
 /** Args for the `mcp` subcommand (stdio MCP server). */
 export interface McpParsedArgs {
   subcommand: "mcp";
@@ -272,6 +309,7 @@ export type ParsedArgs =
   | SelfEvolveParsedArgs
   | TeamParsedArgs
   | DoctorParsedArgs
+  | ConfigDumpParsedArgs
   | McpParsedArgs
   | TuiParsedArgs
   | WebParsedArgs;

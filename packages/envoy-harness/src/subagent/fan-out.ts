@@ -250,11 +250,13 @@ export function aggregateFanOutResults(
     0,
   );
 
-  // Verdict: worst-case.
+  // Verdict: worst-case. Missing verdict treated as pass (partial mocks / early settle).
   const worstVerdict = results.reduce<Verdict>(
     (acc, r) => {
-      if (r.verdict.kind === "fail") return r.verdict;
-      if (r.verdict.kind === "partial" && acc.kind !== "fail") return r.verdict;
+      const v = r.verdict;
+      if (v === undefined) return acc;
+      if (v.kind === "fail") return v;
+      if (v.kind === "partial" && acc.kind !== "fail") return v;
       return acc;
     },
     { kind: "pass", score: 0.5, confidence: "medium" },

@@ -63,6 +63,13 @@ export {
 export { hasUnbalancedQuotes, containsBackticks } from "./permissions/bash/semantics.js";
 
 export {
+  validatePowerShell,
+  tokenizePowerShellCommand,
+  POWERSHELL_VALIDATORS,
+} from "./permissions/powershell/index.js";
+export { validateShellCommand } from "./permissions/shell.js";
+
+export {
   AUTO_RUN_SAFE_TOOLS,
   AUTO_RUN_WORKSPACE_MUTATION_TOOLS,
   isAutoRunSafeBashCommand,
@@ -145,6 +152,9 @@ export {
   type SessionDiagnosticKind,
   type SessionMetadata,
   type SessionProvenance,
+  type PendingInboxSnapshot,
+  type PendingInboxStoredEntry,
+  type PendingChildSnapshot,
 } from "./session.js";
 
 // F14.1: re-export the persistence layer (PersistedSession
@@ -164,6 +174,10 @@ export {
   migrateSessionFile,
   SessionFileBusyError,
   PERSISTED_SESSION_FORMAT_VERSION,
+  buildSessionEvent,
+  isSessionEventRecord,
+  type SessionEventKind,
+  type SessionEventRecord,
   DurableLineWriter,
   EMPTY_REPAIR_REPORT,
   SessionInitGuard,
@@ -224,6 +238,15 @@ export {
   type ToolResultSink,
 } from "./agent/tool-executor.js";
 export {
+  AgentInbox,
+  inboxContentToBlocks,
+  makeWaitInboxActivityTool,
+  type InboxActivityEvent,
+  type InboxContent,
+  type InboxEntry,
+  type InboxTarget,
+} from "./agent/inbox.js";
+export {
   DEFAULT_TOOL_TIMEOUT_MS,
   TOOL_TIMEOUT_GRACE_MS,
   ToolTimeoutError,
@@ -239,8 +262,19 @@ export {
   makeBashTool,
   readFileTool,
   writeTool,
+  editTool,
+  applyPatchTool,
+  makeGlobTool,
+  makeGrepTool,
+  makeSpillReadTool,
   type MakeBashToolOptions,
+  type MakeGlobGrepToolsOptions,
 } from "./tools/builtin/index.js";
+export {
+  createSpillStore,
+  type SpillStore,
+  type CreateSpillStoreOptions,
+} from "./spill/store.js";
 
 // Re-export cost tracking (§14 of the design doc, F7.1)
 export {
@@ -422,13 +456,79 @@ export {
   TomlParseError,
   parseTeamToml,
   Team,
+  makeTeamTools,
   type AgentRunResult,
   type AgentSpec,
+  type MakeTeamToolsOptions,
   type ScheduleSpec,
   type TeamConfig,
   type TeamOptions,
   type TeamResult,
 } from "./team/index.js";
+
+export {
+  NullGuardian,
+  createHeuristicGuardian,
+  createModelGuardian,
+  type GuardianDecision,
+  type GuardianReviewResult,
+  type GuardianReviewer,
+  type GuardianToolCall,
+  type ModelGuardianOptions,
+} from "./guardian/index.js";
+
+export { makeRunCodeTool, type MakeRunCodeToolOptions } from "./tools/run-code.js";
+export {
+  makeCodeModeTools,
+  createInMemoryCodeModeGrantStore,
+  type CodeModeGrantStore,
+  type MakeCodeModeToolsOptions,
+} from "./tools/code-mode/index.js";
+export {
+  createDeferredGrantStore,
+  getToolExposure,
+  listModelFacingTools,
+  withExposure,
+  type DeferredGrantStore,
+  type ToolExposure,
+  type ToolWithExposure,
+} from "./tools/deferred.js";
+export {
+  makeToolSearchTool,
+  type MakeToolSearchToolOptions,
+} from "./tools/tool-search.js";
+export { AgentMailbox, type MailboxMessage } from "./agent/mailbox.js";
+export {
+  createScheduleStore,
+  type ScheduleStore,
+  type ScheduleTask,
+  type ScheduleRecurrence,
+} from "./schedule/store.js";
+export { makeScheduleTools } from "./schedule/tools.js";
+export {
+  createGoalStore,
+  type Goal,
+  type GoalStatus,
+  type GoalStore,
+} from "./goal/store.js";
+export { makeGoalTools } from "./goal/tools.js";
+export {
+  makePresentTool,
+  type PresentedDeliverable,
+} from "./deliverables/present.js";
+export {
+  makeMcpResourceTools,
+  isMcpResourceClient,
+  type McpResource,
+  type McpPrompt,
+  type McpResourceClient,
+  type McpElicitationHandler,
+} from "./mcp/resources.js";
+export {
+  withHandshakeBackoff,
+  type HandshakeBackoffOptions,
+} from "./util/handshake-backoff.js";
+export { createLoopbackRemoteJobTransport } from "./jobs/loopback-remote.js";
 
 // Re-export the sub-agent types + default implementations (F10.1, §10.3)
 export {
@@ -439,6 +539,8 @@ export {
   TaskInputSchema,
   defaultBuildSubagentFactory,
   makeTaskTool,
+  makeWorkflowTool,
+  makeCollaborationAliasTools,
   makeSubagentControlTools,
   makeWaitAgentsTool,
   mapBoundedParallel,
@@ -460,6 +562,8 @@ export {
   type FanOutSpec,
   type LocalMeshSubmitterOptions,
   type MakeTaskToolOptions,
+  type MakeWorkflowToolOptions,
+  type MakeCollaborationAliasToolsOptions,
   type MeshSubmitter,
   type RoutingHint,
   type ContinuableSubagentHandle,

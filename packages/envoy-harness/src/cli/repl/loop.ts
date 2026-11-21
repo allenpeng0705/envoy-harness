@@ -135,10 +135,36 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
   try {
     const tools = new ToolRegistry();
     for (const t of BUILTIN_TOOLS) tools.register(t);
-    const { layer: configLayer } = await loadConfigStack({
+    const patchOverrides: import("../../config/schema.js").ConfigLayer = {};
+    if (opts.args.configPatch !== undefined) {
+      const { parseConfigPatchFragment } = await import(
+        "../run/config-patch.js"
+      );
+      Object.assign(
+        patchOverrides,
+        parseConfigPatchFragment(opts.args.configPatch),
+      );
+    }
+    let { layer: configLayer } = await loadConfigStack({
       cwd,
       ...(opts.args.config !== undefined ? { filePath: opts.args.config } : {}),
+      ...(Object.keys(patchOverrides).length > 0
+        ? { overrides: patchOverrides }
+        : {}),
     });
+    const { createConfigProfileLoader, profileAsOverrides } = await import(
+      "../run/profile-loader.js"
+    );
+    const defaultProfileLoader = createConfigProfileLoader(configLayer);
+    if (opts.args.profile !== undefined) {
+      const profile = defaultProfileLoader.get(opts.args.profile);
+      if (profile === null) {
+        throw new Error(`unknown --profile: ${opts.args.profile}`);
+      }
+      configLayer = { ...configLayer, ...profileAsOverrides(profile) };
+    }
+    // Local binding — do not mutate caller-owned ReplOptions.
+    const profileLoader = opts.profileLoader ?? defaultProfileLoader;
     const mcpWire = await wireMcpClientsFromConfig(
       configLayer.mcpServers,
       tools,
@@ -263,15 +289,24 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
       });
     agentOptions.memoryStore = memoryStore;
 
+    // Late-bound so child spawn inherits the live parent's permission/sandbox.
+    const parentRef: { agent?: Agent } = {};
     // R8.1 — default LocalMeshSubmitter so standalone REPL gets `task`.
     if (!opts.args.noSubagents) {
       const { buildCliLocalMeshSubmitter } = await import(
         "../run/build-local-mesh-submitter.js"
       );
+      const { policyFromMode } = await import("../../permissions/policy.js");
+      const fallbackMode =
+        session.metadata.permissionMode ?? "workspace-write";
       agentOptions.meshSubmitter = buildCliLocalMeshSubmitter({
         model: opts.model,
         cwd,
-        permissionMode: session.metadata.permissionMode ?? "workspace-write",
+        permissionMode: fallbackMode,
+        getPermissionMode: () =>
+          parentRef.agent?.getPermissionMode() ?? fallbackMode,
+        getSandboxPolicy: () =>
+          parentRef.agent?.sandboxPolicy ?? policyFromMode(fallbackMode, cwd),
         ...(agentOptions.tracer !== undefined
           ? { parentTracer: agentOptions.tracer }
           : {}),
@@ -298,7 +333,21 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
       }
     }
 
+    {
+      const { applyPowerFeatureFlags } = await import("../run/power-flags.js");
+      applyPowerFeatureFlags(agentOptions, opts.args, {
+        scheduleGoalsPresent: true,
+      });
+      const { resolveSandboxExecutorFromArgs } = await import(
+        "../run/sandbox-executor-flag.js"
+      );
+      const sandboxExecutor = resolveSandboxExecutorFromArgs(opts.args, cwd);
+      if (sandboxExecutor !== undefined) {
+        agentOptions.sandboxExecutor = sandboxExecutor;
+      }
+    }
     const agent = new Agent(agentOptions);
+    parentRef.agent = agent;
 
     // F17.6: extract the sub-agent registry from the
     // agent's mesh submitter (when one is configured).
@@ -407,7 +456,7 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
             registry,
             ...(opts.scoreboard ? { scoreboard: opts.scoreboard } : {}),
             ...(opts.verifierRules ? { verifierRules: opts.verifierRules } : {}),
-            ...(opts.profileLoader ? { profileLoader: opts.profileLoader } : {}),
+            ...(profileLoader ? { profileLoader } : {}),
             ...(subagentRegistry ? { subagentRegistry } : {}),
             ...(lastResponse !== undefined ? { lastResponse } : {}),
             ...(opts.reviewDiff ? { reviewDiff: opts.reviewDiff } : {}),
@@ -440,6 +489,8 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
         //     The session is shared, so each turn appends to
         //     the same transcript.
         try {
+          // Wave 3 — claim due schedules into the inbox before the turn.
+          agent.tickSchedules();
           const result = await agent.run(line);
           const text = result.content
             .filter((b): b is Extract<typeof b, { type: "text" }> => b.type === "text")

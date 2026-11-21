@@ -1,11 +1,12 @@
 /**
- * Group consecutive status/tool rows for foldable activity blocks.
+ * Group transcript rows: messages, tool cards, foldable activity.
  */
 
 import type { ChatMessage } from "./acp/host.js";
 
 export type TranscriptItem =
   | { kind: "message"; message: ChatMessage }
+  | { kind: "tool"; message: ChatMessage }
   | {
       kind: "activity";
       id: string;
@@ -17,10 +18,16 @@ export function groupTranscript(messages: ChatMessage[]): TranscriptItem[] {
   let i = 0;
   while (i < messages.length) {
     const m = messages[i]!;
+    if (m.tool !== undefined) {
+      items.push({ kind: "tool", message: m });
+      i += 1;
+      continue;
+    }
     if (m.role === "status" || m.role === "tool") {
       const group: ChatMessage[] = [];
       while (
         i < messages.length &&
+        messages[i]!.tool === undefined &&
         (messages[i]!.role === "status" || messages[i]!.role === "tool")
       ) {
         group.push(messages[i]!);
@@ -39,7 +46,7 @@ export function groupTranscript(messages: ChatMessage[]): TranscriptItem[] {
   return items;
 }
 
-/** Highlight common permission args without dumping full JSON first. */
+/** Highlight common permission/tool args without dumping full JSON first. */
 export function permissionPreview(args: unknown): {
   summary: string[];
   raw: string;
@@ -57,6 +64,8 @@ export function permissionPreview(args: unknown): {
       "cwd",
       "url",
       "query",
+      "pattern",
+      "glob",
     ]) {
       const v = o[key];
       if (typeof v === "string" && v.trim()) {

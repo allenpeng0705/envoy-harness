@@ -70,6 +70,12 @@ export interface ToolResultMeta {
   escalation?: import("../sandbox/escalation.js").SandboxEscalationOutcome;
   /** The policy an approved escalation retried with. */
   escalatedPolicy?: import("../types.js").SandboxPolicy;
+  /** PTC / run_code nested-dispatch forensics. */
+  ptc?: {
+    runId: string;
+    invokeCount: number;
+    maxInvokes: number;
+  };
 }
 
 /**
@@ -216,6 +222,16 @@ export interface Tool<TParams extends z.ZodTypeAny = z.ZodTypeAny> {
    * time. Omitted means "use the executor default".
    */
   timeoutMs?: number;
+  /**
+   * When this returns true, the executor may run this call in parallel
+   * with other concurrency-safe calls in the same assistant message
+   * (DeepSeek `isConcurrencySafe` / Codex parallel tool gate).
+   *
+   * **Fail-closed:** omitted or false → exclusive barrier (serial with
+   * respect to other tools). Only mark tools that are read-only /
+   * isolation-safe for the given args.
+   */
+  isConcurrencySafe?: (args: unknown) => boolean;
 }
 
 // ---------------------------------------------------------------------------

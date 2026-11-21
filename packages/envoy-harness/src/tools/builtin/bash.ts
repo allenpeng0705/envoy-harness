@@ -4,11 +4,11 @@
  * **Design doc:** `docs/design.md` §6 (permissions) + §10 (tools).
  *
  * **Permission validation:** every command is run through
- * `validateBash` (§6.2 — the 6-validator composition) using the
- * session's `permissionMode`. A blocked command never reaches
- * the shell; the tool returns `isError: true` with the validator
- * reason. A warned command runs; the model sees the warning in
- * the result so it can adjust.
+ * `validateShellCommand` (bash validators on POSIX; PowerShell
+ * validators on win32 pwsh/powershell) using the session's
+ * `permissionMode`. A blocked command never reaches the shell;
+ * the tool returns `isError: true` with the validator reason. A
+ * warned command runs; the model sees the warning in the result.
  *
  * **Why we re-validate here (not just at the agent boundary):**
  * the bash tool is the chokepoint for "execute a command". Even
@@ -36,6 +36,7 @@ import { spawn } from "node:child_process";
 import { z } from "zod";
 
 import { captureChildIdentity, reapChild } from "../../process/reaper.js";
+import { resolveShellInvocation } from "../shell-invocation.js";
 import {
   classifySandboxFailure,
   formatSandboxFailure,
@@ -49,10 +50,9 @@ import {
   type JobRegistry,
 } from "../../jobs/index.js";
 import type { SandboxResult } from "../../sandbox/types.js";
-import { validateBash } from "../../permissions/bash/index.js";
-import { tokenizeShellCommand } from "../../permissions/bash/tokenize.js";
+import { validateShellCommand } from "../../permissions/shell.js";
 import { policyFromMode } from "../../permissions/policy.js";
-import type { BashValidationInput, SandboxPolicy } from "../../types.js";
+import type { SandboxPolicy } from "../../types.js";
 import type {
   Tool,
   ToolContext,
@@ -139,14 +139,13 @@ async function executeBash(
   const mode = ctx.session.metadata.permissionMode ?? "read-only";
   const policy: SandboxPolicy = ctx.sandboxPolicy ?? policyFromMode(mode, ctx.cwd);
 
-  const input: BashValidationInput = {
+  const inv = resolveShellInvocation(process.platform, command);
+  const verdict = await validateShellCommand(inv.kind, {
     command,
-    argv: tokenizeShellCommand(command),
     env: ctx.shellEnv ?? envRecord(),
     cwd: ctx.cwd,
     policy,
-  };
-  const verdict = await validateBash(input);
+  });
   if (verdict.kind === "block") {
     return {
       content: `bash blocked: ${verdict.reason}`,
@@ -287,11 +286,13 @@ async function runBash(
     // kill ladder can address `-pid` without touching the harness's own
     // group. See `reaper.ts` for why the group matters.
     const detached = process.platform !== "win32";
-    const child = spawn("sh", ["-c", command], {
+    const inv = resolveShellInvocation(process.platform, command);
+    const child = spawn(inv.file, inv.args, {
       cwd: ctx.cwd,
       env: ctx.shellEnv ?? process.env,
       detached,
       stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: process.platform === "win32",
     });
     const identity = captureChildIdentity(child);
     let stdout = "";

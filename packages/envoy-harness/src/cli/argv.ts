@@ -7,6 +7,7 @@ import { stripRunnerSeparators } from "./argv-normalize.js";
 import { parseRunArgs } from "./argv-parse-run.js";
 import { parseSelfEvolveArgs } from "./argv-parse-self-evolve.js";
 import {
+  parseConfigArgs,
   parseDoctorArgs,
   parseMcpArgs,
   parseTeamArgs,
@@ -16,6 +17,7 @@ import {
 
 export {
   ArgvError,
+  type ConfigDumpParsedArgs,
   type DoctorParsedArgs,
   type McpParsedArgs,
   type ParsedArgs,
@@ -43,6 +45,9 @@ export function parseArgs(argv: ReadonlyArray<string>): ParsedArgs {
   }
   if (firstPositional === "doctor") {
     return parseDoctorArgs(normalized);
+  }
+  if (firstPositional === "config") {
+    return parseConfigArgs(normalized);
   }
   if (firstPositional === "mcp") {
     return parseMcpArgs(normalized);

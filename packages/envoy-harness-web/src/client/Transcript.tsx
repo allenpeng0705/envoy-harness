@@ -7,6 +7,7 @@ import {
 } from "react";
 import type { ChatMessage } from "./acp/host.js";
 import { MarkdownBody } from "./MarkdownBody.js";
+import { ToolCard } from "./ToolCard.js";
 import { groupTranscript } from "./transcript-utils.js";
 
 export interface TranscriptProps {
@@ -87,6 +88,9 @@ export function Transcript(props: TranscriptProps): JSX.Element {
                 defaultOpen={item.messages.length <= 2}
               />
             );
+          }
+          if (item.kind === "tool") {
+            return <ToolCard key={item.message.id} message={item.message} />;
           }
           const m = item.message;
           return (

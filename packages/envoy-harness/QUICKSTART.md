@@ -7,6 +7,10 @@ document:
 2. **Embed it** — drop the agent loop into your own app.
 3. **Bridge to EnvoyMesh** — flip the local sub-agent to remote via Package 3.
 
+**Build + run (CLI and WebUI in detail):**
+[`docs/build-and-run.md`](./docs/build-and-run.md) — prerequisites, workspace
+build order, every CLI mode, WebUI architecture, troubleshooting.
+
 > The four design targets — EnvoyMesh-native, Independently runnable,
 > Easy to integrate elsewhere, Self-contained testable — show up in all
 > three layers. v0 is the first three, and `easy to integrate elsewhere`
@@ -18,10 +22,19 @@ document:
 
 ### Install
 
+**Published binary name:** `envoy-harness` (examples below use that).
+In the monorepo, `pnpm envoy -- …` is the same entry from source.
+
 ```sh
+# From npm (global)
 npm install -g @envoymesh/envoy-harness
 # or
 pnpm add -g @envoymesh/envoy-harness
+
+# From this monorepo (recommended while developing)
+pnpm install
+pnpm run build          # required on a fresh clone
+pnpm envoy -- --help
 ```
 
 Set one API key (any of `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` /
@@ -34,18 +47,23 @@ export ANTHROPIC_API_KEY=sk-...
 
 ### CLI Quick Reference
 
-The CLI has 3 subcommands + the default one-shot. The full flag
-set + the 26 built-in REPL commands are below; this table is the
+Default mode is one-shot; flags like `--repl` / `--acp` select other
+hosts. Subcommands (`web`, `tui`, `team`, …) are positional. The full
+flag set + the 26 built-in REPL commands are below; this table is the
 scannable overview.
 
-**Subcommands:**
+**Modes / subcommands:**
 
-| Subcommand | Purpose |
+| Command | Purpose |
 |---|---|
-| `envoy [flags] "<prompt>"` | One-shot: read prompt, run, print result. Default mode. |
-| `envoy --repl` | Long-lived interactive loop. 26 slash commands. |
-| `envoy team <team.toml>` | Sequential multi-agent run from a TOML config. |
-| `envoy self-evolve` | Shadow self-evolution cycle (verifier rules). Off by default. |
+| `envoy-harness [flags] "<prompt>"` | One-shot: read prompt, run, print result. Default mode. |
+| `envoy-harness --repl` | Long-lived interactive loop. 26 slash commands. |
+| `envoy-harness --acp` | ACP JSON-RPC on stdio (WebUI / TUI spawn this). |
+| `envoy-harness web` | Browser WebUI (`@envoymesh/envoy-harness-web`). |
+| `envoy-harness tui` | Terminal UI host. |
+| `envoy-harness team <team.toml>` | Sequential multi-agent run from a TOML config. |
+| `envoy-harness self-evolve` | Shadow self-evolution cycle (verifier rules). Off by default. |
+| `envoy-harness doctor` | Health checks. |
 
 **Common flags** (for `run` + `--repl`):
 
@@ -69,17 +87,34 @@ scannable overview.
 | `--plan` | off | Plan-only mode (no tool execution) |
 | `--no-color` / `--verbose` / `--quiet` | off | Output knobs |
 
-> **Round 8 (done):** standalone CLI wires local sub-agents by default;
-> browser UI via `@envoymesh/envoy-harness-web` (primary entry — connection
-> recovery, mesh rail, EHUI dock):
->
-> ```sh
-> pnpm --filter @envoymesh/envoy-harness-web start
-> # or: envoy-harness web --provider openai --model gpt-4o
-> # mesh: envoy-harness web --peers alice@127.0.0.1:7400 --persist
-> ```
->
-> See [`docs/implementation-plan-round-8.md`](docs/implementation-plan-round-8.md).
+### Browser WebUI
+
+Primary GUI. Spawns a local `envoy-harness --acp` child and serves the
+React app (default **http://127.0.0.1:5177/**).
+
+```sh
+# Monorepo
+pnpm run build    # once on a fresh clone
+pnpm --filter @envoymesh/envoy-harness-web start -- \
+  --provider openai --model gpt-4o --persist
+
+# Same via CLI (monorepo or installed package)
+pnpm envoy -- web --provider openai --model gpt-4o --persist
+envoy-harness web --provider openai --model gpt-4o --persist
+
+# Force Vite middleware / skip auto-open
+envoy-harness web --dev --no-open --port 5177
+
+# With standalone TCP peers
+envoy-harness web --peers alice@127.0.0.1:7400 --persist \
+  --provider openai --model gpt-4o
+```
+
+Typical flags: `--port` · `--host` · `--cwd` · `--provider` · `--model` ·
+`--base-url` · `--persist` · `--no-subagents` · `--peers` · `--dev` ·
+`--no-open`. Details:
+[`../envoy-harness-web/README.md`](../envoy-harness-web/README.md) ·
+repo root [WebUI section](../../README.md#how-to-use-the-webui).
 
 **Environment variables:**
 
@@ -95,22 +130,25 @@ scannable overview.
 
 ```sh
 # Read a prompt, run the agent loop, print the result.
-envoy "explain the auth module"
+envoy-harness "explain the auth module"
 
 # Plan-only (no tool execution).
-envoy --plan "add a /healthz endpoint to the API"
+envoy-harness --plan "add a /healthz endpoint to the API"
 
 # Permission modes: read-only | workspace-write | danger-full-access
-envoy --sandbox=workspace-write "refactor the auth module"
+envoy-harness --sandbox=workspace-write "refactor the auth module"
 
 # Cost ceiling — the agent aborts when reached.
-envoy --max-cost-usd=2.50 "write tests for src/auth.ts"
+envoy-harness --max-cost-usd=2.50 "write tests for src/auth.ts"
 
 # Pipe a prompt from stdin.
-echo "summarize the diff" | envoy -
+echo "summarize the diff" | envoy-harness -
 
 # JSON Lines output (machine-readable; for trace viewers / `jq`).
-envoy --json "explain this" | tee /tmp/envoy-trace.jsonl
+envoy-harness --json "explain this" | tee /tmp/envoy-trace.jsonl
+
+# Monorepo shorthand (same binary via tsx):
+# pnpm envoy -- "explain the auth module"
 ```
 
 ### Permission modes
@@ -180,7 +218,7 @@ writable_roots = ["/Users/me/projects"]
 ```
 
 Precedence: **CLI > config > default**. So
-`envoy --sandbox=danger-full-access` wins over the config file's
+`envoy-harness --sandbox=danger-full-access` wins over the config file's
 `permission_mode`. (Design §20.1.)
 
 ### Interactive REPL
@@ -204,7 +242,8 @@ The `/mcp` command reads the real `McpClientRegistry` (T3.3);
 mutate the session.
 
 ```sh
-envoy --repl
+envoy-harness --repl
+# monorepo: pnpm envoy -- --repl
 ```
 
 On a TTY, the REPL **auto-persists** the session (prints
@@ -230,7 +269,7 @@ envoy> /quit
 Resume a persisted session in the REPL:
 
 ```sh
-envoy --repl --session-dir ~/.local/state/envoy-harness/sessions --resume <id>
+envoy-harness --repl --session-dir ~/.local/state/envoy-harness/sessions --resume <id>
 ```
 
 The session's history (transcript, cwd, permission mode) is restored;
@@ -240,14 +279,14 @@ the loop is the same, the slash commands are the same.
 
 ```sh
 # 1. One-shot, save to disk.
-envoy --persist "fix the bug in src/auth.ts"
+envoy-harness --persist "fix the bug in src/auth.ts"
 # stderr: persisted session: 7c2b3e4d-...
 
 # 2. Resume in REPL.
-envoy --repl --session-dir ~/.local/state/envoy-harness/sessions --resume 7c2b3e4d-...
+envoy-harness --repl --session-dir ~/.local/state/envoy-harness/sessions --resume 7c2b3e4d-...
 
 # 3. Fork a saved session (copy + new id, original transcript).
-envoy --fork 7c2b3e4d-... "try a different approach"
+envoy-harness --fork 7c2b3e4d-... "try a different approach"
 ```
 
 The JSONL format is append-friendly and human-readable:
@@ -267,7 +306,7 @@ Override the storage location per-invocation (`--session-dir`) or per-environmen
 Beyond the default one-shot and `--repl`, two subcommands ship
 in v0:
 
-**`envoy team <team.toml>`** — multi-agent run from a TOML config.
+**`envoy-harness team <team.toml>`** — multi-agent run from a TOML config.
 Agents run sequentially; `${input}` is substituted into each
 agent's `objective`; `depends_on` wires the dependency graph.
 Output: each agent's transcript + result.
@@ -291,11 +330,11 @@ depends_on = ["writer"]
 ```
 
 ```sh
-envoy team ./team.toml
-envoy team ./team.toml --input "release v0.2.0" --json
+envoy-harness team ./team.toml
+envoy-harness team ./team.toml --input "release v0.2.0" --json
 ```
 
-**`envoy self-evolve`** — the shadow self-evolution cycle
+**`envoy-harness self-evolve`** — the shadow self-evolution cycle
 (design §13.1). Reads the committed `verifier-rules.json`,
 runs N cycles, and either prints what would change (default
 shadow) or writes a new ruleset (`--commit`).
@@ -303,13 +342,13 @@ shadow) or writes a new ruleset (`--commit`).
 ```sh
 # Shadow run (default; doesn't write). Reads verifier-rules.json,
 # runs N cycles, prints what would change. No file writes.
-envoy self-evolve
+envoy-harness self-evolve
 
 # Commit run: actually write the candidate ruleset on kept.
-envoy self-evolve --commit
+envoy-harness self-evolve --commit
 
 # Opt in to federated pull (off by default per design §13.3).
-envoy self-evolve --pull --peer-id <your-peer-id>
+envoy-harness self-evolve --pull --peer-id <your-peer-id>
 ```
 
 The cycle is: read recent scoreboard failures → propose a rule
@@ -325,11 +364,11 @@ AGENTS.md, own hooks, own permission — even when local). In Package
 peer.
 
 ```sh
-# Spawn a sub-agent from the CLI.
-envoy task "translate the README to zh"
+# Prefer asking the model to use the `task` tool (on by default).
+envoy-harness --persist "research X with a sub-agent via task"
 
-# Spawn a sub-agent from the REPL.
-envoy> /task research "find the EnvoyMesh runbook"
+# From the REPL:
+envoy> research the EnvoyMesh runbook with a task sub-agent
 envoy> /agents                # list spawned sub-agents + their status
 ```
 
@@ -348,13 +387,13 @@ lives in Part 2.
 | **AGENTS.md discovery** | Always on (read-only, on every run) | `discoverAgentsMd(cwd, options?)` in `src/agents-md/` |
 | **Hooks** (12 events, Codex-compatible names) | Always on; the REPL `/hooks` command lists them | `HookRegistry` + `agent.hooks` |
 | **LSP tools** (`lsp_*`, 4 tools) | On when an `LspManager` is wired; REPL `/lsp` lists status | `LspManager` + `makeLspTools(...)` in `src/lsp/` |
-| **Verifier** (rule / llm / cross sources) | `envoy self-evolve` + REPL `/rules` | `DEFAULT_RULES` + `runVerifierRules(rules, ctx)` in `src/verifier/` |
-| **Scoreboard + federated adoptions** | `envoy self-evolve --pull` + REPL `/scoreboard` | `FederatedScoreboard` in `src/scoreboard/` |
-| **Self-evolve** | `envoy self-evolve [--commit] [--pull]` | `SelfEvolve.runOneCycle(...)` in `src/scoreboard/self-evolve.ts` |
-| **JSON Lines trace** | `envoy --json` | `JsonLinesTracer` in `src/trace/` |
+| **Verifier** (rule / llm / cross sources) | `envoy-harness self-evolve` + REPL `/rules` | `DEFAULT_RULES` + `runVerifierRules(rules, ctx)` in `src/verifier/` |
+| **Scoreboard + federated adoptions** | `envoy-harness self-evolve --pull` + REPL `/scoreboard` | `FederatedScoreboard` in `src/scoreboard/` |
+| **Self-evolve** | `envoy-harness self-evolve [--commit] [--pull]` | `SelfEvolve.runOneCycle(...)` in `src/scoreboard/self-evolve.ts` |
+| **JSON Lines trace** | `envoy-harness --json` | `JsonLinesTracer` in `src/trace/` |
 | **MCP (type seam)** | REPL `/mcp` (reads the real `McpClientRegistry`) | `McpClientRegistry` in `src/mcp/` (stdio transport pending) |
 | **TOML config** | `--config <path>` + `$ENVOY_HARNESS_CONFIG` | `loadConfig({filePath?})` in `src/config/` |
-| **Cost tracking** | Always on; `envoy --max-cost-usd` cap | `CostTracker` in `src/cost.ts` |
+| **Cost tracking** | Always on; `envoy-harness --max-cost-usd` cap | `CostTracker` in `src/cost.ts` |
 | **Cross-agent verification** | `agent.crossVerify?: CrossVerifyFn` | `defaultCrossVerify` in `src/verifier/cross.ts` |
 | **5 built-in tools** | `read_file`, `bash`, `write`, `edit`, `git` (read-only subset) | `BUILTIN_TOOLS` in `src/tools/builtin/` |
 
@@ -660,6 +699,7 @@ the wire format; EnvoyMesh never sees the local agent loop.
 
 ## Where to go next
 
+- [`docs/build-and-run.md`](./docs/build-and-run.md) — build the monorepo and run CLI / WebUI.
 - [`README.md`](./README.md) — full feature surface + flags + tables.
 - [`docs/design.en.md`](./docs/design.en.md) — the design doc (English, source of truth).
 - [`docs/boundary.en.md`](./docs/boundary.en.md) — the package boundary contract.

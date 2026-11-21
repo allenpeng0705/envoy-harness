@@ -14,11 +14,9 @@
  * capabilities (`newSession`, `compact`, `generateAgentsMd`).
  * The Tier 1 commands (F17.2.5) were pure data display.
  *
- * **Phase A / Item 1 (chunk 1.2):** added `--budget N` and
- * `--remote` flags. The `--remote` flag is parsed but the
- * v0 implementation is "log a warning + fall back to
- * budget" (the remote-history transport is a future chunk —
- * it needs a network or local-file target).
+ * **Phase A / Item 1 (chunk 1.2) + Gap 10:** `--budget N` and
+ * `--remote` (calls adapter `remoteCompact` when present;
+ * otherwise fails with an explicit error — no silent stub).
  */
 
 import * as fs from "node:fs/promises";
@@ -34,17 +32,6 @@ import type { ReplCommand } from "./types.js";
  * match the lower end. The `--keep N` flag overrides.
  */
 const DEFAULT_COMPACT_KEEP = 20;
-
-/**
- * Default token budget for the `--budget` strategy. The
- * value is deliberately small enough to be observable in
- * tests (a transcript that fits under 100 tokens is rare
- * in real sessions; the default is for "I have no idea
- * how much room I have, give me a reasonable default").
- * Hosts that know the model's context window should pass
- * `--budget <window - headroom>` explicitly.
- */
-const DEFAULT_COMPACT_BUDGET = 4000;
 
 // ---------------------------------------------------------------------------
 // 1. /new — start a fresh session
@@ -71,7 +58,7 @@ type CompactArgs = {
   summarize?: boolean;
   /** `--budget N`: token-budget strategy. */
   budget?: number;
-  /** `--remote`: remote-history strategy. v0: log + fall back to budget. */
+  /** `--remote`: provider `remoteCompact` when the adapter supports it. */
   remote?: boolean;
 };
 
@@ -171,7 +158,7 @@ const compactCommand: ReplCommand = {
   description:
     "compact the session. Default: drop-oldest (keep last 20). " +
     "Flags: --keep N (custom keep count), --summarize (LLM-summarize the dropped part), " +
-    "--budget N (token-budget strategy), --remote (remote-history stub).",
+    "--budget N (token-budget strategy), --remote (provider remoteCompact).",
   async handler(args, ctx) {
     const { result: parsed, error } = parseCompactArgs(args);
     if (error !== undefined) {
@@ -179,20 +166,25 @@ const compactCommand: ReplCommand = {
       return;
     }
 
-    // `--remote` is a v0 stub. The remote-history
-    // transport needs a target (mesh node or local file);
-    // a future chunk wires it. For now, log a warning +
-    // fall back to the budget strategy.
-    if (parsed.remote) {
-      ctx.stderr.write(
-        "warning: --remote is a stub in v0; falling back to --budget " +
-          `(${DEFAULT_COMPACT_BUDGET} tokens)\n`,
-      );
-      parsed.budget ??= DEFAULT_COMPACT_BUDGET;
-      parsed.remote = false;
-    }
-
     const before = ctx.agent.getMessageCount();
+
+    // Gap 10: real remoteCompact when the model adapter supports it.
+    if (parsed.remote) {
+      const keep = parsed.keep ?? DEFAULT_COMPACT_KEEP;
+      try {
+        await ctx.agent.compactRemote(keep);
+        await ctx.agent.flushSession();
+        const after = ctx.agent.getMessageCount();
+        ctx.stdout.write(
+          `compacted (remote): ${before} → ${after} messages (keep ${keep})\n`,
+        );
+      } catch (err) {
+        ctx.stderr.write(
+          `error: ${err instanceof Error ? err.message : String(err)}\n`,
+        );
+      }
+      return;
+    }
 
     // Dispatch by flag. The strategies are mutually
     // exclusive: --budget wins over --keep + --summarize

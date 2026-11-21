@@ -252,6 +252,14 @@ export const ConfigLayerSchema = z
      * `docs/laya-decision-addons.md`. Denied in untrusted project TOML.
      */
     decision: DecisionConfigSchema.optional(),
+    /**
+     * Named CLI/REPL profiles (`[profiles.name]`). Used by `--profile`
+     * and `/profile`. Values are free-form; known keys: provider, model,
+     * sandbox, approval.
+     */
+    profiles: z
+      .record(z.record(z.unknown()))
+      .optional(),
   })
   .strict();
 export type ConfigLayer = z.infer<typeof ConfigLayerSchema>;

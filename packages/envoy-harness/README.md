@@ -13,6 +13,7 @@ Production-grade agent harness with four design targets:
 - **Hermetic tests** — suite passes with no network and no live LLM key.
 
 **User guides:** monorepo [`README.md`](../../README.md) (CLI · WebUI · peers) ·
+[`docs/build-and-run.md`](./docs/build-and-run.md) (build + run detail) ·
 [`QUICKSTART.md`](./QUICKSTART.md) ·
 [`../envoy-harness-web/README.md`](../envoy-harness-web/README.md).
 
@@ -115,8 +116,13 @@ envoy-harness --fork <source-id> "try a different approach"
 envoy-harness --repl --peers alice@192.168.1.20:8123
 ```
 
-Monorepo: `pnpm envoy -- …` and
-`pnpm --filter @envoymesh/envoy-harness-web start`.
+Monorepo (fresh clone: `pnpm install && pnpm run build` first):
+
+```sh
+pnpm envoy -- --repl --provider openai --model gpt-4o
+pnpm envoy -- web --provider openai --model gpt-4o --persist
+# or: pnpm --filter @envoymesh/envoy-harness-web start -- …
+```
 
 Detailed guide: repo root [`README.md`](../../README.md) and
 [`QUICKSTART.md`](./QUICKSTART.md).

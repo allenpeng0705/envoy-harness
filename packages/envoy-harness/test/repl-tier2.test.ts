@@ -28,6 +28,7 @@ import {
   BUILTIN_COMMANDS,
   BUILTIN_INFO_COMMANDS,
   BUILTIN_TIER2_COMMANDS,
+  PersistedSession,
   createSkillRegistry,
   runRepl,
   type LineReader,
@@ -443,7 +444,7 @@ describe("/compact flags (Phase A item 1)", () => {
     expect(out.data).toContain("over budget");
   });
 
-  it("/compact --remote is a stub that falls back to --budget (with warning)", async () => {
+  it("/compact --remote errors clearly when adapter lacks remoteCompact", async () => {
     const responses = Array.from({ length: 6 }, () => ({
       content: [textBlock("r")],
     }));
@@ -458,8 +459,78 @@ describe("/compact flags (Phase A item 1)", () => {
       stderr: err,
       historyPath: "",
     });
-    expect(err.data).toMatch(/--remote is a stub in v0/);
-    expect(out.data).toMatch(/^compacted \(budget\):/m);
+    expect(err.data).toMatch(/remote compact unavailable/);
+  });
+
+  it("/compact --remote uses adapter.remoteCompact when present", async () => {
+    const responses = Array.from({ length: 30 }, () => ({
+      content: [textBlock("r")],
+    }));
+    const model = scriptedModel(responses) as ReturnType<typeof scriptedModel> & {
+      remoteCompact?: (input: {
+        messages: unknown;
+      }) => Promise<{ summary: string }>;
+    };
+    model.remoteCompact = async () => ({ summary: "REMOTE" });
+    const out = new StringWritable();
+    const err = new StringWritable();
+    await runReplWithSkills({
+      model,
+      args: makeArgs(),
+      lineReader: multiTurnLineReader("/compact --remote", 25),
+      stdout: out,
+      stderr: err,
+      historyPath: "",
+    });
+    expect(err.data).not.toMatch(/remote compact unavailable/);
+    expect(out.data).toMatch(/compacted \(remote\)/);
+  });
+
+  it("/compact --remote on PersistedSession writes compact event JSONL", async () => {
+    const sessionPath = path.join(tempCwd, "remote-compact.jsonl");
+    const responses = Array.from({ length: 30 }, () => ({
+      content: [textBlock("r")],
+    }));
+    const model = scriptedModel(responses) as ReturnType<typeof scriptedModel> & {
+      remoteCompact?: (input: {
+        messages: unknown;
+      }) => Promise<{ summary: string }>;
+    };
+    model.remoteCompact = async () => ({ summary: "REMOTE SUMMARY" });
+    const out = new StringWritable();
+    const err = new StringWritable();
+    await runReplWithSkills({
+      model,
+      args: makeArgs({ cwd: tempCwd }),
+      lineReader: multiTurnLineReader("/compact --remote --keep 4", 25),
+      createSession: async () =>
+        PersistedSession.create({
+          id: "repl-remote-compact",
+          metadata: {
+            cwd: tempCwd,
+            permissionMode: "workspace-write",
+            startedAt: new Date().toISOString(),
+            title: "remote-compact",
+          },
+          filePath: sessionPath,
+        }),
+      stdout: out,
+      stderr: err,
+      historyPath: "",
+    });
+    expect(err.data).not.toMatch(/remote compact unavailable/);
+    expect(out.data).toMatch(/compacted \(remote\)/);
+
+    const reopened = await PersistedSession.open(sessionPath);
+    expect(reopened.events().some((e) => e.kind === "compact")).toBe(true);
+    expect(
+      reopened.events().some(
+        (e) => e.kind === "compact" && (e.detail?.includes("remote") ?? false),
+      ),
+    ).toBe(true);
+    // Compacted transcript is shorter than 25 prompts × 2 roles.
+    expect(reopened.messages.length).toBeLessThan(40);
+    await reopened.close();
   });
 
   it("/compact --unknown-flag is an error", async () => {

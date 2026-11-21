@@ -68,15 +68,47 @@ import { NullTracer } from "./trace/null-tracer.js";
 import type { Tracer } from "./trace/index.js";
 import type { MeshSubmitter, SubagentResult } from "./subagent/index.js";
 import { makeTaskTool } from "./subagent/tools.js";
+import { makeWorkflowTool } from "./subagent/workflow-tool.js";
 import {
   makeSubagentControlTools,
   supportsContinuable,
   type SubagentBackgroundMode,
 } from "./subagent/background.js";
+import { makeCollaborationAliasTools } from "./subagent/collaboration-aliases.js";
+import { NullGuardian } from "./guardian/index.js";
+import type { GuardianReviewer } from "./guardian/types.js";
+import { makeRunCodeTool } from "./tools/run-code.js";
+import { makeCodeModeTools } from "./tools/code-mode/index.js";
+import { createInMemoryCodeModeGrantStore } from "./tools/code-mode/grants.js";
+import {
+  createDeferredGrantStore,
+  getToolExposure,
+  type DeferredGrantStore,
+} from "./tools/deferred.js";
+import { makeToolSearchTool } from "./tools/tool-search.js";
+import { makeTeamTools } from "./team/tools.js";
+import { AgentMailbox } from "./agent/mailbox.js";
+import { createScheduleStore } from "./schedule/store.js";
+import { makeScheduleTools } from "./schedule/tools.js";
+import { createGoalStore } from "./goal/store.js";
+import { makeGoalTools } from "./goal/tools.js";
+import { makePresentTool } from "./deliverables/present.js";
+import { makeMcpResourceTools } from "./mcp/resources.js";
 import type { FanOutRegistry } from "./subagent/fan-out.js";
-import { formatSettlementNotice } from "./subagent/settlement-notice.js";
+import {
+  formatJobSettlementNotice,
+  formatSettlementNotice,
+} from "./subagent/settlement-notice.js";
 import { ToolExecutor, type ToolExecutorContext } from "./agent/tool-executor.js";
 import { DEFAULT_MAX_PARALLEL_TOOL_CALLS } from "./agent/tool-scheduler.js";
+import {
+  AgentInbox,
+  inboxContentToBlocks,
+  makeWaitInboxActivityTool,
+  type InboxContent,
+} from "./agent/inbox.js";
+import { buildSessionEvent } from "./session/format.js";
+import type { PendingChildSnapshot } from "./session.js";
 import type { RetryPolicy } from "./llm/retry.js";
 import {
   firePostCompact,
@@ -293,6 +325,53 @@ export interface AgentOptions {
    * (e.g. ACP). When set, {@link settlementFollowup} is not used.
    */
   onIdleSettlement?: (notice: string) => void | Promise<void>;
+  /**
+   * Cap consecutive idle settlement auto-turns without a host/human
+   * `run()` in between (DeepSeek maxConsecutiveWakes). After the cap,
+   * further notices queue for the next host turn instead of calling
+   * `run()`. Default 3. Ignored when {@link onIdleSettlement} is set.
+   */
+  maxConsecutiveSettlementWakes?: number;
+  /**
+   * Cap on new tool-batch / background-spawn work units for this agent
+   * (Codex rollout-budget lite). When remaining hits 0, further tool
+   * batches and background spawns are refused. Omit for unlimited.
+   */
+  workBudget?: number;
+  /**
+   * Gap 9 — optional Guardian reviewer (default NullGuardian / allow).
+   */
+  guardian?: import("./guardian/types.js").GuardianReviewer;
+  /**
+   * Gap 6 — register opt-in `run_code` (node:vm + tools.invoke). Default false.
+   */
+  enableRunCode?: boolean;
+  /** PTC: max overlapping concurrency-safe nested invokes. Default 10. */
+  runCodeMaxParallelSubCalls?: number;
+  /** PTC: override total nested invoke allowance per program. */
+  runCodeMaxInvokes?: number;
+  /**
+   * Wave 1 — register Codex-shaped `code_mode_exec` / `code_mode_wait`.
+   * Default false.
+   */
+  enableCodeMode?: boolean;
+  /**
+   * Wave 1 — register `tool_search` and treat matching tools as deferred.
+   * Default false.
+   */
+  enableToolSearch?: boolean;
+  /** Wave 3 — register schedule_* tools + tick into inbox. */
+  enableSchedule?: boolean;
+  /** Wave 4 — register create_goal / get_goal / update_goal. */
+  enableGoals?: boolean;
+  /** Wave 4 — register present deliverable tool. */
+  enablePresent?: boolean;
+  /** Wave 3 — register MCP resource/prompt tools when mcpClients set. */
+  enableMcpResources?: boolean;
+  /**
+   * Gap 8 — optional shared team job board for model `team_*` tools / ACP.
+   */
+  teamJobRegistry?: import("./protocol/team-job-board.js").TeamJobRegistry;
   /**
    * F10.4.1: optional fan-out registry. When set,
    * the `task` tool consults the registry on every
@@ -638,8 +717,49 @@ export class Agent {
   settlementFollowup: boolean;
   /** @internal Host-owned idle settlement wake (overrides settlementFollowup). */
   onIdleSettlement: ((notice: string) => void | Promise<void>) | undefined;
+  /** @internal Cap on consecutive settlementFollowup auto-runs. */
+  maxConsecutiveSettlementWakes: number;
   /** @internal Re-entrancy guard for settlement follow-up turns. */
   #settlementFollowupRunning = false;
+  /** @internal Settlement auto-runs since last host `run()`. */
+  #settlementWakeCount = 0;
+  /** @internal After abort/dispose: no new settlement followups. */
+  #disposed = false;
+  /** @internal Unsubscribe jobRegistry.onJobDone. */
+  #unsubscribeJobDone: (() => void) | undefined;
+  /**
+   * @internal DeepSeek-lite parent inbox (followup / steer / inject).
+   */
+  readonly inbox: AgentInbox = new AgentInbox();
+  /** @internal Skip appending `run()` prompt — wake claimed from inbox. */
+  #inboxWakeSkipPrompt = false;
+  /** @internal Re-entrancy guard for inbox-driven idle wakes. */
+  #inboxWakeRunning = false;
+  /** @internal Resolvers for {@link whenIdle}. */
+  #idleWaiters: Array<() => void> = [];
+  /**
+   * @internal Remaining work units for Gap 3 stop-new-work.
+   * `undefined` = unlimited. Decremented on tool batches / background spawns.
+   */
+  workBudgetRemaining: number | undefined;
+  /** @internal Gap 9 Guardian reviewer. */
+  guardian: GuardianReviewer;
+  /** @internal Gap 8 team job board (optional). */
+  teamJobRegistry:
+    | import("./protocol/team-job-board.js").TeamJobRegistry
+    | undefined;
+  /** @internal Wave 1 — deferred tool grants (tool_search). */
+  deferredGrants: DeferredGrantStore;
+  /** @internal Wave 1 — code_mode namespace grants. */
+  codeModeGrants: ReturnType<typeof createInMemoryCodeModeGrantStore>;
+  /** @internal Wave 1 — tool_search enabled. */
+  toolSearchEnabled: boolean;
+  /** @internal Wave 3 — mailbox V2 board. */
+  mailbox: AgentMailbox;
+  /** @internal Wave 3 — schedule store (when enabled). */
+  scheduleStore: ReturnType<typeof createScheduleStore> | undefined;
+  /** @internal Wave 4 — goal store (when enabled). */
+  goalStore: ReturnType<typeof createGoalStore> | undefined;
   /** @internal F10.6: parent session id (when this is a
    *  sub-agent). Every `TraceEvent.emit` includes
    *  this as `subagentOf` so the parent tracer can
@@ -804,7 +924,45 @@ export class Agent {
     this.pendingSettlementNotices = [];
     this.settlementFollowup = options.settlementFollowup ?? false;
     this.onIdleSettlement = options.onIdleSettlement;
+    this.maxConsecutiveSettlementWakes =
+      options.maxConsecutiveSettlementWakes ?? 3;
+    this.workBudgetRemaining =
+      options.workBudget !== undefined && Number.isFinite(options.workBudget)
+        ? Math.max(0, Math.floor(options.workBudget))
+        : undefined;
+    this.guardian = options.guardian ?? NullGuardian;
+    this.teamJobRegistry = options.teamJobRegistry;
+    this.deferredGrants = createDeferredGrantStore();
+    this.codeModeGrants = createInMemoryCodeModeGrantStore();
+    this.toolSearchEnabled = options.enableToolSearch === true;
+    this.mailbox = new AgentMailbox();
+    this.scheduleStore = undefined;
+    this.goalStore = undefined;
     this.subagentOf = options.subagentOf;
+    // Gap 4b: restore durable inbox queues from session header (no wake).
+    const pending =
+      this.session.getPendingInbox?.() ?? this.session.metadata.pendingInbox;
+    if (pending !== undefined) {
+      this.inbox.restore(pending);
+    }
+    // Gap 1: mark continuable children that did not survive process restart.
+    this.#markStalePendingChildren();
+    // Bash (and other non-subagent) jobs: push settlement notices the
+    // same way background sub-agents do. Skip kind=subagent — those
+    // already notify via onBackgroundSettle.
+    if (this.jobRegistry !== undefined) {
+      this.#unsubscribeJobDone = this.jobRegistry.onJobDone((snap) => {
+        if (this.#disposed) return;
+        if (snap.owner !== undefined && snap.owner !== this.session.id) {
+          return;
+        }
+        if (snap.kind === "subagent") return;
+        if (this.jobRegistry!.consumeSettlementNoticeSuppress(snap.id)) {
+          return;
+        }
+        this.enqueueSettlementNotice(formatJobSettlementNotice(snap));
+      });
+    }
     this.approval = options.approval ?? "on-request";
     this.userQuestions = options.userQuestions;
     this.plugins = options.plugins;
@@ -826,6 +984,77 @@ export class Agent {
         record: (hints) => this.recordTurnHints(hints),
       }),
     );
+    this.tools.register(
+      makeWaitInboxActivityTool({
+        wait: (opts) => this.waitForInboxActivity(opts),
+      }),
+    );
+    if (options.enableRunCode === true) {
+      this.tools.register(
+        makeRunCodeTool({
+          tools: this.tools,
+          tryConsumeWorkBudget: (units) => this.tryConsumeWorkBudget(units),
+          ...(options.runCodeMaxParallelSubCalls !== undefined
+            ? { maxParallelSubCalls: options.runCodeMaxParallelSubCalls }
+            : {}),
+          ...(options.runCodeMaxInvokes !== undefined
+            ? { maxInvokes: options.runCodeMaxInvokes }
+            : {}),
+        }),
+      );
+    }
+    if (options.enableCodeMode === true) {
+      for (const tool of makeCodeModeTools({
+        tools: this.tools,
+        grants: this.codeModeGrants,
+        tryConsumeWorkBudget: (units) => this.tryConsumeWorkBudget(units),
+      })) {
+        this.tools.register(tool);
+      }
+    }
+    if (this.toolSearchEnabled) {
+      this.tools.register(
+        makeToolSearchTool({
+          tools: this.tools,
+          grants: this.deferredGrants,
+          codeModeGrants: this.codeModeGrants,
+        }),
+      );
+    }
+    if (options.enableSchedule === true) {
+      this.scheduleStore = createScheduleStore();
+      for (const tool of makeScheduleTools(this.scheduleStore)) {
+        this.tools.register(tool);
+      }
+    }
+    if (options.enableGoals === true) {
+      this.goalStore = createGoalStore();
+      for (const tool of makeGoalTools(this.goalStore)) {
+        this.tools.register(tool);
+      }
+    }
+    if (options.enablePresent === true) {
+      this.tools.register(
+        makePresentTool({ getSession: () => this.session }),
+      );
+    }
+    if (
+      options.enableMcpResources === true &&
+      this.mcpClients !== undefined
+    ) {
+      for (const tool of makeMcpResourceTools(this.mcpClients)) {
+        this.tools.register(tool);
+      }
+    }
+    if (this.teamJobRegistry !== undefined) {
+      for (const tool of makeTeamTools({
+        registry: this.teamJobRegistry,
+        getModel: () => this.model,
+        getCwd: () => this.cwd,
+      })) {
+        this.tools.register(tool);
+      }
+    }
     // F9.2: register the 4 LSP tools when the host provides
     // a manager. We do this AFTER the constructor sets
     // `this.tools` so the registry is available.
@@ -847,7 +1076,17 @@ export class Agent {
       }),
     );
     if (this.userQuestions) {
-      this.tools.register(makeAskUserTool({ service: this.userQuestions }));
+      this.tools.register(
+        makeAskUserTool({
+          service: this.userQuestions,
+          onLateAnswer: (info) => {
+            // steer wakes an idle agent; inject alone would sit until the next turn.
+            this.steer(
+              `Late answer for ${info.pendingId} (${info.prompt}): ${info.answer.value}`,
+            );
+          },
+        }),
+      );
       this.tools.register(
         makeEnterPlanModeTool({ userQuestions: this.userQuestions }),
       );
@@ -899,7 +1138,22 @@ export class Agent {
           submitter: this.meshSubmitter,
           ...(this.fanOutRegistry ? { fanOutRegistry: this.fanOutRegistry } : {}),
           onSubagentComplete,
+          onBackgroundSpawn: (info) => {
+            this.noteChildSpawn({
+              sessionId: info.agentId,
+              jobId: info.jobId,
+              objective: info.objective,
+            });
+          },
           onBackgroundSettle: (info) => {
+            this.session.recordEvent?.(
+              buildSessionEvent("child_settle", {
+                detail: info.agentId,
+                sessionId: info.agentId,
+                jobId: info.jobId,
+              }),
+            );
+            this.#syncPendingChildren();
             this.enqueueSettlementNotice(formatSettlementNotice(info));
           },
           maxSubagents: this.maxSubagents,
@@ -908,17 +1162,40 @@ export class Agent {
           ...(this.jobRegistry ? { jobs: this.jobRegistry } : {}),
         }),
       );
+      this.tools.register(
+        makeWorkflowTool({
+          submitter: this.meshSubmitter,
+          maxSubagents: this.maxSubagents,
+          onSubagentComplete,
+        }),
+      );
       // Background/steerable children: the control tools exist only when
       // the submitter can actually run them. Registering `send_message`
       // against a submitter with no handle registry would advertise a
       // capability that always errors.
       if (supportsContinuable(this.meshSubmitter)) {
-        for (const tool of makeSubagentControlTools(this.meshSubmitter, {
+        const controlTools = makeSubagentControlTools(this.meshSubmitter, {
           ...(this.jobRegistry !== undefined
             ? { jobs: this.jobRegistry }
             : {}),
-        })) {
+          getPendingChildren: () =>
+            this.session.getPendingChildren?.() ??
+            this.session.metadata.pendingChildren ??
+            [],
+        });
+        for (const tool of controlTools) {
           this.tools.register(tool);
+        }
+        const taskTool = this.tools.get("task");
+        const underlying = [
+          ...(taskTool !== undefined ? [taskTool] : []),
+          ...controlTools,
+        ];
+        for (const alias of makeCollaborationAliasTools({
+          underlying,
+          waitInboxActivity: (opts) => this.waitForInboxActivity(opts),
+        })) {
+          this.tools.register(alias);
         }
       }
     }
@@ -996,6 +1273,9 @@ export class Agent {
       abortSignal: this.abortController.signal,
       maxSubagents: this.maxSubagents,
       getMaxParallelToolCalls: () => this.maxParallelToolCalls,
+      tryConsumeWorkBudget: (units) => this.tryConsumeWorkBudget(units),
+      guardian: this.guardian,
+      isToolVisibleToModel: (tool) => this.isToolVisibleToModel(tool),
       meshSubmitter: this.meshSubmitter,
       mcpClients: this.mcpClients,
       ...(this.execWorld !== undefined ? { execWorld: this.execWorld } : {}),
@@ -1086,6 +1366,7 @@ export class Agent {
    * - idle otherwise → queue until the next host turn
    */
   enqueueSettlementNotice(notice: string): void {
+    if (this.#disposed) return;
     if (this.#activeTurnId !== undefined) {
       this.pendingSettlementNotices.push(notice);
       return;
@@ -1095,6 +1376,15 @@ export class Agent {
       return;
     }
     if (this.settlementFollowup) {
+      if (this.#settlementWakeCount >= this.maxConsecutiveSettlementWakes) {
+        // Wake budget exhausted — queue for the next host turn only.
+        this.pendingSettlementNotices.push(notice);
+        return;
+      }
+      if (!this.canAdmitNewWork()) {
+        this.pendingSettlementNotices.push(notice);
+        return;
+      }
       void this.#runSettlementFollowup(notice);
       return;
     }
@@ -1116,12 +1406,375 @@ export class Agent {
     }
   }
 
+  /**
+   * Admit pending inbox messages into the transcript as user-role text.
+   * - `turn-start`: all next-step + one next-turn (DeepSeek first-step claim)
+   * - `step`: next-step only
+   */
+  flushInbox(mode: "turn-start" | "step"): void {
+    const entries =
+      mode === "turn-start"
+        ? this.inbox.claimTurnStart()
+        : this.inbox.claimStep();
+    for (const entry of entries) {
+      this.session.appendMessage("user", inboxContentToBlocks(entry.content));
+      this.session.recordEvent?.(
+        buildSessionEvent("inbox_claim", {
+          detail: `${mode}:${entry.target}`,
+        }),
+      );
+    }
+    if (entries.length > 0) this.#syncPendingInbox();
+  }
+
+  /** True when the next `run()` should not append its prompt (inbox wake). */
+  consumeInboxWakeSkipPrompt(): boolean {
+    if (!this.#inboxWakeSkipPrompt) return false;
+    this.#inboxWakeSkipPrompt = false;
+    return true;
+  }
+
+  /**
+   * Queue a message for its own turn and wake if idle (DeepSeek followup).
+   */
+  followup(content: InboxContent): void {
+    this.#enqueueInbox("next-turn", content, true);
+  }
+
+  /**
+   * Queue a message for the next step boundary and wake if idle
+   * (DeepSeek steer). Mid-turn: flushed before the next model call.
+   */
+  steer(content: InboxContent): void {
+    this.#enqueueInbox("next-step", content, true);
+  }
+
+  /**
+   * Queue a next-step message without waking (DeepSeek inject).
+   * Delivered when a later steer/followup/host turn claims it.
+   */
+  inject(content: InboxContent): void {
+    this.#enqueueInbox("next-step", content, false);
+  }
+
+  /**
+   * Resolves when no turn is active and no settlement/inbox auto-wake
+   * is running.
+   */
+  whenIdle(): Promise<void> {
+    if (this.#isIdle()) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      this.#idleWaiters.push(resolve);
+    });
+  }
+
+  /**
+   * Wait until the next inbox enqueue (followup/steer/inject), or
+   * timeout/abort (Gap 2 activity wait).
+   */
+  waitForInboxActivity(options?: {
+    signal?: AbortSignal;
+    timeoutMs?: number;
+  }): Promise<{ target: "next-turn" | "next-step"; content: InboxContent }> {
+    if (this.#disposed) {
+      return Promise.reject(new Error("agent disposed"));
+    }
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (
+        err: Error | undefined,
+        event?: { target: "next-turn" | "next-step"; content: InboxContent },
+      ) => {
+        if (settled) return;
+        settled = true;
+        unsub();
+        options?.signal?.removeEventListener("abort", onAbort);
+        if (timer !== undefined) clearTimeout(timer);
+        if (err) reject(err);
+        else resolve(event!);
+      };
+      const unsub = this.inbox.onActivity((event) => {
+        finish(undefined, event);
+      });
+      const onAbort = () => {
+        finish(new Error("waitForInboxActivity aborted"));
+      };
+      if (options?.signal !== undefined) {
+        if (options.signal.aborted) {
+          finish(new Error("waitForInboxActivity aborted"));
+          return;
+        }
+        options.signal.addEventListener("abort", onAbort, { once: true });
+      }
+      const timer =
+        options?.timeoutMs !== undefined
+          ? setTimeout(() => {
+              finish(new Error("waitForInboxActivity timed out"));
+            }, options.timeoutMs)
+          : undefined;
+    });
+  }
+
+  /** @internal Consume one work-budget unit; returns false when exhausted. */
+  tryConsumeWorkBudget(units = 1): boolean {
+    if (this.workBudgetRemaining === undefined) return true;
+    if (this.workBudgetRemaining < units) return false;
+    this.workBudgetRemaining -= units;
+    return true;
+  }
+
+  /**
+   * Gap 4 — host turn / wake admission (Codex stop-new-work).
+   * Distinct from {@link tryConsumeWorkBudget}: this only peeks.
+   * Tool batches still consume; exhausted budget refuses new turns.
+   */
+  canAdmitNewWork(): boolean {
+    if (this.workBudgetRemaining === undefined) return true;
+    return this.workBudgetRemaining > 0;
+  }
+
+  /**
+   * Wave 3 — claim due schedules and inject prompts into the inbox.
+   * Hosts (or whenIdle) should call this periodically.
+   */
+  tickSchedules(now?: Date): number {
+    if (this.scheduleStore === undefined) return 0;
+    const due = this.scheduleStore.claimDue(now);
+    for (const task of due) {
+      void this.inject(`[schedule ${task.id}] ${task.prompt}`);
+    }
+    return due.length;
+  }
+
+  /** Wave 3 — list schedule tasks (empty when schedule tools are off). */
+  listSchedules(): ReadonlyArray<
+    import("./schedule/store.js").ScheduleTask
+  > {
+    return this.scheduleStore?.list() ?? [];
+  }
+
+  /** Wave 4 — list goals (empty when goal tools are off). */
+  listGoals(): ReadonlyArray<import("./goal/store.js").Goal> {
+    return this.goalStore?.list() ?? [];
+  }
+
+  /** Wave 3 — create a schedule from the host / REPL (no model turn). */
+  createSchedule(input: {
+    prompt: string;
+    runAt?: string;
+    everyMs?: number;
+  }): import("./schedule/store.js").ScheduleTask {
+    if (this.scheduleStore === undefined) {
+      throw new Error("schedules not enabled (pass enableSchedule: true)");
+    }
+    return this.scheduleStore.create(input);
+  }
+
+  /** Wave 4 — create a goal from the host / REPL (no model turn). */
+  createGoal(input: {
+    title: string;
+    detail?: string;
+  }): import("./goal/store.js").Goal {
+    if (this.goalStore === undefined) {
+      throw new Error("goals not enabled (pass enableGoals: true)");
+    }
+    return this.goalStore.create(input);
+  }
+
+  /** Wave 3 — deliver a child message onto the mailbox board. */
+  deliverMailbox(fromChildId: string, body: string): void {
+    const msg = this.mailbox.deliver(fromChildId, body);
+    this.session.recordEvent?.(
+      buildSessionEvent("inbox_splice", {
+        detail: `mailbox from ${fromChildId}: ${msg.id}`,
+        sessionId: fromChildId,
+      }),
+    );
+  }
+
+  /**
+   * Wave 1 — whether a registered tool should appear in the model catalog.
+   * Deferred tools require a `tool_search` (or equivalent) grant.
+   */
+  isToolVisibleToModel(tool: { name: string; exposure?: string } | import("./tools/types.js").Tool): boolean {
+    if (!this.toolSearchEnabled) return true;
+    if (tool.name === "tool_search") return true;
+    if (getToolExposure(tool as import("./tools/types.js").Tool) === "always") {
+      return true;
+    }
+    return this.deferredGrants.has(tool.name);
+  }
+
+  #isIdle(): boolean {
+    return (
+      this.#activeTurnId === undefined &&
+      !this.#settlementFollowupRunning &&
+      !this.#inboxWakeRunning
+    );
+  }
+
+  #resolveIdleWaiters(): void {
+    if (!this.#isIdle() || this.#idleWaiters.length === 0) return;
+    const waiters = this.#idleWaiters.splice(0, this.#idleWaiters.length);
+    for (const w of waiters) w();
+  }
+
+  #enqueueInbox(
+    target: "next-turn" | "next-step",
+    content: InboxContent,
+    wakeup: boolean,
+  ): void {
+    if (this.#disposed) return;
+    this.inbox.enqueue(target, content);
+    this.#syncPendingInbox();
+    const detail = `${target}${wakeup ? "+wake" : ""}`;
+    this.session.recordDiagnostic?.({
+      kind: "inbox_splice",
+      at: new Date().toISOString(),
+      detail,
+    });
+    this.session.recordEvent?.(
+      buildSessionEvent("inbox_splice", { detail }),
+    );
+    if (wakeup) this.#wakeFromInbox();
+  }
+
+  /** Mirror inbox queues onto session metadata for durable resume. */
+  #syncPendingInbox(): void {
+    const snap = this.inbox.snapshot();
+    if (this.session.setPendingInbox !== undefined) {
+      this.session.setPendingInbox(
+        snap.nextTurn.length === 0 && snap.nextStep.length === 0
+          ? undefined
+          : snap,
+      );
+      return;
+    }
+    if (snap.nextTurn.length === 0 && snap.nextStep.length === 0) {
+      delete this.session.metadata.pendingInbox;
+    } else {
+      this.session.metadata.pendingInbox = snap;
+    }
+  }
+
+  /** Gap 1 — mirror listSubagents into session.metadata.pendingChildren. */
+  #syncPendingChildren(): void {
+    const list = this.meshSubmitter?.listSubagents?.() ?? [];
+    const children: PendingChildSnapshot[] = list.map((r) => ({
+      sessionId: r.sessionId,
+      objective: r.objective,
+      ...(r.capabilityTag !== undefined
+        ? { capabilityTag: r.capabilityTag }
+        : {}),
+      status: r.status,
+      startedAt: r.startedAt,
+      ...(r.completedAt !== undefined ? { completedAt: r.completedAt } : {}),
+      ...(r.generation !== undefined ? { generation: r.generation } : {}),
+    }));
+    if (this.session.setPendingChildren !== undefined) {
+      this.session.setPendingChildren(
+        children.length === 0 ? undefined : children,
+      );
+      return;
+    }
+    if (children.length === 0) delete this.session.metadata.pendingChildren;
+    else this.session.metadata.pendingChildren = children;
+  }
+
+  /**
+   * Gap 1 — on resume, mark header children as stale when no live handle.
+   * Does not invent zombies: process restart cannot revive in-process kids.
+   */
+  #markStalePendingChildren(): void {
+    const existing =
+      this.session.getPendingChildren?.() ??
+      this.session.metadata.pendingChildren ??
+      [];
+    if (existing.length === 0) return;
+    const getHandle = (
+      this.meshSubmitter as
+        | { getHandle?: (id: string) => unknown }
+        | undefined
+    )?.getHandle;
+    const next: PendingChildSnapshot[] = existing.map((c) => {
+      const alive =
+        typeof getHandle === "function" && getHandle(c.sessionId) !== undefined;
+      if (alive) return c;
+      if (c.status === "stale") return c;
+      return { ...c, status: "stale" as const };
+    });
+    if (this.session.setPendingChildren !== undefined) {
+      this.session.setPendingChildren(next);
+    } else {
+      this.session.metadata.pendingChildren = next;
+    }
+  }
+
+  /** @internal Notify child spawn for event log + pendingChildren. */
+  noteChildSpawn(info: {
+    sessionId: string;
+    jobId?: string;
+    objective: string;
+  }): void {
+    this.session.recordEvent?.(
+      buildSessionEvent("child_spawn", {
+        detail: info.objective.slice(0, 120),
+        sessionId: info.sessionId,
+        ...(info.jobId !== undefined ? { jobId: info.jobId } : {}),
+      }),
+    );
+    this.#syncPendingChildren();
+  }
+
+  #wakeFromInbox(): void {
+    if (this.#disposed) return;
+    if (this.#activeTurnId !== undefined) return;
+    if (this.#settlementFollowupRunning || this.#inboxWakeRunning) return;
+    if (this.inbox.isEmpty) return;
+    // Gap 4: stop-new-work — leave messages parked until budget recovers.
+    if (!this.canAdmitNewWork()) return;
+    this.#inboxWakeRunning = true;
+    this.#inboxWakeSkipPrompt = true;
+    void (async () => {
+      try {
+        await this.run("");
+      } catch {
+        /* never throw from wake path */
+      } finally {
+        this.#inboxWakeRunning = false;
+        this.#resolveIdleWaiters();
+        // Drain remaining next-turn messages with further wakes.
+        if (
+          !this.#disposed &&
+          this.#activeTurnId === undefined &&
+          !this.inbox.isEmpty &&
+          this.inbox.nextTurnLength > 0
+        ) {
+          this.#wakeFromInbox();
+        }
+      }
+    })();
+  }
+
   async #runSettlementFollowup(notice: string): Promise<void> {
-    if (this.#settlementFollowupRunning || this.#activeTurnId !== undefined) {
+    if (
+      this.#disposed ||
+      this.#settlementFollowupRunning ||
+      this.#activeTurnId !== undefined
+    ) {
+      if (!this.#disposed) this.pendingSettlementNotices.push(notice);
+      return;
+    }
+    if (this.#settlementWakeCount >= this.maxConsecutiveSettlementWakes) {
+      this.pendingSettlementNotices.push(notice);
+      return;
+    }
+    if (!this.canAdmitNewWork()) {
       this.pendingSettlementNotices.push(notice);
       return;
     }
     this.#settlementFollowupRunning = true;
+    this.#settlementWakeCount += 1;
     try {
       await this.run(notice);
     } catch {
@@ -1129,10 +1782,12 @@ export class Agent {
     } finally {
       this.#settlementFollowupRunning = false;
       if (
+        !this.#disposed &&
         this.#activeTurnId === undefined &&
         this.pendingSettlementNotices.length > 0 &&
         this.settlementFollowup &&
-        this.onIdleSettlement === undefined
+        this.onIdleSettlement === undefined &&
+        this.#settlementWakeCount < this.maxConsecutiveSettlementWakes
       ) {
         const more = this.pendingSettlementNotices
           .splice(0, this.pendingSettlementNotices.length)
@@ -1157,7 +1812,10 @@ export class Agent {
 
   /** Mark the running turn finished (no-op when a newer turn started). */
   endTurn(turnId: string): void {
-    if (this.#activeTurnId === turnId) this.#activeTurnId = undefined;
+    if (this.#activeTurnId === turnId) {
+      this.#activeTurnId = undefined;
+      this.#resolveIdleWaiters();
+    }
   }
 
   /**
@@ -1192,6 +1850,13 @@ export class Agent {
    * running.
    */
   abort(reason?: unknown): void {
+    this.#disposed = true;
+    this.#unsubscribeJobDone?.();
+    this.#unsubscribeJobDone = undefined;
+    this.inbox.clear();
+    this.#syncPendingInbox();
+    const idleWaiters = this.#idleWaiters.splice(0, this.#idleWaiters.length);
+    for (const w of idleWaiters) w();
     this.abortController.abort(reason);
     const owner = this.session.id;
     if (this.jobRegistry !== undefined) {
@@ -1374,7 +2039,16 @@ export class Agent {
     this.tools.unregister("enter_plan_mode");
     this.tools.unregister("exit_plan_mode");
     if (service) {
-      this.tools.register(makeAskUserTool({ service }));
+      this.tools.register(
+        makeAskUserTool({
+          service,
+          onLateAnswer: (info) => {
+            this.steer(
+              `Late answer for ${info.pendingId} (${info.prompt}): ${info.answer.value}`,
+            );
+          },
+        }),
+      );
       this.tools.register(
         makeEnterPlanModeTool({ userQuestions: service }),
       );
@@ -1582,6 +2256,49 @@ export class Agent {
    * @param summarize Receives the dropped messages and returns
    *   a summary string (may be empty — then no block is added).
    */
+  /**
+   * Gap 10 — remote provider compaction when the adapter implements
+   * `remoteCompact`. Fails explicitly when the adapter does not.
+   */
+  async compactRemote(keep = 20): Promise<void> {
+    const remote = this.model.remoteCompact?.bind(this.model);
+    if (remote === undefined) {
+      throw new Error(
+        "remote compact unavailable: model adapter does not implement remoteCompact",
+      );
+    }
+    await this.compactWithSummary(keep, async (dropped) => {
+      const out = await remote({
+        messages: dropped,
+        signal: this.abortController.signal,
+      });
+      return out.summary;
+    });
+    this.session.recordEvent?.(
+      buildSessionEvent("compact", { detail: `remote:keep=${keep}` }),
+    );
+  }
+
+  /**
+   * Gap 10 — queue a local drop-oldest compact to run when idle.
+   * Does not block the current turn.
+   */
+  compactAsync(keep = 20): Promise<void> {
+    return this.whenIdle().then(async () => {
+      const before = this.session.messages.length;
+      const next = compactMessages(this.session.messages, keep);
+      if (next.length === before) return;
+      this.replaceTranscript(injectRetainedContext(next, this.retainedContext));
+      await this.flushSession();
+      this.session.recordEvent?.(
+        buildSessionEvent("compact", {
+          detail: `async:keep=${keep}:dropped=${before - next.length}:before=${before}`,
+        }),
+      );
+      await this.#postCompact(before, true);
+    });
+  }
+
   async compactWithSummary(
     keep: number,
     summarize: (dropped: ReadonlyArray<import("./tools/index.js").Message>) => Promise<string>,
@@ -1785,6 +2502,26 @@ export class Agent {
    * calls back into `this.emit` / `this.makeResult`.
    */
   async run(prompt: string | ReadonlyArray<ContentBlock>): Promise<AgentResult> {
+    // Gap 4: refuse new host/wake turns when work_budget is exhausted.
+    // Mid-turn tool refusal is handled inside ToolExecutor; this gates
+    // admission of a whole new turn (Codex stop-new-work).
+    if (!this.canAdmitNewWork()) {
+      return this.makeResult(
+        [
+          {
+            type: "text",
+            text: "work_budget exhausted: no new turn admitted for this agent.",
+          },
+        ],
+        "aborted",
+        0,
+      );
+    }
+    // Host/human turns reset the settlement wake budget; auto
+    // followups leave the counter alone (they set #settlementFollowupRunning).
+    if (!this.#settlementFollowupRunning && !this.#inboxWakeRunning) {
+      this.#settlementWakeCount = 0;
+    }
     return runAgentLoop(this, prompt);
   }
 

@@ -7,6 +7,7 @@ import * as path from "node:path";
 import { spawn } from "node:child_process";
 
 import { captureChildIdentity, reapChild } from "../process/reaper.js";
+import { resolveShellInvocation } from "../tools/shell-invocation.js";
 import type {
   ExecShellResult,
   ExecWorld,
@@ -67,11 +68,13 @@ export function createLocalExecWorld(): ExecWorld {
         // `detached` on POSIX: own process group, so the kill ladder can
         // address the whole tree without touching the harness's group.
         const detached = process.platform !== "win32";
-        const child = spawn("sh", ["-c", request.command], {
+        const inv = resolveShellInvocation(process.platform, request.command);
+        const child = spawn(inv.file, inv.args, {
           cwd: request.cwd,
           env: request.env ?? process.env,
           detached,
           stdio: ["ignore", "pipe", "pipe"],
+          windowsHide: process.platform === "win32",
         });
         const identity = captureChildIdentity(child);
         let stdout = "";

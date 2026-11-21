@@ -267,10 +267,12 @@ describe("LocalMeshSubmitter deadline + throw handling", () => {
       new AbortController().signal,
     );
     expect(result.status).toBe("failed");
-    expect(result.content[0]).toMatchObject({
-      type: "text",
-      text: expect.stringContaining("sub-agent failed"),
-    });
+    // Max-iterations exhaustion surfaces on the verdict (content may be empty).
+    const verdictReason =
+      result.verdict !== undefined && "reason" in result.verdict
+        ? String(result.verdict.reason)
+        : "";
+    expect(verdictReason).toMatch(/max iterations|sub-agent failed/i);
     const records = loopSubmitter.listSubagents();
     expect(records[0]?.status).toBe("failed");
     expect(records[0]?.completedAt).toBeDefined();

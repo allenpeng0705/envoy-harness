@@ -29,6 +29,9 @@
 
 import type { Message, Tool } from "./tools/types.js";
 
+/** Re-export for adapters (`llm/*`) that import Message from this module. */
+export type { Message, Tool };
+
 /**
  * What a model returns from one `complete()` call. The agent
  * extracts text and tool calls from `content` and dispatches.
@@ -151,4 +154,13 @@ export interface CompleteInput {
  */
 export interface ModelAdapter {
   complete(input: CompleteInput): Promise<ModelResponse>;
+  /**
+   * Gap 10 — optional provider remote-history compaction.
+   * When present, `/compact --remote` and {@link Agent.compactRemote}
+   * use it. When absent, those paths fail explicitly (no silent stub).
+   */
+  remoteCompact?(input: {
+    messages: ReadonlyArray<Message>;
+    signal?: AbortSignal;
+  }): Promise<{ summary: string }>;
 }

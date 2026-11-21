@@ -173,6 +173,41 @@ describe("LocalMeshSubmitter.submitContinuable", () => {
     expect(handle.output()).toContain("finished");
   });
 
+  it("delivery: queue parks without waking; trigger starts the next turn", async () => {
+    let completes = 0;
+    const model: ModelAdapter = {
+      async complete() {
+        completes += 1;
+        return {
+          content: [text(`turn-${completes}`)],
+          stopReason: "end_turn",
+        };
+      },
+    };
+    const submitter = new LocalMeshSubmitter({
+      workerPeerId: "local",
+      buildSubagent: defaultBuildSubagentFactory({ model }),
+    });
+    const handle = submitter.submitContinuable(baseInput, {
+      autoSettleAfterIdle: false,
+    });
+    // Wait until first turn parks on empty inbox.
+    await new Promise((r) => setTimeout(r, 40));
+    expect(completes).toBe(1);
+
+    await handle.send("queued only", { delivery: "queue" });
+    await new Promise((r) => setTimeout(r, 40));
+    expect(completes).toBe(1);
+
+    await handle.send("wake please", { delivery: "trigger" });
+    await new Promise((r) => setTimeout(r, 40));
+    // Queue + trigger should drain both inbox messages (2 more completes).
+    expect(completes).toBeGreaterThanOrEqual(2);
+
+    handle.close();
+    await handle.waitSettle({ timeoutMs: 5_000 });
+  });
+
   it("ignores a turn that finishes after the child was interrupted", async () => {
     // An interrupt settles the child immediately (even while a model call is
     // still hanging). When that call later resolves, the turn must not touch

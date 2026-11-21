@@ -68,13 +68,58 @@ function isPathAllowed(
   );
 }
 
+/** Prefer pwsh (aligned with harness `resolveShellInvocation`); fall back to cmd.exe. */
 async function executeWin32(
   command: string,
   cwd: string,
   maxOutputBytes: number,
   signal?: AbortSignal,
 ): Promise<SidecarExecuteResult> {
-  const { spawn } = await import("node:child_process");
+  const { spawn, execFileSync } = await import("node:child_process");
+  const whichWin = (cmd: string): boolean => {
+    try {
+      execFileSync("where.exe", [cmd], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+        windowsHide: true,
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  if (whichWin("pwsh")) {
+    return captureSpawn(
+      spawn(
+        "pwsh",
+        ["-NoProfile", "-NonInteractive", "-Command", command],
+        {
+          cwd,
+          stdio: ["ignore", "pipe", "pipe"],
+          ...(signal !== undefined ? { signal } : {}),
+        },
+      ),
+      maxOutputBytes,
+      { fsIsolation: false },
+      signal,
+    );
+  }
+  if (whichWin("powershell.exe")) {
+    return captureSpawn(
+      spawn(
+        "powershell.exe",
+        ["-NoProfile", "-NonInteractive", "-Command", command],
+        {
+          cwd,
+          stdio: ["ignore", "pipe", "pipe"],
+          ...(signal !== undefined ? { signal } : {}),
+        },
+      ),
+      maxOutputBytes,
+      { fsIsolation: false },
+      signal,
+    );
+  }
   return captureSpawn(
     spawn("cmd.exe", ["/d", "/s", "/c", command], {
       cwd,

@@ -43,7 +43,11 @@ export type SessionDiagnosticKind =
   /** A denial was escalated and the user widened the policy. */
   | "sandbox-escalated"
   /** A denial was escalated and the user (or policy) refused. */
-  | "sandbox-escalation-denied";
+  | "sandbox-escalation-denied"
+  /** Parent inbox splice (followup / steer / inject). */
+  | "inbox_splice"
+  /** Gap 9 — Guardian batch review (forensic; not model context). */
+  | "guardian_review";
 
 /**
  * A bounded, durable record of something that happened *to* the session
@@ -132,6 +136,45 @@ export interface SessionMetadata {
    * header stays clean. See {@link SessionDiagnosticEvent}.
    */
   diagnostics?: ReadonlyArray<SessionDiagnosticEvent>;
+  /**
+   * Gap 4b — pending parent inbox queues mirrored for `--resume`.
+   * Absent when empty. Synced by Agent on enqueue/claim/clear.
+   */
+  pendingInbox?: PendingInboxSnapshot;
+  /**
+   * Gap 1 — snapshot of continuable children for resume forensics.
+   * Live rehydrate is best-effort; stale entries are marked on open.
+   */
+  pendingChildren?: ReadonlyArray<PendingChildSnapshot>;
+}
+
+/** One durable inbox entry (text or content blocks). */
+export interface PendingInboxStoredEntry {
+  readonly target: "next-turn" | "next-step";
+  readonly content: string | ReadonlyArray<ContentBlock>;
+  readonly enqueuedAt: string;
+}
+
+/** Queued parent inbox state persisted in the session header. */
+export interface PendingInboxSnapshot {
+  readonly nextTurn: ReadonlyArray<PendingInboxStoredEntry>;
+  readonly nextStep: ReadonlyArray<PendingInboxStoredEntry>;
+}
+
+/** One continuable child mirrored for resume (Gap 1). */
+export interface PendingChildSnapshot {
+  readonly sessionId: string;
+  readonly jobId?: string;
+  readonly objective: string;
+  readonly capabilityTag?: string;
+  readonly status: "running" | "completed" | "failed" | "partial" | "stale";
+  readonly startedAt: string;
+  readonly completedAt?: string;
+  /**
+   * Wave 4 — generation fence. Steer/send refused when the live handle's
+   * generation does not match this snapshot (copied/stale history).
+   */
+  readonly generation?: number;
 }
 
 /** Provenance fields for cross-machine / checkpoint resume. */
@@ -274,6 +317,30 @@ export interface Session {
   ): void;
   /** R4.6 — current collaboration mode (defaults to `default`). */
   getCollaborationMode(): import("./plan/mode-kind.js").CollaborationModeState;
+  /**
+   * Gap 4b — replace durable pending inbox (or clear with `undefined`).
+   * `PersistedSession` rewrites the header so resume can restore queues.
+   */
+  setPendingInbox(snapshot: PendingInboxSnapshot | undefined): void;
+  /** Gap 4b — current pending inbox, or `undefined` when empty. */
+  getPendingInbox(): PendingInboxSnapshot | undefined;
+  /**
+   * Gap 1 — replace continuable-child resume snapshot (or clear).
+   */
+  setPendingChildren(
+    children: ReadonlyArray<PendingChildSnapshot> | undefined,
+  ): void;
+  /** Gap 1 — current child snapshot, or empty. */
+  getPendingChildren(): ReadonlyArray<PendingChildSnapshot>;
+  /**
+   * Gap 1 — append a durable session event (JSONL `_kind: "event"`).
+   * Optional so lightweight doubles need not implement it.
+   */
+  recordEvent?(
+    event: import("./session/format.js").SessionEventRecord,
+  ): void;
+  /** Gap 1 — recorded events (empty when none / in-memory default). */
+  events?(): ReadonlyArray<import("./session/format.js").SessionEventRecord>;
 }
 
 /**
@@ -376,6 +443,50 @@ export class InMemorySession implements Session {
         updatedAt: this.metadata.startedAt,
       }
     );
+  }
+
+  setPendingInbox(snapshot: PendingInboxSnapshot | undefined): void {
+    if (
+      snapshot === undefined ||
+      (snapshot.nextTurn.length === 0 && snapshot.nextStep.length === 0)
+    ) {
+      delete this.metadata.pendingInbox;
+    } else {
+      this.metadata.pendingInbox = {
+        nextTurn: snapshot.nextTurn.map((e) => ({ ...e })),
+        nextStep: snapshot.nextStep.map((e) => ({ ...e })),
+      };
+    }
+  }
+
+  getPendingInbox(): PendingInboxSnapshot | undefined {
+    return this.metadata.pendingInbox;
+  }
+
+  setPendingChildren(
+    children: ReadonlyArray<PendingChildSnapshot> | undefined,
+  ): void {
+    if (children === undefined || children.length === 0) {
+      delete this.metadata.pendingChildren;
+    } else {
+      this.metadata.pendingChildren = children.map((c) => ({ ...c }));
+    }
+  }
+
+  getPendingChildren(): ReadonlyArray<PendingChildSnapshot> {
+    return this.metadata.pendingChildren ?? [];
+  }
+
+  private _events: import("./session/format.js").SessionEventRecord[] = [];
+
+  recordEvent(
+    event: import("./session/format.js").SessionEventRecord,
+  ): void {
+    this._events.push(event);
+  }
+
+  events(): ReadonlyArray<import("./session/format.js").SessionEventRecord> {
+    return this._events;
   }
 
   /** No-op: nothing to flush for an in-memory session. */

@@ -256,9 +256,23 @@ export interface DefaultBuildSubagentFactoryOptions {
   retryPolicy?: RetryPolicy;
   /** Working directory. Default: `process.cwd()`. */
   cwd?: string;
-  /** Permission mode. Default: `"read-only"`. The
-   *  sub-agent's own policy, not the requester's. */
+  /**
+   * Permission mode snapshot. Default: `"read-only"`.
+   * Prefer {@link getPermissionMode} when the parent's mode can change
+   * between spawns — the child still gets its own session; inheritance
+   * is the trust boundary, not shared mutable state.
+   */
   permissionMode?: PermissionMode;
+  /**
+   * Live parent permission mode at spawn time. When set, overrides
+   * {@link permissionMode} for each child.
+   */
+  getPermissionMode?: () => PermissionMode;
+  /**
+   * Live parent sandbox policy at spawn time. Seeded onto the child
+   * Agent when provided (child still owns its copy afterward).
+   */
+  getSandboxPolicy?: () => import("../types.js").SandboxPolicy;
   /** Optional system prompt prefix. The full system
    *  prompt is `prefix + "Sub-agent objective: " +
    *  objective`. */
@@ -330,9 +344,13 @@ export function defaultBuildSubagentFactory(
   options: DefaultBuildSubagentFactoryOptions,
 ): (input: SubagentInput) => Agent {
   const cwd = options.cwd ?? process.cwd();
-  const permissionMode = options.permissionMode ?? "read-only";
   const prefix = options.systemPromptPrefix ?? "";
   return (input: SubagentInput) => {
+    const permissionMode =
+      options.getPermissionMode?.() ??
+      options.permissionMode ??
+      "read-only";
+    const sandboxPolicy = options.getSandboxPolicy?.();
     const session = new InMemorySession(newSessionId(), {
       cwd,
       permissionMode,
@@ -347,7 +365,7 @@ export function defaultBuildSubagentFactory(
       `Capability tag: ${input.capabilityTag}`,
       `Objective: ${input.objective}`,
       `Stay within your cost ceiling ($${input.costCeilingUsd.toFixed(2)}) and deadline (${input.deadlineMs}ms).`,
-      `Your permission mode is \`${permissionMode}\`.`,
+      `Your permission mode is \`${permissionMode}\` (inherited policy; own session).`,
     ]
       .filter((line) => line.length > 0)
       .join("\n");
@@ -359,6 +377,7 @@ export function defaultBuildSubagentFactory(
       cwd,
       maxCostUsd: input.costCeilingUsd,
       systemPrompt,
+      ...(sandboxPolicy !== undefined ? { sandboxPolicy } : {}),
       ...(options.parentTracer ? { tracer: options.parentTracer } : {}),
       ...(options.parentSessionId ? { subagentOf: options.parentSessionId } : {}),
       ...(options.meshSubmitter ? { meshSubmitter: options.meshSubmitter } : {}),

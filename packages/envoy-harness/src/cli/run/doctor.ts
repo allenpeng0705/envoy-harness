@@ -192,6 +192,85 @@ export async function runDoctorChecks(
       : `${sessionDir} (not created yet)`,
   });
 
+  // Wave 1–4 power modules — importability (not a live LLM probe).
+  try {
+    await import("../../tools/run-code.js");
+    checks.push({ name: "run_code", ok: true, detail: "module loadable" });
+  } catch (err) {
+    checks.push({
+      name: "run_code",
+      ok: false,
+      detail: err instanceof Error ? err.message : String(err),
+    });
+  }
+  try {
+    await import("../../schedule/store.js");
+    await import("../../goal/store.js");
+    checks.push({
+      name: "schedule_goals",
+      ok: true,
+      detail: "schedule + goal stores loadable (--schedule/--goals/--power)",
+    });
+  } catch (err) {
+    checks.push({
+      name: "schedule_goals",
+      ok: false,
+      detail: err instanceof Error ? err.message : String(err),
+    });
+  }
+  checks.push({
+    name: "platform",
+    ok: true,
+    detail: `${process.platform}/${process.arch}`,
+  });
+
+  if (process.platform === "win32") {
+    const {
+      resolveShellInvocation,
+      resetShellInvocationCache,
+      windowsShellAvailable,
+    } = await import("../../tools/shell-invocation.js");
+    resetShellInvocationCache();
+    const inv = resolveShellInvocation("win32", "echo ok");
+    const available = windowsShellAvailable();
+    checks.push({
+      name: "windows_shell",
+      ok: available,
+      detail: available
+        ? `${inv.kind} → ${inv.file}`
+        : `no pwsh/powershell.exe on PATH (would try ${inv.file})`,
+    });
+  } else {
+    checks.push({
+      name: "windows_shell",
+      ok: true,
+      detail: "skipped (not win32; POSIX uses sh -c)",
+    });
+  }
+
+  try {
+    const { collectStartupReport, formatStartupReport } = await import(
+      "./startup-report.js"
+    );
+    const report = await collectStartupReport({
+      ...(parsed.config !== undefined ? { config: parsed.config } : {}),
+      ...(parsed.sessionDir !== undefined
+        ? { sessionDir: parsed.sessionDir }
+        : {}),
+    });
+    checks.push({
+      name: "startup_report",
+      ok: true,
+      detail: formatStartupReport(report).replace(/\n/g, " | "),
+    });
+  } catch (err) {
+    checks.push({
+      name: "startup_report",
+      ok: false,
+      detail: err instanceof Error ? err.message : String(err),
+    });
+  }
+
   return checks;
 }
 

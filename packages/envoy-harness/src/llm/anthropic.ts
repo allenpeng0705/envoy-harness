@@ -176,6 +176,17 @@ export class AnthropicAdapter implements ModelAdapter {
     this.defaultMaxTokens = options.defaultMaxTokens ?? DEFAULT_MAX_TOKENS;
   }
 
+  /**
+   * Wave 1 — remote compaction via a summarization `complete()` call.
+   */
+  async remoteCompact(input: {
+    messages: ReadonlyArray<import("../model.js").Message>;
+    signal?: AbortSignal;
+  }): Promise<{ summary: string }> {
+    const { remoteCompactViaComplete } = await import("./remote-compact.js");
+    return remoteCompactViaComplete(this, input);
+  }
+
   async complete(input: CompleteInput): Promise<ModelResponse> {
     const { system, messages } = splitSystemAndMessages(input.messages);
     const body: Record<string, unknown> = {

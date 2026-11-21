@@ -21,12 +21,29 @@ export interface WorkflowRunOptions {
    * throws (refuse-all, same teaching signal as F10.2 maxSubagents).
    */
   maxSubagents?: number;
+  /**
+   * Wave 3 — shared work units across children. Each admitted child
+   * consumes 1; when exhausted, remaining children are skipped.
+   */
+  workBudget?: number;
+  /**
+   * Wave 3 — shared token budget across children. Consumes
+   * `result.usage` input+output when present; stops admitting when exhausted.
+   */
+  tokenBudget?: number;
   /** Fired after each pipeline step (and each parallel settle). */
   onTaskComplete?: (
     result: SubagentResult,
     index: number,
     task: WorkflowTask,
   ) => void;
+}
+
+function usageTokens(result: SubagentResult): number {
+  const u = (result as { usage?: { inputTokens?: number; outputTokens?: number } })
+    .usage;
+  if (u === undefined) return 0;
+  return (u.inputTokens ?? 0) + (u.outputTokens ?? 0);
 }
 
 export interface WorkflowParallelResult {
@@ -45,7 +62,7 @@ export async function parallel(
   submitter: MeshSubmitter,
   tasks: ReadonlyArray<WorkflowTask>,
   options: WorkflowRunOptions = {},
-): Promise<WorkflowParallelResult> {
+): Promise<WorkflowParallelResult & { budgetExhausted?: boolean }> {
   if (tasks.length === 0) {
     throw new Error("workflow.parallel: tasks must be non-empty");
   }
@@ -58,16 +75,41 @@ export async function parallel(
     );
   }
   const signal = options.signal ?? new AbortController().signal;
-  const results = await Promise.all(
-    tasks.map(async (task, index) => {
+  let workLeft = options.workBudget;
+  let tokensLeft = options.tokenBudget;
+  let budgetExhausted = false;
+  const results: SubagentResult[] = [];
+  // Admit sequentially against budgets, then run admitted set concurrently.
+  const admitted: Array<{ task: WorkflowTask; index: number }> = [];
+  for (let i = 0; i < tasks.length; i++) {
+    if (workLeft !== undefined && workLeft <= 0) {
+      budgetExhausted = true;
+      break;
+    }
+    if (tokensLeft !== undefined && tokensLeft <= 0) {
+      budgetExhausted = true;
+      break;
+    }
+    if (workLeft !== undefined) workLeft -= 1;
+    admitted.push({ task: tasks[i]!, index: i });
+  }
+  const settled = await Promise.all(
+    admitted.map(async ({ task, index }) => {
       const result = await submitter.submit(task, signal);
+      if (tokensLeft !== undefined) {
+        tokensLeft -= usageTokens(result);
+        if (tokensLeft <= 0) budgetExhausted = true;
+      }
       options.onTaskComplete?.(result, index, task);
-      return result;
+      return { index, result };
     }),
   );
+  settled.sort((a, b) => a.index - b.index);
+  for (const s of settled) results.push(s.result);
   return {
     results,
     aggregated: aggregateFanOutResults(results),
+    ...(budgetExhausted ? { budgetExhausted: true } : {}),
   };
 }
 
@@ -91,6 +133,7 @@ export async function pipeline(
 ): Promise<{
   results: ReadonlyArray<SubagentResult>;
   final: SubagentResult;
+  budgetExhausted?: boolean;
 }> {
   if (steps.length === 0) {
     throw new Error("workflow.pipeline: steps must be non-empty");
@@ -98,8 +141,20 @@ export async function pipeline(
   const signal = options.signal ?? new AbortController().signal;
   const results: SubagentResult[] = [];
   let priorText = "";
+  let workLeft = options.workBudget;
+  let tokensLeft = options.tokenBudget;
+  let budgetExhausted = false;
 
   for (let i = 0; i < steps.length; i++) {
+    if (workLeft !== undefined && workLeft <= 0) {
+      budgetExhausted = true;
+      break;
+    }
+    if (tokensLeft !== undefined && tokensLeft <= 0) {
+      budgetExhausted = true;
+      break;
+    }
+    if (workLeft !== undefined) workLeft -= 1;
     const step = steps[i]!;
     const objective =
       priorText.length > 0
@@ -107,12 +162,23 @@ export async function pipeline(
         : step.objective;
     const input: SubagentInput = { ...step, objective };
     const result = await submitter.submit(input, signal);
+    if (tokensLeft !== undefined) {
+      tokensLeft -= usageTokens(result);
+    }
     results.push(result);
     options.onTaskComplete?.(result, i, step);
     if (result.status === "failed") {
-      return { results, final: result };
+      return {
+        results,
+        final: result,
+        ...(budgetExhausted ? { budgetExhausted: true } : {}),
+      };
     }
     priorText = textFromResult(result) || priorText;
   }
-  return { results, final: results[results.length - 1]! };
+  return {
+    results,
+    final: results[results.length - 1]!,
+    ...(budgetExhausted ? { budgetExhausted: true } : {}),
+  };
 }

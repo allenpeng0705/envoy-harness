@@ -101,6 +101,24 @@ export interface JobRegistry {
     signal?: AbortSignal,
   ): Promise<JobSnapshot>;
   onJobDone(listener: JobDoneListener): () => void;
+  /**
+   * Suppress the next settlement notice for `id` (refcount).
+   * Used while `job_output` wait is active so the wait result
+   * carries the terminal state without a duplicate push notice.
+   */
+  beginSettlementSuppress(id: string): void;
+  /** Drop one wait-suppress ref for `id`. */
+  endSettlementSuppress(id: string): void;
+  /**
+   * Model requested kill — skip the completion notice once when
+   * the job settles (DeepSeek killedByModel).
+   */
+  markSettlementKilledByModel(id: string): void;
+  /**
+   * Returns true when a settlement notice should be skipped, and
+   * clears one-shot kill / wait suppress for that id.
+   */
+  consumeSettlementNoticeSuppress(id: string): boolean;
   /** Cancel every job owned by `owner` and await settlement. */
   disposeOwner(owner: string): Promise<void>;
   /** Tear down the registry (cancel all, drop listeners). */

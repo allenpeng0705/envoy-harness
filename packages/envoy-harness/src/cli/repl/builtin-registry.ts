@@ -10,6 +10,7 @@ import { BUILTIN_INFO_COMMANDS } from "./commands-info.js";
 import { BUILTIN_TIER2_BATCH2_COMMANDS } from "./commands-tier2-batch2.js";
 import { BUILTIN_TIER2_BATCH3_COMMANDS } from "./commands-tier2-batch3.js";
 import { BUILTIN_TIER2_BATCH4_COMMANDS } from "./commands-tier2-batch4.js";
+import { BUILTIN_TIER2_BATCH5_COMMANDS } from "./commands-tier2-batch5.js";
 import { BUILTIN_TIER2_COMMANDS } from "./commands-tier2.js";
 import { ReplCommandRegistry } from "./registry.js";
 import type { ReplCommand } from "./types.js";
@@ -27,5 +28,6 @@ export function buildBuiltinRegistry(
   registry.registerAll(BUILTIN_TIER2_BATCH2_COMMANDS);
   registry.registerAll(BUILTIN_TIER2_BATCH3_COMMANDS);
   registry.registerAll(BUILTIN_TIER2_BATCH4_COMMANDS);
+  registry.registerAll(BUILTIN_TIER2_BATCH5_COMMANDS);
   return registry;
 }

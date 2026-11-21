@@ -5,6 +5,7 @@ optional **multi-machine peers**. Works on a laptop with **no EnvoyMesh**.
 
 | You want… | Do this |
 |---|---|
+| **Build + run (detailed)** | [`docs/build-and-run.md`](./packages/envoy-harness/docs/build-and-run.md) |
 | Chat in the browser | [`envoy-harness web`](#how-to-use-the-webui) |
 | Interactive terminal | [`envoy-harness --repl`](#how-to-use-the-cli) |
 | One prompt, then exit | [`envoy-harness "…"`](#one-shot) |
@@ -25,12 +26,17 @@ optional **multi-machine peers**. Works on a laptop with **no EnvoyMesh**.
 6. [Monorepo commands](#monorepo-commands)
 7. [Docs](#docs)
 
+**Full build/run walkthrough** (prereqs, workspace build order, CLI modes,
+WebUI architecture, troubleshooting):
+[`packages/envoy-harness/docs/build-and-run.md`](./packages/envoy-harness/docs/build-and-run.md).
+
 ---
 
 ## Quick start
 
 ```sh
 pnpm install
+pnpm run build          # required on a fresh clone (workspace packages resolve via dist/)
 
 # Pick one API key (+ optional compatible base URL):
 export OPENAI_API_KEY=…        # or ANTHROPIC_API_KEY / DEEPSEEK_API_KEY / …
@@ -40,6 +46,7 @@ export OPENAI_API_KEY=…        # or ANTHROPIC_API_KEY / DEEPSEEK_API_KEY / …
 pnpm --filter @envoymesh/envoy-harness-web start -- \
   --provider openai --model gpt-4o --persist
 # open http://127.0.0.1:5177/  → Settings for provider / model / base URL
+# same via CLI:  pnpm envoy -- web --provider openai --model gpt-4o --persist
 
 # B) Terminal REPL (recommended for long sessions)
 pnpm envoy -- --repl --provider openai --model gpt-4o
@@ -50,8 +57,8 @@ pnpm envoy -- --provider openai --model gpt-4o "explain this repo"
 #   --base-url https://your-compatible-gateway/v1 "hello"
 ```
 
-After install/build, the binary name is **`envoy-harness`**. In this monorepo,
-`pnpm envoy -- …` forwards to it.
+The published / linked binary name is **`envoy-harness`**. In this monorepo,
+`pnpm envoy -- …` runs it from source via `tsx` (no global install needed).
 
 ---
 
@@ -350,8 +357,15 @@ dependents too early on a clean checkout. The root script derives the order from
 sources import and builds one level at a time.
 
 ```sh
-pnpm --filter @envoymesh/envoy-harness-web start
+# WebUI (after root build)
+pnpm --filter @envoymesh/envoy-harness-web start -- --provider openai --model gpt-4o --persist
 pnpm --filter @envoymesh/envoy-harness-web test
+pnpm --filter @envoymesh/envoy-harness-web typecheck
+
+# CLI from source
+pnpm envoy -- --help
+pnpm envoy -- --repl --provider openai --model gpt-4o
+pnpm envoy -- web --provider openai --model gpt-4o --persist
 ```
 
 ---
@@ -360,6 +374,7 @@ pnpm --filter @envoymesh/envoy-harness-web test
 
 | Doc | What |
 |---|---|
+| [`packages/envoy-harness/docs/build-and-run.md`](./packages/envoy-harness/docs/build-and-run.md) | **Build + run CLI / WebUI** (detailed) |
 | [`packages/envoy-harness/QUICKSTART.md`](./packages/envoy-harness/QUICKSTART.md) | Operator quickstart |
 | [`packages/envoy-harness/docs/design.en.md`](./packages/envoy-harness/docs/design.en.md) | Design |
 | [`packages/envoy-harness/docs/laya-decision-addons.md`](./packages/envoy-harness/docs/laya-decision-addons.md) | Laya / System One decision add-ons (design) |

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type JSX } from "react";
 import type { WorkspaceEntry } from "./acp/host.js";
+import { pathsEqual, shortPathLabel } from "./path-display.js";
 
 export interface ProjectPickerModalProps {
   open: boolean;
@@ -111,7 +112,7 @@ export function ProjectPickerModal(
               ref={pathRef}
               value={pathDraft}
               onChange={(e) => setPathDraft(e.target.value)}
-              placeholder="/absolute/path/to/project"
+              placeholder="/abs/path or C:\\Users\\…\\project"
               spellCheck={false}
               autoComplete="off"
             />
@@ -147,12 +148,14 @@ export function ProjectPickerModal(
             {props.workspaces.map((w) => (
               <li
                 key={w.path}
-                className={w.path === props.activeCwd ? "active" : ""}
+                className={
+                  pathsEqual(w.path, props.activeCwd) ? "active" : ""
+                }
               >
                 <div className="project-info">
                   <span className="project-name">{w.name}</span>
                   <span className="project-path mono" title={w.path}>
-                    {w.path}
+                    {shortPathLabel(w.path, 64)}
                   </span>
                 </div>
                 <div className="project-actions">

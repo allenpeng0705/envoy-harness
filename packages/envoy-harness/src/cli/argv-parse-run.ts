@@ -13,6 +13,7 @@ const RUN_FLAGS = new Set([
   "--version",
   "--json",
   "--sandbox",
+  "--sandbox-executor",
   "--approval",
   "--model",
   "--provider",
@@ -41,6 +42,18 @@ const RUN_FLAGS = new Set([
   "--verbose",
   "--quiet",
   "--no-subagents",
+  "--run-code",
+  "--code-mode",
+  "--tool-search",
+  "--schedule",
+  "--no-schedule",
+  "--goals",
+  "--no-goals",
+  "--present",
+  "--no-present",
+  "--power",
+  "--config-patch",
+  "--profile",
 ]);
 
 /** A flag that takes a value (--flag value) for the run subcommand. */
@@ -67,6 +80,8 @@ const RUN_VALUED_FLAGS = new Set([
   "--peer",
   "--discovery",
   "--connect-timeout-ms",
+  "--config-patch",
+  "--profile",
 ]);
 
 // ---------------------------------------------------------------------------
@@ -89,6 +104,13 @@ export function parseRunArgs(argv: ReadonlyArray<string>): RunParsedArgs {
     maxTurns: undefined,
     maxCostUsd: undefined,
     noSubagents: false,
+    runCode: false,
+    codeMode: false,
+    toolSearch: false,
+    schedule: undefined,
+    goals: undefined,
+    present: undefined,
+    power: false,
     resume: undefined,
     resumeRemote: undefined,
     fork: undefined,
@@ -97,6 +119,8 @@ export function parseRunArgs(argv: ReadonlyArray<string>): RunParsedArgs {
     config: undefined,
     importConfig: undefined,
     importFrom: undefined,
+    configPatch: undefined,
+    profile: undefined,
     plugins: [],
     pluginConfigs: [],
     plan: false,
@@ -141,6 +165,46 @@ export function parseRunArgs(argv: ReadonlyArray<string>): RunParsedArgs {
       }
       if (arg === "--no-subagents") {
         out.noSubagents = true;
+        continue;
+      }
+      if (arg === "--run-code") {
+        out.runCode = true;
+        continue;
+      }
+      if (arg === "--code-mode") {
+        out.codeMode = true;
+        continue;
+      }
+      if (arg === "--tool-search") {
+        out.toolSearch = true;
+        continue;
+      }
+      if (arg === "--schedule") {
+        out.schedule = true;
+        continue;
+      }
+      if (arg === "--no-schedule") {
+        out.schedule = false;
+        continue;
+      }
+      if (arg === "--goals") {
+        out.goals = true;
+        continue;
+      }
+      if (arg === "--no-goals") {
+        out.goals = false;
+        continue;
+      }
+      if (arg === "--present") {
+        out.present = true;
+        continue;
+      }
+      if (arg === "--no-present") {
+        out.present = false;
+        continue;
+      }
+      if (arg === "--power") {
+        out.power = true;
         continue;
       }
       // Valued flags: consume the next arg.
@@ -232,6 +296,12 @@ export function parseRunArgs(argv: ReadonlyArray<string>): RunParsedArgs {
             break;
           case "--from":
             out.importFrom = value;
+            break;
+          case "--config-patch":
+            out.configPatch = value;
+            break;
+          case "--profile":
+            out.profile = value;
             break;
           case "--plugin":
             out.plugins.push(value);

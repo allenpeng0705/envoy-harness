@@ -34,6 +34,8 @@ import type {
   McpClient,
   McpTool,
 } from "./types.js";
+import type { McpPrompt, McpResource, McpResourceClient } from "./resources.js";
+import { withHandshakeBackoff } from "../util/handshake-backoff.js";
 
 /** The minimum child-process surface `StdioMcpClient` needs. */
 export interface McpStdioProcess {
@@ -89,7 +91,7 @@ interface McpServerTool {
  * A `McpClient` that speaks JSON-RPC 2.0 over stdio.
  * The connection owns the child process; `close()` releases it.
  */
-export class StdioMcpClient implements McpClient {
+export class StdioMcpClient implements McpClient, McpResourceClient {
   readonly serverName: string;
   private readonly process: McpStdioProcess;
   private readonly requestTimeoutMs: number;
@@ -114,32 +116,77 @@ export class StdioMcpClient implements McpClient {
     this.process.stdout.on("data", this.dataListener);
   }
 
-  /** Run the `initialize` handshake. Must be called once. */
+  /**
+   * Run the `initialize` handshake. Must be called once.
+   * Retries with handshake backoff on transient transport failures.
+   */
   async connect(): Promise<void> {
     this.assertOpen();
-    const result = (await this.sendRequest("initialize", {
-      protocolVersion: MCP_PROTOCOL_VERSION,
-      capabilities: {},
-      clientInfo: { name: "envoy-harness", version: "0.0.0" },
-    })) as { protocolVersion?: string } | undefined;
-    // Best-effort version negotiation: the spec requires the
-    // server to echo the negotiated version, but a missing or
-    // different version is not fatal in practice (most servers
-    // speak 2024-11-05). Warn instead of failing — the tools
-    // either work or the calls error naturally.
-    if (result?.protocolVersion === undefined) {
-      this.log(
-        `StdioMcpClient: server "${this.serverName}" did not return a protocolVersion`,
-      );
-    } else if (result.protocolVersion !== MCP_PROTOCOL_VERSION) {
-      this.log(
-        `StdioMcpClient: server "${this.serverName}" negotiated ` +
-          `${result.protocolVersion} (client sent ${MCP_PROTOCOL_VERSION}); ` +
-          "continuing best-effort",
-      );
-    }
-    this.sendNotification("notifications/initialized", {});
-    this._initialized = true;
+    await withHandshakeBackoff(async () => {
+      const result = (await this.sendRequest("initialize", {
+        protocolVersion: MCP_PROTOCOL_VERSION,
+        capabilities: {
+          elicitation: {},
+        },
+        clientInfo: { name: "envoy-harness", version: "0.0.0" },
+      })) as { protocolVersion?: string } | undefined;
+      if (result?.protocolVersion === undefined) {
+        this.log(
+          `StdioMcpClient: server "${this.serverName}" did not return a protocolVersion`,
+        );
+      } else if (result.protocolVersion !== MCP_PROTOCOL_VERSION) {
+        this.log(
+          `StdioMcpClient: server "${this.serverName}" negotiated ` +
+            `${result.protocolVersion} (client sent ${MCP_PROTOCOL_VERSION}); ` +
+            "continuing best-effort",
+        );
+      }
+      this.sendNotification("notifications/initialized", {});
+      this._initialized = true;
+    }, { maxRetries: 3, initialDelayMs: 100, maxDelayMs: 2_000 });
+  }
+
+  async listResources(): Promise<ReadonlyArray<McpResource>> {
+    this.assertInitialized();
+    const result = (await this.sendRequest("resources/list", {})) as {
+      resources?: McpResource[];
+    };
+    return result?.resources ?? [];
+  }
+
+  async readResource(
+    uri: string,
+  ): Promise<{ uri: string; text?: string; mimeType?: string }> {
+    this.assertInitialized();
+    const result = (await this.sendRequest("resources/read", { uri })) as {
+      contents?: Array<{ uri: string; text?: string; mimeType?: string }>;
+    };
+    const first = result?.contents?.[0];
+    return {
+      uri,
+      ...(first?.text !== undefined ? { text: first.text } : {}),
+      ...(first?.mimeType !== undefined ? { mimeType: first.mimeType } : {}),
+    };
+  }
+
+  async listPrompts(): Promise<ReadonlyArray<McpPrompt>> {
+    this.assertInitialized();
+    const result = (await this.sendRequest("prompts/list", {})) as {
+      prompts?: McpPrompt[];
+    };
+    return result?.prompts ?? [];
+  }
+
+  async getPrompt(
+    name: string,
+    args?: Record<string, string>,
+  ): Promise<{ messages: unknown }> {
+    this.assertInitialized();
+    const result = (await this.sendRequest("prompts/get", {
+      name,
+      ...(args !== undefined ? { arguments: args } : {}),
+    })) as { messages?: unknown };
+    return { messages: result?.messages ?? [] };
   }
 
   async listTools(): Promise<ReadonlyArray<McpTool>> {

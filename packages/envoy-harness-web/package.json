@@ -33,6 +33,13 @@
     "@envoymesh/envoy-harness": "file:../envoy-harness",
     "@envoymesh/envoy-harness-client": "file:../envoy-harness-client",
     "@envoymesh/envoy-harness-ehui": "file:../envoy-harness-ehui",
+    "@lexical/plain-text": "^0.53.0",
+    "@lexical/react": "^0.53.0",
+    "@lexical/selection": "^0.53.0",
+    "@lexical/utils": "^0.53.0",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "lexical": "^0.53.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "ws": "^8.18.0"

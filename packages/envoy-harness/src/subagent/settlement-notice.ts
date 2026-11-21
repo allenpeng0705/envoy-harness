@@ -2,6 +2,7 @@
  * DeepSeek-style settlement notice text for the parent session.
  */
 
+import type { JobSnapshot } from "../jobs/types.js";
 import type { SubagentResult } from "./types.js";
 
 const CLOSING_CAP = 8_000;
@@ -11,6 +12,9 @@ const CLOSING_CAP = 8_000;
  * {@link isEphemeralUserContextText} so chat UIs hide these as model-only.
  */
 export const SETTLEMENT_NOTICE_PREFIX = "[system] Sub-agent settled:";
+
+/** Prefix for non-subagent background job settlement (bash, etc.). */
+export const JOB_SETTLEMENT_NOTICE_PREFIX = "[system] Job settled:";
 
 export type SettlementNoticeInfo = {
   jobId: string;
@@ -56,4 +60,20 @@ function settlementSummary(
     default:
       return `${subject} settled (${String(status)}).`;
   }
+}
+
+/**
+ * Notice for a non-subagent background job (typically bash).
+ * Subagent jobs are notified via {@link formatSettlementNotice} instead.
+ */
+export function formatJobSettlementNotice(snap: JobSnapshot): string {
+  const label = snap.label.length > 0 ? snap.label : snap.id;
+  const detail =
+    snap.detail !== undefined && snap.detail.length > 0
+      ? `\nDetail: ${snap.detail.slice(0, 500)}`
+      : "";
+  return (
+    `${JOB_SETTLEMENT_NOTICE_PREFIX} job=${snap.id} kind=${snap.kind} ` +
+    `status=${snap.status} — ${label}${detail}`
+  );
 }

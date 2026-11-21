@@ -18,11 +18,21 @@ import type { SubagentResultSigner } from "./signer.js";
 
 export type SubagentHandleId = string;
 
+export type ContinuableSendDelivery = "queue" | "trigger";
+
 export interface ContinuableSubagentHandle {
   readonly id: SubagentHandleId;
   readonly sessionId: string;
-  /** Enqueue a follow-up message (runs after the current turn, if any). */
-  send(message: string | ReadonlyArray<ContentBlock>): Promise<void>;
+  /**
+   * Enqueue a follow-up message.
+   * - `delivery: "trigger"` (default): wake the child so it runs.
+   * - `delivery: "queue"`: inbox only; an idle child stays idle until
+   *   a later trigger or other wake.
+   */
+  send(
+    message: string | ReadonlyArray<ContentBlock>,
+    options?: { delivery?: ContinuableSendDelivery },
+  ): Promise<void>;
   /** Abort the in-flight run (idempotent). Settles as failed. */
   interrupt(reason?: string): void;
   /**
@@ -260,6 +270,8 @@ export class ContinuableSubagentRegistry {
   private readonly handles = new Map<SubagentHandleId, RunningSubagent>();
   private readonly opts: ContinuableRuntimeOptions;
 
+  private nextGeneration = 1;
+
   constructor(opts: ContinuableRuntimeOptions) {
     this.opts = opts;
   }
@@ -271,12 +283,14 @@ export class ContinuableSubagentRegistry {
     const agent = this.opts.buildSubagent(input);
     const sessionId = agent.getSessionId();
     const id = sessionId;
+    const generation = this.nextGeneration++;
     const record: SubagentRecord = {
       sessionId,
       capabilityTag: input.capabilityTag,
       objective: input.objective,
       startedAt: new Date().toISOString(),
       status: "running",
+      generation,
     };
     this.opts.records.push(record);
 
@@ -366,12 +380,14 @@ export class ContinuableSubagentRegistry {
     return {
       id: running.id,
       sessionId: running.record.sessionId,
-      send: async (message) => {
+      send: async (message, options) => {
         if (running.settled) {
           throw new Error(`sub-agent ${running.id} already settled`);
         }
         running.inbox.push(message);
-        this.wake(running);
+        if (options?.delivery !== "queue") {
+          this.wake(running);
+        }
       },
       interrupt: (reason) => {
         this.interruptHandle(running, reason ?? "interrupted");

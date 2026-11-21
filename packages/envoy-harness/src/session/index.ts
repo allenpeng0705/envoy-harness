@@ -23,8 +23,12 @@ export {
   PERSISTED_SESSION_FORMAT_VERSION,
   SUPPORTED_SESSION_FORMAT_VERSIONS,
   buildCreateHeader,
+  buildSessionEvent,
+  isSessionEventRecord,
   resolveHeaderFormatVersion,
   type PersistedHeader,
+  type SessionEventKind,
+  type SessionEventRecord,
 } from "./format.js";
 export { migrateSessionFile, type MigrateSessionFileResult } from "./migrate.js";
 export {

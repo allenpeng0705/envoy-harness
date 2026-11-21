@@ -64,6 +64,40 @@ export function parseSessionUpdateMessage(
   return { role, text: m["text"] };
 }
 
+export interface AvailableCommandUpdate {
+  name: string;
+  description: string;
+}
+
+/**
+ * Wave 9 / M2 — `session/update` with
+ * `{ update: { sessionUpdate: "available_commands_update", availableCommands } }`.
+ */
+export function parseAvailableCommandsUpdate(
+  params: unknown,
+  sessionId: string | null,
+): AvailableCommandUpdate[] | undefined {
+  const p = asRecord(params);
+  if (p === undefined || !sessionMatches(p, sessionId)) return undefined;
+  const update = p["update"];
+  if (update === null || typeof update !== "object") return undefined;
+  const u = update as Record<string, unknown>;
+  if (u["sessionUpdate"] !== "available_commands_update") return undefined;
+  const raw = u["availableCommands"];
+  if (!Array.isArray(raw)) return undefined;
+  const out: AvailableCommandUpdate[] = [];
+  for (const item of raw) {
+    if (item === null || typeof item !== "object") continue;
+    const c = item as Record<string, unknown>;
+    if (typeof c.name !== "string" || c.name.trim().length === 0) continue;
+    const name = c.name.replace(/^\//, "").trim();
+    const description =
+      typeof c.description === "string" ? c.description : "";
+    out.push({ name, description });
+  }
+  return out;
+}
+
 /**
  * Rows from `session/prompt` result that belong in the UI transcript.
  * Skips the echoed user prompt; keeps assistant/tool/system.
