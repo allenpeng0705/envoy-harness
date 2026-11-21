@@ -7,6 +7,7 @@ import {
   formatSessionWhen,
   groupSessionsByProject,
   visibleSessions,
+  type RegisteredProject,
 } from "./session-groups.js";
 import { shortPathLabel } from "./path-display.js";
 
@@ -15,6 +16,8 @@ export interface SessionRailProps {
   retryAttempt: number;
   onReconnect: () => void;
   sessions: SessionSummary[];
+  /** Manual workspace registry — the only source of "Projects" sections. */
+  workspaces: readonly RegisteredProject[];
   activeSessionId: string | null;
   pinnedIds: ReadonlySet<string>;
   archivedIds: ReadonlySet<string>;
@@ -52,9 +55,10 @@ export function SessionRail(props: SessionRailProps): JSX.Element {
       showArchived,
     );
     const filtered = filterSessions(visible, query);
-    return groupSessionsByProject(filtered, props.pinnedIds);
+    return groupSessionsByProject(filtered, props.pinnedIds, props.workspaces);
   }, [
     props.sessions,
+    props.workspaces,
     props.archivedIds,
     props.pinnedIds,
     query,
@@ -231,9 +235,11 @@ export function SessionRail(props: SessionRailProps): JSX.Element {
               <li className="muted">
                 {query.trim().length > 0
                   ? "No matching sessions"
-                  : showArchived
-                    ? "No sessions"
-                    : "No persisted sessions"}
+                  : props.workspaces.length === 0
+                    ? "No projects yet — add one with Open project…"
+                    : showArchived
+                      ? "No sessions"
+                      : "No persisted sessions"}
               </li>
             ) : (
               groups.map((g) => (

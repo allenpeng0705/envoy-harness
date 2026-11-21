@@ -3,10 +3,10 @@
  */
 
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 
 import { loadConfigStack } from "../../config/layers.js";
+import { resolveWritableEnvoyStateRoot } from "../../paths/state-root.js";
 import { resolveDefaultSessionDir } from "./helpers.js";
 
 export interface StartupReport {
@@ -88,17 +88,11 @@ export function writeStartupFailureLog(
   err: unknown,
   sessionDir?: string,
 ): string {
-  const base =
-    sessionDir ??
-    process.env["LOCALAPPDATA"] ??
-    process.env["XDG_STATE_HOME"] ??
-    path.join(os.homedir(), ".local", "state");
-  const dir = path.join(
+  const stateRoot =
     typeof sessionDir === "string" && sessionDir.length > 0
       ? path.dirname(sessionDir)
-      : path.join(base, "envoy-harness"),
-    "logs",
-  );
+      : resolveWritableEnvoyStateRoot();
+  const dir = path.join(stateRoot, "logs");
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, `startup-failure-${Date.now()}.log`);
   const body = [

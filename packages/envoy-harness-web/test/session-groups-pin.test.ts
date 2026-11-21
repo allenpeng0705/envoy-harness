@@ -20,7 +20,9 @@ describe("groupSessionsByProject pins", () => {
         messageCount: 2,
       },
     ];
-    const groups = groupSessionsByProject(sessions, new Set(["a"]));
+    const groups = groupSessionsByProject(sessions, new Set(["a"]), [
+      { path: "/p" },
+    ]);
     expect(groups[0]?.sessions.map((s) => s.id)).toEqual(["a", "b"]);
   });
 });

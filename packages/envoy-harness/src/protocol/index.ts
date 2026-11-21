@@ -18,7 +18,13 @@ export {
   type JsonRpcSuccess,
 } from "./types.js";
 
-export { encodeFrame, FrameDecoder } from "./framing.js";
+export {
+  AutoFrameDecoder,
+  encodeFrame,
+  encodeNdjsonFrame,
+  FrameDecoder,
+  NdjsonFrameDecoder,
+} from "./framing.js";
 
 export {
   JsonRpcConnection,

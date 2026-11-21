@@ -22,6 +22,9 @@ import type {
 
 export function createHostedJobsRegistry(ctx: Context): EnvoyJobRegistry {
   const owned = new Map<string, Array<{ id: string; hooks: EnvoyJobHooks }>>();
+  /** Local mirror of envoy JobRegistry wait/kill notice suppress. */
+  const waitSuppress = new Map<string, number>();
+  const killedByModel = new Set<string>();
 
   return {
     start(spec: EnvoyJobStart): string {
@@ -84,6 +87,23 @@ export function createHostedJobsRegistry(ctx: Context): EnvoyJobRegistry {
     },
     onJobDone(listener: JobDoneListener): () => void {
       return ctx.jobs.onJobDone(listener as never);
+    },
+    beginSettlementSuppress(id: string): void {
+      waitSuppress.set(id, (waitSuppress.get(id) ?? 0) + 1);
+    },
+    endSettlementSuppress(id: string): void {
+      const n = waitSuppress.get(id) ?? 0;
+      if (n <= 1) waitSuppress.delete(id);
+      else waitSuppress.set(id, n - 1);
+    },
+    markSettlementKilledByModel(id: string): void {
+      killedByModel.add(id);
+    },
+    consumeSettlementNoticeSuppress(id: string): boolean {
+      const waiting = (waitSuppress.get(id) ?? 0) > 0;
+      const killed = killedByModel.delete(id);
+      if (waiting) return true;
+      return killed;
     },
     async disposeOwner(owner: string): Promise<void> {
       const jobs = owned.get(owner) ?? [];

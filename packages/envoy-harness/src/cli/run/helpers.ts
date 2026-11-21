@@ -6,7 +6,7 @@
  * duplicating the logic.
  */
 import { promises as fs } from "node:fs";
-import * as os from "node:os";
+import * as path from "node:path";
 
 import {
   EXIT_USAGE,
@@ -16,6 +16,7 @@ import {
   type AskHandler,
   type ModelAdapter,
 } from "../../index.js";
+import { resolveWritableEnvoyStateRoot } from "../../paths/state-root.js";
 import type { ParsedArgs } from "../argv.js";
 import { CliError } from "./errors.js";
 import type { RunOptions, RunResult } from "./types.js";
@@ -71,7 +72,9 @@ export function resolveModel(
  *
  * Order:
  * 1. `$ENVOY_HARNESS_SESSION_DIR` (if set)
- * 2. `~/.local/state/envoy-harness/sessions`
+ * 2. `$XDG_STATE_HOME/envoy-harness/sessions` (or
+ *    `~/.local/state/…`; falls back to `~/.envoy-harness/sessions`
+ *    when the XDG tree is not writable)
  *
  * **Single source of truth.** `doctor` previously hard-coded
  * `~/.local/share/envoy-harness/sessions`, so it reported a directory
@@ -82,7 +85,7 @@ export function resolveModel(
 export function resolveDefaultSessionDir(): string {
   const env = process.env["ENVOY_HARNESS_SESSION_DIR"];
   if (env !== undefined && env.length > 0) return env;
-  return `${process.env["HOME"] ?? os.homedir()}/.local/state/envoy-harness/sessions`;
+  return path.join(resolveWritableEnvoyStateRoot(), "sessions");
 }
 
 /**
@@ -91,7 +94,7 @@ export function resolveDefaultSessionDir(): string {
  * Order:
  * 1. `--session-dir <path>` (if set)
  * 2. `$ENVOY_HARNESS_SESSION_DIR` (if set)
- * 3. `~/.local/state/envoy-harness/sessions`
+ * 3. Writable XDG / fallback state root + `/sessions`
  */
 export function defaultSessionDir(
   parsed: Extract<ParsedArgs, { subcommand: "run" }>,

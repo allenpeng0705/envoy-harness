@@ -3,8 +3,12 @@
  */
 import { describe, expect, it } from "vitest";
 import { PassThrough } from "node:stream";
-import { EventEmitter } from "node:events";
-import { encodeFrame, FrameDecoder } from "@envoymesh/envoy-harness";
+import {
+  AutoFrameDecoder,
+  encodeFrame,
+  encodeNdjsonFrame,
+  FrameDecoder,
+} from "@envoymesh/envoy-harness";
 import { resolveHarnessAcpCommand } from "../src/server/spawn.js";
 
 describe("resolveHarnessAcpCommand", () => {
@@ -16,8 +20,8 @@ describe("resolveHarnessAcpCommand", () => {
   });
 });
 
-describe("Content-Length frame round-trip (bridge contract)", () => {
-  it("encodes and decodes a JSON-RPC initialize", () => {
+describe("ACP framing (bridge contract)", () => {
+  it("encodes/decodes Content-Length initialize", () => {
     const msg = {
       jsonrpc: "2.0",
       id: 1,
@@ -30,19 +34,30 @@ describe("Content-Length frame round-trip (bridge contract)", () => {
     expect(decoder.take()).toEqual([msg]);
   });
 
-  it("relays JSON text ↔ framed bytes like the WS bridge", async () => {
-    // Simulate: browser JSON → encodeFrame → stdin; stdout frames → JSON.
+  it("decodes NDJSON replies the way --acp emits them", () => {
+    const reply = {
+      jsonrpc: "2.0",
+      id: 1,
+      result: { protocolVersion: 1 },
+    };
+    // Bare JSON + newline (no Content-Length) — the ACP default dialect.
+    const decoder = new AutoFrameDecoder();
+    decoder.feed(Buffer.from(`${JSON.stringify(reply)}\n`, "utf8"));
+    expect(decoder.take()).toEqual([reply]);
+    expect(decoder.dialect).toBe("ndjson");
+  });
+
+  it("relays browser JSON ↔ NDJSON like the WS bridge", async () => {
     const stdin = new PassThrough();
-    const stdout = new PassThrough();
     const fromBrowser = {
       jsonrpc: "2.0",
       id: 1,
       method: "initialize",
       params: {},
     };
-    stdin.write(encodeFrame(fromBrowser));
+    stdin.write(encodeNdjsonFrame(fromBrowser));
 
-    const decoder = new FrameDecoder();
+    const decoder = new AutoFrameDecoder();
     const got = await new Promise<unknown>((resolve) => {
       stdin.on("data", (chunk: Buffer) => {
         decoder.feed(chunk);
@@ -52,22 +67,13 @@ describe("Content-Length frame round-trip (bridge contract)", () => {
     });
     expect(got).toEqual(fromBrowser);
 
-    // Child reply framed on stdout → browser JSON
     const reply = {
       jsonrpc: "2.0",
       id: 1,
       result: { protocolVersion: 1 },
     };
-    const outDecoder = new FrameDecoder();
-    stdout.write(encodeFrame(reply));
-    const outGot = await new Promise<unknown>((resolve) => {
-      stdout.on("data", (chunk: Buffer) => {
-        outDecoder.feed(chunk);
-        const msgs = outDecoder.take();
-        if (msgs.length > 0) resolve(msgs[0]);
-      });
-    });
-    expect(JSON.stringify(outGot)).toBe(JSON.stringify(reply));
-    void EventEmitter;
+    const outDecoder = new AutoFrameDecoder();
+    outDecoder.feed(encodeNdjsonFrame(reply));
+    expect(outDecoder.take()).toEqual([reply]);
   });
 });

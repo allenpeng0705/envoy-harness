@@ -5,6 +5,7 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
+import * as os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
@@ -17,6 +18,11 @@ import { resolveHarnessAcpCommand } from "./spawn.js";
 export interface StartWebServerOptions {
   port?: number;
   host?: string;
+  /**
+   * Working directory for the ACP child / default session.
+   * When omitted, uses `~/.envoy-harness/scratch` so the folder you launched
+   * the WebUI from is never treated as a project.
+   */
   cwd?: string;
   /** Extra argv for `envoy-harness --acp` (provider, model, peers, …). */
   harnessArgs?: string[];
@@ -24,6 +30,22 @@ export interface StartWebServerOptions {
   dev?: boolean;
   openBrowser?: boolean;
   stderr?: NodeJS.WritableStream;
+}
+
+/** Neutral ACP session cwd when the operator did not pass `--cwd`. */
+export function defaultWebAcpCwd(homedir: () => string = os.homedir): string {
+  const dir = path.join(homedir(), ".envoy-harness", "scratch");
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+/** Ensure harness argv carries `--cwd <sessionCwd>` exactly once. */
+export function withHarnessCwd(
+  harnessArgs: readonly string[],
+  sessionCwd: string,
+): string[] {
+  if (harnessArgs.includes("--cwd")) return [...harnessArgs];
+  return ["--cwd", sessionCwd, ...harnessArgs];
 }
 
 export interface WebServerHandle {
@@ -38,6 +60,24 @@ function packageRoot(): string {
 
 function clientDistDir(): string {
   return path.join(packageRoot(), "dist/client");
+}
+
+/**
+ * Prefer Vite when the packaged client is missing **or stale** relative to
+ * `src/client`. Otherwise a leftover `dist/client` from an older build keeps
+ * serving yesterday's UI (e.g. cwd-invented "projects") after source fixes.
+ */
+export function shouldPreferViteDev(distDir: string = clientDistDir()): boolean {
+  const indexHtml = path.join(distDir, "index.html");
+  if (!fs.existsSync(indexHtml)) return true;
+  const srcProbe = path.join(packageRoot(), "src/client/App.tsx");
+  try {
+    const srcMtime = fs.statSync(srcProbe).mtimeMs;
+    const distMtime = fs.statSync(indexHtml).mtimeMs;
+    return srcMtime > distMtime;
+  } catch {
+    return false;
+  }
 }
 
 function contentType(filePath: string): string {
@@ -55,13 +95,17 @@ export async function startWebServer(
 ): Promise<WebServerHandle> {
   const host = options.host ?? "127.0.0.1";
   const port = options.port ?? 5177;
-  const cwd = options.cwd ?? process.cwd();
+  // Session/project cwd (scratch by default). Must NOT be the Node spawn cwd —
+  // `--import tsx` resolves packages from the child cwd and fails under
+  // `~/.envoy-harness/scratch`.
+  const sessionCwd = options.cwd ?? defaultWebAcpCwd();
+  const spawnCwd = process.cwd();
   const stderr = options.stderr ?? process.stderr;
-  const harnessArgs = options.harnessArgs ?? [];
+  const harnessArgs = withHarnessCwd(options.harnessArgs ?? [], sessionCwd);
   const dist = clientDistDir();
   const useDev =
     options.dev === true ||
-    (options.dev !== false && !fs.existsSync(path.join(dist, "index.html")));
+    (options.dev !== false && shouldPreferViteDev(dist));
 
   let vite: ViteDevServer | undefined;
   if (useDev) {
@@ -156,7 +200,7 @@ export async function startWebServer(
       attachAcpWsBridge({
         command: resolved.command,
         args: resolved.args,
-        cwd,
+        cwd: spawnCwd,
         ws,
         onChildStderr: (chunk) => {
           stderr.write(chunk);

@@ -33,9 +33,9 @@
  */
 
 import { promises as fs } from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 
+import { resolveWritableEnvoyStateRoot } from "../paths/state-root.js";
 import type { ConfigLayer } from "./schema.js";
 
 /**
@@ -112,8 +112,7 @@ export function sanitizeProjectLayer(raw: ConfigLayer): SanitizedProjectLayer {
 
 /** Directory holding the trust record (same root as session state). */
 export function trustedProjectsPath(env: NodeJS.ProcessEnv = process.env): string {
-  const home = env["HOME"] ?? os.homedir();
-  return path.join(home, ".local", "state", "envoy-harness", "trusted-projects.json");
+  return path.join(resolveWritableEnvoyStateRoot(env), "trusted-projects.json");
 }
 
 /**

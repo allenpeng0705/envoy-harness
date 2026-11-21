@@ -24,10 +24,15 @@ import { PermissionDock } from "./PermissionDock.js";
 import { ProjectPickerModal } from "./ProjectPickerModal.js";
 import { QueuePanel, type QueuedPrompt } from "./QueuePanel.js";
 import { SessionRail } from "./SessionRail.js";
+import {
+  isRegisteredProjectCwd,
+  normalizeProjectKey,
+  projectLabel,
+} from "./session-groups.js";
 import { SessionTabsBar } from "./SessionTabsBar.js";
 import { SettingsModal, type ThemeMode } from "./SettingsModal.js";
 import { TurnHintsDock } from "./TurnHintsDock.js";
-import { isPrimaryMod, shortPathLabel } from "./path-display.js";
+import { isPrimaryMod } from "./path-display.js";
 import {
   activateLeafTab,
   bindFocusedPaneSession,
@@ -120,6 +125,15 @@ export function App(): JSX.Element {
   const host = useMemo(() => new AcpHost(), []);
   const state = useAcpHost(host);
   const [draft, setDraft] = useState("");
+  /** Bumped only for external draft writes (not keystrokes). */
+  const [draftEpoch, setDraftEpoch] = useState(0);
+  const replaceDraft = useCallback(
+    (value: string | ((prev: string) => string)): void => {
+      setDraft(value);
+      setDraftEpoch((n) => n + 1);
+    },
+    [],
+  );
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [projectsOpen, setProjectsOpen] = useState(false);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
@@ -394,11 +408,11 @@ export function App(): JSX.Element {
     };
     if (state.busy || drainingRef.current) {
       setPromptQueue((q) => [...q, queued]);
-      setDraft("");
+      replaceDraft("");
       setAttachments([]);
       return;
     }
-    setDraft("");
+    replaceDraft("");
     setAttachments([]);
     await runPrompt(display, payload.content);
   }, [
@@ -409,6 +423,7 @@ export function App(): JSX.Element {
     hostPromptBlocked,
     host,
     runPrompt,
+    replaceDraft,
   ]);
 
   const enqueueOrSend = useCallback((): void => {
@@ -444,16 +459,21 @@ export function App(): JSX.Element {
     setPromptQueue((q) => {
       const item = q[index];
       if (item === undefined) return q;
-      setDraft(item.text);
+      replaceDraft(item.text);
       queueMicrotask(() => document.getElementById("eh-composer")?.focus());
       return q.filter((_, i) => i !== index);
     });
-  }, []);
+  }, [replaceDraft]);
 
-  const insertComposerHint = useCallback((text: string): void => {
-    setDraft((d) => (d.trim() === "" ? text : `${d.trimEnd()}\n${text}`));
-    queueMicrotask(() => document.getElementById("eh-composer")?.focus());
-  }, []);
+  const insertComposerHint = useCallback(
+    (text: string): void => {
+      replaceDraft((d) =>
+        d.trim() === "" ? text : `${d.trimEnd()}\n${text}`,
+      );
+      queueMicrotask(() => document.getElementById("eh-composer")?.focus());
+    },
+    [replaceDraft],
+  );
 
   const requestDetailsFocus = useCallback(
     (partial: Omit<DetailsFocusRequest, "seq">): void => {
@@ -521,13 +541,16 @@ export function App(): JSX.Element {
     });
   }, [state.sessionId, draft, attachments, promptQueue]);
 
-  const restoreTabDraft = useCallback((id: string): void => {
-    const cached = tabDraftsRef.current.get(id);
-    setDraft(cached?.draft ?? "");
-    setAttachments(cached?.attachments ?? []);
-    setPromptQueue(cached?.queue ?? []);
-    drainHaltRef.current = false;
-  }, []);
+  const restoreTabDraft = useCallback(
+    (id: string): void => {
+      const cached = tabDraftsRef.current.get(id);
+      replaceDraft(cached?.draft ?? "");
+      setAttachments(cached?.attachments ?? []);
+      setPromptQueue(cached?.queue ?? []);
+      drainHaltRef.current = false;
+    },
+    [replaceDraft],
+  );
 
   const switchToSession = useCallback(
     (id: string): void => {
@@ -696,16 +719,29 @@ export function App(): JSX.Element {
     (leafId: string): void => {
       setSessionPanes((prev) => setPaneFocus(prev, leafId));
       saveActiveTabDraft();
+      // New tabs stay in the active project only when that cwd was
+      // manually registered — otherwise open the picker (deepseek-style).
+      if (!isRegisteredProjectCwd(state.cwd, workspaces)) {
+        setProjectsOpen(true);
+        return;
+      }
       drainHaltRef.current = false;
       setPromptQueue([]);
-      setDraft("");
+      replaceDraft("");
       setAttachments([]);
-      void host.newSession(state.cwd || undefined).then(() => {
+      void host.newSession(state.cwd).then(() => {
         setEhuiRefresh((n) => n + 1);
         refreshSessions();
       });
     },
-    [host, state.cwd, saveActiveTabDraft, refreshSessions],
+    [
+      host,
+      state.cwd,
+      workspaces,
+      saveActiveTabDraft,
+      refreshSessions,
+      replaceDraft,
+    ],
   );
 
   const onNewTab = useCallback((): void => {
@@ -785,6 +821,7 @@ export function App(): JSX.Element {
           retryAttempt={state.retryAttempt}
           onReconnect={() => void host.reconnect()}
           sessions={sessions}
+          workspaces={workspaces}
           activeSessionId={state.sessionId}
           pinnedIds={pinnedIds}
           archivedIds={archivedIds}
@@ -834,12 +871,12 @@ export function App(): JSX.Element {
                   return next;
                 });
                 if (state.sessionId === id) {
-                  drainHaltRef.current = false;
-                  setPromptQueue([]);
-                  void host.newSession().then(() => {
-                    setEhuiRefresh((n) => n + 1);
+                  if (isRegisteredProjectCwd(state.cwd, workspaces)) {
+                    startSessionIn(state.cwd);
+                  } else {
+                    setProjectsOpen(true);
                     refreshSessions();
-                  });
+                  }
                 } else {
                   refreshSessions();
                 }
@@ -847,12 +884,12 @@ export function App(): JSX.Element {
               .catch(() => undefined);
           }}
           onNewSession={() => {
-            drainHaltRef.current = false;
-            setPromptQueue([]);
-            void host.newSession().then(() => {
-              setEhuiRefresh((n) => n + 1);
-              refreshSessions();
-            });
+            // Bare "New session" must not invent a project from launch cwd.
+            if (!isRegisteredProjectCwd(state.cwd, workspaces)) {
+              setProjectsOpen(true);
+              return;
+            }
+            startSessionIn(state.cwd);
           }}
           onNewSessionIn={startSessionIn}
           onOpenProjects={() => setProjectsOpen(true)}
@@ -908,8 +945,17 @@ export function App(): JSX.Element {
                     : "offline"}
               </span>
               <span className="sep">·</span>
-              <span title={state.cwd}>
-                {shortPathLabel(state.cwd || "")}
+              <span title={state.cwd || undefined}>
+                {(() => {
+                  const key = normalizeProjectKey(state.cwd || "");
+                  const project = workspaces.find(
+                    (w) => normalizeProjectKey(w.path) === key,
+                  );
+                  if (project !== undefined) {
+                    return project.name.trim() || projectLabel(project.path);
+                  }
+                  return "No project";
+                })()}
               </span>
               <span className="sep">·</span>
               <span>
@@ -1075,7 +1121,9 @@ export function App(): JSX.Element {
 
           <Composer
             draft={draft}
+            draftEpoch={draftEpoch}
             onDraftChange={setDraft}
+            onReplaceDraft={replaceDraft}
             ready={state.ready}
             busy={state.busy}
             blocked={hostPromptBlocked}
@@ -1121,8 +1169,10 @@ export function App(): JSX.Element {
           listFs={(path) => host.listFs(path)}
           readFs={(path) => host.readFs(path)}
           onAttachPath={(path) => {
-            setDraft((d) =>
-              d.trim() === "" ? `Attached: ${path}` : `${d.trimEnd()}\nAttached: ${path}`,
+            replaceDraft((d) =>
+              d.trim() === ""
+                ? `Attached: ${path}`
+                : `${d.trimEnd()}\nAttached: ${path}`,
             );
             queueMicrotask(() =>
               document.getElementById("eh-composer")?.focus(),

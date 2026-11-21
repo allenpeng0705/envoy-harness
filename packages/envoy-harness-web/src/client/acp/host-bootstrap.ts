@@ -30,31 +30,102 @@ export interface AcpBootstrap {
 export interface BootstrapOptions {
   /**
    * Prefer re-attaching this session after reconnect (DeepSeek-style
-   * continuity). Falls back to `session/new` when load fails.
+   * continuity). Falls back to the most recent `session/list` entry, then
+   * `session/new`, when load fails.
    */
   preferSessionId?: string;
 }
 
+/** Survives browser restarts (sessionStorage does not). */
 const LAST_SESSION_KEY = "eh-web-last-session-id";
 
 export function readLastSessionId(): string | null {
   try {
-    const v = sessionStorage.getItem(LAST_SESSION_KEY);
-    return v !== null && v.trim() !== "" ? v.trim() : null;
+    const v = localStorage.getItem(LAST_SESSION_KEY);
+    if (v !== null && v.trim() !== "") return v.trim();
   } catch {
-    return null;
+    // ignore
   }
+  // Migrate from the older sessionStorage key once.
+  try {
+    const legacy = sessionStorage.getItem(LAST_SESSION_KEY);
+    if (legacy !== null && legacy.trim() !== "") {
+      writeLastSessionId(legacy.trim());
+      sessionStorage.removeItem(LAST_SESSION_KEY);
+      return legacy.trim();
+    }
+  } catch {
+    // ignore
+  }
+  return null;
 }
 
 export function writeLastSessionId(id: string | null): void {
   try {
     if (id === null || id.trim() === "") {
-      sessionStorage.removeItem(LAST_SESSION_KEY);
+      localStorage.removeItem(LAST_SESSION_KEY);
     } else {
-      sessionStorage.setItem(LAST_SESSION_KEY, id);
+      localStorage.setItem(LAST_SESSION_KEY, id.trim());
     }
   } catch {
     // ignore quota / private mode
+  }
+}
+
+async function tryLoadSession(
+  client: WsJsonRpcClient,
+  sessionId: string,
+): Promise<{
+  sessionId: string;
+  messages?: Array<{ role?: string; text?: string }>;
+  resumed: true;
+} | null> {
+  try {
+    const loaded = (await client.request("session/load", {
+      sessionId,
+    })) as {
+      sessionId?: string;
+      messages?: Array<{ role?: string; text?: string }>;
+    };
+    const id = loaded.sessionId ?? sessionId;
+    return {
+      sessionId: id,
+      ...(loaded.messages !== undefined ? { messages: loaded.messages } : {}),
+      resumed: true,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Pick the newest persisted session id from `session/list`, if any.
+ * Avoids spawning a fresh `--persist` session on every WebUI restart.
+ */
+async function mostRecentSessionId(
+  client: WsJsonRpcClient,
+): Promise<string | undefined> {
+  try {
+    const res = (await client.request("session/list", {})) as {
+      sessions?: Array<{ id?: string; mtimeMs?: number }>;
+    };
+    const list = Array.isArray(res.sessions) ? res.sessions : [];
+    let bestId: string | undefined;
+    let bestMtime = -1;
+    for (const s of list) {
+      if (typeof s.id !== "string" || s.id.length === 0) continue;
+      const m =
+        typeof s.mtimeMs === "number" && Number.isFinite(s.mtimeMs)
+          ? s.mtimeMs
+          : 0;
+      if (m >= bestMtime) {
+        bestMtime = m;
+        bestId = s.id;
+      }
+    }
+    return bestId;
+  } catch {
+    return undefined;
   }
 }
 
@@ -67,23 +138,16 @@ async function openSession(
   resumed: boolean;
 }> {
   if (preferSessionId !== undefined && preferSessionId.length > 0) {
-    try {
-      const loaded = (await client.request("session/load", {
-        sessionId: preferSessionId,
-      })) as {
-        sessionId?: string;
-        messages?: Array<{ role?: string; text?: string }>;
-      };
-      const id = loaded.sessionId ?? preferSessionId;
-      return {
-        sessionId: id,
-        ...(loaded.messages !== undefined ? { messages: loaded.messages } : {}),
-        resumed: true,
-      };
-    } catch {
-      // fall through to session/new
-    }
+    const loaded = await tryLoadSession(client, preferSessionId);
+    if (loaded !== null) return loaded;
   }
+
+  const recent = await mostRecentSessionId(client);
+  if (recent !== undefined) {
+    const loaded = await tryLoadSession(client, recent);
+    if (loaded !== null) return loaded;
+  }
+
   const session = (await client.request("session/new", {})) as {
     sessionId: string;
   };

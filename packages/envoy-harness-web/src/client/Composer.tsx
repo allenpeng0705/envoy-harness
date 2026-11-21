@@ -38,6 +38,12 @@ import {
 export interface ComposerProps {
   draft: string;
   onDraftChange: (v: string) => void;
+  /**
+   * Bumped only for *external* draft writes (hints, tab restore, clear).
+   * Typing must not bump this — otherwise Lexical fights React and only
+   * the first character sticks.
+   */
+  draftEpoch: number;
   ready: boolean;
   busy: boolean;
   blocked: boolean;
@@ -50,6 +56,8 @@ export interface ComposerProps {
   onSubmit: () => void;
   onCancel: () => void;
   onHint: (text: string) => void;
+  /** Replace draft from slash palette (must bump draftEpoch in the parent). */
+  onReplaceDraft: (text: string) => void;
 }
 
 const HINTS = [
@@ -88,29 +96,50 @@ function setEditorText(editor: LexicalEditor, text: string): void {
 
 function SyncDraftPlugin(props: {
   draft: string;
+  draftEpoch: number;
   onDraftChange: (v: string) => void;
 }): JSX.Element {
   const [editor] = useLexicalComposerContext();
   const lastEmitted = useRef(props.draft);
+  const lastEpoch = useRef(props.draftEpoch);
   const applyingExternal = useRef(false);
+  const onDraftChangeRef = useRef(props.onDraftChange);
+  onDraftChangeRef.current = props.onDraftChange;
 
-  useEffect(() => {
-    if (props.draft === lastEmitted.current) return;
-    applyingExternal.current = true;
-    setEditorText(editor, props.draft);
-    lastEmitted.current = props.draft;
-    applyingExternal.current = false;
-  }, [editor, props.draft]);
-
-  const onChange = useCallback(
-    (state: EditorState): void => {
-      if (applyingExternal.current) return;
-      const text = editorText(state);
+  const applyExternal = useCallback(
+    (text: string): void => {
+      applyingExternal.current = true;
+      setEditorText(editor, text);
       lastEmitted.current = text;
-      props.onDraftChange(text);
+      queueMicrotask(() => {
+        applyingExternal.current = false;
+      });
     },
-    [props],
+    [editor],
   );
+
+  // Mount / editor recreate: push React draft into a fresh Lexical tree.
+  useEffect(() => {
+    applyExternal(props.draft);
+    lastEpoch.current = props.draftEpoch;
+    // intentionally mount-only (editor identity)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount sync
+  }, [editor, applyExternal]);
+
+  // Apply parent-owned draft only when epoch advances (external write).
+  useEffect(() => {
+    if (props.draftEpoch === lastEpoch.current) return;
+    lastEpoch.current = props.draftEpoch;
+    if (props.draft === lastEmitted.current) return;
+    applyExternal(props.draft);
+  }, [applyExternal, props.draft, props.draftEpoch]);
+
+  const onChange = useCallback((state: EditorState): void => {
+    if (applyingExternal.current) return;
+    const text = editorText(state);
+    lastEmitted.current = text;
+    onDraftChangeRef.current(text);
+  }, []);
 
   return <OnChangePlugin onChange={onChange} />;
 }
@@ -195,7 +224,7 @@ export function Composer(props: ComposerProps): JSX.Element {
   const showPalette = matches.length > 0;
 
   const applySlash = (name: string): void => {
-    props.onDraftChange(`/${name} `);
+    props.onReplaceDraft(`/${name} `);
     setSlashIndex(0);
     queueMicrotask(() => document.getElementById("eh-composer")?.focus());
   };
@@ -365,7 +394,7 @@ export function Composer(props: ComposerProps): JSX.Element {
           }
           if (e.key === "Escape") {
             e.preventDefault();
-            props.onDraftChange("");
+            props.onReplaceDraft("");
           }
         }}
       >
@@ -387,6 +416,7 @@ export function Composer(props: ComposerProps): JSX.Element {
           <HistoryPlugin />
           <SyncDraftPlugin
             draft={props.draft}
+            draftEpoch={props.draftEpoch}
             onDraftChange={(v) => {
               props.onDraftChange(v);
               setSlashIndex(0);

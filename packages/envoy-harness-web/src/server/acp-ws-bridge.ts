@@ -1,13 +1,20 @@
 /**
- * WebSocket ↔ `envoy-harness --acp` stdio Content-Length bridge.
+ * WebSocket ↔ `envoy-harness --acp` stdio JSON-RPC bridge.
  *
  * Browser speaks one JSON-RPC object per WebSocket text message.
- * The bridge frames/unframes Content-Length for the ACP child.
+ * The ACP child speaks **NDJSON** by default (`encodeNdjsonFrame`), and
+ * still accepts Content-Length on stdin via AutoFrameDecoder. The bridge
+ * therefore:
+ * - writes NDJSON to the child (ACP standard)
+ * - reads with AutoFrameDecoder (NDJSON or Content-Length)
  */
 
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import type { WebSocket } from "ws";
-import { encodeFrame, FrameDecoder } from "@envoymesh/envoy-harness";
+import {
+  AutoFrameDecoder,
+  encodeNdjsonFrame,
+} from "@envoymesh/envoy-harness";
 
 export interface AcpWsBridgeOptions {
   command: string;
@@ -31,7 +38,7 @@ export function attachAcpWsBridge(options: AcpWsBridgeOptions): AcpWsBridge {
     stdio: ["pipe", "pipe", "pipe"],
   }) as ChildProcessWithoutNullStreams;
 
-  const decoder = new FrameDecoder();
+  const decoder = new AutoFrameDecoder();
   let closed = false;
 
   const close = (): void => {
@@ -47,14 +54,18 @@ export function attachAcpWsBridge(options: AcpWsBridgeOptions): AcpWsBridge {
     }
   };
 
+  const flushToWs = (): void => {
+    for (const msg of decoder.take()) {
+      if (options.ws.readyState === options.ws.OPEN) {
+        options.ws.send(JSON.stringify(msg));
+      }
+    }
+  };
+
   child.stdout.on("data", (chunk: Buffer) => {
     try {
       decoder.feed(chunk);
-      for (const msg of decoder.take()) {
-        if (options.ws.readyState === options.ws.OPEN) {
-          options.ws.send(JSON.stringify(msg));
-        }
-      }
+      flushToWs();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (options.ws.readyState === options.ws.OPEN) {
@@ -66,6 +77,18 @@ export function attachAcpWsBridge(options: AcpWsBridgeOptions): AcpWsBridge {
         );
       }
       close();
+    }
+  });
+
+  child.stdout.on("end", () => {
+    try {
+      for (const msg of decoder.flush()) {
+        if (options.ws.readyState === options.ws.OPEN) {
+          options.ws.send(JSON.stringify(msg));
+        }
+      }
+    } catch {
+      // ignore flush errors on teardown
     }
   });
 
@@ -88,7 +111,7 @@ export function attachAcpWsBridge(options: AcpWsBridgeOptions): AcpWsBridge {
             ? data.toString("utf8")
             : Buffer.from(data as ArrayBuffer).toString("utf8");
       const msg = JSON.parse(text) as unknown;
-      child.stdin.write(encodeFrame(msg));
+      child.stdin.write(encodeNdjsonFrame(msg));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (options.ws.readyState === options.ws.OPEN) {

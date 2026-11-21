@@ -1,61 +1,192 @@
 /**
- * Group persisted sessions by the project (`cwd`) they belong to, for the
- * session rail. Pure — no host or React dependency, so it unit-tests
- * without a server.
+ * Group persisted sessions for the session rail.
+ *
+ * Projects come only from the manual workspace registry (deepseek-style).
+ * Launch/`process.cwd()` is never promoted to a project heading — sessions
+ * whose cwd is not registered land in a trailing "Other" bucket.
  */
 
 import type { SessionSummary } from "./acp/host-types.js";
 
-/** A `cwd` bucket: one section in the session rail. */
+/** A registered project directory (from `workspace/list`). */
+export interface RegisteredProject {
+  path: string;
+  /** Display name; falls back to basename of `path`. */
+  name?: string;
+}
+
+/** A project bucket: one section in the session rail. */
 export interface ProjectGroup {
   /** Absolute project path, or `""` for the trailing "Other" bucket. */
   cwd: string;
-  /** Display label (basename of `cwd`, or "Other"). */
+  /** Display label (registry name, basename, or "Other"). */
   label: string;
   sessions: SessionSummary[];
 }
 
-export const OTHER_PROJECT_LABEL = "Other";
+/** Sessions not attached to a manually registered project. */
+export const OTHER_PROJECT_LABEL = "Ungrouped";
+
+/** Normalize for grouping / registry match (trim + drop trailing separators). */
+export function normalizeProjectKey(cwd: string): string {
+  const trimmed = cwd.trim().replace(/\\/g, "/").replace(/\/+$/, "");
+  if (/^[a-zA-Z]:\//.test(trimmed)) {
+    return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+  }
+  return trimmed;
+}
 
 /** Basename of an absolute path, for a section heading. */
 export function projectLabel(cwd: string): string {
-  const trimmed = cwd.replace(/[\\/]+$/, "");
+  const trimmed = normalizeProjectKey(cwd);
   if (trimmed === "") return OTHER_PROJECT_LABEL;
-  const parts = trimmed.split(/[\\/]+/);
+  const parts = trimmed.split("/").filter(Boolean);
+  return parts[parts.length - 1] || trimmed;
+}
+
+/** `parent/basename` — used when two projects would otherwise share a label. */
+export function projectLabelWithParent(cwd: string): string {
+  const trimmed = normalizeProjectKey(cwd);
+  if (trimmed === "") return OTHER_PROJECT_LABEL;
+  const parts = trimmed.split("/").filter(Boolean);
+  if (parts.length >= 2) {
+    return `${parts[parts.length - 2]}/${parts[parts.length - 1]}`;
+  }
   return parts[parts.length - 1] || trimmed;
 }
 
 /**
- * Group sessions by `cwd`. Named projects are sorted by label; sessions
- * with an unknown/empty `cwd` land in a final "Other" section, matching
- * the task's contract. When `pinnedIds` is provided, pinned sessions sort
- * first within each group.
+ * When two+ named groups share the same display label (e.g. monorepo root
+ * and `packages/envoy-harness` both → "envoy-harness"), rewrite colliding
+ * labels to `parent/basename`. Custom registry names that already differ
+ * from the basename are left alone.
+ */
+export function disambiguateProjectLabels(
+  groups: readonly ProjectGroup[],
+): ProjectGroup[] {
+  const counts = new Map<string, number>();
+  for (const g of groups) {
+    if (g.cwd === "") continue;
+    const key = g.label.trim().toLowerCase();
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return groups.map((g) => {
+    if (g.cwd === "") return g;
+    const key = g.label.trim().toLowerCase();
+    if ((counts.get(key) ?? 0) <= 1) return g;
+    const base = projectLabel(g.cwd);
+    // Custom name that isn't just the basename — keep it.
+    if (g.label.trim() !== base) return g;
+    return { ...g, label: projectLabelWithParent(g.cwd) };
+  });
+}
+
+function sortSessions(
+  list: SessionSummary[],
+  pinnedIds: ReadonlySet<string> | undefined,
+): SessionSummary[] {
+  if (pinnedIds === undefined || pinnedIds.size === 0) return list;
+  return [...list].sort((a, b) => {
+    const ap = pinnedIds.has(a.id) ? 0 : 1;
+    const bp = pinnedIds.has(b.id) ? 0 : 1;
+    if (ap !== bp) return ap - bp;
+    return b.mtimeMs - a.mtimeMs;
+  });
+}
+
+/**
+ * Group sessions under **registered** projects only.
+ *
+ * - Each registry entry becomes a section (even with zero sessions), in
+ *   registry order, labeled by `name` when set.
+ * - Sessions whose `cwd` matches a registered path join that section.
+ * - Unregistered sessions are **not** shown as projects (deepseek-style:
+ *   the Projects rail is registry-only; launch cwd never becomes a heading).
+ *
+ * When `registered` is omitted, falls back to cwd-inferred groups (legacy
+ * / tests). Pass an array (even empty) for deepseek-style manual projects.
+ *
+ * Pass `includeUngrouped: true` only when a host wants a trailing Ungrouped
+ * bucket (tests / alternate UIs). The WebUI Projects rail omits it.
  */
 export function groupSessionsByProject(
   sessions: readonly SessionSummary[],
   pinnedIds?: ReadonlySet<string>,
+  registered?: readonly RegisteredProject[],
+  options?: { includeUngrouped?: boolean },
+): ProjectGroup[] {
+  if (registered !== undefined) {
+    return groupByRegistry(sessions, pinnedIds, registered, options);
+  }
+  return groupByCwd(sessions, pinnedIds);
+}
+
+function groupByRegistry(
+  sessions: readonly SessionSummary[],
+  pinnedIds: ReadonlySet<string> | undefined,
+  registered: readonly RegisteredProject[],
+  options?: { includeUngrouped?: boolean },
+): ProjectGroup[] {
+  const buckets = new Map<string, SessionSummary[]>();
+  for (const w of registered) {
+    const key = normalizeProjectKey(w.path);
+    if (key === "" || buckets.has(key)) continue;
+    buckets.set(key, []);
+  }
+
+  const other: SessionSummary[] = [];
+  for (const s of sessions) {
+    const key = normalizeProjectKey(s.cwd ?? "");
+    const bucket = key === "" ? undefined : buckets.get(key);
+    if (bucket !== undefined) bucket.push(s);
+    else other.push(s);
+  }
+
+  const named: ProjectGroup[] = [];
+  for (const w of registered) {
+    const key = normalizeProjectKey(w.path);
+    if (key === "") continue;
+    const list = buckets.get(key);
+    if (list === undefined) continue;
+    // Drop after first use so duplicate registry paths don't duplicate sections.
+    buckets.delete(key);
+    const label =
+      w.name !== undefined && w.name.trim().length > 0
+        ? w.name.trim()
+        : projectLabel(w.path);
+    named.push({
+      cwd: w.path.trim() || key,
+      label,
+      sessions: sortSessions(list, pinnedIds),
+    });
+  }
+
+  const labeled = disambiguateProjectLabels(named);
+  if (options?.includeUngrouped !== true || other.length === 0) {
+    return labeled;
+  }
+  return [
+    ...labeled,
+    {
+      cwd: "",
+      label: OTHER_PROJECT_LABEL,
+      sessions: sortSessions(other, pinnedIds),
+    },
+  ];
+}
+
+/** Legacy: invent a project section per distinct session cwd. */
+function groupByCwd(
+  sessions: readonly SessionSummary[],
+  pinnedIds: ReadonlySet<string> | undefined,
 ): ProjectGroup[] {
   const byCwd = new Map<string, SessionSummary[]>();
   for (const s of sessions) {
-    // Normalize for *grouping* only: `.. /p/one` and `/p/one/` are the same
-    // project, and splitting them would show two sections with one label.
-    // The first-seen raw path is kept on the group so "open" uses what the
-    // session actually recorded.
-    const key = (s.cwd ?? "").trim().replace(/[\\/]+$/, "");
+    const key = normalizeProjectKey(s.cwd ?? "");
     const bucket = byCwd.get(key);
     if (bucket === undefined) byCwd.set(key, [s]);
     else bucket.push(s);
   }
-
-  const sortList = (list: SessionSummary[]): SessionSummary[] => {
-    if (pinnedIds === undefined || pinnedIds.size === 0) return list;
-    return [...list].sort((a, b) => {
-      const ap = pinnedIds.has(a.id) ? 0 : 1;
-      const bp = pinnedIds.has(b.id) ? 0 : 1;
-      if (ap !== bp) return ap - bp;
-      return b.mtimeMs - a.mtimeMs;
-    });
-  };
 
   const named: ProjectGroup[] = [];
   let other: ProjectGroup | undefined;
@@ -64,21 +195,20 @@ export function groupSessionsByProject(
       other = {
         cwd: "",
         label: OTHER_PROJECT_LABEL,
-        sessions: sortList(list),
+        sessions: sortSessions(list, pinnedIds),
       };
       continue;
     }
     const cwd = (list[0]?.cwd ?? key).trim();
-    // Same basename under different parents is possible; the rail shows
-    // the full path as the row title so they stay distinguishable.
     named.push({
       cwd,
       label: projectLabel(cwd),
-      sessions: sortList(list),
+      sessions: sortSessions(list, pinnedIds),
     });
   }
   named.sort((a, b) => a.label.localeCompare(b.label));
-  return other === undefined ? named : [...named, other];
+  const labeled = disambiguateProjectLabels(named);
+  return other === undefined ? labeled : [...labeled, other];
 }
 
 const PINNED_KEY = "eh-web-pinned-sessions";
@@ -181,4 +311,14 @@ export function visibleSessions(
 ): SessionSummary[] {
   if (showArchived || archivedIds.size === 0) return [...sessions];
   return sessions.filter((s) => !archivedIds.has(s.id));
+}
+
+/** True when `cwd` is one of the manually registered project paths. */
+export function isRegisteredProjectCwd(
+  cwd: string | undefined,
+  registered: readonly RegisteredProject[],
+): boolean {
+  const key = normalizeProjectKey(cwd ?? "");
+  if (key === "") return false;
+  return registered.some((w) => normalizeProjectKey(w.path) === key);
 }

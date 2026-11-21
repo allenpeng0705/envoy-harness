@@ -236,7 +236,7 @@ export function parseTuiArgs(argv: ReadonlyArray<string>): TuiParsedArgs {
   };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
-    if (arg === "tui") continue;
+    if (arg === "tui" || arg === "--") continue;
     if (arg === "--help" || arg === "-h") {
       out.help = true;
       continue;
@@ -295,7 +295,8 @@ export function parseWebArgs(argv: ReadonlyArray<string>): WebParsedArgs {
   };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
-    if (arg === "web") continue;
+    // pnpm/npm may still pass a bare `--` if a caller skipped normalize.
+    if (arg === "web" || arg === "--") continue;
     if (arg === "--help" || arg === "-h") {
       out.help = true;
       continue;

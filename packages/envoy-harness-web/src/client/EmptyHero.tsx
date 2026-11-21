@@ -3,7 +3,8 @@ import type { JSX } from "react";
 export interface EmptyHeroProps {
   ready: boolean;
   sessionId: string | null;
-  cwd: string;
+  /** @deprecated Launch cwd is not shown — projects are manual-only. */
+  cwd?: string;
   /** Opens the project picker; omitted in read-only/embedded hosts. */
   onOpenProject?: () => void;
 }
@@ -12,20 +13,18 @@ export function EmptyHero(props: EmptyHeroProps): JSX.Element {
   if (!props.ready) {
     return (
       <div className="empty-hero">
-        <p className="hero-brand">envoy-harness</p>
+        <p className="hero-brand">envoy</p>
         <p className="hero-sub">Connecting to ACP…</p>
       </div>
     );
   }
   return (
     <div className="empty-hero">
-      <p className="hero-brand">envoy-harness</p>
+      <p className="hero-brand">envoy</p>
       <p className="hero-sub">
-        Local task sub-agents run in parallel by default. Wire{" "}
-        <code>--peers id@host:port</code> for multi-node mesh.
+        Add a project to work in a directory. Launch folder is not a project.
       </p>
       <ul className="hero-meta">
-        {props.cwd ? <li title={props.cwd}>cwd · {props.cwd}</li> : null}
         {props.sessionId ? (
           <li className="mono">session · {props.sessionId.slice(0, 8)}…</li>
         ) : null}

@@ -5,8 +5,18 @@
  */
 
 import { describe, expect, it } from "vitest";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 
+import {
+  defaultWebAcpCwd,
+  shouldPreferViteDev,
+  withHarnessCwd,
+} from "../src/server/start.js";
 import { isLoopbackHost } from "../src/server/host.js";
+import { resolveTsxImportSpecifier } from "../src/server/spawn.js";
 
 describe("isLoopbackHost", () => {
   it("accepts the loopback forms", () => {
@@ -26,5 +36,58 @@ describe("isLoopbackHost", () => {
     // anchored on the "127." label boundary.
     expect(isLoopbackHost("2127.0.0.1")).toBe(false);
     expect(isLoopbackHost("1270.0.0.1")).toBe(false);
+  });
+});
+
+describe("shouldPreferViteDev", () => {
+  it("prefers Vite when dist/client is missing", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "eh-web-dist-"));
+    expect(shouldPreferViteDev(dir)).toBe(true);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("prefers Vite when App.tsx is newer than dist index.html", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "eh-web-dist-"));
+    const index = path.join(dir, "index.html");
+    fs.writeFileSync(index, "<html></html>");
+    const past = new Date("2020-01-01T00:00:00Z");
+    fs.utimesSync(index, past, past);
+    const pkgRoot = path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "..",
+    );
+    expect(fs.existsSync(path.join(pkgRoot, "src/client/App.tsx"))).toBe(true);
+    expect(shouldPreferViteDev(dir)).toBe(true);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe("withHarnessCwd / tsx resolve", () => {
+  it("injects --cwd when missing", () => {
+    expect(withHarnessCwd(["--persist"], "/tmp/scratch")).toEqual([
+      "--cwd",
+      "/tmp/scratch",
+      "--persist",
+    ]);
+  });
+
+  it("does not duplicate an existing --cwd", () => {
+    expect(withHarnessCwd(["--cwd", "/x", "--persist"], "/tmp/scratch")).toEqual(
+      ["--cwd", "/x", "--persist"],
+    );
+  });
+
+  it("resolves an absolute tsx loader", () => {
+    const spec = resolveTsxImportSpecifier();
+    expect(path.isAbsolute(spec)).toBe(true);
+    expect(fs.existsSync(spec)).toBe(true);
+  });
+
+  it("creates the default scratch session cwd", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "eh-home-"));
+    const scratch = defaultWebAcpCwd(() => root);
+    expect(scratch).toBe(path.join(root, ".envoy-harness", "scratch"));
+    expect(fs.existsSync(scratch)).toBe(true);
+    fs.rmSync(root, { recursive: true, force: true });
   });
 });

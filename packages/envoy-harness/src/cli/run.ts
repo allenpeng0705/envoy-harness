@@ -27,6 +27,7 @@
  * `src/cli/index.ts` see no difference.
  */
 import { parseArgs, type ParsedArgs } from "./argv.js";
+import { stripRunnerSeparators } from "./argv-normalize.js";
 import { CliError } from "./run/errors.js";
 import { EXIT_USAGE } from "./run/types.js";
 import { formatHelpText, makeEmptyRunResult } from "./run/helpers.js";
@@ -120,10 +121,12 @@ export async function run(
     return runMcpServerDispatch(parsed, stdout);
   }
   if (parsed.subcommand === "tui") {
-    return runTuiDispatch(parsed, argv);
+    // Strip pnpm/npm `--` the same way parseArgs does — forwarders
+    // re-walk raw argv and would otherwise reject the separator.
+    return runTuiDispatch(parsed, stripRunnerSeparators(argv));
   }
   if (parsed.subcommand === "web") {
-    return runWebDispatch(parsed, argv);
+    return runWebDispatch(parsed, stripRunnerSeparators(argv));
   }
   try {
     // 3a. Phase E / G: --acp serves ACP JSON-RPC on stdio.

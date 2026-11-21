@@ -91,7 +91,9 @@ function buildForwardArgv(
   const out: string[] = [];
   for (let i = 0; i < rawArgv.length; i++) {
     const arg = rawArgv[i];
-    if (arg === undefined || arg === "web") continue;
+    // pnpm/npm inject a bare `--`; callers should strip it, but
+    // skip here too so a raw process.argv path cannot regress.
+    if (arg === undefined || arg === "web" || arg === "--") continue;
     if (!WEB_FORWARD_FLAGS.has(arg)) {
       throw new CliError(`unknown flag for web subcommand: ${arg}`, EXIT_USAGE);
     }

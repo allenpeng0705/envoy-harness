@@ -83,7 +83,7 @@ function buildForwardArgv(
   const out: string[] = [];
   for (let i = 0; i < rawArgv.length; i++) {
     const arg = rawArgv[i];
-    if (arg === undefined || arg === "tui") continue;
+    if (arg === undefined || arg === "tui" || arg === "--") continue;
     if (!TUI_FORWARD_FLAGS.has(arg)) {
       throw new CliError(`unknown flag for tui subcommand: ${arg}`, EXIT_USAGE);
     }

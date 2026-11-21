@@ -264,17 +264,18 @@ async function resolveAcpBackend(
             allowedRoots: workspaceRootsFromEnv(),
           }),
           decision: mergeDecisionConfig(configLayer.decision),
-          // U2 — the status bar reads the model label from config/get.
+          // U2 — WebUI Settings / status bar read provider+model from config/get.
           getConfig: () => ({
             version: "0.0.0",
+            cwd: defaultCwd,
+            ...(parsed.provider !== undefined
+              ? { provider: parsed.provider }
+              : {}),
             ...(parsed.model !== undefined
               ? { model: parsed.model }
               : parsed.provider !== undefined
                 ? { model: parsed.provider }
                 : {}),
-            ...(parsed.provider !== undefined
-              ? { provider: parsed.provider }
-              : {}),
             ...(parsed.baseUrl !== undefined
               ? { baseUrl: parsed.baseUrl }
               : {}),

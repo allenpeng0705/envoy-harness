@@ -26,6 +26,20 @@ import {
 import { StringWritable } from "./helpers.js";
 
 describe("parseArgs", () => {
+  it("strips pnpm/npm -- before detecting the web subcommand", () => {
+    const a = parseArgs([
+      "--",
+      "web",
+      "--provider",
+      "minimax",
+      "--model",
+      "MiniMax-M3",
+      "--persist",
+    ]);
+    expect(a.subcommand).toBe("web");
+    expect(a.help).toBe(false);
+  });
+
   // Helper: parseArgs and narrow to the run subcommand shape.
   function parseRun(argv: ReadonlyArray<string>) {
     const a = parseArgs(argv);

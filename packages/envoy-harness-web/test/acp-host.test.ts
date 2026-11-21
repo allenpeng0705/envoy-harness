@@ -193,23 +193,78 @@ describe("groupSessionsByProject", () => {
     ...(cwd !== undefined ? { cwd } : {}),
   });
 
-  it("groups by cwd, sorts projects, and puts unknown cwd last", () => {
+  it("legacy mode groups by cwd when no registry is passed", () => {
     const groups = groupSessionsByProject([
       summary("a", "/work/beta"),
       summary("b", "/work/alpha"),
       summary("c", undefined),
       summary("d", "   "),
     ]);
-    expect(groups.map((g) => g.label)).toEqual(["alpha", "beta", "Other"]);
+    expect(groups.map((g) => g.label)).toEqual([
+      "alpha",
+      "beta",
+      "Ungrouped",
+    ]);
     expect(groups[0]?.cwd).toBe("/work/alpha");
     expect(groups[2]?.sessions.map((s) => s.id)).toEqual(["c", "d"]);
+  });
+
+  it("registry mode only names manually added projects", () => {
+    const groups = groupSessionsByProject(
+      [
+        summary("a", "/work/beta"),
+        summary("b", "/work/alpha"),
+        summary("c", "/launch/cwd"),
+        summary("d", undefined),
+      ],
+      undefined,
+      [
+        { path: "/work/alpha", name: "Alpha App" },
+        { path: "/work/beta/" },
+      ],
+    );
+    // Launch-cwd / unknown sessions are omitted from Projects (not Ungrouped).
+    expect(groups.map((g) => g.label)).toEqual(["Alpha App", "beta"]);
+    expect(groups[0]?.sessions.map((s) => s.id)).toEqual(["b"]);
+    expect(groups[1]?.sessions.map((s) => s.id)).toEqual(["a"]);
+  });
+
+  it("registry mode never invents a project from launch cwd", () => {
+    const groups = groupSessionsByProject(
+      [summary("c", "/Users/me/envoy-harness")],
+      undefined,
+      [],
+    );
+    expect(groups).toEqual([]);
+  });
+
+  it("registry mode can optionally show Ungrouped", () => {
+    const groups = groupSessionsByProject(
+      [summary("c", "/Users/me/envoy-harness")],
+      undefined,
+      [{ path: "/work/only-manual", name: "Manual" }],
+      { includeUngrouped: true },
+    );
+    expect(groups.map((g) => g.label)).toEqual(["Manual", "Ungrouped"]);
+    expect(groups[1]?.sessions.map((s) => s.id)).toEqual(["c"]);
+  });
+
+  it("disambiguates two paths that share a basename", () => {
+    const groups = groupSessionsByProject([
+      summary("a", "/repo/envoy-harness"),
+      summary("b", "/repo/packages/envoy-harness"),
+    ]);
+    expect(groups.map((g) => g.label).sort()).toEqual([
+      "packages/envoy-harness",
+      "repo/envoy-harness",
+    ]);
   });
 
   it("derives labels from paths", () => {
     expect(projectLabel("/work/alpha/")).toBe("alpha");
     expect(projectLabel("C:\\work\\alpha")).toBe("alpha");
-    expect(projectLabel("")).toBe("Other");
-    expect(projectLabel("/")).toBe("Other");
+    expect(projectLabel("")).toBe("Ungrouped");
+    expect(projectLabel("/")).toBe("Ungrouped");
   });
 
   it("treats a trailing separator as the same project", () => {

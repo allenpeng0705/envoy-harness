@@ -25,8 +25,8 @@
 import * as readline from "node:readline";
 import { stdin, stdout, stderr } from "node:process";
 import * as fs from "node:fs/promises";
-import * as osModule from "node:os";
 import * as pathModule from "node:path";
+import { resolveWritableEnvoyStateRoot } from "../../paths/state-root.js";
 import {
   Agent,
   BUILTIN_TOOLS,
@@ -652,16 +652,7 @@ function newSession(opts: {
 function defaultHistoryPath(): string {
   const env = process.env["ENVOY_HARNESS_HISTORY"];
   if (env && env.length > 0) return env;
-  const xdgState = process.env["XDG_STATE_HOME"];
-  const home = xdgState && xdgState.length > 0 ? xdgState : `${osHomedir()}/.local/state`;
-  return `${home}/envoy-harness/history`;
-}
-
-/** Lazy `os.homedir()` — kept as a function so tests can stub. */
-function osHomedir(): string {
-  // `os` is imported at the top; we just route through a
-  // helper to keep the path-resolution code in one place.
-  return osModule.homedir();
+  return pathModule.join(resolveWritableEnvoyStateRoot(), "history");
 }
 
 /**
