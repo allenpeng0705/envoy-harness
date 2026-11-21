@@ -20,7 +20,9 @@ const params = z.object({
   headed: z
     .boolean()
     .optional()
-    .describe("Launch headed Chromium when starting a new session"),
+    .describe(
+      "true = headed Chromium; false = headless. Omit to keep this session's prior mode (default headless on first open).",
+    ),
   timeout_ms: z.number().int().positive().optional(),
 });
 
@@ -38,7 +40,8 @@ export const browserNavigateTool: Tool<typeof params> = {
     try {
       const page = await getBrowserSessionManager().ensurePage(
         browserSessionKey(ctx),
-        { headed: args.headed === true },
+        // Omit headed when unset so the session keeps its prior headed mode.
+        args.headed !== undefined ? { headed: args.headed } : undefined,
       );
       await page.goto(args.url, {
         ...(args.wait_until !== undefined

@@ -71,10 +71,13 @@ Minimum supported: Playwright **≥ 1.49**. Prefer a build that still exposes
 ### Session behavior
 
 - One Chromium context per agent cwd + session id (process-local manager).
-- **Headless by default.** Pass `headed: true` on `browser_navigate` when a
-  display is available. Switching headed ↔ headless recycles the browser.
+- **Headless by default** on first open. Pass `headed: true` (or `false`) on
+  `browser_navigate` to set mode for **that session**; omit `headed` on later
+  navigates to keep the prior mode. Headed and headless sessions can coexist
+  (separate Chromium processes); flipping mode on one key does not close others.
 - Snapshot refs for duplicate role+name pairs use Playwright
-  `>> nth=N` so `e1` / `e2` stay unambiguous.
+  `>> nth=N` so `e1` / `e2` stay unambiguous. When only ariaSnapshot YAML is
+  available, refs may be empty — use CSS/role selectors.
 - Long `vite` / `next dev` / builds should use **jobs / PTY** (`bash`
   background, `job_*`, `terminal_*`) — do not block the turn on the server.
 

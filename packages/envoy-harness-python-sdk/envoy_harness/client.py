@@ -272,13 +272,24 @@ class EnvoyHarnessClient:
         session_id: str,
         sandbox: Optional[str] = None,
         approval: Optional[str] = None,
+        auto_run: Optional[str] = None,
+        preset: Optional[str] = None,
     ) -> dict:
         params: Dict[str, Any] = {"sessionId": session_id}
         if sandbox is not None:
             params["sandbox"] = sandbox
         if approval is not None:
             params["approval"] = approval
+        if auto_run is not None:
+            params["autoRun"] = auto_run
+        if preset is not None:
+            params["preset"] = preset
         return self.request("session/set_policy", params)["result"]
+
+    def get_session_policy(self, session_id: str) -> dict:
+        return self.request("session/get_policy", {"sessionId": session_id})[
+            "result"
+        ]
 
     def git_diff(
         self,

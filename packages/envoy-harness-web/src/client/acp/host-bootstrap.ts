@@ -20,6 +20,8 @@ export interface AcpBootstrap {
   sandbox: string;
   approval: string;
   autoRun: string;
+  /** Named preset from `session/get_policy` when the backend reports one. */
+  preset: string;
   cwd: string;
   /** Hydrated transcript when resumed via `session/load`. */
   messages?: Array<{
@@ -220,17 +222,25 @@ export async function bootstrapAcpSession(
     sandbox: "read-only",
     approval: "on-request",
     autoRun: "always-confirm",
+    preset: "",
   };
   try {
     const res = (await client.request("session/get_policy", {
       sessionId: opened.sessionId,
     })) as {
-      result?: { sandbox?: string; approval?: string; autoRun?: string };
+      result?: {
+        sandbox?: string;
+        approval?: string;
+        autoRun?: string;
+        preset?: string;
+      };
     };
     policy = {
       sandbox: res.result?.sandbox ?? policy.sandbox,
       approval: res.result?.approval ?? policy.approval,
       autoRun: res.result?.autoRun ?? policy.autoRun,
+      preset:
+        typeof res.result?.preset === "string" ? res.result.preset : "",
     };
   } catch {
     // optional
@@ -263,6 +273,7 @@ export async function bootstrapAcpSession(
     sandbox: policy.sandbox,
     approval: policy.approval,
     autoRun: policy.autoRun,
+    preset: policy.preset,
     cwd,
     ...(opened.messages !== undefined ? { messages: opened.messages } : {}),
     resumed: opened.resumed,

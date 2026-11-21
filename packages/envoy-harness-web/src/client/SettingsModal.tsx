@@ -18,10 +18,12 @@ export interface SettingsModalProps {
   sandbox: string;
   approval: string;
   autoRun: string;
+  preset: string;
   onPolicy: (partial: {
     sandbox?: string;
     approval?: string;
     autoRun?: string;
+    preset?: string;
   }) => void;
   decisionMode: string;
   decisionBackend: string;
@@ -140,6 +142,28 @@ export function SettingsModal(props: SettingsModalProps): JSX.Element | null {
 
         {tab === "permissions" ? (
           <div className="settings-pane" role="tabpanel">
+            <label>
+              Preset
+              <select
+                value={props.preset || "(custom)"}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v === "(custom)") return;
+                  props.onPolicy({ preset: v });
+                }}
+              >
+                <option value="(custom)">(custom / axes below)</option>
+                <option value="safe">safe</option>
+                <option value="ask-all">ask-all</option>
+                <option value="approve-all">approve-all</option>
+                <option value="mobile">mobile (device_*)</option>
+                <option value="webdev">webdev (browser_*)</option>
+              </select>
+            </label>
+            <p className="hint">
+              One knob expands sandbox + approval + auto-run. Mobile/webdev also
+              unlock domain tools and writable roots.
+            </p>
             <label>
               Sandbox
               <select

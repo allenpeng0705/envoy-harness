@@ -257,56 +257,86 @@ class PlaywrightPageHandle implements BrowserPageHandle {
 }
 
 /**
- * Decide whether an existing session can be reused for a headed request.
- * Exported for unit tests.
+ * Resolve headed mode for a session key.
+ * - Explicit `opts.headed` wins.
+ * - Otherwise keep `previousHeaded` for this key.
+ * - First open defaults to headless (`false`).
  */
+export function resolveHeadedMode(
+  opts: { headed?: boolean } | undefined,
+  previousHeaded: boolean | undefined,
+): boolean {
+  if (opts?.headed !== undefined) return opts.headed === true;
+  if (previousHeaded !== undefined) return previousHeaded;
+  return false;
+}
+
+/** @deprecated Prefer {@link resolveHeadedMode}. */
 export function headedModeForEnsure(
   opts: { headed?: boolean } | undefined,
 ): boolean {
-  return opts?.headed === true;
+  return resolveHeadedMode(opts, undefined);
 }
 
 class PlaywrightSessionManager implements BrowserSessionManager {
-  private browser: PwBrowser | undefined;
+  /** One Chromium process per headed mode so sessions don't cross-kill. */
+  private readonly browsers = new Map<boolean, PwBrowser>();
   private readonly pages = new Map<
     string,
-    { handle: PlaywrightPageHandle; context: PwBrowserContext }
+    {
+      handle: PlaywrightPageHandle;
+      context: PwBrowserContext;
+      headed: boolean;
+    }
   >();
-  private headed = false;
+
+  private async launchBrowser(headed: boolean): Promise<PwBrowser> {
+    const existing = this.browsers.get(headed);
+    if (existing !== undefined) return existing;
+    const pw = await loadPlaywright();
+    try {
+      const browser = await pw.chromium.launch({ headless: !headed });
+      this.browsers.set(headed, browser);
+      return browser;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/Executable doesn't exist|browserType\.launch/i.test(msg)) {
+        throw new Error(
+          `${PLAYWRIGHT_MISSING} (browser binary missing: ${msg})`,
+        );
+      }
+      throw err;
+    }
+  }
+
+  private async maybeCloseBrowser(headed: boolean): Promise<void> {
+    const stillUsed = [...this.pages.values()].some((p) => p.headed === headed);
+    if (stillUsed) return;
+    const browser = this.browsers.get(headed);
+    if (browser === undefined) return;
+    this.browsers.delete(headed);
+    await browser.close().catch(() => undefined);
+  }
 
   async ensurePage(
     key: string,
     opts?: { headed?: boolean },
   ): Promise<BrowserPageHandle> {
-    const headed = headedModeForEnsure(opts);
     const existing = this.pages.get(key);
-    if (existing !== undefined && this.headed === headed) {
+    const headed = resolveHeadedMode(opts, existing?.headed);
+    if (existing !== undefined && existing.headed === headed) {
       return existing.handle;
     }
-    // Headed/headless flip (or stale page for this key): recycle.
-    if (existing !== undefined || (this.browser !== undefined && this.headed !== headed)) {
-      await this.closeAll();
+    // Headed flip for this key only — other sessions keep their pages.
+    if (existing !== undefined) {
+      await this.close(key);
     }
 
-    const pw = await loadPlaywright();
-    if (this.browser === undefined) {
-      this.headed = headed;
-      try {
-        this.browser = await pw.chromium.launch({ headless: !headed });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        if (/Executable doesn't exist|browserType\.launch/i.test(msg)) {
-          throw new Error(
-            `${PLAYWRIGHT_MISSING} (browser binary missing: ${msg})`,
-          );
-        }
-        throw err;
-      }
-    }
-    const context = await this.browser.newContext();
+    const browser = await this.launchBrowser(headed);
+    const context = await browser.newContext();
     const page = await context.newPage();
     const handle = new PlaywrightPageHandle(page);
-    this.pages.set(key, { handle, context });
+    this.pages.set(key, { handle, context, headed });
     return handle;
   }
 
@@ -319,18 +349,14 @@ class PlaywrightSessionManager implements BrowserSessionManager {
     if (entry === undefined) return;
     this.pages.delete(key);
     await entry.context.close().catch(() => undefined);
-    if (this.pages.size === 0 && this.browser !== undefined) {
-      await this.browser.close().catch(() => undefined);
-      this.browser = undefined;
-    }
+    await this.maybeCloseBrowser(entry.headed);
   }
 
   async closeAll(): Promise<void> {
     const keys = [...this.pages.keys()];
     for (const k of keys) await this.close(k);
-    if (this.browser !== undefined) {
-      await this.browser.close().catch(() => undefined);
-      this.browser = undefined;
+    for (const headed of [...this.browsers.keys()]) {
+      await this.maybeCloseBrowser(headed);
     }
   }
 }

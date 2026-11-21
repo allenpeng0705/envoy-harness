@@ -154,6 +154,17 @@ export function attachSdkServer(options: SdkServerOptions): () => void {
         return { result: await backend.setPolicy(p) };
       }
 
+      case "session/get_policy": {
+        if (backend.getPolicy === undefined) {
+          throw new JsonRpcError(
+            "session/get_policy not supported",
+            JsonRpcErrorCode.METHOD_NOT_FOUND,
+          );
+        }
+        const sessionId = readSessionId(params);
+        return { result: await backend.getPolicy({ sessionId }) };
+      }
+
       case "git/diff": {
         if (backend.gitDiff === undefined) {
           throw new JsonRpcError(

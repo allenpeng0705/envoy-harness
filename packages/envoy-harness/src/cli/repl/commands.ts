@@ -251,6 +251,8 @@ const presetCommand: ReplCommand = {
     );
     ctx.args.sandbox = preset.permissionMode;
     ctx.args.approval = preset.askForApproval;
+    ctx.args.permissionPreset = preset.name;
+    // Agent.autoRun is set by setPermissionPreset; no RunParsedArgs.autoRun field.
     ctx.stdout.write(
       `preset: ${preset.name} (sandbox=${preset.permissionMode}, approval=${preset.askForApproval}, auto-run=${preset.autoRun})\n`,
     );

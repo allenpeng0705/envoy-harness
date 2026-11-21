@@ -134,6 +134,7 @@ export class AcpHost {
     sandbox: "read-only",
     approval: "on-request",
     autoRun: "always-confirm",
+    preset: "",
     peerCount: 0,
     mesh: null,
     cwd: "",
@@ -799,6 +800,7 @@ export class AcpHost {
       sandbox: boot.sandbox,
       approval: boot.approval,
       autoRun: boot.autoRun,
+      preset: boot.preset,
       cwd: boot.cwd,
       // Resume with rows replaces; resume with empty rows keeps local
       // transcript (avoid wiping the pre-disconnect chat). Fresh session clears.
@@ -987,6 +989,7 @@ export class AcpHost {
     sandbox?: string;
     approval?: string;
     autoRun?: string;
+    preset?: string;
   }): Promise<void> {
     const client = this.#client;
     const sessionId = this.#state.sessionId;
@@ -996,13 +999,31 @@ export class AcpHost {
         sessionId,
         ...policy,
       })) as {
-        result?: { sandbox?: string; approval?: string; autoRun?: string };
+        result?: {
+          sandbox?: string;
+          approval?: string;
+          autoRun?: string;
+          preset?: string;
+        };
       };
+      const nextPreset =
+        res.result?.preset ??
+        (policy.preset !== undefined ? policy.preset : undefined);
       this.#patch({
         sandbox: res.result?.sandbox ?? policy.sandbox ?? this.#state.sandbox,
         approval:
           res.result?.approval ?? policy.approval ?? this.#state.approval,
         autoRun: res.result?.autoRun ?? policy.autoRun ?? this.#state.autoRun,
+        // Named preset from server; clear when axes are set without a preset.
+        preset:
+          nextPreset !== undefined
+            ? nextPreset
+            : policy.preset === undefined &&
+                (policy.sandbox !== undefined ||
+                  policy.approval !== undefined ||
+                  policy.autoRun !== undefined)
+              ? ""
+              : (this.#state.preset ?? ""),
         error: null,
       });
     } catch (err) {

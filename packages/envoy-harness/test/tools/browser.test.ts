@@ -195,13 +195,54 @@ describe("collectSnapshotRefs", () => {
   });
 });
 
-describe("headedModeForEnsure", () => {
-  it("defaults to headless", async () => {
-    const { headedModeForEnsure } = await import(
+describe("resolveHeadedMode", () => {
+  it("defaults to headless; keeps prior when opts omit headed", async () => {
+    const { resolveHeadedMode, headedModeForEnsure } = await import(
       "../../src/tools/builtin/browser/session.js"
     );
+    expect(resolveHeadedMode(undefined, undefined)).toBe(false);
+    expect(resolveHeadedMode({}, true)).toBe(true);
+    expect(resolveHeadedMode({ headed: false }, true)).toBe(false);
+    expect(resolveHeadedMode({ headed: true }, false)).toBe(true);
     expect(headedModeForEnsure(undefined)).toBe(false);
-    expect(headedModeForEnsure({})).toBe(false);
     expect(headedModeForEnsure({ headed: true })).toBe(true);
+  });
+
+  it("omits headed on navigate when unset (keeps prior session mode)", async () => {
+    const calls: Array<{ headed?: boolean } | undefined> = [];
+    const page = mockPage();
+    setBrowserSessionManager({
+      async ensurePage(_key, opts) {
+        calls.push(opts);
+        return page;
+      },
+      getPage: () => page,
+      async close() {},
+      async closeAll() {},
+    });
+    await browserNavigateTool.execute(
+      { url: "http://localhost:5173", headed: true },
+      ctx(),
+    );
+    await browserNavigateTool.execute({ url: "http://localhost:5173/" }, ctx());
+    expect(calls[0]).toEqual({ headed: true });
+    expect(calls[1]).toBeUndefined();
+  });
+});
+
+describe("browser_snapshot aria fallback note", () => {
+  it("notes missing refs when tree is ariaSnapshot YAML only", async () => {
+    const page = mockPage({
+      async accessibilitySnapshot() {
+        return { role: "WebArea", name: "", ariaSnapshot: "- heading" };
+      },
+    });
+    const mgr = mockManager(page);
+    setBrowserSessionManager(mgr);
+    await mgr.ensurePage("/tmp/spa::s1");
+    const result = await browserSnapshotTool.execute({}, ctx());
+    expect(result.isError).toBeUndefined();
+    expect(String(result.content)).toContain("Interactive refs: 0");
+    expect(String(result.content)).toContain("ariaSnapshot YAML");
   });
 });

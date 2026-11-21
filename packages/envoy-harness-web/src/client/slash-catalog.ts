@@ -22,6 +22,7 @@ export const FALLBACK_SLASH_CATALOG: ReadonlyArray<SlashCatalogEntry> = [
   { name: "provider", description: "swap provider: /provider <name> [model]" },
   { name: "sandbox", description: "permission mode" },
   { name: "approval", description: "approval policy" },
+  { name: "preset", description: "permission preset (safe|ask-all|approve-all|mobile|webdev)" },
   { name: "agents", description: "list / steer sub-agents" },
   { name: "memory", description: "memory: list | read | add" },
   { name: "plan", description: "plan document lifecycle" },

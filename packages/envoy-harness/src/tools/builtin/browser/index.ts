@@ -21,6 +21,7 @@ export {
   formatAccessibilityTree,
   getBrowserSessionManager,
   headedModeForEnsure,
+  resolveHeadedMode,
   setBrowserSessionManager,
   type BrowserConsoleEntry,
   type BrowserNetworkEntry,

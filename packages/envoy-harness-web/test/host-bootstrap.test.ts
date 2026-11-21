@@ -56,7 +56,8 @@ describe("bootstrapAcpSession", () => {
         result: {
           sandbox: "workspace-write",
           approval: "on-request",
-          autoRun: "always-confirm",
+          autoRun: "safe-only",
+          preset: "webdev",
         },
       }),
     });
@@ -67,6 +68,8 @@ describe("bootstrapAcpSession", () => {
     expect(boot.resumed).toBe(true);
     expect(boot.cwd).toBe("/work/project");
     expect(boot.messages?.[0]?.text).toBe("hi");
+    expect(boot.preset).toBe("webdev");
+    expect(boot.autoRun).toBe("safe-only");
     expect(client.request).not.toHaveBeenCalledWith(
       "session/new",
       expect.anything(),

@@ -411,23 +411,50 @@ export class EnvoyHarnessClient {
       sandbox?: "read-only" | "workspace-write" | "danger-full-access";
       approval?: "unless-trusted" | "on-request" | "granular" | "never";
       autoRun?: "always-confirm" | "safe-only" | "off";
+      /** One-knob preset; expands sandbox + approval + autoRun (+ domain roots). */
+      preset?: "safe" | "ask-all" | "approve-all" | "mobile" | "webdev";
     },
-  ): Promise<{ sandbox?: string; approval?: string; autoRun?: string }> {
+  ): Promise<{
+    sandbox?: string;
+    approval?: string;
+    autoRun?: string;
+    preset?: string;
+  }> {
     const res = (await this.#conn.request("session/set_policy", {
       sessionId,
       ...(policy.sandbox !== undefined ? { sandbox: policy.sandbox } : {}),
       ...(policy.approval !== undefined ? { approval: policy.approval } : {}),
       ...(policy.autoRun !== undefined ? { autoRun: policy.autoRun } : {}),
-    })) as { result: { sandbox?: string; approval?: string; autoRun?: string } };
+      ...(policy.preset !== undefined ? { preset: policy.preset } : {}),
+    })) as {
+      result: {
+        sandbox?: string;
+        approval?: string;
+        autoRun?: string;
+        preset?: string;
+      };
+    };
     return res.result;
   }
 
   async getSessionPolicy(
     sessionId: string,
-  ): Promise<{ sandbox?: string; approval?: string; autoRun?: string }> {
+  ): Promise<{
+    sandbox?: string;
+    approval?: string;
+    autoRun?: string;
+    preset?: string;
+  }> {
     const res = (await this.#conn.request("session/get_policy", {
       sessionId,
-    })) as { result: { sandbox?: string; approval?: string; autoRun?: string } };
+    })) as {
+      result: {
+        sandbox?: string;
+        approval?: string;
+        autoRun?: string;
+        preset?: string;
+      };
+    };
     return res.result;
   }
 

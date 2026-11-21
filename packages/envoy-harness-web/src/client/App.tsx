@@ -1222,6 +1222,7 @@ export function App(): JSX.Element {
         sandbox={state.sandbox}
         approval={state.approval}
         autoRun={state.autoRun}
+        preset={state.preset}
         onPolicy={(partial) =>
           void host.setPolicy(partial).catch(() => undefined)
         }

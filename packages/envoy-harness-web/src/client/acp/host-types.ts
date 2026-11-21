@@ -180,6 +180,11 @@ export interface AcpHostState {
   sandbox: string;
   approval: string;
   autoRun: string;
+  /**
+   * Named permission preset when known (`safe` / `ask-all` / `approve-all` /
+   * `mobile` / `webdev`). Empty string when custom / unknown.
+   */
+  preset: string;
   peerCount: number;
   mesh: MeshSnapshot | null;
   cwd: string;

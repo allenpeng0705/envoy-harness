@@ -469,16 +469,12 @@ export function defaultBuildAgentFactory(opts: {
           : {}),
       });
     }
-    const mobileRuntime =
+    const domainRuntime =
       skillId === "device-debug"
         ? resolveAgentRuntimeConfig(cwd, { permissionPreset: "mobile" })
-        : undefined;
-    const webdevRuntime =
-      skillId === "browser-debug"
-        ? resolveAgentRuntimeConfig(cwd, { permissionPreset: "webdev" })
-        : undefined;
-    const domainSandbox =
-      mobileRuntime?.sandboxPolicy ?? webdevRuntime?.sandboxPolicy;
+        : skillId === "browser-debug"
+          ? resolveAgentRuntimeConfig(cwd, { permissionPreset: "webdev" })
+          : undefined;
     return new Agent({
       model: opts.model,
       tools,
@@ -498,8 +494,16 @@ export function defaultBuildAgentFactory(opts: {
       // `defaultBuildSubagentFactory` (Package 1).
       ...(opts.meshSubmitter ? { meshSubmitter: opts.meshSubmitter } : {}),
       ...(askHandler !== undefined ? { askHandler } : {}),
-      ...(domainSandbox !== undefined
-        ? { sandboxPolicy: domainSandbox }
+      ...(domainRuntime !== undefined
+        ? {
+            sandboxPolicy: domainRuntime.sandboxPolicy,
+            ...(domainRuntime.autoRun !== undefined
+              ? { autoRun: domainRuntime.autoRun }
+              : {}),
+            ...(domainRuntime.permissionPreset !== undefined
+              ? { permissionPreset: domainRuntime.permissionPreset }
+              : {}),
+          }
         : {}),
     });
   };
