@@ -10,7 +10,7 @@ import { ENVOY_HARNESS_ADAPTER_VERSION } from "../src/index.js";
 
 describe("envoy-harness-adapter smoke", () => {
   it("exports a version constant", () => {
-    expect(ENVOY_HARNESS_ADAPTER_VERSION).toBe("0.0.0");
+    expect(ENVOY_HARNESS_ADAPTER_VERSION).toBe("0.1.0");
   });
 
   it("can be imported as an ES module", () => {

@@ -57,8 +57,8 @@ import {
 // ---------------------------------------------------------------------------
 
 describe("Constants", () => {
-  it("VERSION is the Phase 0 version (still 0.0.0 before the runtime lands)", () => {
-    expect(VERSION).toBe("0.0.0");
+  it("VERSION is the package/runtime version", () => {
+    expect(VERSION).toBe("0.1.0");
   });
 
   it("ENVOY_HARNESS_LOCAL_VERSION is the local surface version", () => {

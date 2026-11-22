@@ -125,6 +125,7 @@ export class AcpHost {
     busy: false,
     sessionId: null,
     protocolVersion: null,
+    version: "",
     model: "",
     provider: "",
     baseUrl: "",
@@ -820,6 +821,7 @@ export class AcpHost {
     this.#patch({
       sessionId: boot.sessionId,
       protocolVersion: boot.protocolVersion,
+      version: boot.version,
       provider: boot.provider,
       model: boot.model,
       baseUrl: boot.baseUrl,

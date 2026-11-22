@@ -11,6 +11,8 @@ import type { WsJsonRpcClient } from "./ws-jsonrpc.js";
 export interface AcpBootstrap {
   sessionId: string;
   protocolVersion: number;
+  /** Harness package version from `config/get` (same as CLI `--version`). */
+  version: string;
   provider: string;
   model: string;
   baseUrl: string;
@@ -264,6 +266,7 @@ export async function bootstrapAcpSession(
   return {
     sessionId: opened.sessionId,
     protocolVersion: init.protocolVersion,
+    version: String(config["version"] ?? ""),
     provider: String(config["provider"] ?? ""),
     model: String(config["model"] ?? ""),
     baseUrl: String(config["baseUrl"] ?? ""),

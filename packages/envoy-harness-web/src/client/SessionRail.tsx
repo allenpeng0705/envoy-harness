@@ -34,6 +34,8 @@ export interface SessionRailProps {
   onToggleCollapsed: () => void;
   provider: string;
   model: string;
+  /** Harness version from ACP config (same as CLI `--version`). */
+  version?: string;
 }
 
 export function SessionRail(props: SessionRailProps): JSX.Element {
@@ -294,6 +296,8 @@ export function SessionRail(props: SessionRailProps): JSX.Element {
 
           <div className="rail-foot">
             <p className="muted compact">
+              {props.version ? `v${props.version}` : null}
+              {props.version ? " · " : null}
               {props.provider || "provider?"}
               {props.model ? ` / ${props.model}` : ""}
             </p>

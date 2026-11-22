@@ -36,6 +36,7 @@ import type {
 } from "./types.js";
 import type { McpPrompt, McpResource, McpResourceClient } from "./resources.js";
 import { withHandshakeBackoff } from "../util/handshake-backoff.js";
+import { VERSION } from "../version.js";
 
 /** The minimum child-process surface `StdioMcpClient` needs. */
 export interface McpStdioProcess {
@@ -128,7 +129,7 @@ export class StdioMcpClient implements McpClient, McpResourceClient {
         capabilities: {
           elicitation: {},
         },
-        clientInfo: { name: "envoy-harness", version: "0.0.0" },
+        clientInfo: { name: "envoy-harness", version: VERSION },
       })) as { protocolVersion?: string } | undefined;
       if (result?.protocolVersion === undefined) {
         this.log(

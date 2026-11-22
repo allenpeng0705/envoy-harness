@@ -1,6 +1,6 @@
 {
   "name": "@envoymesh/envoy-harness-client",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "TypeScript stdio client for envoy-harness ACP / embedding SDK dialects.",
   "type": "module",
   "main": "./dist/index.js",

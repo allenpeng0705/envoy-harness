@@ -160,7 +160,7 @@ describe("isReadOnlySkill", () => {
 
 describe("ENVOY_HARNESS_VERSION", () => {
   it("is the current package version", () => {
-    expect(ENVOY_HARNESS_VERSION).toBe("0.0.0");
+    expect(ENVOY_HARNESS_VERSION).toBe("0.1.0");
   });
 });
 

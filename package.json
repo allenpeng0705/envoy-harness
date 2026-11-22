@@ -1,8 +1,8 @@
 {
   "name": "envoy-harness-monorepo",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
-  "description": "envoy-harness monorepo — the home-team agent harness + adapters for EnvoyMesh.",
+  "description": "envoy-harness monorepo \u2014 the home-team agent harness + adapters for EnvoyMesh.",
   "type": "module",
   "license": "Apache-2.0",
   "engines": {

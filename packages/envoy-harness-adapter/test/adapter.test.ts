@@ -195,7 +195,7 @@ describe("EnvoyHarnessAdapter.buildManifest", () => {
       reputationBySkill: { "code-edit": 0.9, "code-review": 0.8 },
     });
     expect(m.runtime).toBe("envoy-harness");
-    expect(m.runtimeVersion).toBe(ENVOY_HARNESS_SKILLS[0]?.description ? "0.0.0" : "0.0.0");
+    expect(m.runtimeVersion).toBe("0.1.0");
     expect(m.peerId).toBe("peer-1");
     expect(m.ownerId).toBe("owner-1");
     expect(m.skills).toHaveLength(11);

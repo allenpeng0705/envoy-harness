@@ -7,6 +7,7 @@ import type {
   HostUserQuestionRequest,
 } from "../interaction/providers/host-bridge.js";
 import type { WorkspaceEntry } from "../workspace/index.js";
+import { VERSION } from "../version.js";
 
 export interface ProtocolPermissionRequest {
   sessionId: string;
@@ -771,7 +772,7 @@ export function createFakeSessionBackend(options?: {
       return { ...p };
     },
     listTools: () => tools,
-    getConfig: () => options?.config ?? { version: "0.0.0" },
+    getConfig: () => options?.config ?? { version: VERSION },
     ...(options?.peers !== undefined
       ? { listPeers: () => options.peers ?? [] }
       : {}),

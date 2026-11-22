@@ -496,5 +496,9 @@ export type VerdictEntry = z.infer<typeof VerdictEntrySchema>;
  * The public API version. Bumped when the local type surface changes
  * in a non-additive way. The wire surface has its own version in
  * `@envoymesh/protocol`.
+ *
+ * Kept equal to package/runtime {@link VERSION} so CLI, WebUI, and
+ * typed local clients report one number.
  */
-export const ENVOY_HARNESS_LOCAL_VERSION = "0.1.0" as const;
+export { VERSION as ENVOY_HARNESS_LOCAL_VERSION } from "./version.js";
+

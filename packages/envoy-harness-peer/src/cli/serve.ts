@@ -202,7 +202,7 @@ export function createDemoAdapter(identity: { peerId: string; model?: string }):
     ],
     buildManifest: async (input: BuildManifestInput): Promise<CapabilityManifest> => ({
       runtime: "envoy-harness",
-      runtimeVersion: "0.0.0",
+      runtimeVersion: "0.1.0",
       peerId: input.peerId,
       ownerId: input.ownerId,
       issuedAt: new Date().toISOString(),

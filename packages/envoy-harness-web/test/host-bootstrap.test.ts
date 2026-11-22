@@ -51,7 +51,7 @@ describe("bootstrapAcpSession", () => {
         messages: [{ role: "user", text: "hi" }],
       }),
       "discovery/subscribe": () => ({}),
-      "config/get": () => ({ cwd: "/tmp/scratch" }),
+      "config/get": () => ({ cwd: "/tmp/scratch", version: "0.1.0" }),
       "session/get_policy": () => ({
         result: {
           sandbox: "workspace-write",
@@ -68,6 +68,7 @@ describe("bootstrapAcpSession", () => {
     expect(boot.resumed).toBe(true);
     expect(boot.cwd).toBe("/work/project");
     expect(boot.messages?.[0]?.text).toBe("hi");
+    expect(boot.version).toBe("0.1.0");
     expect(boot.preset).toBe("webdev");
     expect(boot.autoRun).toBe("safe-only");
     expect(client.request).not.toHaveBeenCalledWith(

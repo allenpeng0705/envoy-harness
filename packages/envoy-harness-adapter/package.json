@@ -1,7 +1,7 @@
 {
   "name": "@envoymesh/envoy-harness-adapter",
-  "version": "0.0.0",
-  "description": "The reference MAP adapter for envoy-harness — bridges the home-team agent harness to EnvoyMesh's manifest broadcast, task submission, and the 3-tuple reputation book.",
+  "version": "0.1.0",
+  "description": "The reference MAP adapter for envoy-harness \u2014 bridges the home-team agent harness to EnvoyMesh's manifest broadcast, task submission, and the 3-tuple reputation book.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

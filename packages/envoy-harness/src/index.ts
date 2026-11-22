@@ -10,7 +10,7 @@
  * `index-api-ext.ts` to stay under the module-size hard cap.
  */
 
-export const VERSION = "0.0.0" as const;
+export { VERSION } from "./version.js";
 
 export * from "./index-api-core.js";
 export type * from "./index-api-core.js";

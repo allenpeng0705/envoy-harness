@@ -13,6 +13,7 @@ import type { ToolContext } from "../tools/types.js";
 import { zodToJsonSchema } from "../llm/http.js";
 import { encodeFrame, FrameDecoder } from "../protocol/framing.js";
 import type { JsonRpcMessage } from "../protocol/types.js";
+import { VERSION } from "../version.js";
 
 export const MCP_SERVER_PROTOCOL_VERSION = "2024-11-05";
 
@@ -33,7 +34,7 @@ export async function runStdioMcpServer(
   const output = options.output ?? process.stdout;
   const serverInfo = options.serverInfo ?? {
     name: "envoy-harness",
-    version: "0.0.0",
+    version: VERSION,
   };
   const decoder = new FrameDecoder();
   let nextId = 1;

@@ -912,6 +912,7 @@ export function App(): JSX.Element {
           onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
           provider={state.provider}
           model={state.model}
+          version={state.version}
         />
 
         <div

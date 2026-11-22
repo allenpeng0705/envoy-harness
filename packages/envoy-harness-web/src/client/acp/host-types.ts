@@ -169,6 +169,8 @@ export interface AcpHostState {
   busy: boolean;
   sessionId: string | null;
   protocolVersion: number | null;
+  /** Harness runtime version from ACP `config/get` (matches CLI). */
+  version: string;
   model: string;
   provider: string;
   /** Optional API base URL override (OpenAI-/Anthropic-compatible). */

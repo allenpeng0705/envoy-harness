@@ -1,6 +1,6 @@
 {
   "name": "@envoymesh/envoy-process",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Shared process helpers for envoy-harness and envoy-sandbox-win (killProcessTree).",
   "type": "module",
   "main": "./dist/index.js",
@@ -11,7 +11,10 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist", "README.md"],
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",

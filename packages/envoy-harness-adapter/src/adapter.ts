@@ -119,7 +119,7 @@ export interface EnvoyHarnessAdapterInput {
   workerPeerId: string;
   /**
    * Optional: env's runtime version. Default:
-   * `ENVOY_HARNESS_VERSION` ("0.0.0").
+   * `ENVOY_HARNESS_VERSION` ("0.1.0").
    */
   runtimeVersion?: string;
   /**

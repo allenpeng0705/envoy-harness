@@ -31,6 +31,7 @@ import {
 } from "./acp-params.js";
 import { dispatchSessionControl } from "./session-control-dispatch.js";
 import { notifyAcpAvailableCommands } from "./slash-dispatch.js";
+import { VERSION } from "../version.js";
 
 export const ACP_PROTOCOL_VERSION = 1;
 
@@ -50,7 +51,7 @@ export function attachAcpServer(options: AcpServerOptions): () => void {
   const { connection, backend } = options;
   const serverInfo = options.serverInfo ?? {
     name: "envoy-harness",
-    version: "0.0.0",
+    version: VERSION,
   };
   const sessions = new Map<string, SessionState>();
   let discoveryUnsubscribe: (() => void) | undefined;

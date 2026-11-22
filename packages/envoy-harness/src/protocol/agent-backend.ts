@@ -17,6 +17,7 @@ import {
 import { createProviderAdapter } from "../llm/index.js";
 import { newSessionId } from "../session.js";
 import type { AskHandler } from "../types.js";
+import { VERSION } from "../version.js";
 import type { WorkspaceRegistry } from "../workspace/index.js";
 import { formatGitOutput, runGitDiff, runGitStatus } from "./git-runner.js";
 import {
@@ -878,7 +879,7 @@ export function createAgentSessionBackend(
     },
 
     getConfig() {
-      const base = options.getConfig?.() ?? { version: "0.0.0" };
+      const base = options.getConfig?.() ?? { version: VERSION };
       const labels: SessionConfigLabels[] = [];
       for (const live of sessions.values()) {
         labels.push({

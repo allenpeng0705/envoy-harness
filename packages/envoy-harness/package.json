@@ -1,6 +1,6 @@
 {
   "name": "@envoymesh/envoy-harness",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "EnvoyMesh's home-team agent harness \u2014 production-grade CLI agent, EnvoyMesh-native, independently runnable.",
   "type": "module",
   "main": "./dist/index.js",

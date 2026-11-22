@@ -33,6 +33,7 @@ import {
   resolveAgentRuntimeConfig,
   systemPromptOptionsFromConfig,
   type ProtocolSessionBackend,
+  VERSION,
 } from "../../index.js";
 import type { ParsedArgs } from "../argv.js";
 import { wireCordisExtensions } from "../../cordis/wire-from-config.js";
@@ -83,7 +84,7 @@ export async function runAcpDispatch(
   const dispose = attachAcpServer({
     connection,
     backend,
-    serverInfo: { name: "envoy-harness", version: "0.0.0" },
+    serverInfo: { name: "envoy-harness", version: VERSION },
   });
 
   try {
@@ -275,7 +276,7 @@ async function resolveAcpBackend(
             : {}),
           // U2 — WebUI Settings / status bar read provider+model from config/get.
           getConfig: () => ({
-            version: "0.0.0",
+            version: VERSION,
             cwd: defaultCwd,
             ...(parsed.provider !== undefined
               ? { provider: parsed.provider }

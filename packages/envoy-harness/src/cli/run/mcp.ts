@@ -7,6 +7,7 @@ import {
   InMemorySession,
   runStdioMcpServer,
   ToolRegistry,
+  VERSION,
 } from "../../index.js";
 import { policyFromMode } from "../../permissions/policy.js";
 import type { ParsedArgs } from "../argv.js";
@@ -34,7 +35,7 @@ export async function runMcpServerDispatch(
     },
     input: process.stdin,
     output: stdout as import("node:stream").Writable,
-    serverInfo: { name: "envoy-harness", version: "0.0.0" },
+    serverInfo: { name: "envoy-harness", version: VERSION },
   });
   return makeEmptyRunResult();
 }

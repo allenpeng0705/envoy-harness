@@ -297,4 +297,4 @@ export function isReadOnlySkill(skillId: string): boolean {
 }
 
 /** The version of the envoy-harness runtime. Surfaced in the manifest. */
-export const ENVOY_HARNESS_VERSION = "0.0.0" as const;
+export { VERSION as ENVOY_HARNESS_VERSION } from "@envoymesh/envoy-harness";

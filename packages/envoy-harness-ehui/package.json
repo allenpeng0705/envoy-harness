@@ -1,6 +1,6 @@
 {
   "name": "@envoymesh/envoy-harness-ehui",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "React EHUI panels for EnvoyGo / EnvoyMesh (mirrors envoy-harness-tui views).",
   "type": "module",
   "main": "./dist/index.js",

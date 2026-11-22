@@ -1,14 +1,17 @@
 {
   "name": "@envoymesh/envoy-sandbox-win",
-  "version": "0.0.0",
-  "description": "Windows sandbox sidecar (F2b) — stdio IPC for FS-scoped command execution.",
+  "version": "0.1.0",
+  "description": "Windows sandbox sidecar (F2b) \u2014 stdio IPC for FS-scoped command execution.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
     "envoy-sandbox-win": "./dist/bin.js"
   },
-  "files": ["dist", "README.md"],
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",

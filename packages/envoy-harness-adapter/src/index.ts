@@ -26,7 +26,7 @@
 // F8.0 scaffold — the actual adapter lands in F8.1+. This file
 // exists so the package builds, installs, and exports a marker.
 // The first real export is the package version.
-export const ENVOY_HARNESS_ADAPTER_VERSION = "0.0.0" as const;
+export const ENVOY_HARNESS_ADAPTER_VERSION = "0.1.0" as const;
 
 // F8.1 — skills catalog + tool mapping.
 export {
