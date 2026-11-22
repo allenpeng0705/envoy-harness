@@ -87,7 +87,7 @@ describe("createProviderAdapter — MiniMax / GLM / Qwen dispatch", () => {
       env: { MINIMAX_API_KEY: "mm-test" } as NodeJS.ProcessEnv,
     }) as unknown as { baseUrl: string; model: string; apiKey: string };
     expect(adapter.baseUrl).toBe("https://api.minimax.io/v1");
-    expect(adapter.model).toBe("MiniMax-M3");
+    expect(adapter.model).toBe("MiniMax-M3.1-Flash");
     expect(adapter.apiKey).toBe("mm-test");
     // MINIMAX_BASE_URL overrides the default.
     const custom = createProviderAdapter({
@@ -106,7 +106,7 @@ describe("createProviderAdapter — MiniMax / GLM / Qwen dispatch", () => {
       env: { ZHIPU_API_KEY: "glm-test" } as NodeJS.ProcessEnv,
     }) as unknown as { baseUrl: string; model: string };
     expect(adapter.baseUrl).toBe("https://open.bigmodel.cn/api/paas/v4");
-    expect(adapter.model).toBe("glm-4-flash");
+    expect(adapter.model).toBe("glm-4.7-flash");
     const alias = createProviderAdapter({
       provider: "zhipu",
       env: { ZHIPU_API_KEY: "k" } as NodeJS.ProcessEnv,

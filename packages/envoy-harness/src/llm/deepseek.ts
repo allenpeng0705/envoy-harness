@@ -5,7 +5,7 @@
  * differences are:
  * - Base URL: `https://api.deepseek.com/v1` (vs OpenAI's
  *   `https://api.openai.com/v1`).
- * - Default model: `deepseek-chat` (vs OpenAI's `gpt-4o`).
+ * - Default model: `deepseek-flash` (vs OpenAI's `gpt-6.2-sol`).
  * - API key env var: `DEEPSEEK_API_KEY` (vs `OPENAI_API_KEY`).
  *
  * **Why subclass `OpenAIAdapter`?** the wire format is
@@ -17,10 +17,10 @@
  * stop-reason mapping, malformed-args tolerance) for free.
  * The constructor just sets the DeepSeek defaults.
  *
- * **Other DeepSeek models:** `deepseek-reasoner` is the
- * reasoning model; callers can pass `model: "deepseek-reasoner"`
- * to use it. The adapter doesn't branch on the model
- * name — the wire format is the same.
+ * **Other DeepSeek models:** `deepseek-v4-pro` is the stronger
+ * tier; callers can pass `model: "deepseek-v4-pro"` to use it.
+ * The adapter doesn't branch on the model name — the wire
+ * format is the same.
  *
  * **Streaming:** not supported in v0; same as the other
  * adapters.
@@ -37,7 +37,7 @@ import type { HttpClient } from "./http.js";
 export interface DeepSeekAdapterOptions {
   /** The API key. Required. */
   apiKey: string;
-  /** The model identifier. Default: `deepseek-chat`. */
+  /** The model identifier. Default: `deepseek-flash`. */
   model?: string;
   /** Custom base URL. Default: `https://api.deepseek.com/v1`. */
   baseUrl?: string;
@@ -48,7 +48,7 @@ export interface DeepSeekAdapterOptions {
 }
 
 const DEFAULT_BASE_URL = "https://api.deepseek.com/v1";
-const DEFAULT_MODEL = "deepseek-chat";
+const DEFAULT_MODEL = "deepseek-flash";
 
 /**
  * `ModelAdapter` for DeepSeek's chat API. Subclasses

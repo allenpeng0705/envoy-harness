@@ -109,13 +109,20 @@ export interface ProviderConfig {
 
 /** Default models per provider. Public so callers can show them in help text. */
 export const DEFAULT_PROVIDER_MODELS: Readonly<Record<string, string>> = {
-  openai: "gpt-4o",
-  anthropic: "claude-sonnet-4-6",
-  deepseek: "deepseek-chat",
-  minimax: "MiniMax-M3",
-  glm: "glm-4-flash",
+  // OpenAI: gpt-4o is deprecated (API shutdown 2027-01-14); Sol is the everyday coding/agent pick.
+  openai: "gpt-6.2-sol",
+  // Anthropic: Sonnet 4.6 is legacy; Sonnet 5.5 is the current speed/intelligence default.
+  anthropic: "claude-sonnet-5-5",
+  // DeepSeek: deepseek-chat retired 2026-07-24; flash is the current default API id.
+  deepseek: "deepseek-flash",
+  // MiniMax: M3 remains available; M3.1-Flash is the current frontier coding default.
+  minimax: "MiniMax-M3.1-Flash",
+  // Zhipu: glm-4-flash / 4.5-flash retired onto 4.7-flash.
+  glm: "glm-4.7-flash",
+  // Qwen: rolling commercial alias (still current on DashScope).
   qwen: "qwen-plus",
-  ollama: "llama3.1",
+  // Ollama: llama3.2 is the current small Meta default tag (llama3.1 remains pullable).
+  ollama: "llama3.2",
 };
 
 /** The list of supported provider names. Public so the CLI can validate. */

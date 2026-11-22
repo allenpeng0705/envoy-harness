@@ -154,7 +154,7 @@ for the authoritative list.
 | Flag | Effect |
 |---|---|
 | `--provider <name>` | LLM provider: `openai` \| `anthropic` \| `deepseek` \| `minimax` \| `glm` \| `qwen` \| `ollama` (default: `deepseek`). `zhipu` = GLM, `dashscope` = Qwen aliases. |
-| `--model <id>` | Model identifier. Defaults per provider: `gpt-4o`, `claude-sonnet-4-6`, `deepseek-chat`, `MiniMax-M3`, `glm-4-flash`, `qwen-plus`, `llama3.1`. |
+| `--model <id>` | Model identifier. Defaults per provider: `gpt-6.2-sol`, `claude-sonnet-5-5`, `deepseek-flash`, `MiniMax-M3.1-Flash`, `glm-4.7-flash`, `qwen-plus`, `llama3.2`. |
 | `--sandbox <mode>` | Permission mode: `read-only` (default) \| `workspace-write` \| `danger-full-access`. |
 | `--approval <mode>` | Approval policy: `unless-trusted` \| `on-request` \| `granular` \| `never`. |
 | `--cwd <path>` | Override working directory (default: `process.cwd()`). |

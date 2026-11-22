@@ -70,7 +70,7 @@ scannable overview.
 | Flag | Default | What it does |
 |---|---|---|
 | `--provider <name>` | (env) | `openai` / `anthropic` / `deepseek` / `ollama` |
-| `--model <id>` | provider default | Model identifier (e.g. `gpt-4o`, `claude-sonnet-4-6`) |
+| `--model <id>` | provider default | Model identifier (e.g. `gpt-6.2-sol`, `claude-sonnet-5-5`) |
 | `--cwd <path>` | `process.cwd()` | Working directory for tool execution |
 | `--permission-preset <p>` | — | `safe` / `ask-all` / `approve-all` / `mobile` / `webdev` (one knob; see below) |
 | `--sandbox <mode>` | `read-only` | `read-only` / `workspace-write` / `danger-full-access` |

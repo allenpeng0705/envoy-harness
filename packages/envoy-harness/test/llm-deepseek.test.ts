@@ -27,7 +27,7 @@ import { DeepSeekAdapter } from "../src/llm/deepseek.js";
 function okResponse(text = "hi", stopReason: "stop" | "tool_calls" | "length" = "stop"): string {
   return JSON.stringify({
     id: "x",
-    model: "deepseek-chat",
+    model: "deepseek-flash",
     choices: [
       {
         index: 0,
@@ -57,7 +57,7 @@ describe("DeepSeekAdapter — defaults", () => {
     );
   });
 
-  it("uses 'deepseek-chat' as the default model", async () => {
+  it("uses 'deepseek-flash' as the default model", async () => {
     const fake = new FakeHttpClient();
     fake.enqueue({ status: 200, headers: {}, body: okResponse() });
     const adapter = new DeepSeekAdapter({
@@ -66,7 +66,7 @@ describe("DeepSeekAdapter — defaults", () => {
     });
     await adapter.complete({ messages: [], tools: [] });
     const body = JSON.parse(fake.requests[0]?.body ?? "{}");
-    expect(body.model).toBe("deepseek-chat");
+    expect(body.model).toBe("deepseek-flash");
   });
 });
 
@@ -127,7 +127,7 @@ describe("DeepSeekAdapter — response parsing", () => {
     const r = await adapter.complete({ messages: [], tools: [] });
     expect(r.content).toEqual([{ type: "text", text: "hello" }]);
     expect(r.stopReason).toBe("end_turn");
-    expect(r.model).toBe("deepseek-chat");
+    expect(r.model).toBe("deepseek-flash");
   });
 
   it("parses usage into ModelResponse.usage", async () => {
