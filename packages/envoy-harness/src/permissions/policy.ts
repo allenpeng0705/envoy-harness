@@ -22,6 +22,8 @@
  */
 
 import type { PermissionMode, SandboxPolicy } from "../types.js";
+import { isMobileWritableRoot } from "./mobile-roots.js";
+import { isWebdevWritableRoot } from "./webdev-roots.js";
 
 /**
  * Build a `SandboxPolicy` from a permission mode and cwd.
@@ -48,5 +50,29 @@ export function policyFromMode(
     writableRoots: mode === "workspace-write" ? [cwd] : [],
     networkAccess: mode === "danger-full-access",
     slashTmpWritable: true,
+  };
+}
+
+/** True when a root unlocks domain tools (browser_* / device_*). */
+export function isDomainGatedWritableRoot(root: string): boolean {
+  return isWebdevWritableRoot(root) || isMobileWritableRoot(root);
+}
+
+/**
+ * Plan/review force `mode: read-only` so project writes stay blocked, but
+ * keep webdev/mobile domain roots (and their network bit) so gated tools
+ * remain unlocked under those presets.
+ */
+export function readOnlyPolicyPreservingDomainRoots(
+  live: SandboxPolicy,
+  cwd: string,
+): SandboxPolicy {
+  const base = policyFromMode("read-only", cwd);
+  const domainRoots = live.writableRoots.filter(isDomainGatedWritableRoot);
+  return {
+    ...base,
+    writableRoots: domainRoots,
+    networkAccess:
+      domainRoots.length > 0 ? live.networkAccess : base.networkAccess,
   };
 }

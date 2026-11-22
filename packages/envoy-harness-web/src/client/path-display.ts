@@ -6,7 +6,11 @@
 export function normalizePathKey(p: string): string {
   const trimmed = p.trim();
   if (trimmed.length === 0) return "";
-  const withSlashes = trimmed.replace(/\\/g, "/");
+  let withSlashes = trimmed.replace(/\\/g, "/");
+  // Drop trailing separators so `/foo/` and `/foo` compare equal (keep `/`).
+  if (withSlashes.length > 1) {
+    withSlashes = withSlashes.replace(/\/+$/, "");
+  }
   // Windows drive letter case-fold for equality.
   if (/^[a-zA-Z]:\//.test(withSlashes)) {
     return withSlashes.charAt(0).toUpperCase() + withSlashes.slice(1);
@@ -32,6 +36,21 @@ export function shortPathLabel(p: string, maxLen = 48): string {
 /** True when two absolute paths refer to the same directory. */
 export function pathsEqual(a: string, b: string): boolean {
   return normalizePathKey(a) === normalizePathKey(b);
+}
+
+/**
+ * Default WebUI ACP cwd (`~/.envoy-harness/scratch`) — a session working
+ * directory, **not** a registered project. Used so chrome does not treat
+ * scratch as a project name/path.
+ */
+export function isWebUiScratchCwd(cwd: string): boolean {
+  const n = normalizePathKey(cwd).toLowerCase();
+  if (n.length === 0) return false;
+  return (
+    n.endsWith("/.envoy-harness/scratch") ||
+    n === ".envoy-harness/scratch" ||
+    /\/\.envoy-harness\/scratch$/i.test(n)
+  );
 }
 
 /** Detect mod key: Meta on macOS, Ctrl elsewhere. */

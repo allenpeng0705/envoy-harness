@@ -12,7 +12,11 @@ export {
   type ShouldAskUnderAutoRunOptions,
 } from "./auto-run.js";
 
-export { policyFromMode } from "./policy.js";
+export {
+  isDomainGatedWritableRoot,
+  policyFromMode,
+  readOnlyPolicyPreservingDomainRoots,
+} from "./policy.js";
 
 export {
   PERMISSION_PRESETS,

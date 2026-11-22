@@ -7,6 +7,7 @@
  */
 
 import type { SessionSummary } from "./acp/host-types.js";
+import { isWebUiScratchCwd } from "./path-display.js";
 
 /** A registered project directory (from `workspace/list`). */
 export interface RegisteredProject {
@@ -25,7 +26,7 @@ export interface ProjectGroup {
 }
 
 /** Sessions not attached to a manually registered project. */
-export const OTHER_PROJECT_LABEL = "Ungrouped";
+export const OTHER_PROJECT_LABEL = "Without a project";
 
 /** Normalize for grouping / registry match (trim + drop trailing separators). */
 export function normalizeProjectKey(cwd: string): string {
@@ -106,9 +107,9 @@ function sortSessions(
  * When `registered` is omitted, falls back to cwd-inferred groups (legacy
  * / tests). Pass an array (even empty) for deepseek-style manual projects.
  *
- * Pass `includeUngrouped: true` for a trailing Ungrouped bucket (WebUI does
- * this so auto-resumed / scratch sessions stay reachable without becoming
- * named projects).
+ * Pass `includeUngrouped: true` for a trailing "Without a project" bucket
+ * (WebUI does this so auto-resumed / scratch sessions stay reachable without
+ * becoming named projects).
  */
 export function groupSessionsByProject(
   sessions: readonly SessionSummary[],
@@ -131,7 +132,7 @@ function groupByRegistry(
   const buckets = new Map<string, SessionSummary[]>();
   for (const w of registered) {
     const key = normalizeProjectKey(w.path);
-    if (key === "" || buckets.has(key)) continue;
+    if (key === "" || isWebUiScratchCwd(key) || buckets.has(key)) continue;
     buckets.set(key, []);
   }
 
@@ -146,7 +147,7 @@ function groupByRegistry(
   const named: ProjectGroup[] = [];
   for (const w of registered) {
     const key = normalizeProjectKey(w.path);
-    if (key === "") continue;
+    if (key === "" || isWebUiScratchCwd(key)) continue;
     const list = buckets.get(key);
     if (list === undefined) continue;
     // Drop after first use so duplicate registry paths don't duplicate sections.
@@ -321,5 +322,7 @@ export function isRegisteredProjectCwd(
 ): boolean {
   const key = normalizeProjectKey(cwd ?? "");
   if (key === "") return false;
+  // Scratch is never a project, even if someone registered the path.
+  if (isWebUiScratchCwd(key)) return false;
   return registered.some((w) => normalizeProjectKey(w.path) === key);
 }

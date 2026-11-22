@@ -323,8 +323,10 @@ export function createAgentSessionBackend(
       }
       const live = sessions.get(sessionId);
       if (live !== undefined) {
-        live.abort?.abort();
         sessions.delete(sessionId);
+        // Same cleanup as eviction / replace: abort, flush session file,
+        // and drop any Playwright page keyed to this session.
+        retireLiveSession(live, "session deleted");
       }
       const deleted = await options.sessionStore.delete(sessionId);
       return { deleted };
@@ -474,8 +476,8 @@ export function createAgentSessionBackend(
         out.sandbox = preset.permissionMode;
         out.approval = preset.askForApproval;
         out.autoRun = preset.autoRun;
-        return out;
       }
+      // Co-sent axes apply on top of the preset (one-knob first, then tweaks).
       if (params.sandbox !== undefined) {
         live.agent.setPermissionMode(params.sandbox);
         out.sandbox = params.sandbox;
@@ -486,7 +488,21 @@ export function createAgentSessionBackend(
       }
       if (params.autoRun !== undefined) {
         live.autoRun = params.autoRun;
+        // Keep Agent.autoRun in sync so getPermissionPreset() / get_policy
+        // do not report a stale named preset with a different auto-run axis.
+        live.agent.autoRun = params.autoRun;
         out.autoRun = params.autoRun;
+      }
+      // After axis overrides, refresh the reported named preset (may clear).
+      if (
+        params.preset !== undefined &&
+        (params.sandbox !== undefined ||
+          params.approval !== undefined ||
+          params.autoRun !== undefined)
+      ) {
+        const matched = live.agent.getPermissionPreset();
+        if (matched !== undefined) out.preset = matched;
+        else delete out.preset;
       }
       return out;
     },

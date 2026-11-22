@@ -243,6 +243,35 @@ export class AcpHost {
       permission: null,
       userQuestion: null,
     });
+    void this.#refreshPolicy(sessionId);
+  }
+
+  /** Reload sandbox / approval / autoRun / preset for the active session. */
+  async #refreshPolicy(sessionId: string): Promise<void> {
+    const client = this.#client;
+    if (!client || client.closed) return;
+    try {
+      const res = (await client.request("session/get_policy", {
+        sessionId,
+      })) as {
+        result?: {
+          sandbox?: string;
+          approval?: string;
+          autoRun?: string;
+          preset?: string;
+        };
+      };
+      if (this.#state.sessionId !== sessionId) return;
+      this.#patch({
+        sandbox: res.result?.sandbox ?? this.#state.sandbox,
+        approval: res.result?.approval ?? this.#state.approval,
+        autoRun: res.result?.autoRun ?? this.#state.autoRun,
+        preset:
+          typeof res.result?.preset === "string" ? res.result.preset : "",
+      });
+    } catch {
+      // optional on older servers
+    }
   }
 
   #bumpCacheEpoch(): void {
@@ -1636,6 +1665,7 @@ export class AcpHost {
       changedFiles: [],
       turnHints: null,
     });
+    void this.#refreshPolicy(res.sessionId);
     void this.refreshMesh();
     void this.refreshContext();
   }
@@ -1689,6 +1719,7 @@ export class AcpHost {
       changedFiles: [],
       turnHints: null,
     });
+    void this.#refreshPolicy(session.sessionId);
     void this.refreshMesh();
     void this.refreshContext();
   }

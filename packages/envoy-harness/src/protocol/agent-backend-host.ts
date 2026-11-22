@@ -407,6 +407,24 @@ export function retireLiveSession(
   doomed.permissionWait?.resolve("deny");
   cancelPendingUserQuestions(doomed);
   doomed.agent.abort(reason);
+  // Best-effort: drop any Playwright page keyed to this session so ACP
+  // eviction / delete does not leak Chromium across session churn.
+  if (
+    typeof doomed.agent.cwd === "string" &&
+    typeof doomed.agent.getSession === "function"
+  ) {
+    try {
+      const session = doomed.agent.getSession();
+      if (session !== undefined && typeof session.id === "string") {
+        const key = `${doomed.agent.cwd}::${session.id}`;
+        void import("../tools/builtin/browser/session.js")
+          .then((mod) => mod.getBrowserSessionManager().close(key))
+          .catch(() => undefined);
+      }
+    } catch {
+      // ignore — tests may pass minimal agent doubles
+    }
+  }
   // `createAgent` is host-supplied and tests pass minimal doubles, so
   // probe rather than assume the full `Agent` surface.
   if (typeof doomed.agent.getSession !== "function") return;

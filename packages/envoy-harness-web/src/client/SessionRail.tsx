@@ -9,7 +9,7 @@ import {
   visibleSessions,
   type RegisteredProject,
 } from "./session-groups.js";
-import { shortPathLabel } from "./path-display.js";
+import { isWebUiScratchCwd, shortPathLabel } from "./path-display.js";
 
 export interface SessionRailProps {
   connectionState: ConnectionState;
@@ -48,18 +48,28 @@ export function SessionRail(props: SessionRailProps): JSX.Element {
     return n;
   }, [props.sessions, props.archivedIds]);
 
-  const groups = useMemo(() => {
+  const { projectGroups, orphanSessions } = useMemo(() => {
     const visible = visibleSessions(
       props.sessions,
       props.archivedIds,
       showArchived,
     );
     const filtered = filterSessions(visible, query);
-    // Show Ungrouped so auto-resumed / scratch sessions remain reachable
-    // without promoting their cwd to a fake project heading.
-    return groupSessionsByProject(filtered, props.pinnedIds, props.workspaces, {
-      includeUngrouped: true,
-    });
+    // Registry-only project headings. Orphans (scratch / unregistered cwd)
+    // stay in a separate Sessions list — never a fake project section.
+    const groups = groupSessionsByProject(
+      filtered,
+      props.pinnedIds,
+      props.workspaces,
+      { includeUngrouped: true },
+    );
+    const q = query.trim();
+    // When filtering, hide empty project shells (registry still emits them).
+    const projects = groups.filter(
+      (g) => g.cwd !== "" && (q.length === 0 || g.sessions.length > 0),
+    );
+    const orphans = groups.find((g) => g.cwd === "")?.sessions ?? [];
+    return { projectGroups: projects, orphanSessions: orphans };
   }, [
     props.sessions,
     props.workspaces,
@@ -95,10 +105,12 @@ export function SessionRail(props: SessionRailProps): JSX.Element {
           <span className="session-title">
             {pinned ? "★ " : ""}
             {archived ? "▾ " : ""}
-            {s.title ?? "untitled"}
+            {s.title?.trim() || "Untitled session"}
           </span>
           <span className="session-meta mono">{metaParts.join(" · ")}</span>
-          {s.cwd !== undefined && s.cwd.trim().length > 0 ? (
+          {s.cwd !== undefined &&
+          s.cwd.trim().length > 0 &&
+          !isWebUiScratchCwd(s.cwd) ? (
             <span className="session-cwd mono" title={s.cwd}>
               {shortPathLabel(s.cwd, 36)}
             </span>
@@ -235,43 +247,34 @@ export function SessionRail(props: SessionRailProps): JSX.Element {
 
           <p className="rail-section">Projects</p>
           <ul className="session-list">
-            {groups.length === 0 ? (
+            {projectGroups.length === 0 ? (
               <li className="muted">
-                {query.trim().length > 0
+                {query.trim().length > 0 && orphanSessions.length === 0
                   ? "No matching sessions"
                   : props.workspaces.length === 0
                     ? "No projects yet — add one with Open project…"
-                    : showArchived
-                      ? "No sessions"
-                      : "No persisted sessions"}
+                    : "No sessions in projects yet"}
               </li>
             ) : (
-              groups.map((g) => (
-                <li
-                  key={g.cwd === "" ? "__other__" : g.cwd}
-                  className="project-group"
-                >
+              projectGroups.map((g) => (
+                <li key={g.cwd} className="project-group">
                   <div className="project-head">
-                    <span className="project-name" title={g.cwd || undefined}>
+                    <span className="project-name" title={g.cwd}>
                       {g.label}
                     </span>
-                    {g.cwd !== "" ? (
-                      <button
-                        type="button"
-                        className="icon-btn tiny"
-                        title={`New session in ${g.cwd}`}
-                        aria-label={`New session in ${g.label}`}
-                        onClick={() => props.onNewSessionIn(g.cwd)}
-                      >
-                        +
-                      </button>
-                    ) : null}
+                    <button
+                      type="button"
+                      className="icon-btn tiny"
+                      title={`New session in ${g.cwd}`}
+                      aria-label={`New session in ${g.label}`}
+                      onClick={() => props.onNewSessionIn(g.cwd)}
+                    >
+                      +
+                    </button>
                   </div>
-                  {g.cwd !== "" ? (
-                    <p className="project-path mono" title={g.cwd}>
-                      {g.cwd}
-                    </p>
-                  ) : null}
+                  <p className="project-path mono" title={g.cwd}>
+                    {g.cwd}
+                  </p>
                   <ul className="project-sessions">
                     {g.sessions.map(renderSession)}
                   </ul>
@@ -279,6 +282,16 @@ export function SessionRail(props: SessionRailProps): JSX.Element {
               ))
             )}
           </ul>
+
+          {orphanSessions.length > 0 ? (
+            <>
+              <p className="rail-section">Sessions</p>
+              <ul className="session-list orphan-sessions">
+                {orphanSessions.map(renderSession)}
+              </ul>
+            </>
+          ) : null}
+
           <div className="rail-foot">
             <p className="muted compact">
               {props.provider || "provider?"}

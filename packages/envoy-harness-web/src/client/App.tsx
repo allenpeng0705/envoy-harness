@@ -32,7 +32,7 @@ import {
 import { SessionTabsBar } from "./SessionTabsBar.js";
 import { SettingsModal, type ThemeMode } from "./SettingsModal.js";
 import { TurnHintsDock } from "./TurnHintsDock.js";
-import { isPrimaryMod, shortPathLabel } from "./path-display.js";
+import { isPrimaryMod, isWebUiScratchCwd } from "./path-display.js";
 import {
   activateLeafTab,
   bindFocusedPaneSession,
@@ -958,20 +958,41 @@ export function App(): JSX.Element {
                     : "offline"}
               </span>
               <span className="sep">·</span>
-              <span title={state.cwd || undefined}>
-                {(() => {
-                  const key = normalizeProjectKey(state.cwd || "");
-                  const project = workspaces.find(
-                    (w) => normalizeProjectKey(w.path) === key,
+              {(() => {
+                const key = normalizeProjectKey(state.cwd || "");
+                const project = workspaces.find(
+                  (w) => normalizeProjectKey(w.path) === key,
+                );
+                if (project !== undefined) {
+                  const label =
+                    project.name.trim() || projectLabel(project.path);
+                  return (
+                    <span title={state.cwd || undefined}>{label}</span>
                   );
-                  if (project !== undefined) {
-                    return project.name.trim() || projectLabel(project.path);
-                  }
-                  // Unregistered (Ungrouped) — show the real path, not a fake project name.
-                  if (key.length > 0) return shortPathLabel(state.cwd, 40);
-                  return "No project";
-                })()}
-              </span>
+                }
+                // Unregistered cwd (incl. scratch) is not a project — never
+                // show the path as a project label; offer the picker instead.
+                return (
+                  <button
+                    type="button"
+                    className="status-project"
+                    title={
+                      state.cwd
+                        ? `No project (session cwd: ${state.cwd})`
+                        : "Open project picker"
+                    }
+                    onClick={() => setProjectsOpen(true)}
+                  >
+                    No project
+                  </button>
+                );
+              })()}
+              {state.preset ? (
+                <>
+                  <span className="sep">·</span>
+                  <span title="Permission preset">{state.preset}</span>
+                </>
+              ) : null}
               <span className="sep">·</span>
               <span>
                 mesh {state.mesh?.connected ?? state.peerCount}/
@@ -1082,7 +1103,25 @@ export function App(): JSX.Element {
                     <EmptyHero
                       ready={state.ready}
                       sessionId={sid}
-                      cwd={state.cwd}
+                      projectName={(() => {
+                        // Pane may show a background session — use that cwd
+                        // when it differs from the focused host state.
+                        const paneCwd =
+                          sid === state.sessionId
+                            ? state.cwd
+                            : (s?.cwd ?? state.cwd);
+                        if (!isRegisteredProjectCwd(paneCwd, workspaces)) {
+                          return null;
+                        }
+                        const key = normalizeProjectKey(paneCwd);
+                        const project = workspaces.find(
+                          (w) => normalizeProjectKey(w.path) === key,
+                        );
+                        if (project === undefined) return null;
+                        return (
+                          project.name.trim() || projectLabel(project.path)
+                        );
+                      })()}
                       onOpenProject={() => setProjectsOpen(true)}
                     />
                   ),
@@ -1116,6 +1155,7 @@ export function App(): JSX.Element {
 
           <ContextStrip
             cwd={state.cwd}
+            cwdIsProject={isRegisteredProjectCwd(state.cwd, workspaces)}
             attachedNames={attachments.map((a) => a.name)}
             touchedPaths={state.changedFiles}
             onOpenPath={openChangedPath}
@@ -1247,6 +1287,11 @@ export function App(): JSX.Element {
         workspaces={workspaces}
         activeCwd={state.cwd}
         onAdd={async (path, name) => {
+          if (isWebUiScratchCwd(path)) {
+            throw new Error(
+              "The default scratch folder is not a project — pick a real project directory.",
+            );
+          }
           await host.addWorkspace(path, name === "" ? undefined : name);
           refreshWorkspaces();
         }}

@@ -76,6 +76,8 @@ export {
   isPathInsideWorkspace,
   shouldAskUnderAutoRun,
   policyFromMode,
+  readOnlyPolicyPreservingDomainRoots,
+  isDomainGatedWritableRoot,
   PERMISSION_PRESETS,
   PermissionPresetNameSchema,
   isPermissionPresetName,

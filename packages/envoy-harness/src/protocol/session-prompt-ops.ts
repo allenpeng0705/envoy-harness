@@ -101,6 +101,11 @@ export async function runSessionPrompt(
       : {}),
   });
   if (slash !== undefined) {
+    // `/preset` (and similar) update Agent.autoRun but the host permission
+    // hook reads LiveSession.autoRun — keep them aligned after slash cmds.
+    if (live.agent.autoRun !== undefined) {
+      live.autoRun = live.agent.autoRun;
+    }
     const message = slash.messages[0];
     if (message !== undefined) params.onUpdate?.(message);
     return slash;

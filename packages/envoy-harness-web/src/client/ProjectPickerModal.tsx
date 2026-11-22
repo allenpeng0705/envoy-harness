@@ -95,8 +95,9 @@ export function ProjectPickerModal(
           </button>
         </div>
         <p className="hint">
-          Add an absolute directory to start sessions there. Removing a
-          project only forgets it — the directory is never deleted.
+          Register an absolute directory to start sessions there. The default
+          session folder is not a project. Removing only forgets the entry —
+          the directory is never deleted.
         </p>
 
         <form

@@ -363,6 +363,24 @@ body.col-dragging .col-handle::after {
   font-weight: 600;
 }
 
+.chat-status .status-project {
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-family: var(--mono);
+  font-size: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.chat-status .status-project:hover {
+  color: var(--ink);
+}
+
 button,
 select,
 input,
@@ -2047,6 +2065,17 @@ button.context-chip {
 .hero-action {
   width: fit-content;
   margin-bottom: 0.75rem;
+}
+
+.hero-action.secondary {
+  background: transparent;
+  color: var(--muted);
+  border-color: var(--line);
+}
+
+.hero-action.secondary:hover {
+  color: var(--ink);
+  border-color: color-mix(in srgb, var(--ink) 35%, var(--line));
 }
 
 .project-picker-modal {

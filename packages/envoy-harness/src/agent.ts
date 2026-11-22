@@ -53,7 +53,10 @@ import type {
 } from "./types.js";
 import { CostTracker } from "./cost.js";
 import { applyShellEnvironmentPolicy } from "./config/shell-env.js";
-import { policyFromMode } from "./permissions/policy.js";
+import {
+  policyFromMode,
+  readOnlyPolicyPreservingDomainRoots,
+} from "./permissions/policy.js";
 import type { AutoRunPolicy } from "./permissions/auto-run.js";
 import {
   matchPermissionPreset,
@@ -1272,10 +1275,14 @@ export class Agent {
       cwd: this.cwd,
       getSandboxPolicy: () => {
         // R4.6: plan/review force read-only for bash validators even
-        // when the host's configured sandbox is writeable.
+        // when the host's configured sandbox is writeable — but keep
+        // webdev/mobile domain roots so browser_*/device_* stay gated on.
         const kind = this.session.getCollaborationMode().kind;
         if (modeForcesReadOnly(kind)) {
-          return policyFromMode("read-only", this.cwd);
+          return readOnlyPolicyPreservingDomainRoots(
+            this.sandboxPolicy,
+            this.cwd,
+          );
         }
         return this.sandboxPolicy;
       },

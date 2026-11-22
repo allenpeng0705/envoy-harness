@@ -203,7 +203,7 @@ describe("groupSessionsByProject", () => {
     expect(groups.map((g) => g.label)).toEqual([
       "alpha",
       "beta",
-      "Ungrouped",
+      "Without a project",
     ]);
     expect(groups[0]?.cwd).toBe("/work/alpha");
     expect(groups[2]?.sessions.map((s) => s.id)).toEqual(["c", "d"]);
@@ -223,7 +223,7 @@ describe("groupSessionsByProject", () => {
         { path: "/work/beta/" },
       ],
     );
-    // Unregistered sessions stay under Ungrouped — never become a project heading.
+    // Unregistered sessions stay without a project — never become a project heading.
     expect(groups.map((g) => g.label)).toEqual(["Alpha App", "beta"]);
     expect(groups[0]?.sessions.map((s) => s.id)).toEqual(["b"]);
     expect(groups[1]?.sessions.map((s) => s.id)).toEqual(["a"]);
@@ -236,7 +236,7 @@ describe("groupSessionsByProject", () => {
       [{ path: "/work/beta/" }],
       { includeUngrouped: true },
     );
-    expect(withUngrouped.map((g) => g.label)).toEqual(["beta", "Ungrouped"]);
+    expect(withUngrouped.map((g) => g.label)).toEqual(["beta", "Without a project"]);
     expect(withUngrouped[1]?.sessions.map((s) => s.id)).toEqual(["c"]);
   });
 
@@ -247,7 +247,7 @@ describe("groupSessionsByProject", () => {
       [],
       { includeUngrouped: true },
     );
-    expect(groups.map((g) => g.label)).toEqual(["Ungrouped"]);
+    expect(groups.map((g) => g.label)).toEqual(["Without a project"]);
     expect(groups[0]?.cwd).toBe("");
   });
 
@@ -265,8 +265,8 @@ describe("groupSessionsByProject", () => {
   it("derives labels from paths", () => {
     expect(projectLabel("/work/alpha/")).toBe("alpha");
     expect(projectLabel("C:\\work\\alpha")).toBe("alpha");
-    expect(projectLabel("")).toBe("Ungrouped");
-    expect(projectLabel("/")).toBe("Ungrouped");
+    expect(projectLabel("")).toBe("Without a project");
+    expect(projectLabel("/")).toBe("Without a project");
   });
 
   it("treats a trailing separator as the same project", () => {

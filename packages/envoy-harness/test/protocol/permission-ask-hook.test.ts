@@ -38,6 +38,43 @@ describe("installToolPermissionAskHook", () => {
     expect(continueDecision.kind).toBe("continue");
   });
 
+  it("REPL-style: shouldAskUnderAutoRun safe-only auto-allows read_file", async () => {
+    const { shouldAskUnderAutoRun } = await import(
+      "../../src/permissions/auto-run.js"
+    );
+    let policy: "safe-only" | "off" | "always-confirm" | undefined = "safe-only";
+    const hooks = new HookRegistry();
+    installToolPermissionAskHook(hooks, {
+      shouldAsk: (toolName, args) => {
+        const decided = shouldAskUnderAutoRun(policy, toolName, args, {
+          workspaceRoot: "/tmp/spa",
+        });
+        if (decided === undefined) return false;
+        return decided;
+      },
+    });
+    expect(
+      (await hooks.fire("PreToolUse", { tool: "read_file", args: {} })).kind,
+    ).toBe("continue");
+    expect(
+      (
+        await hooks.fire("PreToolUse", {
+          tool: "bash",
+          args: { command: "rm -rf /" },
+        })
+      ).kind,
+    ).toBe("ask");
+    policy = "off";
+    expect(
+      (
+        await hooks.fire("PreToolUse", {
+          tool: "bash",
+          args: { command: "rm -rf /" },
+        })
+      ).kind,
+    ).toBe("continue");
+  });
+
   it("falls back to 'tool' when the payload is missing the tool field", async () => {
     const hooks = new HookRegistry();
     installToolPermissionAskHook(hooks);

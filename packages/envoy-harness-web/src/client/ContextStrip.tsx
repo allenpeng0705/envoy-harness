@@ -1,23 +1,28 @@
 import type { JSX } from "react";
 import { basenameLabel } from "./composer-docks.js";
-import { shortPathLabel } from "./path-display.js";
+import { isWebUiScratchCwd, shortPathLabel } from "./path-display.js";
 
 export interface ContextStripProps {
   cwd: string;
+  /** When false/undefined, cwd is not a registered project (hide path chrome). */
+  cwdIsProject?: boolean;
   attachedNames: ReadonlyArray<string>;
   touchedPaths: ReadonlyArray<string>;
   onOpenPath?: (path: string) => void;
 }
 
 export function ContextStrip(props: ContextStripProps): JSX.Element | null {
-  const hasCwd = props.cwd.trim().length > 0;
+  const showCwd =
+    props.cwd.trim().length > 0 &&
+    props.cwdIsProject === true &&
+    !isWebUiScratchCwd(props.cwd);
   const hasAttach = props.attachedNames.length > 0;
   const hasTouched = props.touchedPaths.length > 0;
-  if (!hasCwd && !hasAttach && !hasTouched) return null;
+  if (!showCwd && !hasAttach && !hasTouched) return null;
 
   return (
     <div className="context-strip" aria-label="Prompt context">
-      {hasCwd ? (
+      {showCwd ? (
         <span className="context-chip mono" title={props.cwd}>
           cwd {shortPathLabel(props.cwd, 40)}
         </span>

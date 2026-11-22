@@ -161,8 +161,8 @@ export function SettingsModal(props: SettingsModalProps): JSX.Element | null {
               </select>
             </label>
             <p className="hint">
-              One knob expands sandbox + approval + auto-run. Mobile/webdev also
-              unlock domain tools and writable roots.
+              One knob sets sandbox + approval + auto-run. Choose webdev for
+              browser_* tools, mobile for device_* tools.
             </p>
             <label>
               Sandbox

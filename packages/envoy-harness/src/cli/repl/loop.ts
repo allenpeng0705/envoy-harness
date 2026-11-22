@@ -361,6 +361,31 @@ export async function runRepl(opts: ReplOptions): Promise<ReplResult> {
     const agent = new Agent(agentOptions);
     parentRef.agent = agent;
 
+    // Honor Agent.autoRun (from --permission-preset / /preset) the same way
+    // ACP does: PreToolUse ask hook + shouldAskUnderAutoRun. Without this,
+    // safe-only / off are stored but never consulted for tool asks.
+    {
+      const { installToolPermissionAskHook } = await import(
+        "../../protocol/permission-hook.js"
+      );
+      const { shouldAskUnderAutoRun } = await import(
+        "../../permissions/auto-run.js"
+      );
+      installToolPermissionAskHook(agent.hooks, {
+        shouldAsk: (toolName, args) => {
+          const decided = shouldAskUnderAutoRun(
+            agent.autoRun,
+            toolName,
+            args,
+            { workspaceRoot: agent.cwd },
+          );
+          // No autoRun policy → keep legacy REPL behavior (do not force asks).
+          if (decided === undefined) return false;
+          return decided;
+        },
+      });
+    }
+
     // F17.6: extract the sub-agent registry from the
     // agent's mesh submitter (when one is configured).
     // The host can override via `opts.subagentRegistry`
